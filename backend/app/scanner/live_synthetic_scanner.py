@@ -1,0 +1,953 @@
+"""Low-latency live synthetic Cash-Carry scanner.
+
+Consumes the normalized one-second observations emitted by the live synthetic
+recorder. It assembles real CE+PE+future quotes at the same timestamp and then
+delegates pricing/ranking to the existing pure synthetic scanner.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+import math
+from datetime import datetime, time as datetime_time
+from dataclasses import replace
+from zoneinfo import ZoneInfo
+from threading import Lock
+import time
+from typing import Callable
+
+from app.backtesting.arbitrage_backtester import FutureQuote, OptionQuote
+from app.scanner.synthetic_cash_carry import SyntheticScanConfig, SyntheticScanResult, scan_synthetic_snapshot
+
+
+class LiveSyntheticScanner:
+    """Bounded in-memory assembler for one-second synthetic opportunities."""
+
+    MAX_ACTIVE_BUCKETS = 4096
+    MAX_BUCKET_AGE_NS = 3_000_000_000
+
+    def __init__(
+        self,
+        *,
+        atm_provider: Callable[[str, int], float | None],
+        config_provider: Callable[[str], SyntheticScanConfig] | None = None,
+        on_result: Callable[[tuple[SyntheticScanResult, ...]], None] | None = None,
+        allow_logical_timestamps: bool = False,
+    ) -> None:
+        self.atm_provider = atm_provider
+        self.config_provider = config_provider or (lambda _symbol: SyntheticScanConfig())
+        self.on_result = on_result
+        # Logical timestamps exist only for deterministic unit tests. Production
+        # instances reject non-epoch-nanosecond values by default.
+        if type(allow_logical_timestamps) is not bool:
+            raise TypeError("allow_logical_timestamps must be a bool")
+        self._allow_logical_timestamps = allow_logical_timestamps
+        self._lock = Lock()
+        self._diagnostics_lock = Lock()
+        self._diagnostics: Counter[str] = Counter()
+        # Separate transport activity from accepted market observations: a
+        # stream of stale/invalid ticks must not make scanner health look fresh.
+        self._last_payload_received_at_ns: int | None = None
+        self._last_observation_at_ns: int | None = None
+        self._last_successful_calculation_at_ns: int | None = None
+        self._last_result_count = 0
+        # Latest completed scan outcome per configured underlying (a gauge, not a cumulative counter).
+        self._latest_scan_by_symbol: dict[str, dict[str, int]] = {}
+        self._buckets: dict[tuple[str, int, int], dict] = {}
+
+    def _count(self, reason: str, amount: int = 1) -> None:
+        with self._diagnostics_lock:
+            self._diagnostics[reason] += amount
+
+    def _record_source_latency(self, latency_ns: int) -> None:
+        """Record bounded source-to-scanner latency buckets; never retain quote data."""
+        self._count("source_latency_samples")
+        if latency_ns < 0:
+            self._count("source_latency_negative")
+        elif latency_ns <= 250_000_000:
+            self._count("source_latency_0_250ms")
+        elif latency_ns <= 1_000_000_000:
+            self._count("source_latency_250ms_1s")
+        elif latency_ns <= 5_000_000_000:
+            self._count("source_latency_1_5s")
+        else:
+            self._count("source_latency_over_5s")
+
+    def diagnostics_snapshot(self) -> dict:
+        """Return scanner-local counters without exposing cached market payloads."""
+        # Keep lock order consistent with observe(): scanner state before counters.
+        with self._lock:
+            self._prune(max((key[1] for key in self._buckets), default=0))
+            with self._diagnostics_lock:
+                counters = dict(self._diagnostics)
+            counters["active_buckets"] = len(self._buckets)
+            counters["last_payload_received_at_ns"] = self._last_payload_received_at_ns
+            counters["last_observation_at_ns"] = self._last_observation_at_ns
+            counters["last_successful_calculation_at_ns"] = self._last_successful_calculation_at_ns
+            counters["last_result_count"] = self._last_result_count
+            for symbol, outcome in self._latest_scan_by_symbol.items():
+                counters[f"latest_scan_result_count_by_symbol:{symbol}"] = outcome["result_count"]
+                counters[f"latest_scan_at_ns_by_symbol:{symbol}"] = outcome["scan_at_ns"]
+                counters[f"latest_scan_status_by_symbol:{symbol}"] = outcome.get("status", "COMPLETED")
+        return {"counters": counters}
+
+    @staticmethod
+    def _expiry(value: object) -> int:
+        text = str(value or "").strip().upper()
+        if text.endswith(".0") and text[:-2].isdigit():
+            text = text[:-2]
+        for fmt in ("%Y%m%d", "%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%m-%Y"):
+            try:
+                return int(datetime.strptime(text, fmt).strftime("%Y%m%d"))
+            except ValueError:
+                continue
+        raise ValueError(f"invalid option/future expiry: {value!r}")
+
+    @staticmethod
+    def _price(value: object) -> float | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return number if math.isfinite(number) and number > 0 else None
+
+    @staticmethod
+    def _timestamp_ns(value: object) -> int | None:
+        """Parse a positive integral timestamp without bool/fraction truncation."""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+        try:
+            timestamp = int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return timestamp if timestamp > 0 else None
+
+    @classmethod
+    def _quote_timestamp_ns(cls, leg: dict) -> int | None:
+        """Return the actual broker timestamp, not a pending-pairing anchor."""
+        if "_quote_source_timestamp_ns" in leg:
+            return cls._timestamp_ns(leg.get("_quote_source_timestamp_ns"))
+        return cls._timestamp_ns(leg.get("source_timestamp_ns"))
+
+    def observe(self, payload: dict) -> tuple[SyntheticScanResult, ...]:
+        self._count("observations_received")
+        received_at_ns = time.time_ns()
+        with self._lock:
+            self._last_payload_received_at_ns = received_at_ns
+        if not isinstance(payload, dict):
+            self._count("invalid_payload_or_scope")
+            return ()
+        symbol = str(payload.get("underlying") or "").strip().upper()
+        cls = str(payload.get("instrument_class") or "").strip().upper()
+        option_type = str(payload.get("option_type") or "").strip().upper()
+        raw_timestamp = payload.get("source_timestamp_ns")
+        # JSON numeric timestamps must be integral. int(1.9) silently truncates
+        # to 1 and bool is an int subclass; neither is a valid source timestamp.
+        if isinstance(raw_timestamp, bool) or (
+            isinstance(raw_timestamp, float)
+            and (not math.isfinite(raw_timestamp) or not raw_timestamp.is_integer())
+        ):
+            self._count("invalid_timestamp")
+            return ()
+        try:
+            timestamp_ns = int(raw_timestamp or 0)
+        except (TypeError, ValueError, OverflowError):
+            self._count("invalid_timestamp")
+            return ()
+        if timestamp_ns <= 0:
+            self._count("invalid_timestamp")
+            return ()
+        # Broker source_timestamp_ns is an epoch-nanosecond contract. Reject
+        # seconds, milliseconds, microseconds, and arbitrary small values in live
+        # instances; otherwise these values bypass wall-clock freshness checks.
+        # Tests may explicitly opt into deterministic logical timestamps.
+        if timestamp_ns < 1_000_000_000_000_000_000:
+            if not self._allow_logical_timestamps:
+                self._count("invalid_timestamp_unit")
+                return ()
+        else:
+            # Measure latency before freshness rejection so stale samples remain
+            # observable. Counters are aggregate-only; no raw payload is kept.
+            now_ns = time.time_ns()
+            self._record_source_latency(now_ns - timestamp_ns)
+            if timestamp_ns > now_ns + 5_000_000_000:
+                self._count("future_timestamp")
+                return ()
+            if now_ns - timestamp_ns > 5_000_000_000:
+                self._count("stale_timestamp")
+                return ()
+        if not symbol or cls not in {"STOCK", "INDEX"}:
+            self._count("invalid_payload_or_scope")
+            return ()
+        bid = self._price(payload.get("bid"))
+        ask = self._price(payload.get("ask"))
+        ltp = self._price(payload.get("ltp") or payload.get("last_traded_price"))
+        # LTP establishes that a leg exists; executable bid/ask may follow on a
+        # subsequent broker tick. Keep that leg pending for the bounded quote wait.
+        quote_missing = bid is None or ask is None
+        if (quote_missing and ltp is None) or (not quote_missing and ask < bid):
+            self._count("invalid_quote")
+            return ()
+
+        def positive_number(value: object) -> float:
+            # Exchange depth is a count of contracts/shares, never a fractional
+            # quantity. A positive decimal must not qualify as executable depth.
+            if isinstance(value, bool):
+                return 0.0
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                return 0.0
+            return number if math.isfinite(number) and number > 0 and number.is_integer() else 0.0
+
+        def nonnegative_int(value: object) -> int:
+            if isinstance(value, bool):
+                return 0
+            try:
+                number = float(value or 0)
+            except (TypeError, ValueError, OverflowError):
+                return 0
+            if not math.isfinite(number) or number <= 0 or not number.is_integer():
+                return 0
+            return int(number)
+
+        def liquid_leg(option: dict) -> bool:
+            # Executability requires a valid two-sided quote with positive depth.
+            # Volume/OI may be absent on individual WebSocket ticks and are metadata,
+            # not a reason to discard an otherwise executable opportunity.
+            return (
+                self._price(option.get("bid")) is not None
+                and self._price(option.get("ask")) is not None
+                and self._price(option.get("ask")) >= self._price(option.get("bid"))
+                and positive_number(option.get("bid_qty")) > 0
+                and positive_number(option.get("ask_qty")) > 0
+            )
+
+        try:
+            expiry = self._expiry(payload.get("expiry"))
+        except ValueError:
+            self._count("invalid_expiry")
+            return ()
+        strike = self._price(payload.get("strike"))
+        if option_type in {"CE", "PE"} and strike is None:
+            self._count("invalid_strike")
+            return ()
+        # An empty option_type is the legacy future-leg representation. Do not
+        # let a cash/underlying quote with no option_type occupy the future slot:
+        # it shares the same underlying/expiry bucket and could create a false
+        # synthetic triplet. Every non-option leg must identify itself as a future.
+        instrument_symbol = str(payload.get("symbol") or "").strip().upper()
+        # Subscription metadata is keyed by instrument token, but validate the
+        # normalized symbol against the declared underlying too: a valid FUT/CE/PE
+        # suffix alone must not let another underlying enter this bucket.
+        if not instrument_symbol.startswith(symbol):
+            self._count("underlying_symbol_mismatch")
+            return ()
+        if option_type not in {"", "CE", "PE"}:
+            self._count("invalid_option_type")
+            return ()
+        # Prefix matching alone is unsafe: NIFTYBANK... also starts with
+        # NIFTY. After the declared underlying, a valid option/future symbol
+        # must continue with its expiry/strike digits (or the legacy FUT suffix).
+        # This is a boundary check, not a full broker-symbol parser.
+        symbol_suffix = instrument_symbol[len(symbol):]
+        valid_symbol_boundary = (
+            bool(symbol_suffix)
+            and (
+                symbol_suffix[0].isdigit()
+                if option_type in {"CE", "PE"}
+                else symbol_suffix.startswith("FUT") or symbol_suffix[0].isdigit()
+            )
+        ) or (option_type == "" and not symbol_suffix)
+        if not valid_symbol_boundary:
+            self._count("underlying_symbol_mismatch")
+            return ()
+        if option_type in {"CE", "PE"} and not instrument_symbol.endswith(option_type):
+            self._count("invalid_option_instrument")
+            return ()
+        if option_type not in {"CE", "PE"} and not instrument_symbol.endswith("FUT"):
+            self._count("invalid_future_instrument")
+            return ()
+        with self._lock:
+            key = self._matching_bucket_key(symbol, timestamp_ns, expiry)
+            bucket = self._buckets.setdefault(
+                key,
+                {"future": None, "options": {}, "first_seen_monotonic_ns": time.monotonic_ns()},
+            )
+            # A later executable-book tick may complete an LTP-selected leg. Keep
+            # its original pairing timestamp only when it is the same instrument
+            # and arrives inside the explicit three-second quote-wait window.
+            def preserve_pending_anchor(previous: dict | None, current: dict) -> dict:
+                # Keep the broker's real source time separately: source_timestamp_ns
+                # may be normalized to the pending bucket anchor for pairing, and
+                # must not erase ordering information for subsequent ticks.
+                current = dict(current)
+                # Never trust a private timestamp supplied in the incoming payload.
+                # This field is owned by the scanner and records the actual source time.
+                current["_quote_source_timestamp_ns"] = (
+                    self._timestamp_ns(current.get("source_timestamp_ns")) or 0
+                )
+                if previous is None:
+                    return current
+                previous_bid = self._price(previous.get("bid"))
+                previous_ask = self._price(previous.get("ask"))
+                previous_ltp = self._price(previous.get("ltp") or previous.get("last_traded_price"))
+                current_bid = self._price(current.get("bid"))
+                current_ask = self._price(current.get("ask"))
+                age_ns = time.monotonic_ns() - int(
+                    bucket.get(
+                        "quote_wait_started_ns",
+                        bucket.get("first_seen_monotonic_ns", time.monotonic_ns()),
+                    )
+                )
+                if (
+                    (previous_bid is None or previous_ask is None)
+                    and previous_ltp is not None
+                    and current_bid is not None
+                    and current_ask is not None
+                    and age_ns < 3_000_000_000
+                ):
+                    anchored = dict(current)
+                    anchored["source_timestamp_ns"] = previous.get("source_timestamp_ns")
+                    return anchored
+
+                # A newer LTP-only update must not erase a previously executable
+                # book. Keep the book's real source timestamp so synchronization
+                # still measures its age; only the pairing/order timestamp advances.
+                # This avoids turning a valid leg into a missing-quote leg on every
+                # trade-only tick, without pretending that the book itself refreshed.
+                if (
+                    previous_bid is not None
+                    and previous_ask is not None
+                    and current_bid is None
+                    and current_ask is None
+                    and (self._price(current.get("ltp") or current.get("last_traded_price")) is not None)
+                    and self._price(previous.get("ask")) >= self._price(previous.get("bid"))
+                ):
+                    retained = dict(current)
+                    retained["bid"] = previous.get("bid")
+                    retained["ask"] = previous.get("ask")
+                    retained["bid_qty"] = previous.get("bid_qty")
+                    retained["ask_qty"] = previous.get("ask_qty")
+                    retained["_quote_source_timestamp_ns"] = self._quote_timestamp_ns(previous) or 0
+                    return retained
+                return current
+
+            accepted_observation = True
+
+            def update_leg_without_time_regression(previous: dict | None, current: dict) -> dict | None:
+                nonlocal accepted_observation
+                if previous is None:
+                    return preserve_pending_anchor(previous, current)
+                try:
+                    previous_ns = self._quote_timestamp_ns(previous) or 0
+                    current_ns = self._timestamp_ns(current.get("source_timestamp_ns")) or 0
+                except (TypeError, ValueError, OverflowError):
+                    previous_ns = current_ns = 0
+                if previous_ns > current_ns > 0:
+                    self._count("out_of_order_leg_updates")
+                    accepted_observation = False
+                    return previous
+                return preserve_pending_anchor(previous, current)
+
+            if option_type in {"CE", "PE"} and strike is not None:
+                legs = bucket["options"].setdefault(strike, {})
+                updated = update_leg_without_time_regression(legs.get(option_type), payload)
+                if updated is not None:
+                    legs[option_type] = updated
+            else:
+                # Future instruments are accepted through one explicit path only.
+                # The upfront identity guard requires FUT in the symbol, so an
+                # empty option_type is a legacy future representation, not a
+                # blanket permission for arbitrary cash/index quotes.
+                updated = update_leg_without_time_regression(bucket.get("future"), payload)
+                if updated is not None:
+                    bucket["future"] = updated
+
+            # Rejected out-of-order ticks must not refresh observation health:
+            # the cached quote did not advance even though transport received a payload.
+            if accepted_observation:
+                with self._diagnostics_lock:
+                    self._last_observation_at_ns = time.time_ns()
+
+            if bucket["future"] is None:
+                self._count("missing_future_leg")
+                self._prune(timestamp_ns)
+                return ()
+            future_payload = bucket["future"]
+            future_class = str(future_payload.get("instrument_class") or "").strip().upper()
+            if future_class not in {"STOCK", "INDEX"}:
+                self._count("invalid_future_instrument_class")
+                self._prune(timestamp_ns)
+                return ()
+            try:
+                future_expiry = self._expiry(future_payload.get("expiry"))
+            except ValueError:
+                self._count("invalid_future_expiry")
+                self._prune(timestamp_ns)
+                return ()
+            future_timestamp_ns = self._quote_timestamp_ns(future_payload) or 0
+            if future_timestamp_ns <= 0:
+                self._count("invalid_future_timestamp")
+                self._prune(timestamp_ns)
+                return ()
+            try:
+                if isinstance(future_payload.get("lot_size"), bool):
+                    raise ValueError("future lot size must be a positive integer")
+                raw_future_lot_size = float(future_payload.get("lot_size") or 0)
+                if (
+                    not math.isfinite(raw_future_lot_size)
+                    or raw_future_lot_size <= 0
+                    or not raw_future_lot_size.is_integer()
+                ):
+                    raise ValueError("future lot size must be a positive integer")
+                future_lot_size = int(raw_future_lot_size)
+            except (TypeError, ValueError, OverflowError):
+                self._count("invalid_future_lot_size")
+                self._prune(timestamp_ns)
+                return ()
+            # Validate each strike independently. An incomplete or delayed option
+            # at another strike must not block an otherwise synchronized CE+PE+FUT
+            # triplet. The pure scanner requires one snapshot timestamp, so accepted
+            # quotes are normalized to the future tick only after this guard passes.
+            anchor_timestamp_ns = future_timestamp_ns
+            strikes = bucket["options"]
+            option_quotes: list[OptionQuote] = []
+            for option_strike, legs in strikes.items():
+                ce, pe = legs.get("CE"), legs.get("PE")
+                if ce is None or pe is None:
+                    # Split the aggregate blocker into directional counters so the
+                    # operator can distinguish missing CALL subscriptions from missing
+                    # PUT subscriptions without exposing raw market payloads.
+                    if ce is None:
+                        self._count("missing_call_leg")
+                    if pe is None:
+                        self._count("missing_put_leg")
+                    self._count("missing_ce_or_pe_leg")
+                    continue
+                leg_classes = {
+                    str(ce.get("instrument_class") or "").strip().upper(),
+                    str(pe.get("instrument_class") or "").strip().upper(),
+                }
+                if leg_classes != {future_class}:
+                    self._count("instrument_class_mismatch")
+                    continue
+                ce_timestamp_ns = self._quote_timestamp_ns(ce) or 0
+                pe_timestamp_ns = self._quote_timestamp_ns(pe) or 0
+                if ce_timestamp_ns <= 0 or pe_timestamp_ns <= 0:
+                    self._count("invalid_option_timestamp")
+                    continue
+                if (
+                    abs(ce_timestamp_ns - pe_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
+                    or abs(ce_timestamp_ns - future_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
+                    or abs(pe_timestamp_ns - future_timestamp_ns) > self.TIMESTAMP_TOLERANCE_NS
+                ):
+                    self._count("timestamp_mismatch")
+                    continue
+                # Never combine legs from a different expiry with the future.
+                try:
+                    matching_expiry = (
+                        self._expiry(ce.get("expiry")) == future_expiry
+                        and self._expiry(pe.get("expiry")) == future_expiry
+                    )
+                except ValueError:
+                    matching_expiry = False
+                if not matching_expiry:
+                    self._count("expiry_mismatch")
+                    continue
+                if not liquid_leg(ce) or not liquid_leg(pe):
+                    self._count("illiquid_or_incomplete_option_leg")
+                    continue
+                ce_bid, ce_ask = self._price(ce.get("bid")), self._price(ce.get("ask"))
+                pe_bid, pe_ask = self._price(pe.get("bid")), self._price(pe.get("ask"))
+                if None in (ce_bid, ce_ask, pe_bid, pe_ask):
+                    continue
+                # The contract lot must agree across CE, PE and FUT. Falling
+                # back to one leg's lot can silently misstate executable P&L.
+                def contract_lot(leg: dict) -> int | None:
+                    if isinstance(leg.get("lot_size"), bool):
+                        return None
+                    try:
+                        raw = float(leg.get("lot_size") or 0)
+                    except (TypeError, ValueError, OverflowError):
+                        return None
+                    if raw != raw or raw in (float("inf"), float("-inf")):
+                        return None
+                    if raw <= 0 or not raw.is_integer():
+                        return None
+                    return int(raw)
+
+                ce_lot = contract_lot(ce)
+                pe_lot = contract_lot(pe)
+                future_lot = contract_lot(future_payload)
+                if ce_lot is None or pe_lot is None or future_lot is None:
+                    self._count("invalid_option_lot_size")
+                    continue
+                if ce_lot != pe_lot or ce_lot != future_lot:
+                    self._count("lot_size_mismatch")
+                    continue
+                lot = ce_lot
+                option_quotes.append(
+                    OptionQuote(
+                        timestamp_ns=anchor_timestamp_ns,
+                        underlying=symbol,
+                        expiry=future_expiry,
+                        strike=option_strike,
+                        call_bid=ce_bid,
+                        call_ask=ce_ask,
+                        put_bid=pe_bid,
+                        put_ask=pe_ask,
+                        lot_size=lot,
+                        instrument_class=future_class,
+                        volume=nonnegative_int(ce.get("volume")),
+                        oi=nonnegative_int(ce.get("oi")),
+                    )
+                )
+
+            quote_wait_started_ns = bucket.get("quote_wait_started_ns")
+            bucket_age_ns = time.monotonic_ns() - int(
+                quote_wait_started_ns
+                if quote_wait_started_ns is not None
+                else bucket.get("first_seen_monotonic_ns", time.monotonic_ns())
+            )
+            if not option_quotes:
+                # LTP-complete CE+PE legs form a candidate even if one executable
+                # book is late. Keep it in memory for at most three seconds so a
+                # follow-up quote tick can complete the same candidate.
+                pending_quote_pair = any(
+                    legs.get("CE") is not None
+                    and legs.get("PE") is not None
+                    and self._price(legs["CE"].get("ltp") or legs["CE"].get("last_traded_price")) is not None
+                    and self._price(legs["PE"].get("ltp") or legs["PE"].get("last_traded_price")) is not None
+                    and (
+                        not liquid_leg(legs["CE"])
+                        or not liquid_leg(legs["PE"])
+                    )
+                    for legs in strikes.values()
+                )
+                if pending_quote_pair:
+                    if bucket.get("quote_wait_started_ns") is None:
+                        bucket["quote_wait_started_ns"] = time.monotonic_ns()
+                        bucket_age_ns = 0
+                    if bucket_age_ns < 3_000_000_000:
+                        self._count("waiting_for_executable_quote")
+                        return ()
+                self._count("no_executable_ce_pe_pair")
+                self._prune(timestamp_ns)
+                return ()
+
+            future_bid, future_ask = self._price(future_payload.get("bid")), self._price(future_payload.get("ask"))
+            if future_bid is None or future_ask is None or future_ask < future_bid:
+                if self._price(future_payload.get("ltp") or future_payload.get("last_traded_price")) is not None:
+                    if bucket.get("quote_wait_started_ns") is None:
+                        bucket["quote_wait_started_ns"] = time.monotonic_ns()
+                        bucket_age_ns = 0
+                    if bucket_age_ns < 3_000_000_000:
+                        self._count("waiting_for_executable_quote")
+                        return ()
+                self._count("invalid_future_quote")
+                self._prune(timestamp_ns)
+                return ()
+            future = FutureQuote(
+                timestamp_ns=anchor_timestamp_ns,
+                underlying=symbol,
+                expiry=future_expiry,
+                bid=future_bid,
+                ask=future_ask,
+                lot_size=future_lot_size,
+                instrument_class=future_class,
+                volume=nonnegative_int(future_payload.get("volume")),
+                oi=nonnegative_int(future_payload.get("oi")),
+            )
+            try:
+                # ATM must be looked up at the future's actual snapshot timestamp,
+                # not whichever option tick happened to arrive last.
+                atm = self.atm_provider(symbol, future_timestamp_ns)
+            except Exception:
+                self._count("atm_provider_errors")
+                self._count(f"atm_provider_errors_by_symbol:{symbol}")
+                self._latest_scan_by_symbol[symbol] = {"result_count": 0, "scan_at_ns": time.time_ns(), "status": "ATM_ERROR"}
+                self._prune(timestamp_ns)
+                return ()
+            if atm is None:
+                self._count("missing_atm_price")
+                # Keep the aggregate counter for existing dashboards, but expose
+                # which underlying is losing its live ATM input. This is bounded
+                # by the configured underlying universe and contains no quote data.
+                self._count(f"missing_atm_price_by_symbol:{symbol}")
+                self._latest_scan_by_symbol[symbol] = {"result_count": 0, "scan_at_ns": time.time_ns(), "status": "ATM_MISSING"}
+                self._prune(timestamp_ns)
+                return ()
+            try:
+                config = self.config_provider(symbol)
+            except Exception:
+                self._count("config_provider_errors")
+                self._count(f"config_provider_errors_by_symbol:{symbol}")
+                self._latest_scan_by_symbol[symbol] = {"result_count": 0, "scan_at_ns": time.time_ns(), "status": "CONFIG_ERROR"}
+                self._prune(timestamp_ns)
+                return ()
+            if not isinstance(config, SyntheticScanConfig):
+                self._count("invalid_scanner_config")
+                self._latest_scan_by_symbol[symbol] = {"result_count": 0, "scan_at_ns": time.time_ns(), "status": "CONFIG_ERROR"}
+                self._prune(timestamp_ns)
+                return ()
+            # Derive carry horizon from this contract's actual expiry, not a static default.
+            expiry_text = str(future.expiry or "").strip().upper()
+            expiry_date = None
+            for expiry_format in ("%Y%m%d", "%d%b%Y", "%d%b%y", "%Y-%m-%d"):
+                try:
+                    expiry_date = datetime.strptime(expiry_text, expiry_format).date()
+                    break
+                except ValueError:
+                    continue
+            if expiry_date is None:
+                self._count("invalid_expiry_for_pricing")
+                self._latest_scan_by_symbol[symbol] = {"result_count": 0, "scan_at_ns": time.time_ns(), "status": "EXPIRY_ERROR"}
+                self._prune(timestamp_ns)
+                return ()
+            tz = ZoneInfo("Asia/Kolkata")
+            expiry_at = datetime.combine(expiry_date, datetime_time(15, 30), tzinfo=tz)
+            # Price carry from the market snapshot's source time, not wall-clock
+            # execution time. This keeps a quote's pricing horizon deterministic
+            # when processing is delayed. Tiny logical timestamps are used by
+            # deterministic unit tests; live epoch-ns timestamps use integer
+            # seconds plus microseconds to avoid float timestamp precision loss.
+            reference_timestamp_ns = future_payload.get("_quote_source_timestamp_ns") or future_timestamp_ns
+            if reference_timestamp_ns >= 1_000_000_000_000_000:
+                source_seconds, source_nanoseconds = divmod(reference_timestamp_ns, 1_000_000_000)
+                reference_at = datetime.fromtimestamp(source_seconds, tz=tz).replace(
+                    microsecond=source_nanoseconds // 1_000
+                )
+            else:
+                reference_at = datetime.now(tz)
+            time_to_expiry_years = max(
+                0.0,
+                (expiry_at - reference_at).total_seconds() / (365.25 * 24 * 60 * 60),
+            )
+            config = replace(config, time_to_expiry_years=time_to_expiry_years)
+            try:
+                atm_strike = float(atm)
+                if not math.isfinite(atm_strike) or atm_strike <= 0:
+                    raise ValueError("ATM strike must be a finite positive number")
+                results = scan_synthetic_snapshot(
+                    option_quotes,
+                    future,
+                    atm_strike=atm_strike,
+                    config=config,
+                )
+            except Exception:
+                self._count("scan_calculation_errors")
+                self._count(f"scan_calculation_errors_by_symbol:{symbol}")
+                # A recent failed attempt must not leave an older successful result looking current.
+                failed_at_ns = time.time_ns()
+                self._latest_scan_by_symbol[symbol] = {
+                    "result_count": 0,
+                    "scan_at_ns": failed_at_ns,
+                    "status": "CALC_ERROR",
+                }
+                self._prune(timestamp_ns)
+                return ()
+            self._prune(timestamp_ns)
+            self._count("scan_evaluations")
+            # Keep aggregate counters for existing dashboards, while exposing
+            # symbol-scoped totals so a busy index cannot hide stock scan outcomes.
+            self._count(f"scan_evaluations_by_symbol:{symbol}")
+            self._count(f"successful_pairs_by_symbol:{symbol}", len(option_quotes))
+            # observe() already holds _lock while evaluating this complete snapshot.
+            self._last_successful_calculation_at_ns = time.time_ns()
+            self._last_result_count = len(results)
+            self._latest_scan_by_symbol[symbol] = {
+                "result_count": len(results),
+                "scan_at_ns": self._last_successful_calculation_at_ns,
+                "status": "RESULTS" if results else "NO_EDGE",
+            }
+            self._count("successful_pairs", len(option_quotes))
+            if results:
+                self._count("opportunities_emitted", len(results))
+                self._count(f"opportunities_emitted_by_symbol:{symbol}", len(results))
+            else:
+                self._count("empty_calculations")
+                self._count(f"empty_calculations_by_symbol:{symbol}")
+        if results and self.on_result is not None:
+            try:
+                self.on_result(results)
+            except Exception:
+                # A downstream alert/storage callback must not break the feed consumer.
+                self._count("result_callback_errors")
+        return results
+
+    def pair_monitor_snapshot(self, limit: int = 200) -> dict:
+        """Expose recent sanitized option/future combinations, including incomplete legs."""
+        now_ns = time.time_ns()
+        rows = []
+        with self._lock:
+            self._prune(max((key[1] for key in self._buckets), default=0))
+            for (symbol, bucket_ts, expiry), bucket in self._buckets.items():
+                if bucket_ts >= 1_000_000_000_000_000 and now_ns - bucket_ts > 5_000_000_000:
+                    continue
+                future = bucket.get("future") or {}
+                try:
+                    future_expiry = self._expiry(future.get("expiry")) if future.get("expiry") else expiry
+                except ValueError:
+                    future_expiry = None
+                option_buckets = bucket.get("options", {})
+                # A future-only snapshot is still actionable diagnostic information:
+                # otherwise a symbol receiving FUT ticks but no option legs vanishes
+                # completely from the pair monitor. Represent it as one explicitly
+                # unstruck structural row rather than inventing a strike.
+                if future and not option_buckets:
+                    option_buckets = {None: {}}
+                for strike, legs in option_buckets.items():
+                    ce, pe = legs.get("CE") or {}, legs.get("PE") or {}
+                    missing = []
+                    if future and future_expiry != expiry:
+                        missing.append("EXPIRY_MISMATCH")
+                    if not future:
+                        missing.append("MISSING_FUTURE")
+                    if not ce:
+                        missing.append("MISSING_CALL")
+                    if not pe:
+                        missing.append("MISSING_PUT")
+                    available_legs = [leg for leg in (future, ce, pe) if leg]
+                    actual_timestamps = [
+                        self._quote_timestamp_ns(leg) for leg in available_legs
+                    ]
+                    anchor_timestamps = [
+                        self._timestamp_ns(leg.get("source_timestamp_ns"))
+                        for leg in available_legs
+                    ]
+                    latest_timestamp = (
+                        max(value for value in actual_timestamps if value is not None)
+                        if actual_timestamps and any(value is not None for value in actual_timestamps)
+                        else bucket_ts
+                    )
+                    if (
+                        any(value is None for value in anchor_timestamps)
+                        or any(value is None for value in actual_timestamps)
+                    ):
+                        missing.append("INVALID_TIMESTAMP")
+                    elif future and ce and pe and max(actual_timestamps) - min(actual_timestamps) > self.TIMESTAMP_TOLERANCE_NS:
+                        # Pending bucket anchors are for association only; actual
+                        # broker times determine whether a triplet is synchronized.
+                        missing.append("TIMESTAMP_MISMATCH")
+
+                    def positive(value):
+                        if isinstance(value, bool):
+                            return False
+                        try:
+                            number = float(value)
+                            return math.isfinite(number) and number > 0 and number.is_integer()
+                        except (TypeError, ValueError, OverflowError):
+                            return False
+
+                    def executable(leg):
+                        bid, ask = self._price(leg.get("bid")), self._price(leg.get("ask"))
+                        return bid is not None and ask is not None and ask >= bid
+
+                    if future and ce and pe:
+                        future_class = str(future.get("instrument_class") or "").strip().upper()
+                        leg_classes = {
+                            str(ce.get("instrument_class") or "").strip().upper(),
+                            str(pe.get("instrument_class") or "").strip().upper(),
+                        }
+                        if future_class not in {"STOCK", "INDEX"} or leg_classes != {future_class}:
+                            missing.append("INSTRUMENT_CLASS_MISMATCH")
+                        try:
+                            ce_expiry = self._expiry(ce.get("expiry"))
+                            pe_expiry = self._expiry(pe.get("expiry"))
+                            if (ce_expiry != expiry or pe_expiry != expiry or future_expiry != expiry) and "EXPIRY_MISMATCH" not in missing:
+                                missing.append("EXPIRY_MISMATCH")
+                        except ValueError:
+                            missing.append("INVALID_EXPIRY")
+                        if not executable(future):
+                            missing.append("INVALID_FUTURE_QUOTE")
+                        for label, option in (("CALL", ce), ("PUT", pe)):
+                            if not executable(option):
+                                missing.append(f"INVALID_{label}_QUOTE")
+                            if not positive(option.get("bid_qty")) or not positive(option.get("ask_qty")):
+                                missing.append(f"{label}_DEPTH_MISSING")
+                            # Match scanner eligibility: executable two-sided depth is
+                            # required, but missing volume/OI metadata alone is not a
+                            # blocker. Reporting it as incomplete would contradict live results.
+                        def monitor_lot(value):
+                            if isinstance(value, bool):
+                                return None
+                            try:
+                                number = float(value or 0)
+                            except (TypeError, ValueError, OverflowError):
+                                return None
+                            if not math.isfinite(number) or number <= 0 or not number.is_integer():
+                                return None
+                            return int(number)
+
+                        ce_lot = monitor_lot(ce.get("lot_size"))
+                        pe_lot = monitor_lot(pe.get("lot_size"))
+                        future_lot = monitor_lot(future.get("lot_size"))
+                        if ce_lot is None or pe_lot is None or future_lot is None:
+                            missing.append("INVALID_LOT_SIZE")
+                        elif ce_lot != pe_lot or ce_lot != future_lot:
+                            missing.append("LOT_SIZE_MISMATCH")
+                        try:
+                            # Use the future snapshot time, matching live evaluation.
+                            monitor_atm = self.atm_provider(
+                                symbol, self._quote_timestamp_ns(future) or latest_timestamp
+                            )
+                        except Exception:
+                            self._count("monitor_atm_provider_errors")
+                            monitor_atm = None
+                        try:
+                            monitor_atm_number = float(monitor_atm)
+                        except (TypeError, ValueError, OverflowError):
+                            monitor_atm_number = 0.0
+                        if not math.isfinite(monitor_atm_number) or monitor_atm_number <= 0:
+                            missing.append("MISSING_ATM")
+                        if not missing:
+                            missing.append("AWAITING_SCANNER_QUALIFICATION")
+                    rows.append({
+                        "timestamp_ns": latest_timestamp,
+                        "underlying": symbol,
+                        "expiry": expiry,
+                        "strike": strike,
+                        "future_bid": self._price(future.get("bid")),
+                        "future_ask": self._price(future.get("ask")),
+                        "call_bid": self._price(ce.get("bid")),
+                        "call_ask": self._price(ce.get("ask")),
+                        "put_bid": self._price(pe.get("bid")),
+                        "put_ask": self._price(pe.get("ask")),
+                        "lot_size": ce.get("lot_size") or future.get("lot_size"),
+                        "state": "READY_TO_EVALUATE" if missing == ["AWAITING_SCANNER_QUALIFICATION"] else "INCOMPLETE",
+                        "reason": ",".join(missing) if missing else "INCOMPLETE",
+                        # Pair monitor reports structural readiness only. It is not
+                        # the scanner's emitted opportunity/result stream.
+                        "readiness_scope": "STRUCTURAL_ONLY",
+                        "opportunity_confirmed": False,
+                        "qualification_status": "NOT_CONFIRMED",
+                    })
+        rows.sort(key=lambda row: int(row.get("timestamp_ns") or 0), reverse=True)
+        bounded_rows = rows[:max(1, min(int(limit), 500))]
+        # Compact, real-data summary lets clients distinguish "no opportunity"
+        # from missing legs without trying to infer state from the visible rows.
+        symbol_summary: dict[str, dict] = {}
+        blocker_counts: Counter[str] = Counter()
+        for row in rows:
+            symbol = str(row.get("underlying") or "UNKNOWN")
+            summary = symbol_summary.setdefault(symbol, {
+                "rows": 0, "ready_to_evaluate": 0, "incomplete": 0,
+                "future_quotes": 0, "call_quotes": 0, "put_quotes": 0,
+            })
+            summary["rows"] += 1
+            summary["ready_to_evaluate"] += int(row.get("state") == "READY_TO_EVALUATE")
+            summary["incomplete"] += int(row.get("state") == "INCOMPLETE")
+            summary["future_quotes"] += int(row.get("future_bid") is not None and row.get("future_ask") is not None)
+            summary["call_quotes"] += int(row.get("call_bid") is not None and row.get("call_ask") is not None)
+            summary["put_quotes"] += int(row.get("put_bid") is not None and row.get("put_ask") is not None)
+            for reason in str(row.get("reason") or "").split(","):
+                if reason and reason != "INCOMPLETE":
+                    blocker_counts[reason] += 1
+        return {
+            "status": "success",
+            "data": bounded_rows,
+            "summary": {
+                "total_rows": len(rows),
+                "symbols": symbol_summary,
+                "blocker_counts": dict(blocker_counts),
+                "readiness_scope": "STRUCTURAL_ONLY",
+                "opportunity_confirmed": False,
+            },
+        }
+
+    TIMESTAMP_TOLERANCE_NS = 2_000_000_000
+
+    def _matching_bucket_key(self, symbol: str, timestamp_ns: int, expiry: int) -> tuple[str, int, int]:
+        # Normal ticks may join only a timestamp-compatible snapshot. Extending
+        # matching to three seconds is reserved for a bucket explicitly waiting
+        # for executable quotes; otherwise unrelated one-second snapshots can be
+        # collapsed into one bucket and valid newer legs can be blocked by stale legs.
+        compatible = [
+            key
+            for key in self._buckets
+            if key[0] == symbol
+            and key[2] == expiry
+            and abs(key[1] - timestamp_ns) <= self.TIMESTAMP_TOLERANCE_NS
+        ]
+        if compatible:
+            return min(compatible, key=lambda key: abs(key[1] - timestamp_ns))
+
+        now_monotonic_ns = time.monotonic_ns()
+        pending = []
+        for key, bucket in self._buckets.items():
+            if key[0] != symbol or key[2] != expiry:
+                continue
+            if abs(key[1] - timestamp_ns) > 3_000_000_000:
+                continue
+            started_ns = bucket.get("quote_wait_started_ns")
+            if started_ns is None:
+                continue
+            try:
+                wait_age_ns = now_monotonic_ns - int(started_ns)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if 0 <= wait_age_ns < 3_000_000_000:
+                pending.append(key)
+        if pending:
+            return min(pending, key=lambda key: abs(key[1] - timestamp_ns))
+        return (symbol, timestamp_ns, expiry)
+
+    def _prune(self, timestamp_ns: int) -> None:
+        # A delayed/out-of-order tick must not move the cleanup watermark
+        # backwards and keep older buckets alive indefinitely.
+        newest_bucket_ns = max((key[1] for key in self._buckets), default=timestamp_ns)
+        watermark_ns = max(timestamp_ns, newest_bucket_ns)
+        cutoff = watermark_ns - self.MAX_BUCKET_AGE_NS
+        now_monotonic_ns = time.monotonic_ns()
+        before = len(self._buckets)
+
+        def bucket_is_fresh(bucket: dict) -> bool:
+            if not isinstance(bucket, dict) or bucket.get("first_seen_monotonic_ns") is None:
+                # Keep compatibility with manually seeded diagnostic/test buckets;
+                # production buckets always receive a monotonic creation timestamp.
+                return True
+            try:
+                first_seen_ns = int(bucket["first_seen_monotonic_ns"])
+            except (TypeError, ValueError, OverflowError):
+                return False
+            wait_started = bucket.get("quote_wait_started_ns")
+            if wait_started is not None:
+                try:
+                    wait_age_ns = now_monotonic_ns - int(wait_started)
+                except (TypeError, ValueError, OverflowError):
+                    return False
+                # A pending executable-book quote gets its own bounded three-second
+                # grace period, even if the original bucket was created earlier.
+                return 0 <= wait_age_ns < self.MAX_BUCKET_AGE_NS
+            age_ns = now_monotonic_ns - first_seen_ns
+            return 0 <= age_ns < self.MAX_BUCKET_AGE_NS
+
+        self._buckets = {
+            key: value for key, value in self._buckets.items()
+            if key[1] >= cutoff and bucket_is_fresh(value)
+        }
+        expired = before - len(self._buckets)
+        if expired:
+            self._count("pruned_buckets", expired)
+            self._count("monotonic_age_pruned_buckets", expired)
+
+        # Time-based pruning is the primary bound; this hard cap protects the
+        # process if a broker feed emits many distinct timestamps/symbol keys.
+        if len(self._buckets) > self.MAX_ACTIVE_BUCKETS:
+            excess = len(self._buckets) - self.MAX_ACTIVE_BUCKETS
+            oldest = sorted(self._buckets, key=lambda key: key[1])[:excess]
+            for key in oldest:
+                self._buckets.pop(key, None)
+            self._count("bucket_capacity_evictions", excess)
+
+
+__all__ = ["LiveSyntheticScanner"]

@@ -1,0 +1,858 @@
+"""Low-latency in-process Cash-Future scanner fed directly by the 1-second stream."""
+
+from __future__ import annotations
+
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+import math
+import threading
+import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from app.core.config import settings
+from app.models import LiveCashFutureAlertHistory, LiveCashFutureScannerResult, User
+from app.notifications.service import LiveCashFutureAlert, NotificationService
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+@dataclass(frozen=True)
+class LiveCashFutureSignal:
+    symbol: str
+    contract_month: str
+    cash_ltp: float
+    future_ltp: float
+    cash_bid: float | None
+    cash_ask: float | None
+    future_bid: float | None
+    future_ask: float | None
+    cash_bid_qty: float | None
+    cash_ask_qty: float | None
+    future_bid_qty: float | None
+    future_ask_qty: float | None
+    liquidity_qty: float | None
+    gap: float
+    gap_pct: float
+    timestamp_ns: int
+    received_at_ns: int
+    cash_day_high: float
+    cash_day_low: float
+    future_day_high: float
+    future_day_low: float
+    lot_size: int | None
+    gross_lot_value: float | None
+    alert_lots: int | None
+    gross_profit: float | None
+    net_profit: float | None
+    estimated_cost: float
+    net_gap: float
+    net_gap_pct: float
+    annualized_gap_pct: float | None
+    stable_observations: int
+    future_volume: int | None
+    future_oi: int | None
+    eligible: bool
+    alert_eligible: bool
+    capacity_lots: int | None
+    capacity_notional: float | None
+    lifecycle: str
+    reason_codes: tuple[str, ...]
+    observation_ref: str
+    alert_event: str | None
+    quality_score: float
+    expiry: str | None = None
+
+
+class LiveCashFutureScanner:
+    """Pairs same-second cash/future observations without broker quote polling."""
+
+    def __init__(self, *, notifier: NotificationService | None = None) -> None:
+        self.notifier = notifier or NotificationService()
+        # Scanner callbacks can overlap across socket shards. RLock keeps all
+        # shared state transitions and health counters coherent when helpers
+        # are called from already-locked sections.
+        self._lock = threading.RLock()
+        self._latest: dict[tuple[str, int], dict[str, dict]] = {}
+        self._max_latest_buckets = 5000
+        self._signals: dict[tuple[str, str], LiveCashFutureSignal] = {}
+        self._session_extremes: dict[tuple[str, str], dict[str, float]] = {}
+        self._stability: dict[tuple[str, str], tuple[int, int]] = {}
+        self._alert_state: dict[tuple[str, str], str] = {}
+        self._alert_last_at: dict[tuple[str, str], float] = {}
+        self._stats = {
+            "observations": 0, "pairs": 0, "pairs_with_quotes": 0,
+            "pairs_missing_quotes": 0, "pairs_dropped_liquidity": 0,
+            "dropped": 0, "persisted": 0, "pair_events": 0,
+            "pair_events_persisted": 0, "invalid_payloads": 0,
+            "invalid_legs": 0, "invalid_timestamps": 0, "invalid_prices": 0,
+            "stale_quotes": 0, "crossed_cash_quotes": 0,
+            "out_of_order_updates": 0, "cache_evictions": 0,
+        }
+        self._last_observation_ns: int | None = None
+        self._pair_events: deque[dict] = deque(maxlen=2000)
+        self._last_pair_persist_at: dict[tuple[str, str], float] = {}
+        self._alert_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cf-alert")
+        self._result_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cf-result")
+        self._last_result_cleanup = 0.0
+
+    def _increment_stat(self, key: str, amount: int = 1) -> None:
+        """Update a health counter safely from concurrent market-data callbacks."""
+        with self._lock:
+            self._stats[key] = self._stats.get(key, 0) + amount
+
+    @staticmethod
+    def _price(payload: dict, key: str, divisor: float = 1.0) -> float | None:
+        value = payload.get(key)
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number) or number <= 0:
+            return None
+        return number / divisor
+
+    @staticmethod
+    def _safe_int(value: object) -> int | None:
+        try:
+            number = int(float(value))
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return number if number >= 0 else None
+
+    @staticmethod
+    def _positive_qty(payload: dict, key: str) -> float | None:
+        value = payload.get(key)
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number) or number <= 0:
+            return None
+        return number
+
+    @staticmethod
+    def _parse_expiry(value: object):
+        if not value:
+            return None
+        for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(str(value).strip().upper(), fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    def _notify_users(self, session_factory, signal: LiveCashFutureSignal) -> None:
+        if session_factory is None:
+            return
+        try:
+            with session_factory() as db:
+                alert = LiveCashFutureAlert(
+                    symbol=signal.symbol,
+                    contract_month=signal.contract_month,
+                    expiry=signal.expiry,
+                    cash_ask=float(signal.cash_ask),
+                    future_bid=float(signal.future_bid),
+                    gap=signal.gap,
+                    gap_pct=signal.gap_pct,
+                    timestamp_ns=signal.timestamp_ns,
+                    lot_size=signal.lot_size,
+                    alert_lots=signal.alert_lots,
+                    gross_profit=signal.gross_profit,
+                    net_profit=signal.net_profit,
+                )
+                self.notifier.dispatch(db, alert)
+        except Exception as exc:
+            from app.core.logger import app_logger
+            app_logger.error("Cash-Future alert notification failed: %s", exc)
+
+    def _persist_result(self, session_factory, signal: LiveCashFutureSignal) -> None:
+        if session_factory is None or signal.lifecycle in {"", "EXPIRED"}:
+            return
+        try:
+            observed_at = datetime.fromtimestamp(signal.timestamp_ns / 1_000_000_000, IST).replace(tzinfo=None)
+            now = datetime.now(IST).replace(tzinfo=None)
+            retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
+            with session_factory() as db:
+                cutoff = now - timedelta(days=retention_days)
+                if time.monotonic() - self._last_result_cleanup >= 60.0:
+                    db.query(LiveCashFutureScannerResult).filter(
+                        LiveCashFutureScannerResult.observed_at < cutoff
+                    ).delete(synchronize_session=False)
+                    db.query(LiveCashFutureAlertHistory).filter(
+                        LiveCashFutureAlertHistory.observed_at < cutoff
+                    ).delete(synchronize_session=False)
+                    self._last_result_cleanup = time.monotonic()
+                existing = db.query(LiveCashFutureScannerResult.id).filter(
+                    LiveCashFutureScannerResult.symbol == signal.symbol,
+                    LiveCashFutureScannerResult.contract_month == signal.contract_month,
+                    LiveCashFutureScannerResult.timestamp_ns == signal.timestamp_ns,
+                ).first()
+                if existing:
+                    return
+                db.add(LiveCashFutureScannerResult(
+                    symbol=signal.symbol,
+                    contract_month=signal.contract_month,
+                    timestamp_ns=signal.timestamp_ns,
+                    observed_at=observed_at,
+                    cash_ltp=signal.cash_ltp,
+                    future_ltp=signal.future_ltp,
+                    cash_bid=signal.cash_bid,
+                    cash_ask=signal.cash_ask,
+                    future_bid=signal.future_bid,
+                    future_ask=signal.future_ask,
+                    cash_bid_qty=signal.cash_bid_qty,
+                    cash_ask_qty=signal.cash_ask_qty,
+                    future_bid_qty=signal.future_bid_qty,
+                    future_ask_qty=signal.future_ask_qty,
+                    liquidity_qty=signal.liquidity_qty,
+                    gap=signal.gap,
+                    gap_pct=signal.gap_pct,
+                    cash_day_high=signal.cash_day_high,
+                    cash_day_low=signal.cash_day_low,
+                    future_day_high=signal.future_day_high,
+                    future_day_low=signal.future_day_low,
+                    lot_size=signal.lot_size,
+                    gross_lot_value=signal.gross_lot_value,
+                    estimated_cost=signal.estimated_cost,
+                    net_gap=signal.net_gap,
+                    net_gap_pct=signal.net_gap_pct,
+                    annualized_gap_pct=signal.annualized_gap_pct,
+                    stable_observations=signal.stable_observations,
+                    capacity_lots=signal.capacity_lots,
+                    capacity_notional=signal.capacity_notional,
+                    lifecycle=signal.lifecycle,
+                    reason_codes=",".join(signal.reason_codes),
+                    observation_ref=signal.observation_ref,
+                    alert_event=signal.alert_event,
+                ))
+                db.commit()
+                self._increment_stat("persisted")
+        except Exception as exc:
+            from app.core.logger import app_logger
+            app_logger.error("Cash-Future scanner result persistence failed: %s", exc)
+
+
+    def _persist_alert(self, session_factory, signal: LiveCashFutureSignal) -> None:
+        if session_factory is None or not signal.alert_event or signal.lifecycle == "EXPIRED":
+            return
+        try:
+            observed_at = datetime.fromtimestamp(signal.timestamp_ns / 1_000_000_000, IST).replace(tzinfo=None)
+            now = datetime.now(IST).replace(tzinfo=None)
+            retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
+            with session_factory() as db:
+                cutoff = now - timedelta(days=retention_days)
+                db.query(LiveCashFutureAlertHistory).filter(
+                    LiveCashFutureAlertHistory.observed_at < cutoff
+                ).delete(synchronize_session=False)
+                exists = db.query(LiveCashFutureAlertHistory.id).filter(
+                    LiveCashFutureAlertHistory.symbol == signal.symbol,
+                    LiveCashFutureAlertHistory.contract_month == signal.contract_month,
+                    LiveCashFutureAlertHistory.timestamp_ns == signal.timestamp_ns,
+                    LiveCashFutureAlertHistory.event == signal.alert_event,
+                ).first()
+                if exists:
+                    return
+                db.add(LiveCashFutureAlertHistory(
+                    observed_at=observed_at,
+                    timestamp_ns=signal.timestamp_ns,
+                    symbol=signal.symbol,
+                    contract_month=signal.contract_month,
+                    event=signal.alert_event,
+                    cash_ask=float(signal.cash_ask),
+                    future_bid=float(signal.future_bid),
+                    gap=signal.gap,
+                    gap_pct=signal.gap_pct,
+                    lot_size=signal.lot_size,
+                    alert_lots=signal.alert_lots,
+                    gross_profit=signal.gross_profit,
+                    estimated_cost=signal.estimated_cost,
+                    net_profit=signal.net_profit,
+                    net_gap_pct=signal.net_gap_pct,
+                    annualized_gap_pct=signal.annualized_gap_pct,
+                    liquidity_qty=signal.liquidity_qty,
+                    stable_observations=signal.stable_observations,
+                ))
+                db.commit()
+        except Exception as exc:
+            from app.core.logger import app_logger
+            app_logger.error("Cash-Future alert persistence failed: %s", exc)
+
+    @staticmethod
+    def _factor(value: float | None, values: list[float]) -> float:
+        if value is None or not values:
+            return 0.0
+        low, high = min(values), max(values)
+        if high <= low:
+            return 1.0
+        return (value - low) / (high - low)
+
+    def _rank(self, signals: list[LiveCashFutureSignal]) -> dict[tuple[str, str], float]:
+        if not signals:
+            return {}
+        gaps = [max(0.0, s.gap_pct) for s in signals]
+        nets = [max(0.0, s.net_gap_pct) for s in signals]
+        annualized = [max(0.0, s.annualized_gap_pct or 0.0) for s in signals]
+        stability = [float(s.stable_observations) for s in signals]
+        liquidity = [float(s.liquidity_qty or 0.0) for s in signals]
+        weights = (
+            max(0.0, float(settings.LIVE_CASH_FUTURE_RANK_GAP_WEIGHT)),
+            max(0.0, float(settings.LIVE_CASH_FUTURE_RANK_NET_WEIGHT)),
+            max(0.0, float(settings.LIVE_CASH_FUTURE_RANK_ANNUALIZED_WEIGHT)),
+            max(0.0, float(settings.LIVE_CASH_FUTURE_RANK_STABILITY_WEIGHT)),
+            max(0.0, float(settings.LIVE_CASH_FUTURE_RANK_LIQUIDITY_WEIGHT)),
+        )
+        total = sum(weights) or 1.0
+        return {
+            (s.symbol, s.contract_month): (
+                weights[0] * self._factor(max(0.0, s.gap_pct), gaps)
+                + weights[1] * self._factor(max(0.0, s.net_gap_pct), nets)
+                + weights[2] * self._factor(max(0.0, s.annualized_gap_pct or 0.0), annualized)
+                + weights[3] * self._factor(float(s.stable_observations), stability)
+                + weights[4] * self._factor(float(s.liquidity_qty or 0.0), liquidity)
+            ) / total
+            for s in signals
+        }
+
+    def _record_pair_event(
+        self,
+        *,
+        symbol: str,
+        month: str,
+        timestamp_ns: int,
+        received_at_ns: int,
+        cash: dict,
+        future: dict,
+        status: str,
+        reasons: tuple[str, ...],
+        gap: float = 0.0,
+        gap_pct: float = 0.0,
+        liquidity_qty: float | None = None,
+        lot_size: int | None = None,
+        session_factory=None,
+    ) -> None:
+        observed_at = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, IST)
+        event = {
+            "symbol": symbol,
+            "contract_month": month,
+            "timestamp_ns": timestamp_ns,
+            "received_at_ns": received_at_ns,
+            "observed_at": observed_at.isoformat(),
+            "cash_ltp": cash.get("ltp"),
+            "future_ltp": future.get("ltp"),
+            "cash_bid": cash.get("bid"),
+            "cash_ask": cash.get("ask"),
+            "future_bid": future.get("bid"),
+            "future_ask": future.get("ask"),
+            "cash_bid_qty": cash.get("bid_qty"),
+            "cash_ask_qty": cash.get("ask_qty"),
+            "future_bid_qty": future.get("bid_qty"),
+            "future_ask_qty": future.get("ask_qty"),
+            "liquidity_qty": liquidity_qty,
+            "gap": gap,
+            "gap_pct": gap_pct,
+            "status": status,
+            "lifecycle": status,
+            "reason_codes": list(reasons),
+            "observation_ref": f"{symbol}:{month}:{timestamp_ns}",
+            "age_ms": max(0.0, (time.time_ns() - received_at_ns) / 1_000_000.0),
+        }
+        with self._lock:
+            self._pair_events.appendleft(event)
+            self._increment_stat("pair_events")
+            # `last_observation_at` is the last accepted scanner pair observation,
+            # not merely the last incoming leg that may later be rejected.
+            if self._last_observation_ns is None or timestamp_ns >= self._last_observation_ns:
+                self._last_observation_ns = timestamp_ns
+            persist_ok = time.monotonic() - self._last_pair_persist_at.get((symbol, month), 0.0) >= 5.0
+            if persist_ok:
+                self._last_pair_persist_at[(symbol, month)] = time.monotonic()
+        if persist_ok and session_factory is not None:
+            self._result_executor.submit(
+                self._persist_pair_event,
+                session_factory,
+                event,
+                cash,
+                future,
+                lot_size,
+            )
+
+    def _persist_pair_event(self, session_factory, event: dict, cash: dict, future: dict, lot_size: int | None) -> None:
+        try:
+            observed_at = datetime.fromtimestamp(int(event["timestamp_ns"]) / 1_000_000_000, IST).replace(tzinfo=None)
+            now = datetime.now(IST).replace(tzinfo=None)
+            retention_days = max(1, int(settings.LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS))
+            with session_factory() as db:
+                cutoff = now - timedelta(days=retention_days)
+                db.query(LiveCashFutureScannerResult).filter(
+                    LiveCashFutureScannerResult.observed_at < cutoff
+                ).delete(synchronize_session=False)
+                existing = db.query(LiveCashFutureScannerResult.id).filter(
+                    LiveCashFutureScannerResult.symbol == event["symbol"],
+                    LiveCashFutureScannerResult.contract_month == event["contract_month"],
+                    LiveCashFutureScannerResult.timestamp_ns == event["timestamp_ns"],
+                ).first()
+                if existing:
+                    return
+                cash_ltp = float(cash.get("ltp") or 0.0)
+                future_ltp = float(future.get("ltp") or 0.0)
+                db.add(LiveCashFutureScannerResult(
+                    symbol=event["symbol"],
+                    contract_month=event["contract_month"],
+                    timestamp_ns=event["timestamp_ns"],
+                    observed_at=observed_at,
+                    cash_ltp=cash_ltp,
+                    future_ltp=future_ltp,
+                    cash_bid=cash.get("bid"),
+                    cash_ask=cash.get("ask"),
+                    future_bid=future.get("bid"),
+                    future_ask=future.get("ask"),
+                    cash_bid_qty=cash.get("bid_qty"),
+                    cash_ask_qty=cash.get("ask_qty"),
+                    future_bid_qty=future.get("bid_qty"),
+                    future_ask_qty=future.get("ask_qty"),
+                    liquidity_qty=event.get("liquidity_qty"),
+                    gap=float(event.get("gap") or 0.0),
+                    gap_pct=float(event.get("gap_pct") or 0.0),
+                    cash_day_high=cash_ltp,
+                    cash_day_low=cash_ltp,
+                    future_day_high=future_ltp,
+                    future_day_low=future_ltp,
+                    lot_size=lot_size,
+                    gross_lot_value=None,
+                    estimated_cost=0.0,
+                    net_gap=float(event.get("gap") or 0.0),
+                    net_gap_pct=float(event.get("gap_pct") or 0.0),
+                    annualized_gap_pct=None,
+                    stable_observations=1,
+                    capacity_lots=None,
+                    capacity_notional=None,
+                    lifecycle=event["status"],
+                    reason_codes=",".join(event["reason_codes"]),
+                    observation_ref=event["observation_ref"],
+                    alert_event=None,
+                ))
+                db.commit()
+                self._increment_stat("pair_events_persisted")
+        except Exception as exc:
+            from app.core.logger import app_logger
+            app_logger.error("Cash-Future pair diagnostic persistence failed: %s", exc)
+
+    def pair_snapshot(self, *, max_age_seconds: float = 120.0, limit: int = 100) -> list[dict]:
+        """Return the newest diagnostic observation for each symbol/contract pair."""
+        cutoff_ns = time.time_ns() - int(max(1.0, max_age_seconds) * 1_000_000_000)
+        with self._lock:
+            latest: dict[tuple[str, str], dict] = {}
+            for item in self._pair_events:
+                received_at_ns = int(item.get("received_at_ns", item["timestamp_ns"]))
+                if received_at_ns < cutoff_ns:
+                    continue
+                key = (str(item.get("symbol", "")).upper(), str(item.get("contract_month", "")).upper())
+                if key not in latest:
+                    latest[key] = dict(item)
+            return list(latest.values())[:limit]
+
+
+    def _prune_latest_locked(self, now_ns: int, tolerance_ns: int) -> None:
+        """Bound quote-cache lifetime by receive time, not exchange-clock order."""
+        retention_ns = max(
+            5_000_000_000,
+            int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 2_000_000_000),
+            tolerance_ns + 1_000_000_000,
+        )
+        cutoff_ns = now_ns - retention_ns
+        for key, bucket in list(self._latest.items()):
+            cash = bucket.get("CASH")
+            if cash and int(cash.get("received_at_ns") or 0) < cutoff_ns:
+                bucket.pop("CASH", None)
+                self._increment_stat("cache_evictions")
+            futures = bucket.get("FUTURE", {})
+            for month, future in list(futures.items()):
+                if int(future.get("received_at_ns") or 0) < cutoff_ns:
+                    futures.pop(month, None)
+                    self._increment_stat("cache_evictions")
+            if not bucket.get("CASH") and not futures:
+                self._latest.pop(key, None)
+        limit = max(1, int(self._max_latest_buckets))
+        while len(self._latest) > limit:
+            oldest_key = min(
+                self._latest,
+                key=lambda key: max(
+                    [int(self._latest[key].get("CASH", {}).get("received_at_ns") or 0)]
+                    + [
+                        int(item.get("received_at_ns") or 0)
+                        for item in self._latest[key].get("FUTURE", {}).values()
+                    ]
+                ),
+            )
+            self._latest.pop(oldest_key, None)
+            self._increment_stat("cache_evictions")
+
+    def observe(self, payload: dict, *, session_factory=None) -> LiveCashFutureSignal | None:
+        if not isinstance(payload, dict):
+            with self._lock:
+                self._increment_stat("invalid_payloads")
+                self._increment_stat("dropped")
+            return None
+        leg = str(payload.get("leg") or "").upper()
+        symbol = str(payload.get("underlying") or "").strip().upper()
+        month = str(payload.get("contract_month") or "").strip().upper()
+        try:
+            timestamp_ns = int(payload.get("source_timestamp_ns") or payload.get("exchange_timestamp") or 0)
+        except (TypeError, ValueError, OverflowError):
+            timestamp_ns = 0
+        wall_now_ns = time.time_ns()
+        max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
+        # Reject corrupt/far-future timestamps and old source quotes before
+        # they can be paired. Receive-time freshness alone cannot detect a
+        # delayed/replayed quote that has just arrived from the feed.
+        if timestamp_ns <= 0 or not symbol or timestamp_ns > wall_now_ns + 300_000_000_000:
+            with self._lock:
+                self._increment_stat("invalid_timestamps")
+                self._increment_stat("dropped")
+            return None
+        if wall_now_ns - timestamp_ns > max_age_ns:
+            with self._lock:
+                self._increment_stat("stale_quotes")
+                self._increment_stat("dropped")
+            return None
+        with self._lock:
+            self._increment_stat("observations")
+        if leg == "CASH":
+            month = "CASH"
+        elif leg != "FUTURE" or not month:
+            with self._lock:
+                self._increment_stat("invalid_legs")
+                self._increment_stat("dropped")
+            return None
+        received_at_ns = payload.get("received_at_ns")
+        try:
+            received_at_ns = int(received_at_ns) if received_at_ns is not None else time.time_ns()
+        except (TypeError, ValueError, OverflowError):
+            received_at_ns = time.time_ns()
+        now_ns = time.time_ns()
+        if received_at_ns <= 0 or received_at_ns > now_ns + 5_000_000_000 or now_ns - received_at_ns > max_age_ns:
+            with self._lock:
+                self._increment_stat("stale_quotes")
+                self._increment_stat("dropped")
+            return None
+
+        # Health must reflect the latest accepted observation. Previously this
+        # field was initialized but never updated, so a busy scanner could
+        # report last_observation_at=null despite receiving thousands of ticks.
+        with self._lock:
+            self._last_observation_ns = max(self._last_observation_ns or 0, received_at_ns)
+
+        ltp = self._price(payload, "ltp")
+        if ltp is None:
+            ltp = self._price({"x": payload.get("last_traded_price")}, "x", 100.0)
+        if ltp is None:
+            with self._lock:
+                self._increment_stat("invalid_prices")
+                self._increment_stat("dropped")
+            return None
+
+        bid = self._price(payload, "bid")
+        ask = self._price(payload, "ask")
+        bid_qty = self._positive_qty(payload, "bid_qty")
+        ask_qty = self._positive_qty(payload, "ask_qty")
+        # Bid/ask and depth are diagnostics only. Pair construction is driven by
+        # synchronized positive LTPs; a bad/missing book must not discard the pair.
+        if leg == "CASH" and bid is not None and ask is not None and bid > ask:
+            with self._lock:
+                self._increment_stat("crossed_cash_quotes")
+        lot = None
+        try:
+            raw_lot = payload.get("lot_size")
+            if raw_lot is not None and int(raw_lot) > 0:
+                lot = int(raw_lot)
+        except (TypeError, ValueError, OverflowError):
+            pass
+
+        key = (symbol, timestamp_ns)
+        leg_payload = {
+            "ltp": ltp, "bid": bid, "ask": ask,
+            "bid_qty": bid_qty, "ask_qty": ask_qty,
+            "lot_size": lot, "expiry": payload.get("expiry"),
+            "volume": payload.get("volume"), "oi": payload.get("oi") or payload.get("open_interest"),
+            "received_at_ns": received_at_ns,
+            "timestamp_ns": timestamp_ns,
+        }
+        ts_date = datetime.fromtimestamp(timestamp_ns / 1_000_000_000, IST).date()
+        ts_date_key = ts_date.isoformat()
+        tolerance_ns = int(max(0.0, float(settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS)) * 1_000_000_000)
+        with self._lock:
+            self._session_extremes = {k: v for k, v in self._session_extremes.items() if k[1] == ts_date_key}
+            self._prune_latest_locked(now_ns, tolerance_ns)
+            candidates = [k for k in self._latest if k[0] == symbol and abs(k[1] - timestamp_ns) <= tolerance_ns]
+            nearest = min(candidates, key=lambda k: abs(k[1] - timestamp_ns), default=key)
+            bucket = self._latest.setdefault(nearest, {})
+            if leg == "CASH":
+                previous_leg = bucket.get("CASH")
+                if previous_leg and timestamp_ns < int(previous_leg.get("timestamp_ns") or 0):
+                    self._increment_stat("out_of_order_updates")
+                    self._increment_stat("dropped")
+                    return None
+                bucket["CASH"] = leg_payload
+            else:
+                futures = bucket.setdefault("FUTURE", {})
+                previous_leg = futures.get(month)
+                if previous_leg and timestamp_ns < int(previous_leg.get("timestamp_ns") or 0):
+                    self._increment_stat("out_of_order_updates")
+                    self._increment_stat("dropped")
+                    return None
+                futures[month] = leg_payload
+            self._prune_latest_locked(now_ns, tolerance_ns)
+            # A bounded eviction can remove an old bucket; re-resolve the active
+            # bucket before pairing instead of retaining a stale local reference.
+            bucket = self._latest.get(nearest)
+            if bucket is None:
+                return None
+            futures = bucket.get("FUTURE", {})
+            if "CASH" not in bucket or month not in futures:
+                return None
+            cash, future = bucket["CASH"], futures[month]
+            # A fresh incoming leg must never revive a pair whose counterpart
+            # has aged out while the socket continued delivering only one side.
+            pair_max_age_ns = int(max(0.5, float(settings.LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS)) * 1_000_000_000)
+            if (
+                now_ns - int(cash.get("received_at_ns") or 0) > pair_max_age_ns
+                or now_ns - int(future.get("received_at_ns") or 0) > pair_max_age_ns
+            ):
+                self._increment_stat("stale_quotes")
+                self._increment_stat("dropped")
+                return None
+            self._increment_stat("pairs")
+
+        cash_ask, future_bid = cash["ask"], future["bid"]
+        quote_complete = all(
+            value is not None and value > 0
+            for value in (cash["bid"], cash_ask, future_bid, future["ask"])
+        ) and cash["bid"] <= cash_ask and future_bid <= future["ask"]
+        if quote_complete:
+            with self._lock:
+                self._increment_stat("pairs_with_quotes")
+        else:
+            with self._lock:
+                self._increment_stat("pairs_missing_quotes")
+
+        liquidity_values = [
+            cash["bid_qty"], cash["ask_qty"],
+            future["bid_qty"], future["ask_qty"],
+        ]
+        liquidity_qty = min(liquidity_values) if all(value is not None for value in liquidity_values) else None
+
+        # Pair metrics are based only on synchronized LTPs. Bid/ask is retained
+        # strictly as read-only display data and must not affect gap or eligibility.
+        cash_reference_price = cash["ltp"]
+        future_reference_price = future["ltp"]
+        gap = future_reference_price - cash_reference_price
+        gap_pct = gap / cash_reference_price * 100.0
+        expiry = self._parse_expiry(future.get("expiry"))
+        days = max(1, (expiry - ts_date).days) if expiry else None
+        extreme_key = (symbol, ts_date.isoformat())
+        stability_key = (symbol, month)
+
+        with self._lock:
+            ext = self._session_extremes.setdefault(extreme_key, {
+                "cash_high": cash["ltp"], "cash_low": cash["ltp"],
+                "future_high": future["ltp"], "future_low": future["ltp"],
+            })
+            ext["cash_high"] = max(ext["cash_high"], cash["ltp"])
+            ext["cash_low"] = min(ext["cash_low"], cash["ltp"])
+            ext["future_high"] = max(ext["future_high"], future["ltp"])
+            ext["future_low"] = min(ext["future_low"], future["ltp"])
+            previous_stability = self._stability.get(stability_key)
+            max_gap_ns = int(max(1.0, float(settings.LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS) + 1.0) * 1_000_000_000)
+            stable = (
+                previous_stability[0] + 1
+                if previous_stability and timestamp_ns > previous_stability[1] and timestamp_ns - previous_stability[1] <= max_gap_ns
+                else 1
+            )
+            self._stability[stability_key] = (stable, timestamp_ns)
+            previous_signal = self._signals.get((symbol, month))
+
+        combined_notional = (cash_reference_price + future_reference_price) * (lot or 1)
+        estimated_cost = combined_notional * max(0.0, float(settings.LIVE_CASH_FUTURE_COST_BPS)) / 10_000.0
+        estimated_cost += max(0.0, float(settings.LIVE_CASH_FUTURE_ESTIMATED_COST_PER_LOT))
+        estimated_cost += combined_notional * max(0.0, float(settings.LIVE_CASH_FUTURE_SLIPPAGE_BPS)) / 10_000.0
+        estimated_cost += max(0.0, float(settings.LIVE_CASH_FUTURE_SLIPPAGE_PER_LOT))
+        gross_lot_value = gap * lot if lot else None
+        net_gap = gap - estimated_cost / lot if lot else gap
+        net_gap_pct = net_gap / cash_reference_price * 100.0
+        annualized = gap_pct * 365.0 / days if days else None
+
+        capacity_lots = None
+        capacity_notional = None
+        if lot and lot > 0 and cash_reference_price > 0:
+            capacity_lots = max(0, int(float(settings.LIVE_CASH_FUTURE_CAPITAL) // (cash_reference_price * lot)))
+            capacity_notional = capacity_lots * cash_reference_price * lot
+
+        min_stable = max(1, int(settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS))
+        configured_lots = max(1, int(settings.LIVE_CASH_FUTURE_ALERT_LOTS))
+        alert_lots = min(configured_lots, capacity_lots) if capacity_lots is not None else None
+        gross_profit = gap * lot * alert_lots if lot and alert_lots else None
+        net_profit = net_gap * lot * alert_lots if lot and alert_lots else None
+        actionable_lots = alert_lots is not None and alert_lots >= 1
+        # This scanner is pair/display-only: all spread, book, liquidity,
+        # stability and profitability fields are informational, never signal gates.
+        eligible = False
+        alert_eligible = False
+        lifecycle = "PAIR_ONLY"
+
+        reasons = ["PAIR_CREATED_BY_SYNCHRONIZED_LTP"]
+        if quote_complete:
+            reasons.append("EXECUTION_QUOTES_PRESENT")
+        else:
+            reasons.append("EXECUTION_QUOTES_INCOMPLETE_INFORMATIONAL")
+        if gap > 0:
+            reasons.append("POSITIVE_LTP_GAP_INFORMATIONAL")
+        if net_gap > 0:
+            reasons.append("POSITIVE_NET_GAP")
+        if stable >= min_stable:
+            reasons.append("STABLE")
+        if liquidity_qty is not None:
+            reasons.append("LIQUIDITY_MEASURED")
+        if capacity_lots is not None:
+            reasons.append("CAPACITY_ESTIMATED")
+        if gap <= 0:
+            reasons.append("NON_POSITIVE_GAP")
+        if net_gap <= 0:
+            reasons.append("NON_POSITIVE_NET_GAP")
+        if stable < min_stable:
+            reasons.append("NOT_STABLE_YET")
+
+        quote_quality = 1.0 if cash["bid"] is not None and cash["ask"] is not None and future["bid"] is not None and future["ask"] is not None else 0.0
+        liquidity_quality = min(1.0, (liquidity_qty or 0.0) / max(1.0, float(lot or 1) * 10.0))
+        stability_quality = min(1.0, stable / max(1.0, float(min_stable)))
+        edge_quality = min(1.0, max(0.0, net_gap_pct) / 1.0)
+        quality_score = round(100.0 * (0.30 * quote_quality + 0.25 * liquidity_quality + 0.25 * stability_quality + 0.20 * edge_quality), 2)
+
+        # Pair-only mode: never trigger alerts or broker-facing notifications.
+        alert_event = None
+
+        signal = LiveCashFutureSignal(
+            symbol=symbol,
+            contract_month=month,
+            expiry=future.get("expiry"),
+            cash_ltp=cash["ltp"],
+            future_ltp=future["ltp"],
+            cash_bid=cash["bid"],
+            cash_ask=cash_ask,
+            future_bid=future_bid,
+            future_ask=future["ask"],
+            cash_bid_qty=cash["bid_qty"],
+            cash_ask_qty=cash["ask_qty"],
+            future_bid_qty=future["bid_qty"],
+            future_ask_qty=future["ask_qty"],
+            liquidity_qty=liquidity_qty,
+            gap=gap,
+            gap_pct=gap_pct,
+            timestamp_ns=timestamp_ns,
+            received_at_ns=received_at_ns,
+            cash_day_high=ext["cash_high"],
+            cash_day_low=ext["cash_low"],
+            future_day_high=ext["future_high"],
+            future_day_low=ext["future_low"],
+            lot_size=lot,
+            gross_lot_value=gross_lot_value,
+            alert_lots=alert_lots,
+            gross_profit=gross_profit,
+            net_profit=net_profit,
+            estimated_cost=estimated_cost,
+            net_gap=net_gap,
+            net_gap_pct=net_gap_pct,
+            annualized_gap_pct=annualized,
+            stable_observations=stable,
+            future_volume=self._safe_int(future.get("volume")),
+            future_oi=self._safe_int(future.get("oi")),
+            eligible=eligible,
+            alert_eligible=alert_eligible,
+            capacity_lots=capacity_lots,
+            capacity_notional=capacity_notional,
+            lifecycle=lifecycle,
+            reason_codes=tuple(reasons),
+            observation_ref=f"{symbol}:{month}:{timestamp_ns}",
+            alert_event=alert_event,
+            quality_score=quality_score,
+        )
+        diagnostic_status = "SIGNAL" if eligible else "PAIR_CREATED"
+        self._record_pair_event(
+            symbol=symbol, month=month, timestamp_ns=timestamp_ns, received_at_ns=received_at_ns,
+            cash=cash, future=future, status=diagnostic_status,
+            reasons=tuple(["PAIR_CREATED", *reasons] if eligible else ["PAIR_CREATED", *reasons]),
+            gap=gap, gap_pct=gap_pct, liquidity_qty=liquidity_qty, lot_size=lot, session_factory=session_factory,
+        )
+        with self._lock:
+            self._signals[(signal.symbol, signal.contract_month)] = signal
+
+        meaningful_change = previous_signal is None or previous_signal.lifecycle != signal.lifecycle or previous_signal.alert_event != signal.alert_event or abs(signal.gap_pct - previous_signal.gap_pct) >= 0.05 or abs(signal.quality_score - previous_signal.quality_score) >= 2.0
+        if meaningful_change and session_factory is not None:
+            self._result_executor.submit(self._persist_result, session_factory, signal)
+        if alert_event and session_factory is not None:
+            # Keep database I/O off the market-data callback path just like
+            # notification delivery; scanner latency must not depend on SQLite.
+            self._result_executor.submit(self._persist_alert, session_factory, signal)
+            self._alert_executor.submit(self._notify_users, session_factory, signal)
+        return signal
+
+    def health(self) -> dict:
+        with self._lock:
+            stats = dict(self._stats)
+            stats["latest_cache_buckets"] = len(self._latest)
+            stats["latest_cache_limit"] = max(1, int(self._max_latest_buckets))
+            last_observation_ns = self._last_observation_ns
+        stats["last_observation_at"] = (
+            datetime.fromtimestamp(last_observation_ns / 1_000_000_000, IST).isoformat()
+            if last_observation_ns
+            else None
+        )
+        return stats
+
+    def snapshot(self, *, max_age_seconds: float = 5.0, limit: int = 50) -> list[dict]:
+        now_ns = int(datetime.now(IST).timestamp() * 1_000_000_000)
+        cutoff = int(now_ns - max_age_seconds * 1_000_000_000)
+        with self._lock:
+            fresh_signals = [
+                signal for signal in self._signals.values()
+                if signal.received_at_ns >= cutoff
+            ]
+        # The ₹5,000 gross-lot threshold is a result-visibility rule only.
+        # Keep observing, pairing, tracking, and persisting every pair above;
+        # hide only rows whose (gap × lot_size) is not strictly greater than ₹5,000.
+        signals = [
+            signal for signal in fresh_signals
+            if signal.gross_lot_value is not None and signal.gross_lot_value > 5000.0
+        ]
+        signals.sort(key=lambda item: (-item.gap_pct, item.symbol, item.contract_month))
+        rank_scores = self._rank(signals)
+        by_symbol: dict[str, list[LiveCashFutureSignal]] = {}
+        for signal in signals:
+            by_symbol.setdefault(signal.symbol, []).append(signal)
+
+        data: list[dict] = []
+        for signal in signals[:limit]:
+            item = signal.__dict__.copy()
+            peers = by_symbol.get(signal.symbol, [])
+            peer = next((p for p in peers if p.contract_month != signal.contract_month), None)
+            item["rank_score"] = rank_scores.get((signal.symbol, signal.contract_month), 0.0)
+            item["quality_score"] = signal.quality_score
+            item["contract_role"] = signal.contract_month
+            item["comparison"] = "CURRENT vs NEAR" if peer else "single contract"
+            item["rank_factors"] = {
+                "gap_pct": signal.gap_pct,
+                "net_gap_pct": signal.net_gap_pct,
+                "annualized_gap_pct": signal.annualized_gap_pct,
+                "stable_observations": signal.stable_observations,
+                "liquidity_qty": signal.liquidity_qty,
+            }
+            item["peer_contract_month"] = peer.contract_month if peer else None
+            item["peer_gap_pct"] = peer.gap_pct if peer else None
+            item["gap_pct_delta_vs_peer"] = signal.gap_pct - peer.gap_pct if peer else None
+            item["is_best_contract_month"] = bool(peer and signal.gap_pct >= peer.gap_pct)
+            item["lifecycle"] = signal.lifecycle if signal.received_at_ns >= cutoff else "EXPIRED"
+            data.append(item)
+
+        data.sort(key=lambda item: (-float(item["rank_score"]), -float(item["gap_pct"]), item["symbol"], item["contract_month"]))
+        return data[:limit]

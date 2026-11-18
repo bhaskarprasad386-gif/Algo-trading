@@ -1,0 +1,147 @@
+# Cash-Future Backtest — Consolidated Status
+
+GitHub `main` is the single source of truth for the Cash-Future milestone. This file consolidates **all newly added work + all earlier remaining work** and locks the order below. Every future `Next` must start by checking this file and the current repository state; do not restart, duplicate, or skip work based on chat memory alone.
+
+## Locked project scope
+- Current implementation focus: **Cash-Future historical backtesting + live scanner + live paper trading**.
+- Historical strategy application is **Cash-Future only for now**.
+- Real/live broker execution is OFF and must not be added to this milestone.
+- Arbitrage implementation is OFF for now.
+- Existing working features must be preserved; additions should be incremental.
+- Data must be durable/incremental; never require the whole history in RAM/mobile.
+
+## Master priority order — execute from top to bottom
+
+### P0 — Historical Cash-Future strategy application + execution core
+- [x] Select one historical date or date range.
+- [x] Select a Cash-Future strategy + configuration.
+- [x] Load only the requested historical Cash + Future observations/contracts.
+- [x] Evaluate strategy strictly point-in-time; no look-ahead.
+- [x] Normalize strategy BUY/SELL signals into historical Cash-Future actions.
+- [x] Preserve existing convergence strategy and APIs; do not replace them.
+- [x] Execute signals through the existing Cash-Future executable-price model.
+- [x] Apply point-in-time historical lot size, charges, funding, slippage/bid-ask and expiry rules.
+- [x] Persist strategy-run metadata, signals, trades, P&L and equity for comparison/replay.
+- [x] Add Cash-Future strategy-run API.
+- [x] Targeted tests: date filtering, BUY/SELL, no-look-ahead, deterministic strategy execution and contract isolation; replay cadence regression tests added.
+
+### P1 — ₹1 crore portfolio capital + realistic risk/execution
+- [x] Default historical/backtest portfolio capital = **₹1,00,00,000**.
+- [x] Portfolio-level capital ledger primitive supports simultaneous symbol/contract reservations.
+- [x] Lock required capital/margin on entry and release the exact position reservation on exit.
+- [x] Integrate portfolio ledger into the Cash-Future strategy runner for simultaneous positions.
+- [x] Prevent over-allocation in the integrated runner and record blocked-entry reason/count.
+- [x] Mark-to-market unrealized P&L for open positions.
+- [x] Cumulative realized + unrealized equity curve.
+- [x] Margin checks and historical forced liquidation/exit validation.
+- [x] Realistic depth/liquidity limits and partial fills only where genuine historical bid/ask/depth exists.
+- [x] Explicit rollover-boundary position policy: close/reopen or carry; never mix expiry-series prices.
+
+### P2 — Production historical data pipeline
+- [x] Connect durable Cash-Future acquisition/materialization to the historical backtest readiness path.
+- [x] Require verified coverage manifests before a historical run is considered complete.
+- [x] Durable full-F&O Cash-Future jobs: progress, cancel, resume, idempotent retry, bounded resources.
+- [N/A] Validate 6-month and 1-year historical coverage: intentionally removed from this milestone because genuine historical data is not available; future backtests consume only accumulated/materialized data.
+- [x] Removed the free historical 1-minute download dependency from the user-facing Cash-Future workflow; runs now consume only genuinely materialized data, while live Angel One data can be accumulated incrementally for future backtests.
+- [x] Data-quality gates: duplicate timestamps, missing sessions, stale/crossed quotes, impossible OHLC, incomplete contracts.
+- [N/A] Historical source-to-P&L reconciliation over unavailable historical coverage: not a completion dependency; live accumulated data remains the future backtest source.
+- [x] Preserve genuine finer-resolution data when available; replay exposes only intervals supported by actual source cadence and never manufactures finer data.
+- [x] Persisted DB reconciliation checks that requested historical ranges are actually covered at expected session cadence.
+- [x] Session-aware reconciliation does not treat weekends/market-closed boundaries as missing bars.
+- [x] Historical readiness blocks wrong-range, interior-gap, incomplete-manifest and non-materialized requests.
+
+### P3 — Results / Calendar / Replay completion
+- [x] Make date/month Results use the same canonical Cash-Future contract identity + point-in-time lot path as the backtest engine.
+- [x] Switch Android date ranking to canonical `/date-gap` with `mode=shorting`.
+- [x] Switch monthly search to one `/monthly-gap` request instead of day-by-day looping.
+- [x] Complete Futures Results UI: instrument selector + contract-month selector + future graph/replay.
+- [x] Preserve ranking: `(High - Open) × point-in-time historical lot`.
+- [x] Intraday replay uses 1-minute source data and displays 15-minute candles with 1-minute stepping.
+- [x] Replay 15-minute buckets align to NSE 09:15 session start: 09:15, 09:30, …, 15:15.
+- [x] Replay cadence/session-start regression coverage added; source cadence is preserved and no finer interval is claimed than the materialized data supports.
+
+### P4 — Scanner + paper-trading integration
+- [x] Keep Cash-Future live scanner operational independently of historical backtesting.
+- [x] Live paper trading supports arbitrary strategy BUY/SELL actions through the broker-independent paper execution API.
+- [x] Paper capital default = ₹1 crore.
+- [x] Paper fills use available live bid/ask executable sides and reject crossed quotes; no fake market data.
+- [x] Live market observations continue through the durable live Cash-Future store and paper orders/fills are durably persisted for journal/reconciliation.
+- [x] Paper risk controls: max orders/day, max order quantity, max position size and max realized loss are enforced; global trading kill-switch remains available and live broker routing stays disabled.
+- [x] Keep live broker execution disabled.
+
+### P5 — Final validation gate
+- [ ] Backend compile.
+- [ ] Cash-Future targeted backend tests.
+- [ ] Android compile/tests for Results/replay and Cash-Future strategy UI.
+- [ ] Full test suite.
+- [ ] Fresh GitHub Actions run verified PASS.
+- [ ] Only after all applicable P0–P5 items pass: Cash-Future milestone marked complete.
+
+## Completed / implemented
+- [x] Historical Cash-Future acquisition foundation.
+- [x] Durable historical storage and coverage catalog.
+- [x] Incremental download queue and targeted gap-repair foundation.
+- [x] Coverage audit/manifest and contract preflight.
+- [x] Historical contract identity and lot-size handling.
+- [x] Current/near contract selection foundation.
+- [x] Continuous futures rollover chain.
+- [x] NSE session boundaries 09:15–15:30.
+- [x] Friday → Monday transition without weekend requests.
+- [x] Generic event-driven backtest engine integration foundation.
+- [x] Chunked/resumable processing and durable result/checkpoint infrastructure.
+- [x] Cash-Future convergence backtest with per-contract isolation.
+- [x] Multi-contract streaming backtest without expiry-series mixing.
+- [x] Convergence / expiry / max-holding exits.
+- [x] Gap, charges and funding-cost P&L model.
+- [x] Optional realistic bid/ask execution: entry cash ASK + future BID; reverse exit cash BID + future ASK.
+- [x] Missing executable prices rejected in strict bid/ask mode; no fabricated fills.
+- [x] Open positions reported instead of fabricating exits.
+- [x] Date Results ranking: `(High - Open) × historical lot`.
+- [x] Monthly Results search and monthly OHLC graph foundation.
+- [x] Selected-date prior-history comparison for larger historical gaps.
+- [x] Intraday 1-minute source replay with 15-minute chart / 1-minute stepping.
+- [x] Android Results wiring for selected-date gap ranking, prior larger gaps and replay.
+- [x] Session-aligned 15-minute replay buckets starting at 09:15.
+- [x] First ₹1 crore capital reservation/blocking layer in Cash-Future strategy runner.
+- [x] Reusable portfolio capital ledger for simultaneous symbol/contract reservations.
+- [x] Portfolio runner integration for simultaneous positions and independent capital reservations.
+- [x] Portfolio MTM unrealized P&L and cumulative realized + unrealized equity.
+- [x] Historical margin-breach forced liquidation using only the current observation's genuine price; stale-price liquidation is rejected.
+- [x] Historical bid/ask depth quantities are honored when present; partial/no-fill behavior never fabricates liquidity.
+- [x] Rollover-boundary policy closes the old contract only on its own genuine observation or rejects the boundary; expiry-series prices are never mixed.
+- [x] Streaming Cash-Future data-quality audit and persisted-backtest quality gate.
+- [x] Quality tests for clean data, crossed quotes, negative depth, duplicate identity and gate failure.
+- [x] Persisted historical-range reconciliation against actual materialized Cash-Future rows.
+- [x] Session-aware interior-gap reconciliation without bridging weekends or closed-market periods.
+- [x] Regression coverage for wrong historical range, interior manifest gaps, split/adjacent coverage, and persisted rows that do not span requested endpoints.
+- [x] Historical strategy-run selection and execution path is wired from Android strategy builder to the Cash-Future strategy-run API.
+- [x] Results/date/month Android paths use the canonical Cash-Future date-gap/monthly-gap APIs, point-in-time lot values, CURRENT/NEAR contract replay, and the Futures results/replay UI.
+
+## Locked rules
+1. Shorting gap for Results = `High - Open`.
+2. Ranking = `(High - Open) × historical lot size`.
+3. Historical lot size is point-in-time; never use today's lot for an old date.
+4. No weekend/session-outside NSE requests.
+5. No expiry/contract mixing within one position.
+6. No fabricated market data, fills or exits.
+7. Bid/ask mode uses executable sides: BUY at ASK, SELL at BID.
+8. No finer-resolution data may be manufactured from coarser candles.
+9. Full-year/F&O results are incrementally persisted.
+10. Real/live broker order execution remains OFF.
+11. Historical strategy application is Cash-Future only until this milestone is validated.
+12. Strategy evaluation is strictly point-in-time; no look-ahead.
+13. Default historical/backtest portfolio capital = ₹1,00,00,000 unless explicitly overridden for a run.
+14. Existing completed behavior must be preserved when adding new layers.
+15. **Every future continuation starts by checking this status file + current GitHub state.**
+16. Do not mark work complete without implementation/test evidence.
+17. Historical forced liquidation may only use a genuine price observation at the liquidation timestamp; never liquidate another position using its stale last price.
+
+## Current checkpoint
+**Implementation scope: COMPLETE. P0–P4 are now source-verified complete. Historical download/6-month/1-year coverage is explicitly out of scope because genuine historical data is unavailable. Only P5 compile/test/CI verification remains; no fabricated historical data will be introduced.**
+
+The next layer must preserve all P1 execution behavior, point-in-time lot/contract identity, genuine liquidity rules, rollover safety, ₹1 crore portfolio accounting, and no-look-ahead evaluation.
+
+## Completion gate
+Cash-Future is complete when every applicable implementation item is implemented/tested and unavailable historical-coverage items are explicitly N/A. Free historical 1-minute acquisition and 6-month/1-year coverage are **not completion dependencies**; existing genuine stored data and future live accumulation remain valid sources.
+
+Final verification gate: **Code → Compile → Targeted tests → Full tests → Fresh CI → PASS → LOCK**.

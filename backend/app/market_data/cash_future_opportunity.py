@@ -1,0 +1,218 @@
+"""Cash-Future opportunity scanner over the common normalized market-data contract.
+
+This module is strategy logic only: it consumes MarketDataRecord values supplied by
+CommonWebSocketManager and never opens a broker connection.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from threading import RLock
+from typing import Iterable
+
+from app.market_data.contracts import InstrumentType, MarketDataRecord
+from app.market_data.opportunity import (
+    OpportunityLeg,
+    OpportunitySignal,
+    OrderSide,
+    gross_profit_from_points,
+    qualifies_opportunity,
+)
+
+
+@dataclass(frozen=True)
+class CashFutureScanResult:
+    signal: OpportunitySignal
+    cash: MarketDataRecord
+    future: MarketDataRecord
+    contract_month: str
+    direction: str
+
+    def as_dict(self) -> dict[str, object]:
+        data = self.signal.as_dict()
+        data.update({
+            "date_time": datetime.fromtimestamp(self.signal.timestamp_ns / 1_000_000_000, ZoneInfo("Asia/Kolkata")).isoformat(),
+            "symbol": self.signal.symbol,
+            "contract_month": self.contract_month,
+            "direction": self.direction,
+            "cash_ltp": self.cash.ltp,
+            "future_ltp": self.future.ltp,
+            "cash_bid": self.cash.bid,
+            "cash_ask": self.cash.ask,
+            "future_bid": self.future.bid,
+            "future_ask": self.future.ask,
+            "cash_bid_qty": self.cash.bid_qty,
+            "cash_ask_qty": self.cash.ask_qty,
+            "future_bid_qty": self.future.bid_qty,
+            "future_ask_qty": self.future.ask_qty,
+            "lot_size": self.signal.lot_size,
+            "gap": self.signal.gap_points,
+            "gross_profit": self.signal.gross_profit,
+            "executable": self.signal.qualifies,
+            "live_orders": False,
+        })
+        return data
+
+
+class CashFutureOpportunityScanner:
+    """Pair fresh cash/current/near futures from normalized common data."""
+
+    strategy_id = "cash-future"
+    MAX_PAIR_AGE_NS = 1_000_000_000
+
+    def __init__(self, *, minimum_gap_points: float = 0.0, minimum_gross_profit: float = 0.0) -> None:
+        if minimum_gap_points < 0 or minimum_gross_profit < 0:
+            raise ValueError("thresholds cannot be negative")
+        self.minimum_gap_points = float(minimum_gap_points)
+        self.minimum_gross_profit = float(minimum_gross_profit)
+        self._lock = RLock()
+        self._latest: dict[str, dict[str, MarketDataRecord]] = {}
+        self._results: dict[tuple[str, str], CashFutureScanResult] = {}
+        self._out_of_order_records = 0
+        self._stale_pair_rejections = 0
+
+    @staticmethod
+    def _validate_record(record: MarketDataRecord) -> None:
+        if record.instrument_type not in {InstrumentType.EQUITY, InstrumentType.FUTURE}:
+            raise ValueError("Cash-Future accepts only equity cash and future records")
+        if not record.is_executable_quote:
+            raise ValueError("Cash-Future requires a valid two-sided executable quote")
+        if record.timestamp_ns < 1:
+            raise ValueError("record timestamp must be positive")
+
+    @property
+    def out_of_order_records(self) -> int:
+        with self._lock:
+            return self._out_of_order_records
+
+    @property
+    def stale_pair_rejections(self) -> int:
+        with self._lock:
+            return self._stale_pair_rejections
+
+    def update(self, record: MarketDataRecord, *, contract_month: str) -> CashFutureScanResult | None:
+        self._validate_record(record)
+        month = str(contract_month).strip().upper()
+        if record.instrument_type is InstrumentType.EQUITY:
+            leg = "CASH"
+        else:
+            if month not in {"CURRENT", "NEAR"}:
+                raise ValueError("contract_month must be CURRENT or NEAR")
+            leg = month
+        symbol = (record.underlying or record.symbol).strip().upper()
+        with self._lock:
+            bucket = self._latest.setdefault(symbol, {})
+            previous = bucket.get(leg)
+            if previous is not None and record.timestamp_ns < previous.timestamp_ns:
+                # A delayed broker frame must not replace a newer quote for
+                # the same leg and make a previously fresh pair stale.
+                self._out_of_order_records += 1
+                return None
+            bucket[leg] = record
+            cash = bucket.get("CASH")
+            if cash is None:
+                return None
+            candidate_months = ("CURRENT", "NEAR") if leg == "CASH" else (leg,)
+            candidates: list[tuple[float, str, MarketDataRecord, tuple[OpportunityLeg, ...], str]] = []
+            for candidate_month in candidate_months:
+                future = bucket.get(candidate_month)
+                if future is None or future.lot_size is None or future.lot_size <= 0:
+                    self._results.pop((symbol, candidate_month), None)
+                    continue
+                if abs(cash.timestamp_ns - future.timestamp_ns) > self.MAX_PAIR_AGE_NS:
+                    self._stale_pair_rejections += 1
+                    self._results.pop((symbol, candidate_month), None)
+                    continue
+                forward_gap = float(future.bid) - float(cash.ask)
+                reverse_gap = float(cash.bid) - float(future.ask)
+                if forward_gap < 0 and reverse_gap < 0:
+                    self._results.pop((symbol, candidate_month), None)
+                    continue
+                if forward_gap >= reverse_gap:
+                    gap = forward_gap
+                    direction = "CASH_BUY_FUTURE_SELL"
+                    legs = (
+                        OpportunityLeg(cash, OrderSide.BUY, "cash-entry"),
+                        OpportunityLeg(future, OrderSide.SELL, f"future-{candidate_month.lower()}-entry"),
+                    )
+                else:
+                    gap = reverse_gap
+                    direction = "CASH_SELL_FUTURE_BUY"
+                    legs = (
+                        OpportunityLeg(cash, OrderSide.SELL, "cash-entry"),
+                        OpportunityLeg(future, OrderSide.BUY, f"future-{candidate_month.lower()}-entry"),
+                    )
+                candidates.append((gap, candidate_month, future, legs, direction))
+            if not candidates:
+                return None
+
+            evaluated: list[CashFutureScanResult] = []
+            for gap, selected_month, future, legs, direction in candidates:
+                gross = gross_profit_from_points(gap, int(future.lot_size))
+                qualifies = qualifies_opportunity(
+                    gap_points=gap,
+                    gross_profit=gross,
+                    minimum_gap_points=self.minimum_gap_points,
+                    minimum_gross_profit=self.minimum_gross_profit,
+                )
+                anchor_timestamp_ns = max(cash.timestamp_ns, future.timestamp_ns)
+                signal_cash = replace(cash, timestamp_ns=anchor_timestamp_ns)
+                signal_future = replace(future, timestamp_ns=anchor_timestamp_ns)
+                signal_legs = (
+                    OpportunityLeg(signal_cash, legs[0].side, legs[0].label),
+                    OpportunityLeg(signal_future, legs[1].side, legs[1].label),
+                )
+                signal = OpportunitySignal(
+                    strategy_id=self.strategy_id,
+                    opportunity_type="cash-future",
+                    symbol=symbol,
+                    timestamp_ns=anchor_timestamp_ns,
+                    gap_points=gap,
+                    gross_profit=gross,
+                    lot_size=int(future.lot_size),
+                    qualifies=qualifies,
+                    minimum_gap_points=self.minimum_gap_points,
+                    minimum_gross_profit=self.minimum_gross_profit,
+                    legs=signal_legs,
+                    expiry=future.expiry,
+                    metadata={"contract_month": selected_month, "direction": direction, "source": "common-market-data", "live_orders": False},
+                )
+                result = CashFutureScanResult(signal, cash, future, selected_month, direction)
+                key = (symbol, selected_month)
+                was_qualified = key in self._results
+                if qualifies:
+                    self._results[key] = result
+                else:
+                    self._results.pop(key, None)
+                evaluated.append(result if qualifies or not was_qualified else None)
+
+            evaluated = [item for item in evaluated if item is not None]
+            if not evaluated:
+                return None
+
+            return max(evaluated, key=lambda item: item.signal.gross_profit)
+
+    def reset(self) -> None:
+        """Drop cached pair state when the subscribed futures contract set rolls."""
+        with self._lock:
+            self._latest.clear()
+            self._results.clear()
+
+    def scan(self, records: Iterable[tuple[MarketDataRecord, str]]) -> tuple[CashFutureScanResult, ...]:
+        results = []
+        for record, month in records:
+            result = self.update(record, contract_month=month)
+            if result is not None and result.signal.qualifies:
+                results.append(result)
+        return tuple(sorted(results, key=lambda item: item.signal.gross_profit, reverse=True))
+
+    def snapshot(self, *, qualified_only: bool = True) -> tuple[CashFutureScanResult, ...]:
+        with self._lock:
+            values = tuple(self._results.values())
+        if qualified_only:
+            values = tuple(item for item in values if item.signal.qualifies)
+        return tuple(sorted(values, key=lambda item: item.signal.gross_profit, reverse=True))
+
+
+__all__ = ["CashFutureOpportunityScanner", "CashFutureScanResult"]

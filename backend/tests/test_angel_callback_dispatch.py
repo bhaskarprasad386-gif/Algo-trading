@@ -1,0 +1,285 @@
+import pytest
+
+from app.market_data.angel_callback_dispatch import (
+    AngelShardCallbackAdapter,
+    CallbackInvocation,
+)
+
+
+def test_per_shard_adapter_preserves_batch_and_callback_fifo_order():
+    adapter = AngelShardCallbackAdapter(capacity=4)
+    adapter.activate_generation(1)
+    seen = []
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(
+            CallbackInvocation(lambda value: seen.append(("raw", value)), "a", "raw"),
+            CallbackInvocation(lambda value: seen.append(("record", value)), "a", "record"),
+        ),
+    )
+    assert adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda value: seen.append(("raw", value)), "b", "raw"),),
+    )
+    adapter.stop(timeout=2.0, drain=True)
+    assert seen == [("raw", "a"), ("record", "a"), ("raw", "b")]
+    assert adapter.snapshot()["processed_batches"] == 2
+
+
+def test_per_shard_adapter_rejects_retired_generation():
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    adapter.activate_generation(2)
+    assert not adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, None, "raw"),),
+    )
+    assert adapter.snapshot()["stale_batches"] == 1
+
+
+def test_per_shard_adapter_overflow_latches_integrity_fault():
+    adapter = AngelShardCallbackAdapter(capacity=1)
+    adapter.activate_generation(1)
+    adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, None, "raw"),),
+    )
+    assert not adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, None, "raw"),),
+    )
+    state = adapter.snapshot()
+    assert state["overflow_batches"] == 1
+    assert state["integrity_fault"] is True
+    assert state["closed"] is True
+    assert state["queue_depth"] == 0
+    assert state["discarded_batches"] == 1
+    assert not adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, None, "raw"),),
+    )
+
+
+def test_per_shard_adapter_isolates_callback_exception():
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    seen = []
+
+    def fail(_):
+        raise RuntimeError("consumer failed")
+
+    adapter.start()
+    adapter.publish(
+        generation=1,
+        invocations=(
+            CallbackInvocation(fail, None, "raw"),
+            CallbackInvocation(lambda value: seen.append(value), "ok", "record"),
+        ),
+    )
+    adapter.stop(timeout=2.0, drain=True)
+    assert seen == ["ok"]
+    assert adapter.snapshot()["callback_errors"] == 1
+
+
+def test_per_shard_adapter_stop_rejects_new_publish_and_drains():
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    seen = []
+    adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(seen.append, 1, "raw"),),
+    )
+    adapter.start()
+    adapter.stop(timeout=2.0, drain=True)
+    assert seen == [1]
+    assert not adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(seen.append, 2, "raw"),),
+    )
+    assert adapter.snapshot()["closed"] is True
+
+
+def test_adapter_detaches_mutable_payload_before_worker_delivery():
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    payload = {"depth": {"bids": [{"price": 100}]}}
+    seen = []
+    adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(seen.append, payload, "raw"),),
+    )
+    payload["depth"]["bids"][0]["price"] = 1
+    adapter.start()
+    adapter.stop(timeout=2.0, drain=True)
+    assert seen[0]["depth"]["bids"][0]["price"] == 100
+
+
+
+def test_non_draining_stop_counts_discarded_batches():
+    adapter = AngelShardCallbackAdapter(capacity=3)
+    adapter.activate_generation(1)
+    adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, 1, "raw"),),
+    )
+    adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, 2, "raw"),),
+    )
+    adapter.stop(timeout=2.0, drain=False)
+    assert adapter.snapshot()["discarded_batches"] == 2
+
+
+def test_payload_copy_failure_is_reported_as_integrity_fault():
+    class Uncopyable:
+        def __deepcopy__(self, memo):
+            raise TypeError("cannot detach payload")
+
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    accepted = adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, Uncopyable(), "raw"),),
+    )
+    state = adapter.snapshot()
+    assert accepted is False
+    assert state["payload_copy_errors"] == 1
+    assert state["integrity_fault"] is True
+    assert state["closed"] is True
+    assert state["queue_depth"] == 0
+    assert "payload_copy: TypeError" in state["last_error"]
+
+
+
+def test_delivery_counters_distinguish_attempts_successes_and_errors():
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+
+    def fail(_):
+        raise RuntimeError("consumer unavailable")
+
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(
+            CallbackInvocation(lambda _: None, "ok", "raw"),
+            CallbackInvocation(fail, "bad", "record"),
+        ),
+    )
+    adapter.stop(timeout=2.0, drain=True)
+    state = adapter.snapshot()
+    assert state["callback_attempts"] == 2
+    assert state["callback_successes"] == 1
+    assert state["callback_errors"] == 1
+    assert state["delivery_status"] == "DEGRADED"
+
+
+def test_overflow_marks_delivery_status_degraded():
+    adapter = AngelShardCallbackAdapter(capacity=1)
+    adapter.activate_generation(1)
+    adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, 1, "raw"),),
+    )
+    accepted = adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, 2, "raw"),),
+    )
+    assert accepted is False
+    state = adapter.snapshot()
+    assert state["delivery_status"] == "DEGRADED"
+    assert state["integrity_fault"] is True
+
+
+def test_graceful_stop_without_worker_counts_unprocessed_batches():
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, 1, "raw"),),
+    )
+    adapter.stop(timeout=2.0, drain=True)
+    state = adapter.snapshot()
+    assert state["discarded_batches"] == 1
+    assert state["queue_depth"] == 0
+
+
+
+def test_overflow_retires_generation_and_discards_queued_work_while_inflight_finishes():
+    from threading import Event
+
+    adapter = AngelShardCallbackAdapter(capacity=1)
+    adapter.activate_generation(1)
+    entered = Event()
+    release = Event()
+    seen = []
+
+    def blocked(value):
+        entered.set()
+        release.wait(timeout=2.0)
+        seen.append(value)
+
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(blocked, "inflight", "raw"),),
+    )
+    assert entered.wait(timeout=1.0)
+    assert adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(seen.append, "queued", "raw"),),
+    )
+    assert not adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(seen.append, "overflow", "raw"),),
+    )
+    state = adapter.snapshot()
+    assert state["closed"] is True
+    assert state["queue_depth"] == 0
+    assert state["discarded_batches"] == 1
+    assert state["delivery_status"] == "DEGRADED"
+
+    release.set()
+    adapter.stop(timeout=2.0, drain=True)
+    assert seen == ["inflight"]
+
+
+
+def test_retirement_fences_remaining_callbacks_in_already_dequeued_batch():
+    from threading import Event, Thread
+
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    entered = Event()
+    release = Event()
+    seen = []
+
+    def blocked(value):
+        entered.set()
+        release.wait(timeout=2.0)
+        seen.append(value)
+
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(
+            CallbackInvocation(blocked, "inflight", "raw"),
+            CallbackInvocation(seen.append, "must-not-run-after-retire", "record"),
+        ),
+    )
+    assert entered.wait(timeout=1.0)
+
+    # stop invalidates the generation even though one consumer callback is
+    # already executing and cannot be cancelled safely.
+    with pytest.raises(TimeoutError):
+        adapter.stop(timeout=0.05, drain=False)
+    release.set()
+    worker = adapter._thread
+    assert worker is not None
+    worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    assert seen == ["inflight"]
+    assert adapter.snapshot()["callback_attempts"] == 1
+    assert adapter.snapshot()["closed"] is True

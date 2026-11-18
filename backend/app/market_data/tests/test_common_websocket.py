@@ -1,0 +1,2131 @@
+import app.market_data.common_websocket as common_websocket_module
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+from app.market_data.websocket import MarketDataWebSocket
+from app.market_data.contracts import InstrumentKey
+from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
+from threading import Event, Thread
+import time
+
+
+class FakeSocket:
+    instances = []
+
+    def __init__(self):
+        self.connect_calls = []
+        self.subscribe_calls = []
+        self.closed = False
+        self.connected = False
+        self.connecting = False
+        type(self).instances.append(self)
+
+    def connect(self, **kwargs):
+        self.connect_calls.append(kwargs)
+        self.connecting = False
+        self.connected = True
+
+    def subscribe(self, tokens, mode=None):
+        self.subscribe_calls.append((list(tokens), mode))
+
+    def subscribe_groups(self, groups, mode=None):
+        self.subscribe_calls.append((dict(groups), mode))
+
+    def unsubscribe_groups(self, groups):
+        pass
+
+    def close(self):
+        self.closed = True
+        self.connected = False
+
+
+def descriptor(token, exchange="NSE", segment="EQ"):
+    key = InstrumentKey(exchange, segment, token)
+    return InstrumentDescriptor(
+        key=key,
+        symbol=f"S{token}",
+        instrument_type="equity",
+        exchange=exchange,
+        segment=segment,
+    )
+
+
+def setup_function():
+    FakeSocket.instances.clear()
+    # These tests assert manager behavior, not production pacing duration.
+    with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
+        common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL = 0.0
+        common_websocket_module._SHARED_BROKER_LAST_CONNECT_STARTED_AT = 0.0
+    common_websocket_module._SHARED_BROKER_MIN_CONNECT_INTERVAL_SECONDS = 0.0
+
+
+def test_common_manager_deduplicates_shared_instrument_and_fans_out():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("cash", lambda m: seen.append(("cash", m["token"])))
+    manager.register_callback("box", lambda m: seen.append(("box", m["token"])))
+
+    manager.subscribe("cash", [d.key])
+    manager.subscribe("box", [d.key])
+
+    assert len(FakeSocket.instances) == 1
+    socket = FakeSocket.instances[0]
+    assert len(socket.connect_calls) == 1
+    assert socket.connect_calls[0]["subscriptions"] == {1: ["101"]}
+    assert registry.subscriptions()[0].ref_count == 2
+    snapshot = manager.snapshot()
+    assert snapshot["socket_groups"] == 1
+    assert snapshot["disconnected_groups"] == []
+    assert snapshot["connected_groups"] == ["1:0"]
+
+    manager._on_data(SocketGroup(1, 0), {"token": "101", "ltp": 100})
+    assert set(seen) == {("box", "101"), ("cash", "101")}
+
+
+def test_normalized_common_feed_publishes_shared_snapshot():
+    from app.market_data.shared_cache import get_shared_market_data_cache
+
+    registry = InstrumentRegistry()
+    item = descriptor("cachecentral991827", "NSE", "EQ")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    cache = get_shared_market_data_cache()
+    cache.delete(item.key.value)
+    received = []
+    manager.register_normalized_callback("scanner", received.append)
+    try:
+        manager.subscribe("scanner", [item.key])
+        manager._on_data(SocketGroup(1, 0), {
+            "token": item.key.token,
+            "exchange_type": 1,
+            # Angel One wire prices are paise; the normalizer publishes rupees.
+            "ltp": 12345,
+            "timestamp_ns": "1792386000000000000",
+        })
+        snapshot = cache.get(item.key.value)
+        assert len(received) == 1
+        assert snapshot is not None
+        assert snapshot["ltp"] == 123.45
+        assert snapshot["timestamp_ns"] == 1792386000000000000
+    finally:
+        cache.delete(item.key.value)
+        manager.close()
+
+
+def test_mode_upgrade_rehomes_socket_group_without_duplicate_sockets():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+
+    manager.subscribe("a", [d.key], mode=1)
+    first = FakeSocket.instances[0]
+    manager.subscribe("b", [d.key], mode=3)
+
+    assert len(FakeSocket.instances) == 2
+    assert first.closed is True
+    assert FakeSocket.instances[1].connect_calls[0]["mode"] == 3
+    assert registry.subscriptions()[0].mode == 3
+
+
+def test_clear_consumer_closes_unused_socket_and_preserves_other_consumer():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager.register_callback("a", lambda m: None)
+    manager.register_callback("b", lambda m: None)
+    manager.subscribe("a", [d.key])
+    manager.subscribe("b", [d.key])
+
+    manager.clear_consumer("a")
+    assert registry.subscriptions()[0].consumers == frozenset({"b"})
+    assert FakeSocket.instances[0].closed is False
+
+    manager.clear_consumer("b")
+    assert manager.snapshot()["active_instruments"] == 0
+    assert FakeSocket.instances[0].closed is True
+
+
+def test_same_token_on_different_exchange_group_does_not_cross_fan_out():
+    registry = InstrumentRegistry()
+    nse = descriptor("101", "NSE", "EQ")
+    nfo = descriptor("101", "NFO", "DERIVATIVES")
+    registry.register_many([nse, nfo])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("nse", lambda m: seen.append("nse"))
+    manager.register_callback("nfo", lambda m: seen.append("nfo"))
+    manager.subscribe("nse", [nse.key])
+    manager.subscribe("nfo", [nfo.key])
+
+    manager._on_data(SocketGroup(1, 0), {"token": "101", "exchange_type": 1})
+    assert seen == ["nse"]
+
+
+def test_recovery_rebuilds_missing_socket_shard():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(1001)]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager.subscribe("cash", [d.key for d in descriptors])
+
+    assert len(FakeSocket.instances) == 2
+    missing = SocketGroup(1, 1)
+    with manager._lock:
+        manager._sockets.pop(missing)
+        manager._socket_tokens.pop(missing, None)
+        manager._socket_created_at.pop(missing, None)
+
+    # Required groups come from desired subscriptions, not only live socket objects.
+    partial = manager.snapshot()
+    assert partial["socket_groups"] == 1
+    assert partial["required_socket_group_count"] == 2
+    assert partial["required_socket_groups"] == ["1:0", "1:1"]
+    assert partial["missing_socket_groups"] == ["1:1"]
+
+    recovered = manager.recover_disconnected(min_age_seconds=10.0)
+
+    assert recovered == 0
+    assert len(FakeSocket.instances) == 3
+    assert manager.snapshot()["socket_groups"] == 2
+    assert manager.snapshot()["connected_groups"] == ["1:0", "1:1"]
+
+
+class PartialFailureSocket(FakeSocket):
+    created = 0
+
+    def __init__(self):
+        super().__init__()
+        type(self).created += 1
+
+    def connect(self, **kwargs):
+        if type(self).created == 2:
+            raise RuntimeError("simulated second-shard connect failure")
+        return super().connect(**kwargs)
+
+
+def test_partial_reconcile_failure_is_recovered_on_next_cycle():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(1001)]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=PartialFailureSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        try:
+            manager.subscribe("cash", [d.key for d in descriptors])
+        except RuntimeError as exc:
+            assert "second-shard" in str(exc)
+        else:
+            raise AssertionError("expected partial shard connection failure")
+
+        assert manager.snapshot()["socket_groups"] == 1
+        assert len(registry.subscriptions()) == 1001
+
+        PartialFailureSocket.created = 2
+        recovered = manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert recovered == 0
+        snapshot = manager.snapshot()
+        assert snapshot["socket_groups"] == 2
+        assert snapshot["connected_groups"] == ["1:0", "1:1"]
+    finally:
+        manager.close()
+        PartialFailureSocket.created = 0
+
+
+def test_partial_connect_failure_does_not_prevent_later_required_shard_attempts():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(2001)]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=PartialFailureSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        try:
+            manager.subscribe("cash", [d.key for d in descriptors])
+        except RuntimeError as exc:
+            assert "second-shard" in str(exc)
+        else:
+            raise AssertionError("expected the failed middle shard to remain visible")
+
+        snapshot = manager.snapshot()
+        # Shard 1 fails, but shard 2 must still be attempted and connected.
+        assert snapshot["required_socket_groups"] == ["1:0", "1:1", "1:2"]
+        assert snapshot["connected_groups"] == ["1:0", "1:2"]
+        assert snapshot["missing_socket_groups"] == ["1:1"]
+        assert len(PartialFailureSocket.instances) >= 3
+    finally:
+        manager.close()
+        PartialFailureSocket.created = 0
+
+
+def test_recovery_supervisor_rebuilds_missing_socket_without_strategy_runner():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(1001)]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 0.01
+    try:
+        manager.subscribe("cash", [d.key for d in descriptors])
+        assert manager.snapshot()["socket_groups"] == 2
+        missing = SocketGroup(1, 1)
+        with manager._lock:
+            manager._sockets.pop(missing)
+            manager._socket_tokens.pop(missing, None)
+            manager._socket_created_at.pop(missing, None)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and manager.snapshot()["socket_groups"] < 2:
+            time.sleep(0.02)
+        assert manager.snapshot()["socket_groups"] == 2
+    finally:
+        manager.close()
+
+
+class AlwaysFailThenRecoverSocket(FakeSocket):
+    attempts = 0
+
+    def connect(self, **kwargs):
+        type(self).attempts += 1
+        if type(self).attempts == 1:
+            raise ConnectionError("simulated broker connect failure")
+        return super().connect(**kwargs)
+
+
+def test_connect_failure_telemetry_and_recovery_restores_socket():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=AlwaysFailThenRecoverSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        try:
+            manager.subscribe("cash", [d.key])
+        except ConnectionError:
+            pass
+        else:
+            raise AssertionError("expected simulated broker connect failure")
+
+        failed = manager.snapshot()
+        assert failed["socket_groups"] == 0
+        assert failed["connect_failures"] == 1
+        assert failed["last_connect_failure"]["group"] == "1:0"
+        assert failed["last_connect_failure"]["error_type"] == "ConnectionError"
+        assert "simulated broker connect failure" in failed["last_connect_failure"]["error"]
+
+        manager.recover_disconnected(min_age_seconds=0.0)
+
+        recovered = manager.snapshot()
+        assert recovered["socket_groups"] == 1
+        assert recovered["connected_groups"] == ["1:0"]
+        assert recovered["recovery_attempts"] == 1
+        assert recovered["last_recovery_at"] is not None
+    finally:
+        manager.close()
+        AlwaysFailThenRecoverSocket.attempts = 0
+
+
+
+def test_recovery_replaces_connected_silent_socket():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._silent_feed_timeout_seconds = 0.0
+    try:
+        manager.subscribe("cash", [d.key])
+        original = FakeSocket.instances[0]
+        # Recovery keeps a one-second minimum socket age even when callers pass
+        # min_age_seconds=0.0; age the fake socket so the test targets silence.
+        with manager._lock:
+            manager._socket_created_at[SocketGroup(1, 0)] -= 2.0
+
+        recovered = manager.recover_disconnected(
+            min_age_seconds=0.0,
+            silent_age_seconds=0.0,
+        )
+
+        assert recovered == 1
+        assert original.closed is True
+        assert len(FakeSocket.instances) == 2
+        assert manager.snapshot()["socket_groups"] == 1
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+    finally:
+        manager.close()
+
+class ConnectingSocket(FakeSocket):
+    def connect(self, **kwargs):
+        self.connect_calls.append(kwargs)
+        self.connecting = True
+        self.connected = False
+
+
+def test_recovery_does_not_reap_async_connecting_socket():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=ConnectingSocket)
+    manager.subscribe("cash", [d.key])
+
+    recovered = manager.recover_disconnected(min_age_seconds=0.0)
+
+    assert recovered == 0
+    assert len(ConnectingSocket.instances) == 1
+    assert manager.snapshot()["socket_groups"] == 1
+    manager.close()
+
+
+def test_stale_socket_callback_is_ignored_after_recovery_replaces_socket():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("cash", lambda m: seen.append(m["token"]))
+    manager._silent_feed_timeout_seconds = 0.0
+    try:
+        manager.subscribe("cash", [d.key])
+        original = FakeSocket.instances[0]
+        old_callback = original.connect_calls[0]["on_data"]
+        with manager._lock:
+            manager._socket_created_at[SocketGroup(1, 0)] -= 2.0
+
+        manager.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=0.0)
+        replacement = FakeSocket.instances[1]
+        new_callback = replacement.connect_calls[0]["on_data"]
+
+        old_callback({"token": "101"})
+        assert seen == []
+        assert manager.snapshot()["ticks_received"] == 0
+
+        new_callback({"token": "101"})
+        assert seen == ["101"]
+        assert manager.snapshot()["ticks_received"] == 1
+    finally:
+        manager.close()
+
+
+def test_recovery_replaces_socket_stuck_in_connecting_state_after_timeout():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=ConnectingSocket)
+    manager._connect_timeout_seconds = 1.0
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [d.key])
+        original = ConnectingSocket.instances[0]
+        with manager._lock:
+            manager._socket_created_at[SocketGroup(1, 0)] -= 2.0
+
+        recovered = manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert recovered == 1
+        assert original.closed is True
+        assert len(ConnectingSocket.instances) == 2
+        assert manager.snapshot()["socket_groups"] == 1
+        assert manager.snapshot()["disconnected_groups"] == ["1:0"]
+    finally:
+        manager.close()
+
+
+class BlockingFirstSocket(FakeSocket):
+    attempts = 0
+    release_first_connect = Event()
+
+    def connect(self, **kwargs):
+        type(self).attempts += 1
+        if type(self).attempts == 1:
+            self.connect_calls.append(kwargs)
+            self.connecting = True
+            type(self).release_first_connect.wait(timeout=5.0)
+            return
+        super().connect(**kwargs)
+
+
+def test_blocking_connect_does_not_hold_recovery_reconcile_lock():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    BlockingFirstSocket.attempts = 0
+    BlockingFirstSocket.release_first_connect.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=BlockingFirstSocket)
+    manager._connect_call_wait_seconds = 0.05
+    manager._connect_timeout_seconds = 1.0
+    manager._recovery_interval_seconds = 60.0
+    try:
+        started = time.monotonic()
+        manager.subscribe("cash", [d.key])
+        assert time.monotonic() - started < 1.0
+
+        original = BlockingFirstSocket.instances[0]
+        with manager._lock:
+            manager._socket_created_at[SocketGroup(1, 0)] -= 2.0
+
+        recovered = manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert recovered == 1
+        assert original.closed is True
+        assert len(BlockingFirstSocket.instances) == 2
+        assert manager.snapshot()["socket_groups"] == 1
+        # Recovery/reconciliation must complete even though the stale SDK call
+        # is blocked, but the replacement must not overlap that broker handshake.
+        replacement = BlockingFirstSocket.instances[1]
+        assert replacement.connect_calls == []
+        BlockingFirstSocket.release_first_connect.set()
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if manager.snapshot()["connected_groups"] == ["1:0"]:
+                break
+            time.sleep(0.01)
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+        assert len(replacement.connect_calls) == 1
+    finally:
+        BlockingFirstSocket.release_first_connect.set()
+        manager.close()
+
+
+class BlockingSubscribeSocket(FakeSocket):
+    subscribe_attempts = 0
+    release_first_subscribe = Event()
+
+    def subscribe_groups(self, groups, mode=None):
+        self.subscribe_calls.append((dict(groups), mode))
+        type(self).subscribe_attempts += 1
+        if type(self).subscribe_attempts == 1:
+            type(self).release_first_subscribe.wait(timeout=5.0)
+
+
+def test_blocking_subscription_call_is_bounded_and_socket_is_recovered():
+    registry = InstrumentRegistry()
+    first = descriptor("101")
+    second = descriptor("102")
+    registry.register_many([first, second])
+    BlockingSubscribeSocket.subscribe_attempts = 0
+    BlockingSubscribeSocket.release_first_subscribe.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=BlockingSubscribeSocket)
+    manager._socket_call_wait_seconds = 0.05
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [first.key])
+        original = BlockingSubscribeSocket.instances[0]
+
+        started = time.monotonic()
+        try:
+            manager.subscribe("cash", [second.key])
+        except TimeoutError as exc:
+            assert "subscribe call exceeded" in str(exc)
+        else:
+            raise AssertionError("expected blocked subscription call to time out")
+        assert time.monotonic() - started < 1.0
+        assert original.closed is True
+        assert manager.snapshot()["socket_groups"] == 0
+
+        manager.recover_disconnected(min_age_seconds=0.0)
+        snapshot = manager.snapshot()
+        assert snapshot["socket_groups"] == 1
+        assert snapshot["connected_groups"] == ["1:0"]
+        assert len(BlockingSubscribeSocket.instances) == 2
+    finally:
+        BlockingSubscribeSocket.release_first_subscribe.set()
+        manager.close()
+        BlockingSubscribeSocket.subscribe_attempts = 0
+
+
+def test_stale_failure_callback_cannot_trigger_broker_cooldown():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager.subscribe("cash", [d.key])
+
+    group = SocketGroup(1, 0)
+    socket = FakeSocket.instances[0]
+    generation = manager._socket_generation[group]
+    # Simulate the callback arriving after a newer generation has been recorded.
+    with manager._lock:
+        manager._socket_generation[group] = generation + 1
+
+    manager._handle_socket_failure(
+        group, socket, generation, "429 Connection Limit Exceeded"
+    )
+
+    with common_websocket_module._SHARED_BROKER_COOLDOWN_STATE_LOCK:
+        assert common_websocket_module._SHARED_BROKER_COOLDOWN_UNTIL == 0.0
+    assert manager._sockets[group] is socket
+    assert manager.snapshot()["socket_groups"] == 1
+
+
+def test_angel_failure_callback_triggers_immediate_recovery_and_rejects_old_generation_ticks():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    seen = []
+    manager.register_callback("cash", lambda message: seen.append(message["token"]))
+    try:
+        manager.subscribe("cash", [d.key])
+        original = FakeSocket.instances[0]
+        old_connect = original.connect_calls[0]
+        old_data = old_connect["on_data"]
+        old_generation = manager._socket_generation[SocketGroup(1, 0)]
+
+        old_connect["on_failure"]("simulated Angel disconnect")
+
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and len(FakeSocket.instances) < 2:
+            time.sleep(0.01)
+        assert len(FakeSocket.instances) == 2
+        replacement = FakeSocket.instances[1]
+        new_connect = replacement.connect_calls[0]
+        new_generation = manager._socket_generation[SocketGroup(1, 0)]
+        assert new_generation > old_generation
+        assert original.closed is True
+
+        old_data({"token": "101", "exchange_type": 1})
+        assert seen == []
+        new_connect["on_data"]({"token": "101", "exchange_type": 1})
+        assert seen == ["101"]
+        snapshot = manager.snapshot()
+        assert snapshot["socket_failure_events"] == 1
+        assert snapshot["last_socket_failure"]["reason"] == "simulated Angel disconnect"
+    finally:
+        manager.close()
+
+
+def test_recovery_rebuilds_missing_expected_group_when_socket_count_looks_complete():
+    registry = InstrumentRegistry()
+    first = descriptor("101")
+    second = descriptor("102")
+    registry.register_many([first, second])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [first.key, second.key])
+        expected = {SocketGroup(1, 0), SocketGroup(1, 1)}
+        assert set(manager._sockets) == expected
+
+        # Simulate an unexpected stale group masking the missing shard while
+        # leaving the total socket count equal to the expected count.
+        with manager._lock:
+            socket = manager._sockets.pop(SocketGroup(1, 1))
+            manager._sockets[SocketGroup(1, 9)] = socket
+            manager._socket_tokens[SocketGroup(1, 9)] = manager._socket_tokens.pop(SocketGroup(1, 1))
+            manager._socket_created_at[SocketGroup(1, 9)] = manager._socket_created_at.pop(SocketGroup(1, 1))
+            manager._last_data_at[SocketGroup(1, 9)] = manager._last_data_at.pop(SocketGroup(1, 1))
+            manager._socket_generation[SocketGroup(1, 9)] = manager._socket_generation.pop(SocketGroup(1, 1))
+
+        assert len(manager._sockets) == len(expected)
+        manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert set(manager._sockets) == expected
+        assert SocketGroup(1, 9) not in manager._sockets
+        assert manager.snapshot()["socket_groups"] == 2
+    finally:
+        manager.close()
+
+
+def test_common_manager_disables_nested_socket_reconnect_supervisor():
+    manager = CommonWebSocketManager()
+    socket = manager._create_socket()
+    captured = {}
+    group = SocketGroup(1, 0)
+    socket.connect = lambda **kwargs: captured.update(kwargs)
+    with manager._lock:
+        manager._sockets[group] = socket
+        manager._socket_tokens[group] = {(1, "101")}
+        manager._socket_created_at[group] = time.monotonic()
+        manager._last_data_at[group] = time.monotonic()
+        manager._socket_generation[group] = 1
+    try:
+        assert isinstance(socket, MarketDataWebSocket)
+        assert socket._auto_reconnect is False
+        manager._start_socket_connect(
+            socket=socket,
+            group=group,
+            pairs={(1, "101")},
+            subscriptions={1: ["101"]},
+            generation=1,
+        )
+        assert captured["reconnect_attempts"] == 0
+        assert captured["reconnect_delay_seconds"] == 0.0
+    finally:
+        manager.close()
+
+
+class LateSuccessfulConnectSocket(FakeSocket):
+    attempts = 0
+    release_first_connect = Event()
+    late_connect_finished = Event()
+
+    def connect(self, **kwargs):
+        self.connect_calls.append(kwargs)
+        type(self).attempts += 1
+        if type(self).attempts == 1:
+            self.connecting = True
+            type(self).release_first_connect.wait(timeout=5.0)
+            super().connect(**kwargs)
+            type(self).late_connect_finished.set()
+            return
+        super().connect(**kwargs)
+
+
+def test_late_successful_connect_is_closed_after_recovery_replaces_socket():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    LateSuccessfulConnectSocket.attempts = 0
+    LateSuccessfulConnectSocket.release_first_connect.clear()
+    LateSuccessfulConnectSocket.late_connect_finished.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=LateSuccessfulConnectSocket)
+    manager._connect_call_wait_seconds = 0.05
+    manager._connect_timeout_seconds = 1.0
+    manager._recovery_interval_seconds = 60.0
+    reconcile_calls = []
+    original_reconcile_after_retirement = manager._reconcile_after_retirement
+
+    def track_reconcile(group):
+        reconcile_calls.append(group)
+        original_reconcile_after_retirement(group)
+
+    manager._reconcile_after_retirement = track_reconcile
+    try:
+        manager.subscribe("cash", [d.key])
+        original = LateSuccessfulConnectSocket.instances[0]
+        with manager._lock:
+            manager._socket_created_at[SocketGroup(1, 0)] -= 2.0
+        assert manager.recover_disconnected(min_age_seconds=0.0) == 1
+        replacement = manager._sockets[SocketGroup(1, 0)]
+        assert replacement is not original
+
+        LateSuccessfulConnectSocket.release_first_connect.set()
+        assert LateSuccessfulConnectSocket.late_connect_finished.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and not reconcile_calls:
+            time.sleep(0.01)
+        assert reconcile_calls == [SocketGroup(1, 0)], (
+            "a fast close of a late successful handshake must trigger reconciliation "
+            "without waiting for the periodic recovery supervisor"
+        )
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and original.connected:
+            time.sleep(0.01)
+        assert original.closed is True
+        assert original.connected is False
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and not replacement.connected:
+            time.sleep(0.01)
+        assert replacement.connected is True
+        assert len([item for item in LateSuccessfulConnectSocket.instances if not item.closed]) == 1
+    finally:
+        LateSuccessfulConnectSocket.release_first_connect.set()
+        manager.close()
+        LateSuccessfulConnectSocket.attempts = 0
+
+
+def test_failure_callback_invalidation_waits_for_reconcile_snapshot_to_finish():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [d.key])
+        original = FakeSocket.instances[0]
+        callback = original.connect_calls[0]["on_failure"]
+        callback_finished = Event()
+        with manager._reconcile_lock:
+            worker = Thread(
+                target=lambda: (callback("concurrent failure"), callback_finished.set()),
+                daemon=True,
+            )
+            worker.start()
+            time.sleep(0.05)
+            assert not callback_finished.is_set()
+            assert manager._sockets[SocketGroup(1, 0)] is original
+
+        assert callback_finished.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and len(FakeSocket.instances) < 2:
+            time.sleep(0.01)
+        assert len(FakeSocket.instances) == 2
+        assert manager._sockets[SocketGroup(1, 0)] is FakeSocket.instances[1]
+        assert original.closed is True
+    finally:
+        manager.close()
+
+
+
+class GuardedSocket(FakeSocket):
+    forbidden_socket = None
+    created_while_forbidden_open = False
+
+    def __init__(self):
+        if self.forbidden_socket is not None and not self.forbidden_socket.closed:
+            type(self).created_while_forbidden_open = True
+        super().__init__()
+
+
+def test_recovery_closes_unexpected_group_before_opening_missing_shard():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor(str(i)) for i in range(3)]
+    registry.register_many(descriptors)
+    GuardedSocket.forbidden_socket = None
+    GuardedSocket.created_while_forbidden_open = False
+    manager = CommonWebSocketManager(registry, socket_factory=GuardedSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key for item in descriptors])
+        expected = {SocketGroup(1, 0), SocketGroup(1, 1), SocketGroup(1, 2)}
+        assert set(manager._sockets) == expected
+        unexpected_socket = manager._sockets.pop(SocketGroup(1, 2))
+        manager._sockets[SocketGroup(1, 9)] = unexpected_socket
+        manager._socket_tokens[SocketGroup(1, 9)] = manager._socket_tokens.pop(SocketGroup(1, 2))
+        manager._socket_created_at[SocketGroup(1, 9)] = manager._socket_created_at.pop(SocketGroup(1, 2))
+        manager._last_data_at[SocketGroup(1, 9)] = manager._last_data_at.pop(SocketGroup(1, 2))
+        manager._socket_generation[SocketGroup(1, 9)] = manager._socket_generation.pop(SocketGroup(1, 2))
+        GuardedSocket.forbidden_socket = unexpected_socket
+
+        manager.recover_disconnected(min_age_seconds=0.0)
+
+        assert unexpected_socket.closed is True
+        assert GuardedSocket.created_while_forbidden_open is False
+        assert set(manager._sockets) == expected
+        assert len([s for s in GuardedSocket.instances if not s.closed]) == 3
+    finally:
+        manager.close()
+        GuardedSocket.forbidden_socket = None
+
+
+
+def test_closed_manager_does_not_reopen_sockets_from_late_recovery():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    manager.subscribe("cash", [d.key])
+    assert len(FakeSocket.instances) == 1
+
+    manager.close()
+    assert manager.snapshot()["socket_groups"] == 0
+    assert manager.recover_disconnected(min_age_seconds=0.0) == 0
+    time.sleep(0.05)
+    assert manager.snapshot()["socket_groups"] == 0
+    assert len([item for item in FakeSocket.instances if not item.closed]) == 0
+
+    try:
+        manager.subscribe("cash", [d.key])
+    except RuntimeError as exc:
+        assert "closed" in str(exc)
+    else:
+        raise AssertionError("closed manager must reject new subscriptions")
+
+class FailTwiceThenRecoverSocket(FakeSocket):
+    attempts = 0
+
+    def connect(self, **kwargs):
+        type(self).attempts += 1
+        if type(self).attempts <= 2:
+            raise ConnectionError(f"temporary broker failure {type(self).attempts}")
+        return super().connect(**kwargs)
+
+
+def test_recovery_supervisor_retries_repeated_connect_failures_until_success():
+    registry = InstrumentRegistry()
+    item = descriptor("991")
+    registry.register(item)
+    FailTwiceThenRecoverSocket.attempts = 0
+    manager = CommonWebSocketManager(registry, socket_factory=FailTwiceThenRecoverSocket)
+    manager._connect_call_wait_seconds = 0.02
+    manager._recovery_interval_seconds = 0.01
+    try:
+        try:
+            manager.subscribe("cash", [item.key])
+        except ConnectionError:
+            pass
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            snapshot = manager.snapshot()
+            if snapshot["connected_groups"] == ["1:0"]:
+                break
+            time.sleep(0.01)
+
+        snapshot = manager.snapshot()
+        assert FailTwiceThenRecoverSocket.attempts >= 3
+        assert snapshot["socket_groups"] == 1
+        assert snapshot["connected_groups"] == ["1:0"]
+        assert snapshot["connect_failures"] >= 2
+    finally:
+        manager.close()
+        FailTwiceThenRecoverSocket.attempts = 0
+
+
+def test_socket_capacity_configuration_fails_fast_without_opening_partial_feed():
+    registry = InstrumentRegistry()
+    items = [descriptor("992"), descriptor("993")]
+    registry.register_many(items)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    manager._max_sockets = 1
+    manager._recovery_interval_seconds = 0.01
+    try:
+        try:
+            manager.subscribe("cash", [item.key for item in items])
+        except ValueError as exc:
+            assert "global WebSocket limit exceeded" in str(exc)
+        else:
+            raise AssertionError("socket capacity overflow must fail fast")
+
+        assert manager.snapshot()["socket_groups"] == 0
+        assert FakeSocket.instances == []
+        assert manager.registry.subscriptions()
+    finally:
+        manager.close()
+
+
+def test_feed_telemetry_distinguishes_raw_frames_from_routing_failures():
+    registry = InstrumentRegistry()
+    d = descriptor("101", "NSE", "EQ")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    seen = []
+    manager.register_callback("cash", lambda message: seen.append(message))
+    try:
+        manager.subscribe("cash", [d.key])
+        group = SocketGroup(1, 0)
+
+        # Current socket receives frames, but several cannot be routed.
+        manager._on_data(group, ["not", "a", "dict"])
+        manager._on_data(group, {"ltp": 100})
+        manager._on_data(group, {"token": "101", "exchange_type": "bad"})
+        manager._on_data(group, {"token": "999", "exchange_type": 1})
+        manager._on_data(group, {"token": "101", "exchange_type": 2})
+        manager._on_data(group, {"token": "101", "exchange_type": 1, "ltp": 100})
+
+        snapshot = manager.snapshot()
+        assert snapshot["raw_frames_received"] == 6
+        assert snapshot["invalid_frame_types"] == 1
+        assert snapshot["missing_token_frames"] == 1
+        assert snapshot["invalid_exchange_type_frames"] == 1
+        assert snapshot["unmatched_frames"] == 2
+        assert snapshot["exchange_mismatch_frames"] == 1
+        assert snapshot["ticks_received"] == 1
+        assert snapshot["last_raw_frame_age_seconds"] is not None
+        assert len(seen) == 1
+    finally:
+        manager.close()
+
+
+def test_stale_socket_generation_does_not_increment_raw_frame_telemetry():
+    registry = InstrumentRegistry()
+    d = descriptor("101")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [d.key])
+        group = SocketGroup(1, 0)
+        old_callback = FakeSocket.instances[0].connect_calls[0]["on_data"]
+        with manager._lock:
+            old_generation = manager._socket_generation[group]
+            manager._socket_generation[group] = old_generation + 1
+
+        old_callback({"token": "101", "exchange_type": 1})
+        snapshot = manager.snapshot()
+        assert snapshot["raw_frames_received"] == 0
+        assert snapshot["ticks_received"] == 0
+    finally:
+        manager.close()
+
+
+
+
+def test_matched_tick_without_consumer_callback_is_counted_as_a_delivery_gap():
+    registry = InstrumentRegistry()
+    d = descriptor("909")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    try:
+        manager.subscribe("consumer-not-registered", [d.key])
+        manager._on_data(SocketGroup(1, 0), {"token": "909", "ltp": 12345})
+
+        snapshot = manager.snapshot()
+        assert snapshot["ticks_received"] == 1
+        assert snapshot["missing_callback_routes"] == 1
+        assert snapshot["normalized_records_emitted"] == 0
+        assert snapshot["delivery_errors"] == 0
+    finally:
+        manager.close()
+
+
+def test_normalized_record_delivery_failure_is_counted_separately():
+    registry = InstrumentRegistry()
+    d = descriptor("910")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+
+    def fail_delivery(record):
+        raise RuntimeError("consumer intentionally failed")
+
+    try:
+        manager.register_normalized_callback("consumer", fail_delivery)
+        manager.subscribe("consumer", [d.key])
+        manager._on_data(SocketGroup(1, 0), {"token": "910", "ltp": 12345})
+
+        snapshot = manager.snapshot()
+        assert snapshot["normalized_records_emitted"] == 1
+        assert snapshot["normalized_delivery_errors"] == 1
+        assert snapshot["delivery_errors"] == 1
+        assert "consumer intentionally failed" in snapshot["last_delivery_error"]
+    finally:
+        manager.close()
+
+
+
+def test_missing_exchange_type_routes_only_when_token_is_unambiguous():
+    registry = InstrumentRegistry()
+    nse = descriptor("777", "NSE", "EQ")
+    nfo = descriptor("777", "NFO", "DERIVATIVES")
+    registry.register_many([nse, nfo])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("nse", lambda message: seen.append("nse"))
+    manager.register_callback("nfo", lambda message: seen.append("nfo"))
+    try:
+        manager.subscribe("nse", [nse.key])
+        manager.subscribe("nfo", [nfo.key])
+        manager._on_data(SocketGroup(1, 0), {"token": "777", "ltp": 100})
+        snapshot = manager.snapshot()
+        assert seen == []
+        assert snapshot["missing_exchange_type_frames"] == 1
+        assert snapshot["ambiguous_token_frames"] == 1
+        assert snapshot["ticks_received"] == 0
+    finally:
+        manager.close()
+
+
+def test_missing_exchange_type_still_routes_unique_token():
+    registry = InstrumentRegistry()
+    item = descriptor("778")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("cash", lambda message: seen.append(message["token"]))
+    try:
+        manager.subscribe("cash", [item.key])
+        group = SocketGroup(1, 0)
+        manager._on_data(group, {"token": "778", "ltp": 100})
+        snapshot = manager.snapshot()
+        assert seen == ["778"]
+        assert snapshot["missing_exchange_type_frames"] == 1
+        assert snapshot["ambiguous_token_frames"] == 0
+        assert snapshot["ticks_received"] == 1
+        assert snapshot["ticks_by_exchange_type"] == {"1": 1}
+        # A uniquely mapped token still proves that its exchange transport is
+        # active, even when the provider omitted exchange_type in the frame.
+        assert manager._last_raw_frame_at_by_exchange_type[(group, 1)] > 0
+        original = manager._sockets[group]
+        with manager._lock:
+            manager._socket_created_at[group] -= 60.0
+        recovered = manager.recover_disconnected(
+            min_age_seconds=0.0, silent_age_seconds=30.0
+        )
+        assert recovered == 0
+        assert manager._sockets[group] is original
+        assert original.closed is False
+    finally:
+        manager.close()
+
+
+def test_normalized_delivery_counter_only_increments_after_consumer_success():
+    registry = InstrumentRegistry()
+    item = descriptor("779")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    try:
+        manager.register_normalized_callback(
+            "consumer", lambda record: (_ for _ in ()).throw(RuntimeError("consumer failed"))
+        )
+        manager.subscribe("consumer", [item.key])
+        manager._on_data(SocketGroup(1, 0), {"token": "779", "ltp": 12345})
+        snapshot = manager.snapshot()
+        assert snapshot["normalized_records_emitted"] == 1
+        assert snapshot["normalized_records_delivered"] == 0
+        assert snapshot["normalized_delivery_errors"] == 1
+    finally:
+        manager.close()
+
+
+def test_invalid_subscription_mode_is_rejected_before_broker_io():
+    registry = InstrumentRegistry()
+    item = descriptor("780")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    try:
+        try:
+            manager.subscribe("consumer", [item.key], mode=5)
+        except ValueError as exc:
+            assert "mode must be one" in str(exc)
+        else:
+            raise AssertionError("unsupported mode must be rejected")
+        assert FakeSocket.instances == []
+        assert registry.subscriptions() == ()
+    finally:
+        manager.close()
+
+
+def test_mode_four_is_accepted_consistently_by_common_manager():
+    registry = InstrumentRegistry()
+    item = descriptor("781")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    try:
+        manager.subscribe("depth-consumer", [item.key], mode=4)
+        assert manager.snapshot()["connected_groups"] == ["4:0"]
+        assert FakeSocket.instances[0].connect_calls[0]["mode"] == 4
+    finally:
+        manager.close()
+
+
+def test_missing_exchange_type_rejects_ambiguous_token_across_socket_groups():
+    registry = InstrumentRegistry()
+    nse = descriptor("777", "NSE", "EQ")
+    nfo = descriptor("777", "NFO", "DERIVATIVES")
+    registry.register_many([nse, nfo])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    seen = []
+    manager.register_callback("nse", lambda message: seen.append("nse"))
+    manager.register_callback("nfo", lambda message: seen.append("nfo"))
+    try:
+        manager.subscribe("nse", [nse.key])
+        manager.subscribe("nfo", [nfo.key])
+        assert manager.snapshot()["socket_groups"] == 2
+        manager._on_data(SocketGroup(1, 0), {"token": "777", "ltp": 100})
+        snapshot = manager.snapshot()
+        assert seen == []
+        assert snapshot["ambiguous_token_frames"] == 1
+        assert snapshot["ticks_received"] == 0
+    finally:
+        manager.close()
+
+
+def test_matched_frame_only_refreshes_silence_timer_after_successful_delivery():
+    registry = InstrumentRegistry()
+    item = descriptor("782")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+
+    def fail_delivery(_message):
+        raise RuntimeError("consumer delivery failed")
+
+    manager.register_callback("consumer", fail_delivery)
+    try:
+        manager.subscribe("consumer", [item.key])
+        group = SocketGroup(1, 0)
+        before = manager._last_data_at[group]
+        manager._on_data(group, {"token": "782", "exchange_type": 1, "ltp": 100})
+        snapshot = manager.snapshot()
+        assert manager._last_data_at[group] == before
+        assert snapshot["ticks_received"] == 1
+        assert snapshot["raw_callback_attempts"] == 1
+        assert snapshot["raw_callback_successes"] == 0
+        assert snapshot["last_successful_delivery_age_seconds_by_group"]["1:0"] is None
+    finally:
+        manager.close()
+
+
+def test_raw_unmatched_frames_prevent_transport_silence_reconnect():
+    registry = InstrumentRegistry()
+    item = descriptor("782")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("consumer", [item.key])
+        group = SocketGroup(1, 0)
+        original = manager._sockets[group]
+        with manager._lock:
+            manager._socket_created_at[group] -= 2.0
+            manager._last_data_at[group] -= 120.0
+        before_attempts = manager.snapshot()["recovery_attempts"]
+
+        # The transport is active, but this token cannot be routed to the
+        # subscription. This is a mapping/data-path problem, not socket silence.
+        manager._on_data(group, {"token": "unregistered", "exchange_type": 1})
+        assert manager.snapshot()["unmatched_frames"] == 1
+        assert manager.recover_disconnected(
+            min_age_seconds=0.0, silent_age_seconds=1.0
+        ) == 0
+
+        assert manager._sockets[group] is original
+        assert len(FakeSocket.instances) == 1
+        assert manager.snapshot()["recovery_attempts"] == before_attempts
+    finally:
+        manager.close()
+
+
+def test_non_integer_subscription_mode_is_rejected_before_broker_io():
+    registry = InstrumentRegistry()
+    item = descriptor("783")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    try:
+        try:
+            manager.subscribe("consumer", [item.key], mode=1.0)
+        except ValueError as exc:
+            assert "mode must be one" in str(exc)
+        else:
+            raise AssertionError("float mode must be rejected rather than reaching the broker SDK")
+        assert FakeSocket.instances == []
+        assert registry.subscriptions() == ()
+    finally:
+        manager.close()
+
+
+def test_missing_exchange_type_uses_mode_scope_not_other_mode_routes():
+    registry = InstrumentRegistry()
+    nse = descriptor("777", "NSE", "EQ")
+    nfo = descriptor("777", "NFO", "DERIVATIVES")
+    registry.register_many([nse, nfo])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("nse", lambda message: seen.append("nse"))
+    manager.register_callback("nfo", lambda message: seen.append("nfo"))
+    try:
+        manager.subscribe("nse", [nse.key], mode=1)
+        manager.subscribe("nfo", [nfo.key], mode=3)
+        manager._on_data(SocketGroup(1, 0), {"token": "777", "ltp": 100})
+        assert seen == ["nse"]
+        snapshot = manager.snapshot()
+        assert snapshot["ambiguous_token_frames"] == 0
+        assert snapshot["ticks_received"] == 1
+    finally:
+        manager.close()
+
+
+def test_exchange_type_alias_is_used_when_primary_field_is_null():
+    registry = InstrumentRegistry()
+    item = descriptor("784")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("cash", lambda message: seen.append(message["token"]))
+    try:
+        manager.subscribe("cash", [item.key])
+        manager._on_data(
+            SocketGroup(1, 0),
+            {"token": "784", "exchange_type": None, "exchangeType": 1, "ltp": 100},
+        )
+        snapshot = manager.snapshot()
+        assert seen == ["784"]
+        assert snapshot["invalid_exchange_type_frames"] == 0
+        assert snapshot["missing_exchange_type_frames"] == 0
+    finally:
+        manager.close()
+
+
+def test_boolean_and_fractional_exchange_types_are_rejected():
+    registry = InstrumentRegistry()
+    item = descriptor("785")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+    manager.register_callback("cash", lambda message: seen.append(message["token"]))
+    try:
+        manager.subscribe("cash", [item.key])
+        manager._on_data(SocketGroup(1, 0), {"token": "785", "exchange_type": True})
+        manager._on_data(SocketGroup(1, 0), {"token": "785", "exchange_type": 1.5})
+        snapshot = manager.snapshot()
+        assert seen == []
+        assert snapshot["invalid_exchange_type_frames"] == 2
+        assert snapshot["ticks_received"] == 0
+    finally:
+        manager.close()
+
+
+
+def test_single_socket_transport_failure_preserves_other_healthy_shard():
+    registry = InstrumentRegistry()
+    descriptors = [descriptor("101"), descriptor("102")]
+    registry.register_many(descriptors)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key for item in descriptors])
+        assert len(FakeSocket.instances) == 2
+        original_by_group = {
+            group: socket for group, socket in manager._sockets.items()
+        }
+        failed_group = SocketGroup(1, 0)
+        healthy_group = SocketGroup(1, 1)
+        failed_socket = original_by_group[failed_group]
+        healthy_socket = original_by_group[healthy_group]
+
+        failed_socket.connect_calls[0]["on_failure"]("transport reset")
+
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline:
+            current = manager.snapshot()
+            if current["socket_groups"] == 2 and failed_socket.closed:
+                break
+            time.sleep(0.01)
+
+        assert failed_socket.closed is True
+        assert manager._sockets[healthy_group] is healthy_socket
+        assert healthy_socket.closed is False
+        assert healthy_socket.connected is True
+        assert sorted(manager.snapshot()["connected_groups"]) == ["1:0", "1:1"]
+        assert len(FakeSocket.instances) == 3  # only the failed shard was replaced
+        assert manager._recovery_thread is not None
+        assert manager._recovery_thread.is_alive()
+    finally:
+        manager.close()
+
+
+def test_reconcile_replaces_known_disconnected_socket_before_subscription_update():
+    registry = InstrumentRegistry()
+    first = descriptor("101")
+    second = descriptor("102")
+    registry.register_many([first, second])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [first.key])
+        original = FakeSocket.instances[0]
+        original.connected = False
+        manager.subscribe("cash", [second.key])
+        assert original.closed is True
+        assert len(FakeSocket.instances) == 2
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+        assert set(manager._socket_tokens[SocketGroup(1, 0)]) == {(1, "101"), (1, "102")}
+    finally:
+        manager.close()
+
+
+class BlockingConnectAcrossShardsSocket(FakeSocket):
+    first_started = Event()
+    release_first = Event()
+    connect_order = []
+
+    def connect(self, **kwargs):
+        type(self).connect_order.append(len(type(self).connect_order))
+        super().connect(**kwargs)
+        if len(type(self).connect_order) == 1:
+            # Model a successfully opened socket whose long-lived transport loop
+            # remains active. connect() itself must return after handshake.
+            type(self).first_started.set()
+            Thread(
+                target=lambda: type(self).release_first.wait(timeout=3.0),
+                name="fake-blocked-transport",
+                daemon=True,
+            ).start()
+
+
+def test_blocking_transport_does_not_hold_global_admission_for_other_shard():
+    registry = InstrumentRegistry()
+    items = [descriptor("601"), descriptor("602")]
+    registry.register_many(items)
+    BlockingConnectAcrossShardsSocket.first_started.clear()
+    BlockingConnectAcrossShardsSocket.release_first.clear()
+    BlockingConnectAcrossShardsSocket.connect_order.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=BlockingConnectAcrossShardsSocket)
+    manager._max_tokens_per_socket = 1
+    manager._connect_call_wait_seconds = 0.05
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key for item in items])
+        assert BlockingConnectAcrossShardsSocket.first_started.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if len(BlockingConnectAcrossShardsSocket.connect_order) >= 2:
+                break
+            time.sleep(0.01)
+        assert len(BlockingConnectAcrossShardsSocket.connect_order) >= 2, (
+            "a blocked first shard must not hold broker admission and starve the next shard"
+        )
+    finally:
+        BlockingConnectAcrossShardsSocket.release_first.set()
+        manager.close()
+
+
+def test_snapshot_separates_raw_route_and_delivery_clocks():
+    registry = InstrumentRegistry()
+    item = descriptor("786")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager.register_callback("cash", lambda message: None)
+    try:
+        manager.subscribe("cash", [item.key])
+        manager._on_data(SocketGroup(1, 0), {"token": "786", "exchange_type": 1, "ltp": 100})
+        snapshot = manager.snapshot()
+        assert "1:0" in snapshot["last_raw_frame_age_seconds_by_group"]
+        assert "1:0" in snapshot["last_successful_route_age_seconds_by_group"]
+        assert "1:0" in snapshot["last_successful_delivery_age_seconds_by_group"]
+    finally:
+        manager.close()
+
+
+def test_failed_shard_replacement_waits_for_old_socket_close():
+    class BlockingCloseSocket(FakeSocket):
+        release_close = Event()
+
+        def close(self):
+            type(self).release_close.wait(timeout=2.0)
+            self.closed = True
+            self.connected = False
+
+    registry = InstrumentRegistry()
+    item = descriptor("787")
+    registry.register(item)
+    BlockingCloseSocket.instances.clear()
+    BlockingCloseSocket.release_close.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=BlockingCloseSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key])
+        original = BlockingCloseSocket.instances[0]
+        original.connect_calls[0]["on_failure"]("transport reset")
+
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if "1:0" in manager.snapshot()["failure_recovery_groups"]:
+                break
+            time.sleep(0.01)
+        assert "1:0" in manager.snapshot()["failure_recovery_groups"]
+
+        manager._reconcile()
+        assert len(BlockingCloseSocket.instances) == 1, (
+            "replacement must wait until the retired transport close completes"
+        )
+
+        BlockingCloseSocket.release_close.set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if len(BlockingCloseSocket.instances) == 2:
+                break
+            time.sleep(0.01)
+        assert len(BlockingCloseSocket.instances) == 2
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+    finally:
+        BlockingCloseSocket.release_close.set()
+        manager.close()
+
+
+def test_reconcile_disconnected_socket_blocks_replacement_until_close_finishes():
+    class BlockingRetireSocket(FakeSocket):
+        release_close = Event()
+
+        def close(self):
+            type(self).release_close.wait(timeout=4.0)
+            self.closed = True
+            self.connected = False
+
+    registry = InstrumentRegistry()
+    first = descriptor("788")
+    second = descriptor("789")
+    registry.register_many([first, second])
+    BlockingRetireSocket.instances.clear()
+    BlockingRetireSocket.release_close.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=BlockingRetireSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [first.key])
+        original = BlockingRetireSocket.instances[0]
+        original.connected = False
+        manager.subscribe("cash", [second.key])
+
+        assert len(BlockingRetireSocket.instances) == 1
+        assert "1:0" in manager.snapshot()["failure_recovery_groups"]
+
+        BlockingRetireSocket.release_close.set()
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            if len(BlockingRetireSocket.instances) == 2:
+                break
+            time.sleep(0.01)
+        assert len(BlockingRetireSocket.instances) == 2
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+    finally:
+        BlockingRetireSocket.release_close.set()
+        manager.close()
+
+
+
+def test_retired_transport_health_blocks_new_global_session_until_close_exits():
+    registry = InstrumentRegistry()
+    first = descriptor("801")
+    second = descriptor("802")
+    registry.register_many([first, second])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 60.0
+    release = Event()
+    try:
+        manager.subscribe("cash", [first.key])
+        assert len(FakeSocket.instances) == 1
+
+        blocked_close = Thread(
+            target=lambda: release.wait(timeout=4.0),
+            name="test-retired-transport",
+            daemon=True,
+        )
+        blocked_close.start()
+        manager._watch_retired_transport(
+            blocked_close,
+            group=SocketGroup(9, 9),
+            generation=99,
+            reason="test_blocked_close",
+            on_finished=manager._reconcile,
+        )
+
+        manager.subscribe("cash", [second.key])
+        snapshot = manager.snapshot()
+        assert snapshot["retired_transport_count"] == 1
+        assert snapshot["retired_transport_groups"] == ["9:9"]
+        assert len(FakeSocket.instances) == 1, (
+            "a retired transport may still consume a broker session; don't open another shard"
+        )
+
+        release.set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and len(FakeSocket.instances) < 2:
+            time.sleep(0.01)
+        assert len(FakeSocket.instances) == 2
+        assert manager.snapshot()["retired_transport_count"] == 0
+    finally:
+        release.set()
+        manager.close()
+
+
+
+def test_snapshot_exposes_safe_per_socket_lifecycle_health():
+    class DiagnosticSocket(FakeSocket):
+        @property
+        def health(self):
+            return {
+                "connected": self.connected,
+                "last_error": "ConnectionResetError: simulated",
+                "transport_thread_alive": True,
+                "transport_close_timed_out": True,
+                "auth_token": "must-not-leak",
+            }
+
+    registry = InstrumentRegistry()
+    item = descriptor("990")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=DiagnosticSocket)
+    try:
+        manager.subscribe("cash", [item.key])
+        health = manager.snapshot()["socket_health_by_group"]["1:0"]
+        assert health["connected"] is True
+        assert health["last_error"] == "ConnectionResetError: simulated"
+        assert health["transport_thread_alive"] is True
+        assert health["transport_close_timed_out"] is True
+        assert "auth_token" not in health
+    finally:
+        manager.close()
+
+
+def test_silent_feed_recovery_is_limited_to_regular_market_window():
+    ist = ZoneInfo("Asia/Kolkata")
+
+    assert common_websocket_module._is_regular_trading_window(
+        datetime(2026, 10, 16, 5, 45, tzinfo=ist)
+    ) is False
+    assert common_websocket_module._is_regular_trading_window(
+        datetime(2026, 10, 16, 10, 0, tzinfo=ist)
+    ) is True
+    assert common_websocket_module._is_regular_trading_window(
+        datetime(2026, 10, 17, 10, 0, tzinfo=ist)
+    ) is False
+
+
+
+def test_missing_shard_does_not_repeat_recovery_while_retired_transport_is_alive():
+    registry = InstrumentRegistry()
+    items = [descriptor("991"), descriptor("992")]
+    registry.register_many(items)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 60.0
+    release = Event()
+    try:
+        manager.subscribe("cash", [item.key for item in items])
+        assert len(FakeSocket.instances) == 2
+
+        missing = SocketGroup(1, 1)
+        with manager._lock:
+            retired_socket = manager._sockets.pop(missing)
+            manager._socket_tokens.pop(missing, None)
+            manager._socket_created_at.pop(missing, None)
+            manager._last_data_at.pop(missing, None)
+            manager._socket_generation.pop(missing, None)
+
+        blocked_close = Thread(
+            target=lambda: release.wait(timeout=4.0),
+            name="test-missing-shard-retired-transport",
+            daemon=True,
+        )
+        blocked_close.start()
+        manager._watch_retired_transport(
+            blocked_close,
+            group=missing,
+            generation=99,
+            reason="test_missing_shard_wait",
+            on_finished=manager._reconcile,
+        )
+
+        before = manager.snapshot()["recovery_attempts"]
+        assert manager.recover_disconnected(min_age_seconds=0.0) == 0
+        assert manager.recover_disconnected(min_age_seconds=0.0) == 0
+        snapshot = manager.snapshot()
+        assert snapshot["retired_transport_count"] == 1
+        assert snapshot["recovery_attempts"] == before
+        assert len(FakeSocket.instances) == 2
+
+        release.set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if manager.snapshot()["socket_groups"] == 2 and manager.snapshot()["retired_transport_count"] == 0:
+                break
+            time.sleep(0.01)
+        assert manager.snapshot()["socket_groups"] == 2
+        assert manager.snapshot()["retired_transport_count"] == 0
+    finally:
+        release.set()
+        manager.close()
+
+
+
+def test_stale_connect_exception_cannot_trigger_broker_cooldown():
+    started = Event()
+    release = Event()
+    failed = Event()
+
+    class Late429Socket(FakeSocket):
+        def connect(self, **kwargs):
+            self.connect_calls.append(kwargs)
+            self.connecting = True
+            started.set()
+            release.wait(timeout=3.0)
+            self.connecting = False
+            failed.set()
+            raise RuntimeError("429 Connection Limit Exceeded")
+
+    registry = InstrumentRegistry()
+    item = descriptor("993")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=Late429Socket)
+    manager._connect_call_wait_seconds = 0.02
+    try:
+        manager.subscribe("cash", [item.key])
+        assert started.wait(timeout=1.0)
+        group = SocketGroup(1, 0)
+        with manager._lock:
+            old_generation = manager._socket_generation[group]
+            manager._socket_generation[group] = old_generation + 1
+
+        release.set()
+        assert failed.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and manager.snapshot()["broker_cooldown_remaining_seconds"] > 0:
+            time.sleep(0.01)
+
+        assert manager.snapshot()["broker_cooldown_remaining_seconds"] == 0
+        assert manager.snapshot()["socket_groups"] == 1
+    finally:
+        release.set()
+        manager.close()
+
+
+
+def test_consumer_refresh_removes_old_token_and_activates_new_token():
+    registry = InstrumentRegistry()
+    old = descriptor("101", "NFO", "DERIVATIVES")
+    new = descriptor("202", "NFO", "DERIVATIVES")
+    registry.register_many([old, new])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+
+    manager.subscribe("synthetic-options", [old.key], mode=3)
+    old_socket = FakeSocket.instances[0]
+    assert old_socket.connect_calls[0]["subscriptions"] == {2: ["101"]}
+
+    manager.clear_consumer("synthetic-options")
+    assert manager.snapshot()["active_instruments"] == 0
+    assert old_socket.closed is True
+
+    manager.subscribe("synthetic-options", [new.key], mode=3)
+    new_socket = FakeSocket.instances[-1]
+    assert new_socket is not old_socket
+    assert new_socket.connect_calls[0]["subscriptions"] == {2: ["202"]}
+    assert [sub.key.token for sub in registry.subscriptions()] == ["202"]
+
+
+def test_latest_exchange_timestamp_never_regresses_on_out_of_order_ticks():
+    registry = InstrumentRegistry()
+    d = descriptor("101", "NSE", "EQ")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    manager.register_normalized_callback("cash", lambda record: None)
+    try:
+        manager.subscribe("cash", [d.key])
+        group = SocketGroup(1, 0)
+        manager._on_data(group, {
+            "token": "101", "exchange_type": 1, "ltp": 100,
+            "timestamp_ns": "1792386000000000000",
+        })
+        manager._on_data(group, {
+            "token": "101", "exchange_type": 1, "ltp": 99,
+            "timestamp_ns": "1792385990000000000",
+        })
+        snapshot = manager.snapshot()
+        assert snapshot["ticks_received"] == 2
+        assert snapshot["last_tick"]["timestamp_ns"] == 1792385990000000000
+        assert snapshot["latest_tick_timestamp_ns"] == 1792386000000000000
+    finally:
+        manager.close()
+
+def test_local_timestamp_fallback_does_not_count_as_exchange_source_freshness():
+    registry = InstrumentRegistry()
+    item = descriptor("414", "NSE", "EQ")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    manager.register_normalized_callback("cash", lambda record: None)
+    try:
+        manager.subscribe("cash", [item.key])
+        manager._on_data(SocketGroup(1, 0), {
+            "token": "414", "exchange_type": 1, "ltp": 100,
+        })
+        snapshot = manager.snapshot()
+        assert snapshot["ticks_received"] == 1
+        assert snapshot["latest_tick_timestamp_ns_by_exchange_type"] == {}
+    finally:
+        manager.close()
+
+
+
+def test_recovery_does_not_recycle_connected_socket_when_primary_frames_arrive_with_stale_quotes():
+    registry = InstrumentRegistry()
+    item = descriptor("101", "NSE", "EQ")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key])
+        group = SocketGroup(1, 0)
+        original = manager._sockets[group]
+        now = time.monotonic()
+        # The broker is delivering frames for this exchange, but their exchange
+        # timestamps are stale. Keep the quote stale for strategy freshness while
+        # proving that transport recovery must not churn the live socket.
+        manager._last_raw_frame_at_by_group[group] = now
+        manager._last_raw_frame_at_by_exchange_type[(group, 1)] = now
+        stale_timestamp_ns = time.time_ns() - 60_000_000_000
+        manager._latest_tick_timestamp_ns_by_group_exchange[(group, 1)] = (
+            stale_timestamp_ns
+        )
+        # The public exchange-age diagnostic is aggregated across groups.
+        manager._latest_tick_timestamp_ns_by_exchange_type[1] = stale_timestamp_ns
+        manager._socket_created_at[group] -= 60.0
+
+        recovered = manager.recover_disconnected(
+            min_age_seconds=0.0, silent_age_seconds=30.0
+        )
+
+        assert recovered == 0
+        assert manager._sockets[group] is original
+        assert original.closed is False
+        assert len(FakeSocket.instances) == 1
+        # Data freshness diagnostics remain stale; this change affects recovery only.
+        ages = manager.snapshot()["last_exchange_tick_age_seconds_by_exchange_type"]
+        assert ages["1"] >= 59
+    finally:
+        manager.close()
+
+
+def test_exchange_freshness_snapshot_does_not_hide_stale_nse_nfo_behind_mcx():
+    registry = InstrumentRegistry()
+    items = [
+        descriptor("101", "NSE", "EQ"),
+        descriptor("202", "NFO", "DERIVATIVES"),
+        descriptor("303", "MCX", "COMMODITY"),
+    ]
+    registry.register_many(items)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    manager.register_normalized_callback("quotes", lambda record: None)
+    try:
+        manager.subscribe("quotes", [item.key for item in items], mode=3)
+        group = SocketGroup(3, 0)
+        now_ns = time.time_ns()
+        manager._latest_tick_timestamp_ns_by_exchange_type.update({
+            1: now_ns - 60_000_000_000,
+            2: now_ns - 60_000_000_000,
+            5: now_ns,
+        })
+        manager._latest_tick_timestamp_ns_by_group_exchange.update({
+            (group, 1): now_ns - 60_000_000_000,
+            (group, 2): now_ns - 60_000_000_000,
+            (group, 5): now_ns,
+        })
+        # Model per-exchange transport silence explicitly: the shared shard
+        # still receives MCX frames, while its NSE/NFO subscriptions are silent.
+        now = time.monotonic()
+        manager._last_raw_frame_at_by_exchange_type.update({
+            (group, 1): now - 60.0,
+            (group, 2): now - 60.0,
+            (group, 5): now,
+        })
+        manager._last_raw_frame_at_by_group[group] = now
+        manager._socket_created_at[group] -= 60.0
+        snapshot = manager.snapshot()
+        ages = snapshot["last_exchange_tick_age_seconds_by_exchange_type"]
+        assert ages["1"] >= 59
+        assert ages["2"] >= 59
+        assert ages["5"] < 5
+
+        # Recent raw frames from MCX must not prevent recovery of a shard whose
+        # subscribed NSE/NFO exchanges have both stopped producing fresh ticks.
+        manager._silent_feed_timeout_seconds = 30.0
+        recovered = manager.recover_disconnected(
+            min_age_seconds=0.0, silent_age_seconds=30.0
+        )
+        assert recovered == 1
+        assert FakeSocket.instances[0].closed is True
+        assert manager.snapshot()["socket_groups"] == 1
+    finally:
+        manager.close()
+
+
+
+
+def test_new_lexicographically_earlier_token_does_not_rehome_active_shard():
+    registry = InstrumentRegistry()
+    first = descriptor("101")
+    second = descriptor("102")
+    earlier = descriptor("050")
+    registry.register_many([first, second, earlier])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 2
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [first.key, second.key])
+        original_socket = manager._sockets[SocketGroup(1, 0)]
+        original_tokens = set(manager._socket_tokens[SocketGroup(1, 0)])
+
+        manager.subscribe("box", [earlier.key])
+
+        assert manager._sockets[SocketGroup(1, 0)] is original_socket
+        assert manager._socket_tokens[SocketGroup(1, 0)] == original_tokens
+        assert manager._socket_tokens[SocketGroup(1, 1)] == {(1, "050")}
+        assert manager.snapshot()["required_socket_groups"] == ["1:0", "1:1"]
+        assert original_socket.closed is False
+    finally:
+        manager.close()
+
+
+def test_socket_capacity_rejection_does_not_commit_new_shard_assignments():
+    registry = InstrumentRegistry()
+    first = descriptor("101")
+    second = descriptor("102")
+    registry.register_many([first, second])
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._max_tokens_per_socket = 1
+    manager._max_sockets = 1
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [first.key])
+        original_socket = manager._sockets[SocketGroup(1, 0)]
+        original_assignments = dict(manager._shard_assignments[1])
+
+        try:
+            manager.subscribe("box", [second.key])
+        except ValueError as exc:
+            assert "global WebSocket limit exceeded" in str(exc)
+        else:
+            raise AssertionError("socket capacity overflow must be rejected")
+
+        assert manager._shard_assignments[1] == original_assignments
+        assert manager._sockets[SocketGroup(1, 0)] is original_socket
+        assert original_socket.closed is False
+        assert manager.snapshot()["socket_groups"] == 1
+    finally:
+        manager.close()
+
+
+def test_snapshot_exposes_per_instrument_subscription_roster_and_raw_frames():
+    registry = InstrumentRegistry()
+    spot = descriptor("99926000", "NSE", "NSE")
+    registry.register(spot)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("iv-skew-flip-spot", [spot.key], mode=3)
+        manager._on_data(SocketGroup(3, 0), {
+            "token": "99926000", "exchange_type": 1, "ltp": 25000,
+        })
+        snapshot = manager.snapshot()
+        roster = snapshot["subscription_roster"]
+        assert roster == [{
+            "consumer": ["iv-skew-flip-spot"],
+            "mode": 3,
+            "exchange": "NSE",
+            "segment": "NSE",
+            "exchange_type": 1,
+            "token": "99926000",
+            "symbol": "S99926000",
+            "instrument_type": "equity",
+            "underlying": None,
+            "expiry": None,
+            "strike": None,
+            "option_type": None,
+            "socket_group": "3:0",
+            "raw_frames": 1,
+        }]
+        assert snapshot["raw_frames_by_instrument"] == {"3:1:99926000": 1}
+    finally:
+        manager.close()
+
+
+def test_transport_observer_receives_current_open_and_retiring_close_only():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    group = SocketGroup(3, 1)
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 7
+    manager._socket_generation_counter[group] = 7
+    events = []
+    manager.register_transport_observer(
+        "readiness", lambda *args: events.append(args)
+    )
+
+    manager._notify_transport_observers("OPEN", group, 7, 100)
+    manager._sockets.pop(group)
+    manager._socket_generation.pop(group)
+    manager._notify_transport_observers("CLOSED", group, 7, 200)
+    manager._notify_transport_observers("ERROR", group, 7, 300)
+    manager._notify_transport_observers("CLOSED", group, 6, 400)
+
+    assert [(event, generation, received) for event, _group, generation, received in events] == [
+        ("OPEN", 7, 100), ("CLOSED", 7, 200)
+    ]
+
+
+def test_transport_observer_failure_isolated_from_other_observers():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    group = SocketGroup(1, 0)
+    manager._sockets[group] = object()
+    manager._socket_generation[group] = 3
+    manager._socket_generation_counter[group] = 3
+    received = []
+    manager.register_transport_observer(
+        "broken", lambda *_: (_ for _ in ()).throw(RuntimeError("observer failure"))
+    )
+    manager.register_transport_observer("healthy", lambda *args: received.append(args))
+    manager._notify_transport_observers("OPEN", group, 3, 123)
+
+    assert len(received) == 1
+    assert manager._delivery_errors == 1
+
+
+
+def test_late_connect_failure_after_manager_shutdown_does_not_pollute_health():
+    started = Event()
+    release = Event()
+    failed = Event()
+
+    class LateFailureSocket(FakeSocket):
+        def connect(self, **kwargs):
+            self.connect_calls.append(kwargs)
+            self.connecting = True
+            started.set()
+            release.wait(timeout=4.0)
+            failed.set()
+            raise RuntimeError("late retired handshake failure")
+
+    registry = InstrumentRegistry()
+    item = descriptor("994")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=LateFailureSocket)
+    manager._connect_call_wait_seconds = 0.02
+    try:
+        manager.subscribe("cash", [item.key])
+        assert started.wait(timeout=1.0)
+        before = manager.snapshot()
+        assert before["connect_failures"] == 0
+
+        manager.close()
+        release.set()
+        assert failed.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if not any(
+                thread.name.startswith("common-ws-connect-") and thread.is_alive()
+                for thread in __import__("threading").enumerate()
+            ):
+                break
+            time.sleep(0.01)
+
+        after = manager.snapshot()
+        assert after["connect_failures"] == 0
+        assert after["last_connect_failure"] is None
+        assert after["socket_groups"] == 0
+    finally:
+        release.set()
+        manager.close()
+
+
+
+def test_shared_broker_admission_serializes_connects_across_manager_instances():
+    started = Event()
+    release = Event()
+    second_started = Event()
+
+    class FirstBlockingSocket(FakeSocket):
+        # Keep this subclass's instance accounting isolated from sibling
+        # FakeSocket subclasses that inherit the base class list.
+        instances = []
+
+        def connect(self, **kwargs):
+            self.connect_calls.append(kwargs)
+            self.connecting = True
+            started.set()
+            release.wait(timeout=4.0)
+            self.connecting = False
+            self.connected = True
+
+    class SecondSocket(FakeSocket):
+        # FakeSocket.instances is inherited by subclasses; keep this test's
+        # instance accounting isolated from FirstBlockingSocket.
+        instances = []
+
+        def connect(self, **kwargs):
+            self.connect_calls.append(kwargs)
+            self.connecting = False
+            self.connected = True
+            second_started.set()
+
+    first_registry = InstrumentRegistry()
+    second_registry = InstrumentRegistry()
+    first_item = descriptor("801")
+    second_item = descriptor("802")
+    first_registry.register(first_item)
+    second_registry.register(second_item)
+    first_manager = CommonWebSocketManager(
+        first_registry, socket_factory=FirstBlockingSocket
+    )
+    second_manager = CommonWebSocketManager(
+        second_registry, socket_factory=SecondSocket
+    )
+    first_manager._connect_call_wait_seconds = 0.02
+    second_manager._connect_call_wait_seconds = 0.02
+    first_manager._recovery_interval_seconds = 60.0
+    second_manager._recovery_interval_seconds = 60.0
+    try:
+        first_manager.subscribe("first", [first_item.key])
+        assert started.wait(timeout=1.0)
+
+        second_manager.subscribe("second", [second_item.key])
+        assert not second_started.is_set(), (
+            "a second manager must not start a broker handshake while the "
+            "first manager's handshake is still unresolved"
+        )
+
+        # The second manager may defer socket construction itself until the
+        # process-wide admission slot is free. Assert handshake serialization,
+        # not eager placeholder allocation.
+        release.set()
+        assert second_started.wait(timeout=2.0)
+        assert len(FirstBlockingSocket.instances) == 1
+        assert FirstBlockingSocket.instances[0].connected is True
+        assert len(SecondSocket.instances) == 1
+        second_socket = SecondSocket.instances[0]
+        assert second_socket.connected is True
+    finally:
+        release.set()
+        first_manager.close()
+        second_manager.close()
+
+
+
+def test_retired_slot_waits_for_actual_transport_thread_after_close_returns():
+    class LingeringTransportSocket(FakeSocket):
+        release_transport = Event()
+
+        def connect(self, **kwargs):
+            super().connect(**kwargs)
+            self._transport_thread = Thread(
+                target=lambda: type(self).release_transport.wait(timeout=5.0),
+                name="test-lingering-angel-transport",
+                daemon=True,
+            )
+            self._transport_thread.start()
+
+        @property
+        def health(self):
+            return {
+                "connected": self.connected,
+                "transport_thread_alive": bool(
+                    getattr(self, "_transport_thread", None)
+                    and self._transport_thread.is_alive()
+                ),
+            }
+
+    LingeringTransportSocket.release_transport.clear()
+    registry = InstrumentRegistry()
+    item = descriptor("805")
+    registry.register(item)
+    manager = CommonWebSocketManager(
+        registry, socket_factory=LingeringTransportSocket
+    )
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key])
+        original = LingeringTransportSocket.instances[0]
+        group = SocketGroup(1, 0)
+        with manager._lock:
+            generation = manager._socket_generation[group]
+            manager._sockets.pop(group)
+            manager._socket_tokens.pop(group, None)
+            manager._socket_created_at.pop(group, None)
+            manager._socket_generation.pop(group, None)
+
+        close_worker = manager._close_socket_tracked(
+            original,
+            group=group,
+            generation=generation,
+            reason="test_transport_still_alive",
+            on_finished=lambda: manager._reconcile_after_retirement(group),
+            timeout=0.05,
+        )
+        assert close_worker.is_alive(), (
+            "close() returning must not mark the broker transport retired while "
+            "its run_forever thread is still alive"
+        )
+        manager._reconcile()
+        assert len(LingeringTransportSocket.instances) == 1
+        assert manager.snapshot()["retired_transport_count"] == 1
+
+        LingeringTransportSocket.release_transport.set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if len(LingeringTransportSocket.instances) == 2 and manager.snapshot()["retired_transport_count"] == 0:
+                break
+            time.sleep(0.01)
+        assert len(LingeringTransportSocket.instances) == 2
+        assert manager.snapshot()["retired_transport_count"] == 0
+        assert manager.snapshot()["connected_groups"] == ["1:0"]
+    finally:
+        LingeringTransportSocket.release_transport.set()
+        manager.close()

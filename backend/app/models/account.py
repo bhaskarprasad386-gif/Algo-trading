@@ -1,0 +1,27 @@
+from datetime import datetime, timezone
+
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String
+
+from app.core.database import Base
+
+PAPER_STARTING_BALANCE = 10_000_000.0
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class TradingAccount(Base):
+    __tablename__ = "trading_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    mode = Column(String(10), nullable=False, default="PAPER")
+    virtual_balance = Column(Float, nullable=False, default=PAPER_STARTING_BALANCE)
+    initial_virtual_balance = Column(Float, nullable=False, default=PAPER_STARTING_BALANCE)
+    initial_balance_source = Column(String(32), nullable=False, default="BOOTSTRAP")
+    realized_pnl = Column(Float, nullable=False, default=0.0)
+    is_active = Column(Boolean, default=True, nullable=False)
+    box_spread_auto_lots = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)

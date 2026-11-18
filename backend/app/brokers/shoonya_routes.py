@@ -1,0 +1,210 @@
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
+
+import requests
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from app.brokers.connections import broker_connections
+from app.brokers.real_owner_auth import require_real_owner_access
+from app.brokers.real_owner_state import claim_authenticated_account, set_owner_connection_state
+from app.brokers.safety import trading_safety
+from app.brokers.session_store import broker_sessions
+from app.brokers.shoonya import ShoonyaAdapter, ShoonyaHistoryUnavailable
+from app.brokers.shoonya_auth import ShoonyaAuthenticationError, ShoonyaOAuthAuthenticator
+from app.brokers.shoonya_oauth_state import ShoonyaOAuthFlowStore
+from app.core.database import get_db
+from app.core.logger import app_logger
+
+router = APIRouter()
+
+
+class ShoonyaAuthUrlRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=200)
+    uid: str = Field(min_length=1, max_length=100)
+    account_id: str = Field(min_length=1, max_length=100)
+
+
+class ShoonyaVerifyRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=200)
+    secret_code: str = Field(min_length=1, max_length=500)
+    auth_code: str = Field(min_length=1, max_length=2000)
+    flow_id: str = Field(min_length=16, max_length=256)
+    display_name: str | None = Field(default=None, max_length=100)
+
+
+class ShoonyaRESTClient:
+    """Read-only Shoonya Noren REST client for authenticated owner sessions."""
+
+    base_url = "https://api.shoonya.com/NorenWClientAPI"
+
+    def __init__(self, *, uid: str, account_id: str, access_token: str, http: Any | None = None):
+        self.uid = uid
+        self.account_id = account_id
+        self.access_token = access_token
+        self.http = http or requests.Session()
+
+    def _post(self, endpoint: str, payload: dict[str, Any]) -> Any:
+        if not self.access_token:
+            raise RuntimeError("Shoonya session is disconnected")
+        response = self.http.post(
+            f"{self.base_url}/{endpoint}",
+            headers={
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "text/plain",
+            },
+            data="jData=" + json.dumps(payload, separators=(",", ":")),
+            timeout=15,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_user_details(self) -> dict[str, Any]:
+        return self._post("UserDetails", {"uid": self.uid})
+
+    def get_order_book(self) -> list[dict[str, Any]]:
+        result = self._post("OrderBook", {"uid": self.uid})
+        if not isinstance(result, list):
+            raise RuntimeError("Shoonya OrderBook response is invalid")
+        return result
+
+    def get_trade_book(self) -> list[dict[str, Any]]:
+        result = self._post("TradeBook", {"uid": self.uid, "actid": self.account_id})
+        if not isinstance(result, list):
+            raise RuntimeError("Shoonya TradeBook response is invalid")
+        return result
+
+    def disconnect(self) -> None:
+        token = self.access_token
+        self.access_token = ""
+        if token:
+            try:
+                response = self.http.post(
+                    f"{self.base_url}/Logout",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "text/plain",
+                    },
+                    data="jData=" + json.dumps({"uid": self.uid}, separators=(",", ":")),
+                    timeout=10,
+                )
+                response.raise_for_status()
+            except Exception:
+                # Local credential clearing must not depend on remote logout.
+                pass
+        close = getattr(self.http, "close", None)
+        if callable(close):
+            close()
+
+
+shoonya_oauth_flows = ShoonyaOAuthFlowStore()
+
+
+def _configured_redirect_uri() -> str:
+    return str(os.getenv("SHOONYA_REDIRECT_URI") or "").strip()
+
+
+@router.post("/shoonya/auth-url")
+def shoonya_auth_url(
+    payload: ShoonyaAuthUrlRequest,
+    user_id: int = Depends(require_real_owner_access),
+) -> dict:
+    redirect_uri = _configured_redirect_uri()
+    if not redirect_uri:
+        raise HTTPException(status_code=503, detail="Shoonya redirect URI is not configured on the server")
+    try:
+        flow_id = shoonya_oauth_flows.create(
+            client_id=payload.client_id,
+            redirect_uri=redirect_uri,
+            uid=payload.uid,
+            account_id=payload.account_id,
+        )
+        url = ShoonyaOAuthAuthenticator.build_authorization_url(client_id=payload.client_id)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail="Shoonya OAuth configuration is invalid") from exc
+    return {
+        "broker": "shoonya",
+        "authorization_url": url,
+        "flow_id": flow_id,
+        "expires_in": 600,
+        "callback": "Retain flow_id in the browser until the registered Shoonya callback returns the auth code.",
+    }
+
+
+@router.post("/shoonya/verify")
+def shoonya_verify(
+    payload: ShoonyaVerifyRequest,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(require_real_owner_access),
+) -> dict:
+    try:
+        pending = shoonya_oauth_flows.consume(
+            flow_id=payload.flow_id,
+            client_id=payload.client_id,
+            redirect_uri=_configured_redirect_uri(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Shoonya OAuth flow is invalid, expired, or already used") from exc
+
+    # Re-authentication must disarm any prior process-local safety state first.
+    trading_safety.disable(user_id)
+    client: ShoonyaRESTClient | None = None
+    adapter: ShoonyaAdapter | None = None
+    try:
+        authenticated = ShoonyaOAuthAuthenticator().exchange_auth_code(
+            client_id=payload.client_id,
+            secret_code=payload.secret_code,
+            auth_code=payload.auth_code,
+            expected_uid=pending.uid,
+            expected_account_id=pending.account_id,
+        )
+        client = ShoonyaRESTClient(
+            uid=authenticated.uid,
+            account_id=authenticated.account_id,
+            access_token=authenticated.access_token,
+        )
+        adapter = ShoonyaAdapter(client)
+        adapter.connect(uid=authenticated.uid, account_id=authenticated.account_id)
+        claim_authenticated_account(db, "shoonya", authenticated.account_id)
+        set_owner_connection_state(db, True)
+
+        logout_error = broker_sessions.replace_and_disconnect_previous(user_id, "shoonya", adapter)
+        if logout_error is not None:
+            app_logger.error("Previous shoonya provider logout failed during reconnect: %s", type(logout_error).__name__)
+        item = broker_connections.connect(user_id, "shoonya", payload.display_name)
+        trading_safety.disable(user_id)
+        return {
+            "connected": item.connected,
+            "broker": "shoonya",
+            "uid": authenticated.uid,
+            "account_id": authenticated.account_id,
+            "display_name": item.display_name,
+            "real_trading": False,
+            "kill_switch": True,
+        }
+    except HTTPException:
+        if adapter is not None:
+            adapter.disconnect()
+        elif client is not None:
+            client.disconnect()
+        db.rollback()
+        raise
+    except (ShoonyaAuthenticationError, ShoonyaHistoryUnavailable, ValueError) as exc:
+        if adapter is not None:
+            adapter.disconnect()
+        elif client is not None:
+            client.disconnect()
+        db.rollback()
+        raise HTTPException(status_code=401, detail="Shoonya authentication or account verification failed") from exc
+    except Exception as exc:
+        if adapter is not None:
+            adapter.disconnect()
+        elif client is not None:
+            client.disconnect()
+        db.rollback()
+        app_logger.error("Shoonya durable account binding failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Shoonya account could not be safely bound to the Box Spread owner") from exc

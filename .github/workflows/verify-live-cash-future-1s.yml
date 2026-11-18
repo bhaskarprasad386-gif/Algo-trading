@@ -1,0 +1,646 @@
+name: Verify Live Cash-Future 1s Collector
+# Runtime verification refresh: execute the current main verifier against the VPS.
+# Verification pass after live collector health/continuity hardening.
+# Storage diagnostic trigger: collect current SQLite dbstat before archive/cleanup decisions.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "20 9 * * 1-5"
+      timezone: "Asia/Kolkata"
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/verify-live-cash-future-1s.yml
+
+permissions:
+  contents: read
+
+jobs:
+  storage-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VPS_HOST: 82.41.67.22
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
+    steps:
+      - name: SQLite storage breakdown
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY_B64"
+          printf '%s' "$VPS_SSH_KEY_B64" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          APP_DIR=/opt/Algo-Trading
+          echo "=== SQLITE STORAGE BREAKDOWN ==="
+          DAILY_DB="$APP_DIR/backend/backtest_market_data_2026_09_30.sqlite3"
+          if [ -f "$DAILY_DB" ]; then
+            echo "DB=$DAILY_DB"
+            "$APP_DIR/.venv/bin/python" - "$DAILY_DB" <<'PY'
+          import os, sqlite3, sys
+          db=sys.argv[1]
+          c=sqlite3.connect(db, timeout=5)
+          try:
+              print("DB_SIZE_BYTES="+str(os.path.getsize(db)))
+              print("PAGE_SIZE="+str(c.execute("PRAGMA page_size").fetchone()[0]))
+              print("PAGE_COUNT="+str(c.execute("PRAGMA page_count").fetchone()[0]))
+              print("FREELIST_PAGES="+str(c.execute("PRAGMA freelist_count").fetchone()[0]))
+              print("WAL_MODE="+str(c.execute("PRAGMA journal_mode").fetchone()[0]))
+              rows=c.execute("SELECT name, SUM(pgsize) FROM dbstat GROUP BY name ORDER BY SUM(pgsize) DESC").fetchall()
+              for name,size in rows[:30]:
+                  print(f"DBSTAT {name} {size}")
+          finally:
+              c.close()
+          PY
+          else
+            echo "DB_NOT_FOUND=$DAILY_DB"
+          fi
+
+          BASE_DB="$APP_DIR/backend/backtest_market_data.sqlite3"
+          if [ -f "$BASE_DB" ]; then
+            echo "BASE_DB=$BASE_DB"
+            "$APP_DIR/.venv/bin/python" - "$BASE_DB" <<'PY'
+          import os, sqlite3, sys
+          db=sys.argv[1]
+          c=sqlite3.connect(db, timeout=5)
+          try:
+              print("BASE_DB_SIZE_BYTES="+str(os.path.getsize(db)))
+              print("BASE_PAGE_SIZE="+str(c.execute("PRAGMA page_size").fetchone()[0]))
+              print("BASE_PAGE_COUNT="+str(c.execute("PRAGMA page_count").fetchone()[0]))
+              print("BASE_FREELIST_PAGES="+str(c.execute("PRAGMA freelist_count").fetchone()[0]))
+              print("BASE_WAL_MODE="+str(c.execute("PRAGMA journal_mode").fetchone()[0]))
+              rows=c.execute("SELECT source,timeframe,COUNT(*) FROM source_watermarks GROUP BY source,timeframe ORDER BY source,timeframe").fetchall()
+              for source,timeframe,instruments in rows:
+                  print(f"BASE_SOURCE {source} {timeframe} INSTRUMENTS={instruments}")
+                  mn=c.execute("SELECT timestamp_ns FROM data_catalog WHERE source=? AND timeframe=? ORDER BY timestamp_ns LIMIT 1",(source,timeframe)).fetchone()
+                  mx=c.execute("SELECT timestamp_ns FROM data_catalog WHERE source=? AND timeframe=? ORDER BY timestamp_ns DESC LIMIT 1",(source,timeframe)).fetchone()
+                  print(f"BASE_RANGE {source} {timeframe} MIN_NS={mn[0] if mn else 'NA'} MAX_NS={mx[0] if mx else 'NA'}")
+          finally:
+              c.close()
+          PY
+          else
+            echo "BASE_DB_NOT_FOUND=$BASE_DB"
+          fi
+
+  verify:
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VPS_HOST: 82.41.67.22
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
+    steps:
+      - name: Verify collector runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY_B64"
+          printf '%s' "$VPS_SSH_KEY_B64" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          APP_DIR=/opt/Algo-Trading
+          ENV_FILE="$APP_DIR/backend/.env"
+
+          echo "=== SQLITE STORAGE BREAKDOWN ==="
+          for DB in "$APP_DIR/backend/backtest_market_data_2026_09_30.sqlite3" "$APP_DIR/backend/backtest_market_data.sqlite3"; do
+            if [ -f "$DB" ]; then
+              echo "DB=$DB"
+              "$APP_DIR/.venv/bin/python" - "$DB" <<'PY'
+          import sqlite3, sys
+          db=sys.argv[1]
+          c=sqlite3.connect(db)
+          try:
+              print("DB_SIZE_BYTES="+str(__import__("os").path.getsize(db)))
+              print("PAGE_SIZE="+str(c.execute("PRAGMA page_size").fetchone()[0]))
+              print("PAGE_COUNT="+str(c.execute("PRAGMA page_count").fetchone()[0]))
+              print("FREELIST_PAGES="+str(c.execute("PRAGMA freelist_count").fetchone()[0]))
+              print("WAL_MODE="+str(c.execute("PRAGMA journal_mode").fetchone()[0]))
+              try:
+                  rows=c.execute("SELECT name, SUM(pgsize) FROM dbstat GROUP BY name ORDER BY SUM(pgsize) DESC").fetchall()
+                  for name,size in rows[:20]:
+                      print(f"DBSTAT {name} {size}")
+              except sqlite3.OperationalError as e:
+                  print("DBSTAT_UNAVAILABLE="+str(e))
+          finally:
+              c.close()
+          PY
+            fi
+          done
+
+          echo "=== DEPLOYMENT ==="
+          echo "COMMIT=$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+          echo "SERVICE=$(systemctl is-active algo-trading.service 2>/dev/null || true)"
+
+          echo "=== FLAGS ==="
+          if grep -E '^(LIVE_CASH_FUTURE_DATA_ENABLED|LIVE_TRADING)=' "$ENV_FILE" 2>/dev/null; then
+            true
+          else
+            echo "FLAGS_NOT_FOUND"
+          fi
+
+          echo "=== COLLECTOR PROCESSES ==="
+          pgrep -af 'cash.*future|future.*cash|live.*collector|collector' 2>/dev/null | head -50 || true
+
+          echo "=== RECENT SERVICE LOG ==="
+          journalctl -u algo-trading.service --no-pager -n 80 2>/dev/null | grep -Ei 'cash.?future|collector|live.*data|websocket|smartapi|error|exception' | tail -50 || true
+
+          echo "=== CONTRACT DIAGNOSTIC ==="
+          cd "$APP_DIR/backend"
+          "$APP_DIR/.venv/bin/python" - <<'PY'
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          from app.market_data.instruments import InstrumentMaster
+          from app.market_data.live_cash_future_stream import LiveCashFutureOneSecondCollector
+
+          master = InstrumentMaster()
+          rows = master.download()
+          today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+          fut = [
+              x for x in rows
+              if str(x.get("exch_seg","")).upper() == "NFO"
+              and str(x.get("instrumenttype","")).upper() == "FUTSTK"
+          ]
+          active = [x for x in fut if str(x.get("expiry","")).strip()]
+          print(f"MASTER_TOTAL={len(rows)}")
+          print(f"NFO_FUTSTK_TOTAL={len(fut)}")
+          print(f"NFO_FUTSTK_WITH_EXPIRY={len(active)}")
+          print(f"MASTER_SAMPLE={fut[:3]}")
+
+          nse_symbols = {
+              str(x.get("symbol") or "").strip().upper()
+              for x in rows
+              if str(x.get("exch_seg","")).upper() == "NSE"
+          }
+          exact = 0
+          suffix_eq = 0
+          unresolved = []
+          for item in fut:
+              underlying = str(item.get("name") or "").strip().upper()
+              if not underlying:
+                  continue
+              if underlying in nse_symbols:
+                  exact += 1
+              elif f"{underlying}-EQ" in nse_symbols:
+                  suffix_eq += 1
+              else:
+                  unresolved.append(underlying)
+          print(f"FUT_UNDERLYINGS_WITH_EXACT_NSE_SYMBOL={exact}")
+          print(f"FUT_UNDERLYINGS_WITH_NSE_EQ_SYMBOL={suffix_eq}")
+          print(f"FUT_UNDERLYINGS_WITHOUT_EXACT_OR_EQ={len(set(unresolved))}")
+          print(f"UNRESOLVED_SAMPLE={sorted(set(unresolved))[:20]}")
+
+          collector = LiveCashFutureOneSecondCollector(":memory:", instrument_master=master)
+          futures, cash = collector._contracts()
+          print(f"COLLECTOR_FUTURES={len(futures)}")
+          print(f"COLLECTOR_CASH={len(cash)}")
+          print(f"COLLECTOR_UNDERLYINGS={len({x['_underlying'] for x in futures})}")
+          print(f"COLLECTOR_SAMPLE={[(x['_underlying'],x['symbol'],x['_expiry'].isoformat(),x['_contract_month']) for x in futures[:10]]}")
+          PY
+          cd "$APP_DIR"
+          echo "=== DATA FILES ==="
+          find "$APP_DIR/backend" -maxdepth 3 -type f \( -iname '*cash*future*' -o -iname '*live*data*' \) -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' 2>/dev/null | sort | tail -30 || true
+
+          echo "=== LIVE 1S DATA DIAGNOSTIC ==="
+          DATA_DB="$APP_DIR/backend/backtest_market_data.sqlite3"
+          if [ -f "$DATA_DB" ]; then
+            "$APP_DIR/.venv/bin/python" - <<'PY'
+          import sqlite3
+          import time
+
+          db = "/opt/Algo-Trading/backend/backtest_market_data.sqlite3"
+          conn = sqlite3.connect(db)
+          try:
+              row = conn.execute(
+                  "SELECT COUNT(*), COUNT(DISTINCT instrument), MIN(timestamp_ns), MAX(timestamp_ns) "
+                  "FROM data_catalog WHERE source=? AND timeframe=?",
+                  ("angelone-live-1s", "1s"),
+              ).fetchone()
+              count, instruments, min_ts, max_ts = row
+              print(f"LIVE_1S_ROWS={count}")
+              print(f"LIVE_1S_INSTRUMENTS={instruments}")
+              print(f"LIVE_1S_MIN_TIMESTAMP_NS={min_ts}")
+              print(f"LIVE_1S_MAX_TIMESTAMP_NS={max_ts}")
+              if max_ts is not None:
+                  age_seconds = max(0.0, (time.time_ns() - int(max_ts)) / 1_000_000_000)
+                  print(f"LIVE_1S_LATEST_AGE_SECONDS={age_seconds:.1f}")
+              else:
+                  print("LIVE_1S_LATEST_AGE_SECONDS=NA")
+          finally:
+              conn.close()
+          PY
+          else
+            echo "LIVE_1S_DB_NOT_FOUND"
+          fi
+
+          echo "=== LIVE 1S COVERAGE BY UNDERLYING ==="
+          DATA_DB="$APP_DIR/backend/backtest_market_data.sqlite3"
+          if [ -f "$DATA_DB" ]; then
+            DATA_DB="$DATA_DB" "$APP_DIR/.venv/bin/python" - <<'PY'
+          import json
+          import os
+          import sqlite3
+
+          db = os.environ["DATA_DB"]
+          conn = sqlite3.connect(db)
+          try:
+              max_row = conn.execute(
+                  "SELECT MAX(timestamp_ns) FROM data_catalog WHERE source=? AND timeframe=?",
+                  ("angelone-live-1s", "1s"),
+              ).fetchone()
+              max_ts = max_row[0]
+              if max_ts is None:
+                  raise SystemExit("COVERAGE_NO_LIVE_DATA")
+              start_ts = int(max_ts) - 10_000_000_000
+              rows = conn.execute(
+                  "SELECT timestamp_ns,payload_json FROM data_catalog "
+                  "WHERE source=? AND timeframe=? AND timestamp_ns>=? AND timestamp_ns<=?",
+                  ("angelone-live-1s", "1s", start_ts, int(max_ts)),
+              )
+
+              cash = set()
+              futures = set()
+              cash_rows = 0
+              future_rows = 0
+              observations = {}
+              for ts, payload_json in rows:
+                  try:
+                      payload = json.loads(payload_json)
+                  except (TypeError, ValueError):
+                      continue
+                  underlying = str(payload.get("underlying") or "").strip().upper()
+                  leg = str(payload.get("leg") or "").strip().upper()
+                  if not underlying:
+                      continue
+                  key = (underlying, int(ts))
+                  if leg == "CASH":
+                      cash.add(underlying)
+                      cash_rows += 1
+                      observations.setdefault(key, {})["cash"] = payload
+                  elif leg == "FUTURE":
+                      futures.add(underlying)
+                      future_rows += 1
+                      observations.setdefault(key, {}).setdefault("futures", []).append(payload)
+
+              paired = cash & futures
+              cash_only = cash - futures
+              future_only = futures - cash
+
+              quote_pairs = 0
+              positive_gap_pairs = 0
+              quote_pair_underlyings = set()
+              positive_gap_underlyings = set()
+
+              for (underlying, _ts), legs in observations.items():
+                  cash_payload = legs.get("cash")
+                  if not cash_payload:
+                      continue
+                  try:
+                      cash_ask = float(cash_payload.get("ask"))
+                  except (TypeError, ValueError):
+                      cash_ask = 0.0
+                  if cash_ask <= 0:
+                      continue
+                  for future_payload in legs.get("futures", []):
+                      try:
+                          future_bid = float(future_payload.get("bid"))
+                      except (TypeError, ValueError):
+                          future_bid = 0.0
+                      if future_bid <= 0:
+                          continue
+                      quote_pairs += 1
+                      quote_pair_underlyings.add(underlying)
+                      gap = future_bid - cash_ask
+                      if gap > 0:
+                          positive_gap_pairs += 1
+                          positive_gap_underlyings.add(underlying)
+
+              print("COVERAGE_WINDOW_SECONDS=10")
+              print(f"COVERAGE_MAX_TIMESTAMP_NS={max_ts}")
+              print(f"COVERAGE_CASH_ROWS={cash_rows}")
+              print(f"COVERAGE_FUTURE_ROWS={future_rows}")
+              print(f"COVERAGE_CASH_UNDERLYINGS={len(cash)}")
+              print(f"COVERAGE_FUTURE_UNDERLYINGS={len(futures)}")
+              print(f"COVERAGE_PAIRED_UNDERLYINGS={len(paired)}")
+              print(f"COVERAGE_CASH_ONLY={len(cash_only)}")
+              print(f"COVERAGE_FUTURE_ONLY={len(future_only)}")
+              print(f"COVERAGE_QUOTE_PAIRS={quote_pairs}")
+              print(f"COVERAGE_QUOTE_PAIR_UNDERLYINGS={len(quote_pair_underlyings)}")
+              print(f"COVERAGE_POSITIVE_GAP_PAIRS={positive_gap_pairs}")
+              print(f"COVERAGE_POSITIVE_GAP_UNDERLYINGS={len(positive_gap_underlyings)}")
+              print(f"COVERAGE_CASH_ONLY_SAMPLE={sorted(cash_only)[:20]}")
+              print(f"COVERAGE_FUTURE_ONLY_SAMPLE={sorted(future_only)[:20]}")
+              if not cash or not futures:
+                  raise SystemExit("COVERAGE_LEG_MISSING")
+          finally:
+              conn.close()
+          PY
+          else
+            echo "COVERAGE_DB_NOT_FOUND"
+          fi
+
+          echo "=== TODAY 12:00-15:30 CONTINUITY ==="
+          DATA_DB="$APP_DIR/backend/backtest_market_data.sqlite3"
+          if [ -f "$DATA_DB" ]; then
+            DATA_DB="$DATA_DB" "$APP_DIR/.venv/bin/python" - <<'PY'
+          import os
+          import sqlite3
+          from datetime import datetime, time
+          from zoneinfo import ZoneInfo
+
+          db = os.environ["DATA_DB"]
+          ist = ZoneInfo("Asia/Kolkata")
+          today = datetime.now(ist).date()
+          start = datetime.combine(today, time(12, 0), tzinfo=ist)
+          end = datetime.combine(today, time(15, 30), tzinfo=ist)
+          start_ns = int(start.timestamp() * 1_000_000_000)
+          end_ns = int(end.timestamp() * 1_000_000_000)
+          expected_seconds = int((end - start).total_seconds()) + 1
+
+          conn = sqlite3.connect(db)
+          try:
+              row = conn.execute(
+                  """
+                  SELECT
+                    COUNT(*),
+                    COUNT(DISTINCT CAST(timestamp_ns / 1000000000 AS INTEGER)),
+                    MIN(timestamp_ns),
+                    MAX(timestamp_ns),
+                    COUNT(DISTINCT instrument)
+                  FROM data_catalog
+                  WHERE source=? AND timeframe=? AND timestamp_ns BETWEEN ? AND ?
+                  """,
+                  ("angelone-live-1s", "1s", start_ns, end_ns),
+              ).fetchone()
+              rows, distinct_seconds, min_ts, max_ts, instruments = row
+
+              legs = conn.execute(
+                  """
+                  SELECT
+                    COUNT(DISTINCT CASE WHEN json_extract(payload_json, '$.leg')='CASH'
+                                        THEN CAST(timestamp_ns / 1000000000 AS INTEGER) END),
+                    COUNT(DISTINCT CASE WHEN json_extract(payload_json, '$.leg')='FUTURE'
+                                        THEN timestamp_ns / 1000000000 END)
+                  FROM data_catalog
+                  WHERE source=? AND timeframe=? AND timestamp_ns BETWEEN ? AND ?
+                  """,
+                  ("angelone-live-1s", "1s", start_ns, end_ns),
+              ).fetchone()
+
+              print(f"SESSION_DATE={today.isoformat()}")
+              print("SESSION_START=12:00:00 IST")
+              print("SESSION_END=15:30:00 IST")
+              print(f"SESSION_EXPECTED_SECONDS={expected_seconds}")
+              print(f"SESSION_ROWS={rows}")
+              print(f"SESSION_DISTINCT_SECONDS={distinct_seconds}")
+              print(f"SESSION_INSTRUMENTS={instruments}")
+              print(f"SESSION_CASH_DISTINCT_SECONDS={legs[0]}")
+              print(f"SESSION_FUTURE_DISTINCT_SECONDS={legs[1]}")
+              print(f"SESSION_MIN_TIMESTAMP_NS={min_ts}")
+              print(f"SESSION_MAX_TIMESTAMP_NS={max_ts}")
+
+              complete = (
+                  distinct_seconds == expected_seconds
+                  and legs[0] == expected_seconds
+                  and legs[1] == expected_seconds
+                  and min_ts == start_ns
+                  and max_ts == end_ns
+              )
+              print(f"SESSION_12_15_30_CONTINUOUS={'PASS' if complete else 'FAIL'}")
+              if not complete:
+                  raise SystemExit("TODAY_12_15_30_CONTINUITY_FAILED")
+          finally:
+              conn.close()
+          PY
+          else
+            echo "SESSION_COVERAGE_DB_NOT_FOUND"
+            exit 1
+          fi
+
+          echo "=== RECENT CONFLICT CHECK ==="
+          conflicts=$(journalctl -u algo-trading.service --no-pager --since "-10 minutes" 2>/dev/null | grep -ci 'conflicting historical record identity' || true)
+          echo "RECENT_CONFLICT_ERRORS_LAST_10M=$conflicts"
+
+          echo "=== HEALTH ==="
+          code=$(curl -sS --connect-timeout 2 --max-time 5 -o /tmp/health_body -w "%{http_code}" http://127.0.0.1:8000/health 2>/dev/null || true)
+          echo "HEALTH_HTTP=$code"
+          echo "=== LIVE SCANNER E2E ==="
+          scanner_body=$(mktemp)
+          scanner_code=$(curl -sS --connect-timeout 2 --max-time 10 -o "$scanner_body" -w "%{http_code}" "http://127.0.0.1:8000/api/v1/scanner/cash-future/live/fast?max_age_seconds=5&limit=50" 2>/dev/null || true)
+          echo "SCANNER_HTTP=$scanner_code"
+          SCANNER_BODY="$scanner_body" "$APP_DIR/.venv/bin/python" - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["SCANNER_BODY"])
+          body = json.loads(path.read_text())
+          data = body.get("data")
+          print(f"SCANNER_STATUS={body.get('status')}")
+          print(f"SCANNER_NAME={body.get('scanner')}")
+          print(f"SCANNER_MODE={body.get('mode')}")
+          print(f"SCANNER_SIGNAL_COUNT={len(data) if isinstance(data, list) else -1}")
+          if not isinstance(data, list):
+              raise SystemExit("SCANNER_DATA_NOT_LIST")
+          if body.get("status") != "success" or body.get("scanner") != "cash-future" or body.get("mode") != "live-fast":
+              raise SystemExit("SCANNER_RESPONSE_CONTRACT_FAILED")
+          if not data:
+              from datetime import datetime
+              from zoneinfo import ZoneInfo
+              now = datetime.now(ZoneInfo("Asia/Kolkata"))
+              market_open = now.weekday() < 5 and (now.hour, now.minute) >= (9, 15) and (now.hour, now.minute) < (15, 30)
+              print(f"SCANNER_MARKET_SESSION_ACTIVE={market_open}")
+              if market_open:
+                  raise SystemExit("SCANNER_NO_FRESH_SIGNAL_DURING_MARKET")
+              print("SCANNER_LIVE_SESSION_CLOSED_EXPECTED")
+              raise SystemExit(0)
+          required = {
+              "symbol", "contract_month", "cash_ask", "future_bid",
+              "gap", "gap_pct", "net_gap_pct", "net_profit",
+              "cash_day_high", "cash_day_low", "lifecycle", "rank_score",
+          }
+          missing = sorted(required.difference(data[0]))
+          print(f"SCANNER_FIRST_SYMBOL={data[0].get('symbol')}")
+          print(f"SCANNER_FIRST_CONTRACT_MONTH={data[0].get('contract_month')}")
+          print(f"SCANNER_FIRST_GAP_PCT={data[0].get('gap_pct')}")
+          print(f"SCANNER_FIRST_NET_PROFIT={data[0].get('net_profit')}")
+          print(f"SCANNER_FIRST_LIFECYCLE={data[0].get('lifecycle')}")
+          print(f"SCANNER_FIRST_RANK_SCORE={data[0].get('rank_score')}")
+          if missing:
+              print(f"SCANNER_MISSING_FIELDS={missing}")
+              raise SystemExit("SCANNER_RESPONSE_FIELDS_FAILED")
+          print("SCANNER_E2E=PASS")
+          PY
+          scanner_count=$(SCANNER_BODY="$scanner_body" "$APP_DIR/.venv/bin/python" - <<'PY'
+          import json, os
+          body = json.loads(open(os.environ["SCANNER_BODY"]).read())
+          print(len(body.get("data") or []))
+          PY
+          )
+          if [ "$scanner_count" -eq 0 ]; then
+            rm -f "$scanner_body"
+            echo "SCANNER_CHAIN_SKIPPED_MARKET_CLOSED=true"
+            exit 0
+          fi
+          echo "=== SCANNER FILTER / RANK / ALERT CHAIN ==="
+          cd "$APP_DIR/backend"
+          SCANNER_BODY="$scanner_body" "$APP_DIR/.venv/bin/python" - <<'PY'
+          import json
+          import math
+          import os
+          from datetime import datetime, timedelta
+
+          from app.core.config import settings
+          from app.core.database import SessionLocal
+          from app.models import LiveCashFutureAlertHistory, LiveCashFutureScannerResult
+
+          body = json.loads(open(os.environ["SCANNER_BODY"]).read())
+          data = body.get("data") or []
+
+          def count(pred):
+              return sum(1 for item in data if pred(item))
+
+          positive_gap = count(lambda x: float(x.get("gap") or 0) > 0)
+          positive_net = count(lambda x: float(x.get("net_gap") or 0) > 0)
+          gap_threshold = float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT)
+          min_stable = max(1, int(settings.LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS))
+          eligible = count(
+              lambda x: float(x.get("gap") or 0) > 0
+              and float(x.get("net_gap") or 0) > 0
+              and float(x.get("gap_pct") or 0) >= gap_threshold
+              and int(x.get("stable_observations") or 0) >= min_stable
+          )
+          alert_min_gross = float(settings.LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT)
+          alert_min_net = float(settings.LIVE_CASH_FUTURE_ALERT_MIN_NET_PROFIT)
+          alert_min_annualized = float(settings.LIVE_CASH_FUTURE_ALERT_MIN_ANNUALIZED_GAP_PCT)
+          alert_shape = count(
+              lambda x: float(x.get("gap") or 0) > 0
+              and float(x.get("net_gap") or 0) > 0
+              and float(x.get("gap_pct") or 0) >= gap_threshold
+              and int(x.get("stable_observations") or 0) >= min_stable
+              and x.get("alert_lots") is not None and int(x.get("alert_lots") or 0) >= 1
+              and (alert_min_gross <= 0 or (x.get("gross_profit") is not None and float(x.get("gross_profit")) >= alert_min_gross))
+              and (alert_min_net <= 0 or (x.get("net_profit") is not None and float(x.get("net_profit")) >= alert_min_net))
+              and (alert_min_annualized <= 0 or (x.get("annualized_gap_pct") is not None and float(x.get("annualized_gap_pct")) >= alert_min_annualized))
+          )
+          active = count(lambda x: str(x.get("lifecycle") or "") in {"NEW", "ACTIVE", "WEAKENING"})
+          alert_events = count(lambda x: bool(x.get("alert_event")))
+          rank_values = [float(x.get("rank_score")) for x in data if x.get("rank_score") is not None]
+          rank_finite = all(math.isfinite(x) for x in rank_values)
+          rank_sorted = all(rank_values[i] >= rank_values[i+1] for i in range(len(rank_values)-1))
+
+          print(f"CHAIN_API_SIGNALS={len(data)}")
+          print(f"CHAIN_POSITIVE_GAP={positive_gap}")
+          print(f"CHAIN_POSITIVE_NET_GAP={positive_net}")
+          print(f"CHAIN_ELIGIBLE={eligible}")
+          print(f"CHAIN_ALERT_ELIGIBLE={alert_shape}")
+          print(f"CHAIN_ALERT_MIN_GROSS_PROFIT={alert_min_gross}")
+          print(f"CHAIN_ALERT_MIN_NET_PROFIT={alert_min_net}")
+          print(f"CHAIN_ALERT_MIN_ANNUALIZED_GAP_PCT={alert_min_annualized}")
+          print(f"CHAIN_ACTIONABLE_LIFECYCLE={active}")
+          print(f"CHAIN_ALERT_EVENTS={alert_events}")
+          print(f"CHAIN_RANK_FINITE={rank_finite}")
+          print(f"CHAIN_RANK_SORTED_DESC={rank_sorted}")
+          print(f"CHAIN_GAP_THRESHOLD_PCT={gap_threshold}")
+          print(f"CHAIN_MIN_STABLE_OBSERVATIONS={min_stable}")
+
+          if not data:
+              raise SystemExit("CHAIN_NO_SCANNER_DATA")
+          if not rank_finite or not rank_sorted:
+              raise SystemExit("CHAIN_RANK_CONTRACT_FAILED")
+
+          cutoff = datetime.utcnow() - timedelta(minutes=5)
+          with SessionLocal() as db:
+              # Scanner persistence uses the application's configured DATABASE_URL,
+              # not the separate historical/backtest SQLite catalog.
+              result_count = db.query(LiveCashFutureScannerResult).filter(
+                  LiveCashFutureScannerResult.observed_at >= cutoff
+              ).count()
+              alert_count = db.query(LiveCashFutureAlertHistory).filter(
+                  LiveCashFutureAlertHistory.observed_at >= cutoff
+              ).count()
+
+              p_gap = db.query(LiveCashFutureScannerResult).filter(
+                  LiveCashFutureScannerResult.observed_at >= cutoff,
+                  LiveCashFutureScannerResult.gap > 0,
+              ).count()
+              p_net = db.query(LiveCashFutureScannerResult).filter(
+                  LiveCashFutureScannerResult.observed_at >= cutoff,
+                  LiveCashFutureScannerResult.net_gap > 0,
+              ).count()
+              p_threshold = db.query(LiveCashFutureScannerResult).filter(
+                  LiveCashFutureScannerResult.observed_at >= cutoff,
+                  LiveCashFutureScannerResult.gap_pct >= gap_threshold,
+              ).count()
+              p_stable = db.query(LiveCashFutureScannerResult).filter(
+                  LiveCashFutureScannerResult.observed_at >= cutoff,
+                  LiveCashFutureScannerResult.stable_observations >= min_stable,
+              ).count()
+
+              alert_new = db.query(LiveCashFutureAlertHistory).filter(
+                  LiveCashFutureAlertHistory.observed_at >= cutoff,
+                  LiveCashFutureAlertHistory.event == "NEW",
+              ).count()
+              alert_recovery = db.query(LiveCashFutureAlertHistory).filter(
+                  LiveCashFutureAlertHistory.observed_at >= cutoff,
+                  LiveCashFutureAlertHistory.event == "RECOVERY",
+              ).count()
+              alert_gross = db.query(LiveCashFutureAlertHistory).filter(
+                  LiveCashFutureAlertHistory.observed_at >= cutoff,
+                  LiveCashFutureAlertHistory.gross_profit.isnot(None),
+                  LiveCashFutureAlertHistory.gross_profit >= alert_min_gross,
+              ).count()
+              alert_net = db.query(LiveCashFutureAlertHistory).filter(
+                  LiveCashFutureAlertHistory.observed_at >= cutoff,
+                  LiveCashFutureAlertHistory.net_profit.isnot(None),
+                  LiveCashFutureAlertHistory.net_profit >= alert_min_net,
+              ).count()
+              alert_annualized = db.query(LiveCashFutureAlertHistory).filter(
+                  LiveCashFutureAlertHistory.observed_at >= cutoff,
+                  LiveCashFutureAlertHistory.annualized_gap_pct.isnot(None),
+                  LiveCashFutureAlertHistory.annualized_gap_pct >= alert_min_annualized,
+              ).count()
+
+              invalid_persisted = db.query(LiveCashFutureScannerResult).filter(
+                  LiveCashFutureScannerResult.observed_at >= cutoff,
+                  ~(
+                      (LiveCashFutureScannerResult.gap > 0)
+                      & (LiveCashFutureScannerResult.net_gap > 0)
+                      & (LiveCashFutureScannerResult.gap_pct >= gap_threshold)
+                      & (LiveCashFutureScannerResult.stable_observations >= min_stable)
+                      & LiveCashFutureScannerResult.lifecycle.in_({"NEW", "ACTIVE", "WEAKENING"})
+                  ),
+              ).count()
+
+          print(f"CHAIN_PERSISTED_RESULTS_5M={result_count}")
+          print(f"CHAIN_PERSISTED_POSITIVE_GAP_5M={p_gap}")
+          print(f"CHAIN_PERSISTED_POSITIVE_NET_GAP_5M={p_net}")
+          print(f"CHAIN_PERSISTED_THRESHOLD_OK_5M={p_threshold}")
+          print(f"CHAIN_PERSISTED_STABLE_OK_5M={p_stable}")
+          print(f"CHAIN_ALERTS_5M={alert_count}")
+          print(f"CHAIN_NEW_ALERTS_5M={alert_new}")
+          print(f"CHAIN_RECOVERY_ALERTS_5M={alert_recovery}")
+          print(f"CHAIN_ALERT_GROSS_OK_5M={alert_gross}")
+          print(f"CHAIN_ALERT_NET_OK_5M={alert_net}")
+          print(f"CHAIN_ALERT_ANNUALIZED_OK_5M={alert_annualized}")
+          print(f"CHAIN_INVALID_PERSISTED_RESULTS_5M={invalid_persisted}")
+
+          if invalid_persisted:
+              raise SystemExit("CHAIN_PERSISTED_ELIGIBILITY_FAILED")
+
+          print("SCANNER_FILTER_RANK_ALERT_E2E=PASS")
+          PY
+          rm -f "$scanner_body"
+          REMOTE

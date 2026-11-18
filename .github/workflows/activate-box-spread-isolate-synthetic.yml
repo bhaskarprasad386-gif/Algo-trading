@@ -1,0 +1,96 @@
+name: Isolate Synthetic Scanner and Activate Box Spread
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/activate-box-spread-isolate-synthetic.yml"
+
+permissions:
+  contents: read
+
+# Serialize with VPS Deploy so the env switch cannot race a deployment.
+concurrency:
+  group: vps-service-mutation
+  cancel-in-progress: false
+
+jobs:
+  activate-box-spread:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Switch live scanner flags and verify API
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY_B64"
+          printf '%s' "$VPS_SSH_KEY_B64" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          APP_DIR="/opt/Algo-Trading"
+          ENV_FILE="$APP_DIR/backend/.env"
+          test -d "$APP_DIR/.git"
+          test -f "$ENV_FILE"
+          cd "$APP_DIR"
+
+          # Keep a private rollback copy without touching the repo or live databases.
+          BACKUP="/tmp/algo-trading-backend-env.pre-box-switch.$(date +%Y%m%d-%H%M%S)"
+          cp -p "$ENV_FILE" "$BACKUP"
+          chmod 600 "$BACKUP"
+          echo "ENV_BACKUP=$BACKUP"
+
+          set_env() {
+            local key="$1"
+            local value="$2"
+            if grep -q "^${key}=" "$ENV_FILE"; then
+              sed -i "s/^${key}=.*/${key}=${value}/" "$ENV_FILE"
+            else
+              printf '\n%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+            fi
+          }
+
+          # Change only these two scanner flags. Other scanners, shared-feed settings,
+          # persistent data and broker-order settings are deliberately untouched.
+          set_env LIVE_SYNTHETIC_DATA_ENABLED false
+          set_env LIVE_BOX_SPREAD_DATA_ENABLED true
+          grep -qx 'LIVE_SYNTHETIC_DATA_ENABLED=false' "$ENV_FILE"
+          grep -qx 'LIVE_BOX_SPREAD_DATA_ENABLED=true' "$ENV_FILE"
+
+          systemctl restart algo-trading.service
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/health >/tmp/algo-box-switch-health.json; then
+              break
+            fi
+            if [[ "$attempt" -eq 30 ]]; then
+              systemctl --no-pager --full status algo-trading.service || true
+              journalctl -u algo-trading.service -n 80 --no-pager || true
+              exit 1
+            fi
+            sleep 2
+          done
+          systemctl is-active --quiet algo-trading.service
+          echo "SERVICE=active"
+          echo "LIVE_SYNTHETIC_DATA_ENABLED=false"
+          echo "LIVE_BOX_SPREAD_DATA_ENABLED=true"
+          echo "BROKER_ORDERS=unchanged (not enabled by this workflow)"
+          printf 'HEALTH='
+          cat /tmp/algo-box-switch-health.json
+          rm -f /tmp/algo-box-switch-health.json
+
+          # The endpoint must respond with real backend JSON. Zero rows can be normal
+          # while quotes are warming up or the market is closed; never fabricate rows.
+          BOX_JSON="$(curl --fail --silent --show-error --connect-timeout 2 --max-time 12 'http://127.0.0.1:8000/api/v1/scanner/box-spread/live?limit=5')"
+          printf '%s' "$BOX_JSON" | python3 -c 'import json,sys; p=json.load(sys.stdin); print("BOX_SPREAD_API=OK count=%s opportunities=%s mode=%s" % (p.get("count", "unknown"), p.get("opportunity_count", "unknown"), p.get("mode", "unknown")))'
+          echo "COMMON_FEED_HEALTH="
+          curl --fail --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/common-feed-health || true
+          REMOTE

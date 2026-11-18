@@ -1,0 +1,1907 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Activity, ArrowLeft, Bell, Filter, RefreshCw, Search, ShieldCheck, Zap } from "lucide-react";
+import { Card, PageTitle } from "@/components/ui";
+import { appConfig } from "@/lib/config";
+import LiveOpportunityGrid from "@/components/LiveOpportunityGrid";
+import { usePagePush } from "@/components/page-push-provider";
+
+export type WorkspaceConfig = {
+  slug: string;
+  title: string;
+  description: string;
+  universe: string;
+  columns: string[];
+  metrics: string[];
+  controls: string[];
+  pairTitle: string;
+  pairColumns: string[];
+  historyEndpoint: string;
+  pairEndpoint?: string;
+};
+
+const configs: Record<string, WorkspaceConfig> = {
+  "calendar-spread": {
+    slug: "calendar-spread",
+    title: "Calendar Spread",
+    description: "Dedicated near-vs-far expiry spread scanner using the common live market-data feed.",
+    universe: "F&O + INDEX + COMMODITIES",
+    columns: ["Time", "Underlying", "Exchange", "Near", "Far", "Spread", "Gap / Edge", "Volume / OI", "Signal"],
+    metrics: ["Eligible Contracts", "Spread Opportunities", "Signals", "Last Scan"],
+    controls: ["All Eligible", "INDEX PRIORITY", "Near/Far", "Edge Threshold"],
+    pairTitle: "Near / Far Pair Monitor",
+    pairColumns: ["Time", "Underlying", "Exchange", "Near", "Far", "Spread", "Edge", "Liquidity", "State"],
+    historyEndpoint: "/api/v1/scanner/calendar-spread/history?days=1&limit=100",
+    pairEndpoint: "/api/v1/scanner/calendar-spread/pairs?limit=200",
+  },
+  "synthetic-arbitrage": {
+    slug: "synthetic-arbitrage",
+    title: "Synthetic Arbitrage",
+    description: "Dedicated index-only synthetic future/cash-carry scanner using live index options and futures.",
+    universe: "SUPPORTED INDICES ONLY",
+    columns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future", "LONG Edge", "SHORT Edge", "Signal"],
+    metrics: ["Eligible Combos", "Executable Edges", "Signals", "Last Scan"],
+    controls: ["INDEX", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"],
+    pairTitle: "Option / Future Pair Monitor",
+    pairColumns: ["Time", "Underlying", "Expiry", "Strike", "Future", "Call (CE)", "Put (PE)", "Synthetic Future", "LONG Edge", "SHORT Edge", "Direction", "State"],
+    historyEndpoint: "/api/v1/scanner/synthetic-cash-carry/pair-history?days=2&limit=5000",
+    pairEndpoint: "/api/v1/scanner/synthetic-cash-carry/pairs?limit=200",
+  },
+  "box-spread": {
+    slug: "box-spread",
+    title: "Box Spread",
+    description: "Dedicated four-leg box scanner with executable edge and liquidity ranking.",
+    universe: "SUPPORTED INDEX OPTIONS ONLY",
+    columns: ["Underlying", "Expiry / Quote Time", "Expiry Type", "Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)", "Box Edge", "Min Leg Volume", "Direction", "Freshness"],
+    metrics: ["Eligible Boxes", "Executable Edges", "Signals", "Last Scan"],
+    controls: ["All Eligible", "Expiry", "Strike Range", "Edge Threshold"],
+    pairTitle: "Low / High Strike Pair Monitor",
+    pairColumns: ["Time", "Underlying", "Spot Price", "Spot Quote Time / Age", "Expiry", "Expiry Type", "Quote Time", "Low Strike", "High Strike", "Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)", "Box Edge", "Lot Size", "Max Executable Lots", "Direction", "Freshness"],
+    historyEndpoint: "/api/v1/scanner/box-spread/snapshots?days=1&limit=5000",
+  },
+  "custom-strategy": {
+    slug: "custom-strategy",
+    title: "Custom Strategy",
+    description: "Independent strategy workspace.",
+    universe: "CONFIGURATION ONLY",
+    columns: ["Symbol", "Segment", "Contract", "Side", "Live Price", "Condition", "Action"],
+    metrics: ["Eligible Symbols", "Conditions Met", "Alerts", "Last Scan"],
+    controls: ["F&O Stocks", "Cash / Future / Option", "BUY / SELL", "Condition"],
+    pairTitle: "Pair Monitor",
+    pairColumns: ["Time", "Symbol", "State"],
+    historyEndpoint: "",
+  },
+};
+
+type Row = Record<string, unknown>;
+
+type BoxSpreadLegColumn = "Low Call (LTP/Bid Qty/Ask Qty)" | "Low Put (LTP/Bid Qty/Ask Qty)" | "High Call (LTP/Bid Qty/Ask Qty)" | "High Put (LTP/Bid Qty/Ask Qty)";
+
+function BoxSpreadLegQuote({ row, column }: { row: Row; column: BoxSpreadLegColumn }) {
+  const prefix = column.startsWith("Low ") ? "low_" : "high_";
+  const option = column.includes("Call") ? "call" : "put";
+  const key = prefix + option;
+  const direction = String(value(row, "direction") ?? "LONG").toUpperCase();
+  const isLong = direction !== "SHORT";
+  // Box Spread executable sides reverse for SHORT baskets. Keep the visual
+  // BUY/ASK and SELL/BID labels aligned with the actual direction.
+  const isBuy = isLong
+    ? (prefix === "low_" && option === "call") || (prefix === "high_" && option === "put")
+    : (prefix === "low_" && option === "put") || (prefix === "high_" && option === "call");
+  const tone = isBuy ? "rounded bg-emerald-500/15 px-1.5 py-0.5 font-semibold text-emerald-600 dark:text-emerald-300" : "rounded bg-rose-500/15 px-1.5 py-0.5 font-semibold text-rose-600 dark:text-rose-300";
+  const action = isBuy ? "BUY · ASK" : "SELL · BID";
+  const priceSide = isBuy ? "ask" : "bid";
+  return <span>LTP {formatValue(value(row, key + "_ltp"))} · <span className={tone}>{action} {formatValue(value(row, key + "_" + priceSide))} ({formatValue(value(row, key + "_" + priceSide + "_qty"))})</span> · {isBuy ? "Bid " + formatValue(value(row, key + "_bid")) + " (" + formatValue(value(row, key + "_bid_qty")) + ")" : "Ask " + formatValue(value(row, key + "_ask")) + " (" + formatValue(value(row, key + "_ask_qty")) + ")"}</span>;
+}
+
+function value(row: Row, ...keys: string[]) {
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== "") return row[key];
+  }
+  return undefined;
+}
+
+function numberValue(row: Row, ...keys: string[]) {
+  const raw = value(row, ...keys);
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function nullableNumber(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatExpiry(raw: unknown) {
+  if (raw === undefined || raw === null || raw === "") return "—";
+  let text = String(raw).trim();
+  // Numeric JSON values can arrive as YYYYMMDD.0 and bypass the old 8-digit check.
+  if (/^\d{8}\.0+$/.test(text)) text = text.split(".")[0];
+  if (/^\d{8}$/.test(text)) {
+    const year = Number(text.slice(0, 4));
+    const month = Number(text.slice(4, 6));
+    const day = Number(text.slice(6, 8));
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day) {
+      return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+    }
+  }
+  // Parse ISO dates emitted by the live API before the instrument-master formats.
+  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const year = Number(isoMatch[1]);
+    const month = Number(isoMatch[2]);
+    const day = Number(isoMatch[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day) {
+      return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+    }
+  }
+  // Parse common instrument-master expiry formats; leave unknown text untouched
+  // rather than showing a misleading locale-formatted numeric value.
+  const match = text.match(/^(\d{1,2})[- ]([A-Za-z]{3})[- ](\d{2,4})$/);
+  if (match) {
+    const parsed = new Date(Date.parse(match[1] + " " + match[2] + " " + match[3] + " UTC"));
+    if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+  }
+  return text;
+}
+
+function syntheticFutureValue(row: Row) {
+  const strike = nullableNumber(value(row, "strike"));
+  const callBid = nullableNumber(value(row, "call_bid"));
+  const callAsk = nullableNumber(value(row, "call_ask"));
+  const putBid = nullableNumber(value(row, "put_bid"));
+  const putAsk = nullableNumber(value(row, "put_ask"));
+  if (strike === null) return "Bid — / Ask —";
+  // Raw parity values: K + CE Bid - PE Ask; K + CE Ask - PE Bid.
+  const computedBid = callBid !== null && putAsk !== null ? strike + callBid - putAsk : null;
+  const computedAsk = callAsk !== null && putBid !== null ? strike + callAsk - putBid : null;
+  const syntheticBid = nullableNumber(value(row, "synthetic_bid")) ?? computedBid;
+  const syntheticAsk = nullableNumber(value(row, "synthetic_ask")) ?? computedAsk;
+  return "Bid " + formatValue(syntheticBid) + " / Ask " + formatValue(syntheticAsk);
+}
+
+function quoteSideNumber(raw: unknown, side: "bid" | "ask"): number | null {
+  // Check labeled quote strings BEFORE numeric coercion. A combined value
+  // like "Bid 73,560 / Ask 73,583 · 15:05:48" must yield different bid/ask.
+  if (typeof raw === "string") {
+    const label = side === "bid" ? "Bid" : "Ask";
+    const match = raw.match(new RegExp(label + "\\s+([+-]?[\\d,]+(?:\\.\\d+)?)", "i"));
+    if (match) {
+      const parsed = Number(match[1].replaceAll(",", ""));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    const trimmed = raw.trim();
+    if (/^[+-]?[\\d,]+(?:\\.\\d+)?$/.test(trimmed)) {
+      const parsed = Number(trimmed.replaceAll(",", ""));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+  }
+  return nullableNumber(raw);
+}
+
+function syntheticRawEdges(row: Row) {
+  const strike = nullableNumber(value(row, "strike"));
+  // Prefer individual numeric fields, but tolerate combined quote summaries.
+  const futureSummary = value(row, "future_summary");
+  const callSummary = value(row, "call_summary");
+  const putSummary = value(row, "put_summary");
+  const futureBid = quoteSideNumber(value(row, "future_bid") ?? futureSummary, "bid");
+  const futureAsk = quoteSideNumber(value(row, "future_ask") ?? futureSummary, "ask");
+  const callBid = quoteSideNumber(value(row, "call_bid") ?? callSummary, "bid");
+  const callAsk = quoteSideNumber(value(row, "call_ask") ?? callSummary, "ask");
+  const putBid = quoteSideNumber(value(row, "put_bid") ?? putSummary, "bid");
+  const putAsk = quoteSideNumber(value(row, "put_ask") ?? putSummary, "ask");
+  if ([strike, futureBid, futureAsk, callBid, callAsk, putBid, putAsk].some(v => v === null)) return null;
+  const syntheticBid = strike! + callBid! - putAsk!;
+  const syntheticAsk = strike! + callAsk! - putBid!;
+  return { long: syntheticBid - futureAsk!, short: futureBid! - syntheticAsk, syntheticBid, syntheticAsk };
+}
+
+function syntheticDisplayDirection(row: Row) {
+  const edges = syntheticRawEdges(row);
+  if (!edges) {
+    // Do not present a stale backend direction as verified against displayed quotes.
+    const backendEdge = nullableNumber(value(row, "executable_edge"));
+    const backendDirection = String(value(row, "direction") ?? "").toUpperCase();
+    return backendEdge !== null && backendEdge > 0 && (backendDirection === "LONG" || backendDirection === "SHORT")
+      ? backendDirection
+      : "NOT EVALUATED";
+  }
+  if (edges.long > 0 && edges.short <= 0) return "LONG";
+  if (edges.short > 0 && edges.long <= 0) return "SHORT";
+  if (edges.long > 0 && edges.short > 0) return edges.long >= edges.short ? "LONG" : "SHORT";
+  return "NO EDGE";
+}
+
+function syntheticDisplayEdge(row: Row, raw: unknown) {
+  const edges = syntheticRawEdges(row);
+  if (!edges) return nullableNumber(raw);
+  const direction = syntheticDisplayDirection(row);
+  if (direction === "LONG") return edges.long > 0 ? edges.long : null;
+  if (direction === "SHORT") return edges.short > 0 ? edges.short : null;
+  return null;
+}
+
+function syntheticEdgeExplanation(row: Row, raw: unknown) {
+  if (raw === undefined || raw === null || raw === "") return "NOT EVALUATED — executable quotes/config required";
+  const direction = String(value(row, "direction") ?? "").toUpperCase();
+  const futureBid = value(row, "future_bid"), futureAsk = value(row, "future_ask");
+  const syntheticBuy = value(row, "carry_adjusted_synthetic_buy");
+  const syntheticSell = value(row, "carry_adjusted_synthetic_sell");
+  const fees = nullableNumber(value(row, "fees_per_unit"));
+  const feeText = fees === null ? "" : " − fees " + formatValue(fees);
+  const comparison = direction.includes("LONG") && syntheticBuy !== undefined && syntheticBuy !== null
+    ? "Future Bid " + formatValue(futureBid) + " − carry-adjusted Synthetic Ask " + formatValue(syntheticBuy) + feeText
+    : direction.includes("SHORT") && syntheticSell !== undefined && syntheticSell !== null
+      ? "carry-adjusted Synthetic Bid " + formatValue(syntheticSell) + " − Future Ask " + formatValue(futureAsk) + feeText
+      : "backend executable pricing (carry/fees applied)";
+  return formatValue(raw) + " pts (" + comparison + ")";
+}
+
+function isOutsideNseRegularHours(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  const weekday = values.weekday;
+  const minutes = Number(values.hour) * 60 + Number(values.minute);
+  // NSE/NFO regular session window; exchange holidays are intentionally not
+  // inferred here, so a stale feed during a holiday remains visibly stale.
+  return ["Sat", "Sun"].includes(weekday) || minutes < 9 * 60 + 15 || minutes >= 15 * 60 + 30;
+}
+
+function boxExchangeStatus(status: unknown) {
+  const normalized = String(status ?? "UNKNOWN").toUpperCase();
+  return normalized === "STALE" && isOutsideNseRegularHours()
+    ? "OUTSIDE REGULAR HOURS"
+    : normalized;
+}
+
+function boxFeedDisplayStatus(status: string) {
+  return status === "STALE" && isOutsideNseRegularHours()
+    ? "OUTSIDE REGULAR HOURS"
+    : status.replaceAll("_", " ");
+}
+
+function formatValue(raw: unknown) {
+  if (raw === undefined || raw === null || raw === "") return "—";
+  if (typeof raw === "boolean") return raw ? "YES" : "NO";
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw.toLocaleString("en-IN", { maximumFractionDigits: 4 }) : "—";
+  return String(raw);
+}
+
+function parseTimestamp(raw: unknown): Date | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  // Handle Unix seconds, milliseconds and nanoseconds without treating ms as ns.
+  if (typeof raw === "number" || (typeof raw === "string" && /^\d+(?:\.\d+)?$/.test(raw.trim()))) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    const millis = n >= 1e17 ? n / 1e6 : n >= 1e12 ? n : n >= 1e9 ? n * 1000 : NaN;
+    if (!Number.isFinite(millis)) return null;
+    const date = new Date(millis);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const date = new Date(String(raw));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatTimestamp(raw: unknown) {
+  const date = parseTimestamp(raw);
+  return date ? date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) : "—";
+}
+
+function quoteTimestamp(row: Row) {
+  const date = parseTimestamp(value(row, "timestamp_ns", "observed_at", "timestamp"));
+  return date ? date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) : "";
+}
+
+function withQuoteTimestamp(text: string, row: Row) {
+  const timestamp = quoteTimestamp(row);
+  return timestamp && text !== "—" ? text + " · " + timestamp : text;
+}
+
+function formatCell(slug: string, column: string, row: Row) {
+  const keys: Record<string, Record<string, string[]>> = {
+    "calendar-spread": {
+      Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying"], Exchange: ["exchange"], Near: ["near_contract_month"],
+      Far: ["far_contract_month"], Spread: ["gap_points"], "Gap / Edge": ["long_edge", "short_edge"],
+      "Volume / OI": ["liquidity_qty"], Signal: ["direction"],
+    },
+    "synthetic-arbitrage": {
+      Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying"], Expiry: ["expiry"], Strike: ["strike"],
+      Future: ["future_bid", "future_ask", "future_summary"], "Call (CE)": ["call_bid", "call_ask"], "Put (PE)": ["put_bid", "put_ask"],
+      "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Executable Edge": ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Liquidity: ["lot_size"], Signal: ["direction"],
+    },
+    "box-spread": {
+      Underlying: ["symbol"], "Spot Price": ["spot_price"], "Expiry / Quote Time": ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"],
+      "Low Call (LTP/Bid Qty/Ask Qty)": ["low_call_ltp"], "Low Put (LTP/Bid Qty/Ask Qty)": ["low_put_ltp"],
+      "High Call (LTP/Bid Qty/Ask Qty)": ["high_call_ltp"], "High Put (LTP/Bid Qty/Ask Qty)": ["high_put_ltp"],
+      "Box Edge": ["executable_edge"], "Min Leg Volume": ["liquidity_qty"], Direction: ["direction"], Freshness: ["freshness"],
+    },
+  };
+  const raw = value(row, ...(keys[slug]?.[column] ?? []));
+  if (slug === "box-spread" && column === "Expiry / Quote Time") {
+    const expiry = formatExpiry(raw);
+    const lowTime = formatTimestamp(value(row, "timestamp_ns"));
+    const highTime = formatTimestamp(value(row, "high_timestamp_ns"));
+    return expiry + " · L " + lowTime + " / H " + highTime;
+  }
+  if (column === "Expiry") return formatExpiry(raw);
+  if (slug === "box-spread" && column === "Quote Time") {
+    return "Low " + formatTimestamp(value(row, "timestamp_ns")) + " / High " + formatTimestamp(value(row, "high_timestamp_ns"));
+  }
+  if (slug === "box-spread" && ["Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)"].includes(column)) {
+    const prefix = column.startsWith("Low ") ? "low_" : "high_";
+    const option = column.includes("Call") ? "call" : "put";
+    const key = prefix + option;
+    return "LTP " + formatValue(value(row, key + "_ltp")) + " · Bid " + formatValue(value(row, key + "_bid")) + " (" + formatValue(value(row, key + "_bid_qty")) + ") · Ask " + formatValue(value(row, key + "_ask")) + " (" + formatValue(value(row, key + "_ask_qty")) + ")";
+  }
+  if (column === "Underlying") return formatValue(value(row, "underlying", "symbol"));
+  if (slug === "box-spread" && column === "Max Executable Lots") {
+    const lots = nullableNumber(raw);
+    return lots === null || lots < 0 || !Number.isInteger(lots) ? "—" : lots.toLocaleString("en-IN") + " lots";
+  }
+  if (slug === "box-spread" && column === "Freshness") {
+    const age = nullableNumber(value(row, "quote_age_seconds"));
+    const supplied = String(raw ?? "").trim().toUpperCase();
+    // Prefer explicit backend freshness; recover a missing/UNKNOWN label only
+    // from the measured quote age, never from the presence of an opportunity row.
+    const freshness = supplied && supplied !== "UNKNOWN"
+      ? supplied
+      : age === null ? "UNKNOWN" : age <= 5 ? "LIVE" : "STALE";
+    return freshness + (age === null ? "" : " · " + age.toFixed(2) + "s");
+  }
+  if (slug === "synthetic-arbitrage" && column === "Time") return formatTimestamp(raw);
+  if (slug === "synthetic-arbitrage" && column === "Synthetic Future") return withQuoteTimestamp(syntheticFutureValue(row), row);
+  if (slug === "synthetic-arbitrage" && (column === "LONG Edge" || column === "SHORT Edge")) {
+    const edges = syntheticRawEdges(row);
+    if (!edges) return "NOT EVALUATED";
+    const edge = column === "LONG Edge" ? edges.long : edges.short;
+    return (edge > 0 ? "+" : "") + formatValue(edge) + " pts";
+  }
+  if (slug === "synthetic-arbitrage" && column === "Signal") return syntheticDisplayDirection(row);
+  if (slug === "synthetic-arbitrage" && (column === "Edge" || column === "Executable Edge")) {
+    const edge = syntheticDisplayEdge(row, raw);
+    const direction = syntheticDisplayDirection(row);
+    if (edge === null) return direction === "NOT EVALUATED" ? "NOT EVALUATED" : "NO EDGE";
+    return formatValue(edge) + " pts — " + direction;
+  }
+  if (slug === "calendar-spread" && column === "Time") return formatTimestamp(raw);
+  if (slug === "synthetic-arbitrage" && ["Future", "Call (CE)", "Put (PE)"].includes(column)) {
+    const bid = column === "Future" ? row.future_bid : column === "Call (CE)" ? row.call_bid : row.put_bid;
+    const ask = column === "Future" ? row.future_ask : column === "Call (CE)" ? row.call_ask : row.put_ask;
+    const summary = column === "Future" ? row.future_summary : undefined;
+    const shownBid = bid !== undefined && bid !== null && bid !== "" ? formatValue(bid) : "—";
+    const shownAsk = ask !== undefined && ask !== null && ask !== "" ? formatValue(ask) : "—";
+    if ((bid === undefined || bid === null || bid === "") && (ask === undefined || ask === null || ask === "") && summary !== undefined && summary !== null && summary !== "") return withQuoteTimestamp(formatValue(summary), row);
+    return withQuoteTimestamp("Bid " + shownBid + " / Ask " + shownAsk, row);
+  }
+  return formatValue(raw);
+}
+
+function syntheticCellTone(slug: string, column: string, row: Row) {
+  if (slug !== "synthetic-arbitrage") return "";
+  if (column === "LONG Edge" || column === "SHORT Edge") {
+    const edges = syntheticRawEdges(row);
+    if (!edges) return "theme-warning font-semibold";
+    const edge = column === "LONG Edge" ? edges.long : edges.short;
+    return edge > 0 ? "theme-success font-bold" : edge < 0 ? "theme-danger" : "theme-muted";
+  }
+  if (column === "Signal" || column === "Direction") {
+    const direction = syntheticDisplayDirection(row);
+    if (direction === "LONG" || direction === "SHORT") return "inline-flex rounded-md border theme-border theme-success-bg px-2 py-1 font-bold theme-success";
+    if (direction === "NO EDGE") return "inline-flex rounded-md border theme-border theme-surface-2 px-2 py-1 font-semibold theme-muted";
+    return "inline-flex rounded-md border theme-border theme-warning-bg px-2 py-1 font-semibold theme-warning";
+  }
+  return "";
+}
+
+function pairCell(slug: string, column: string, row: Row) {
+  const maps: Record<string, Record<string, string[]>> = {
+    "calendar-spread": {
+      Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying"], Exchange: ["exchange"],
+      Near: ["near_contract_month"], Far: ["far_contract_month"], Spread: ["gap_points"],
+      Edge: ["long_edge", "short_edge"], Liquidity: ["liquidity_qty"], State: ["direction", "qualifies"],
+    },
+    "synthetic-arbitrage": {
+      Time: ["timestamp_ns", "observed_at", "timestamp"], Underlying: ["underlying", "symbol"], Expiry: ["expiry"], Strike: ["strike"],
+      Future: ["future_bid", "future_ask", "future_summary"], "Call (CE)": ["call_bid", "call_ask"], "Put (PE)": ["put_bid", "put_ask"],
+      "Synthetic Future": ["strike"], "LONG Edge": ["long_edge"], "SHORT Edge": ["short_edge"], Edge: ["executable_edge"], "Edge / Lot": ["edge_per_lot"], "Gross P&L": ["gross_pnl"], Direction: ["direction"], State: ["executable_edge"],
+    },
+    "box-spread": {
+      Time: ["observed_at", "last_update_timestamp_ns", "timestamp_ns"], Underlying: ["symbol", "underlying"], "Spot Price": ["spot_price"], "Spot Quote Time / Age": ["spot_timestamp_ns", "spot_age_seconds"], Expiry: ["expiry_date", "expiry"], "Expiry Type": ["expiry_type"], "Quote Time": ["last_update_timestamp_ns", "timestamp_ns"], Freshness: ["freshness"],
+      "Low Strike": ["low_strike"], "High Strike": ["high_strike"],
+      "Low Call (LTP/Bid Qty/Ask Qty)": ["low_call_ltp"], "Low Put (LTP/Bid Qty/Ask Qty)": ["low_put_ltp"],
+      "High Call (LTP/Bid Qty/Ask Qty)": ["high_call_ltp"], "High Put (LTP/Bid Qty/Ask Qty)": ["high_put_ltp"],
+      "Box Edge": ["executable_edge"], "Lot Size": ["lot_size"], "Max Executable Lots": ["max_executable_lots"], Direction: ["direction"], State: ["executable_edge"],
+    },
+  };
+  const raw = value(row, ...(maps[slug]?.[column] ?? []));
+  if (slug === "box-spread" && column === "Spot Quote Time / Age") {
+    const timestamp = formatTimestamp(value(row, "spot_timestamp_ns", "spot_observed_at"));
+    const age = nullableNumber(value(row, "spot_age_seconds"));
+    return timestamp === "—" ? "—" : timestamp + (age === null ? "" : " · " + age.toFixed(2) + "s");
+  }
+  if (slug === "synthetic-arbitrage" && column === "Synthetic Future") return withQuoteTimestamp(syntheticFutureValue(row), row);
+  if (slug === "synthetic-arbitrage" && ["Future", "Call (CE)", "Put (PE)"].includes(column)) {
+    const bid = column === "Future" ? row.future_bid : column === "Call (CE)" ? row.call_bid : row.put_bid;
+    const ask = column === "Future" ? row.future_ask : column === "Call (CE)" ? row.call_ask : row.put_ask;
+    const summary = column === "Future" ? row.future_summary : undefined;
+    const shownBid = bid !== undefined && bid !== null && bid !== "" ? formatValue(bid) : "—";
+    const shownAsk = ask !== undefined && ask !== null && ask !== "" ? formatValue(ask) : "—";
+    if ((bid === undefined || bid === null || bid === "") && (ask === undefined || ask === null || ask === "") && summary !== undefined && summary !== null && summary !== "") return withQuoteTimestamp(formatValue(summary), row);
+    return withQuoteTimestamp("Bid " + shownBid + " / Ask " + shownAsk, row);
+  }
+  if (column === "Time") return formatTimestamp(raw);
+  if (column === "Expiry") return formatExpiry(raw);
+  if (slug === "box-spread" && column === "Quote Time") {
+    return "Low " + formatTimestamp(value(row, "timestamp_ns")) + " / High " + formatTimestamp(value(row, "high_timestamp_ns"));
+  }
+  if (slug === "box-spread" && ["Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)"].includes(column)) {
+    const prefix = column.startsWith("Low ") ? "low_" : "high_";
+    const option = column.includes("Call") ? "call" : "put";
+    const key = prefix + option;
+    return "LTP " + formatValue(value(row, key + "_ltp")) + " · Bid " + formatValue(value(row, key + "_bid")) + " · Ask " + formatValue(value(row, key + "_ask"));
+  }
+  if (slug === "box-spread" && column === "Freshness") {
+    const age = nullableNumber(value(row, "quote_age_seconds"));
+    return String(raw ?? "UNKNOWN") + (age === null ? "" : " · " + age.toFixed(2) + "s");
+  }
+  if (slug === "synthetic-arbitrage" && (column === "LONG Edge" || column === "SHORT Edge")) {
+    const edges = syntheticRawEdges(row);
+    if (!edges) return "NOT EVALUATED";
+    const edge = column === "LONG Edge" ? edges.long : edges.short;
+    return (edge > 0 ? "+" : "") + formatValue(edge) + " pts";
+  }
+  if (slug === "synthetic-arbitrage" && column === "Edge") {
+    const edge = syntheticDisplayEdge(row, raw);
+    const direction = syntheticDisplayDirection(row);
+    return edge === null ? "—" : formatValue(edge) + " pts — " + direction;
+  }
+  if (slug === "synthetic-arbitrage" && (column === "Direction" || column === "Signal")) {
+    return syntheticDisplayDirection(row);
+  }
+  if (column === "State") {
+    const edgeRaw = value(row, "executable_edge", "long_edge", "short_edge");
+    const edge = numberValue(row, "executable_edge", "long_edge", "short_edge");
+    if (slug === "calendar-spread") return row.qualifies === true || edge > 0 ? "OPPORTUNITY" : "NO SIGNAL";
+    if (slug === "synthetic-arbitrage") {
+      const state = typeof row.state === "string" && row.state
+        ? row.state.replaceAll("_", " ")
+        : edgeRaw === undefined ? "NOT EVALUATED" : (edge > 0 ? "EDGE" : "NO EDGE");
+      const reason = typeof row.reason === "string" && row.reason ? " · " + row.reason.replaceAll("_", " ") : "";
+      return state + reason;
+    }
+    return edge > 0 ? "EDGE" : "NO EDGE";
+  }
+  return formatValue(raw);
+}
+
+async function copyTextWithFallback(text: string): Promise<boolean> {
+  if (!text) return false;
+  try {
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {}
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, area.value.length);
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  } catch { return false; }
+}
+
+function historyCell(slug: string, column: string, row: Row) {
+  if ((slug === "synthetic-arbitrage" || slug === "box-spread") && column === "Time") {
+    const observed = row.observed_at;
+    if (observed !== undefined && observed !== null && observed !== "") {
+      const date = new Date(String(observed));
+      if (!Number.isNaN(date.getTime())) {
+        return date.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
+      }
+    }
+  }
+  return pairCell(slug, column, row);
+}
+
+function isSignal(slug: string, row: Row) {
+  if (slug === "calendar-spread") return row.qualifies === true || numberValue(row, "long_edge", "short_edge") > 0;
+  return numberValue(row, "executable_edge") > 0;
+}
+
+function runnerLabel(slug: string) {
+  if (slug === "calendar-spread") return "Calendar Spread Runner";
+  if (slug === "synthetic-arbitrage") return "Synthetic Future Runner";
+  if (slug === "box-spread") return "Box Spread Runner";
+  return "Strategy Runner";
+}
+
+export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
+  const c = configs[slug];
+  const isCustom = slug === "custom-strategy";
+  const { data: pagePushData } = usePagePush("box-spread");
+  const endpoint =
+    slug === "calendar-spread" ? "/api/v1/scanner/calendar-spread/live?limit=50" :
+    slug === "synthetic-arbitrage" ? "/api/v1/scanner/synthetic-cash-carry/live?limit=50" :
+    slug === "box-spread" ? "/api/v1/scanner/box-spread/live?limit=50&max_age_seconds=5" : null;
+
+  const [currentLiveTime, setCurrentLiveTime] = useState("");
+  const [liveApiLastOkAt, setLiveApiLastOkAt] = useState<number | null>(null);
+  const [liveApiStatus, setLiveApiStatus] = useState<"CHECKING" | "RESPONDING" | "ERROR">("CHECKING");
+  const [search, setSearch] = useState("");
+  const [liveExpiryView, setLiveExpiryView] = useState<"MONTHLY" | "WEEKLY">("MONTHLY");
+  const [control, setControl] = useState(c.controls[0]);
+  const [top15StockSymbols, setTop15StockSymbols] = useState<string[]>([
+    "RELIANCE", "HDFCBANK", "ICICIBANK", "SBIN", "INFY",
+    "TCS", "AXISBANK", "LT", "BHARTIARTL", "KOTAKBANK",
+    "TMPV", "BAJFINANCE", "M&M", "HINDALCO", "TATASTEEL",
+  ]);
+  const [universeAvailability, setUniverseAvailability] = useState<{
+    eligible_future_symbols?: string[]; missing_future_symbols?: string[];
+    configured_index_symbols?: string[]; eligible_index_symbols?: string[]; missing_index_underlyings?: string[];
+    eligible_target_symbols?: string[]; missing_option_expiry_symbols?: string[]; checked_at?: string | null;
+  } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [rows, setRows] = useState<Row[]>([]);
+  const [rowsStale, setRowsStale] = useState(false);
+  const rowsRef = useRef<Row[]>([]);
+  const loadRequestRef = useRef(0);
+  const [historyRows, setHistoryRows] = useState<Row[]>([]);
+  const [historyTotalCount, setHistoryTotalCount] = useState(0);
+  const [pairRows, setPairRows] = useState<Row[]>([]);
+  const [pairMonitorStatus, setPairMonitorStatus] = useState("CHECKING");
+  const [hiddenPairColumns, setHiddenPairColumns] = useState<string[]>([]);
+  const [pairColumnPrefsLoaded, setPairColumnPrefsLoaded] = useState(false);
+  const [showPairColumnPicker, setShowPairColumnPicker] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyFilter, setHistoryFilter] = useState("");
+  const [historyExpiryView, setHistoryExpiryView] = useState<"MONTHLY" | "WEEKLY">("MONTHLY");
+  const [historySymbol, setHistorySymbol] = useState("");
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historySort, setHistorySort] = useState<{ key: "edge" | "lots"; direction: "asc" | "desc" }>({ key: "edge", direction: "desc" });
+  const [historyHealth, setHistoryHealth] = useState<{ last_save_at?: string | null; last_saved_count?: number; last_error?: string | null; storage?: string } | null>(null);
+  const [copyStatus, setCopyStatus] = useState("");
+  const [copyFallbackText, setCopyFallbackText] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [feedTicks, setFeedTicks] = useState<number | null>(null);
+  const [feedAge, setFeedAge] = useState<number | null>(null);
+  const [feedExchangeFreshness, setFeedExchangeFreshness] = useState<Record<string, { age_seconds?: number | null; status?: string }> | null>(null);
+  const [feedStatus, setFeedStatus] = useState("CHECKING");
+  const [indexSpotRows, setIndexSpotRows] = useState<Array<{symbol:string;spot_price:number|null;spot_timestamp_ns:number|null;spot_age_seconds:number|null;status:string}>>([]);
+  const [feedInstruments, setFeedInstruments] = useState<number | null>(null);
+  const [runner, setRunner] = useState<{ running: boolean; detail: string } | null>(null);
+  const [feedErrors, setFeedErrors] = useState<{ delivery: number; normalizer: number } | null>(null);
+  const [scannerDiagnostics, setScannerDiagnostics] = useState<Record<string, unknown> | null>(null);
+  const [calendarRuntime, setCalendarRuntime] = useState<Record<string, unknown> | null>(null);
+  const [boxDepthShadow, setBoxDepthShadow] = useState<any>(null);
+  const [indexSelectionDraft, setIndexSelectionDraft] = useState<string[]>([]);
+  const [weeklyOnlyDraft, setWeeklyOnlyDraft] = useState<string[]>([]);
+  const [activeIndexSymbols, setActiveIndexSymbols] = useState<string[]>([]);
+  const [savedIndexSymbols, setSavedIndexSymbols] = useState<string[]>([]);
+  const [savedWeeklyOnlySymbols, setSavedWeeklyOnlySymbols] = useState<string[]>([]);
+  const [indexHandoffState, setIndexHandoffState] = useState("CHECKING");
+  const [indexSelectionLoading, setIndexSelectionLoading] = useState(false);
+  const [indexSelectionSaving, setIndexSelectionSaving] = useState(false);
+  const [indexSelectionMessage, setIndexSelectionMessage] = useState("");
+  const [indexSelectionError, setIndexSelectionError] = useState<string | null>(null);
+  const indexSelectionDraftInitialized = useRef(false);
+
+  useEffect(() => {
+    const updateClock = () => setCurrentLiveTime(new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }));
+    updateClock();
+    const timer = window.setInterval(updateClock, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    setPairColumnPrefsLoaded(false);
+    try {
+      const saved = JSON.parse(window.localStorage.getItem("algo:pair-monitor:hidden-columns:v1:" + slug) || "[]");
+      setHiddenPairColumns(Array.isArray(saved) ? saved.filter((column: unknown): column is string => typeof column === "string" && c.pairColumns.includes(column)) : []);
+    } catch {
+      setHiddenPairColumns([]);
+    }
+    setPairColumnPrefsLoaded(true);
+  }, [slug, c.pairColumns]);
+
+  useEffect(() => {
+    if (!pairColumnPrefsLoaded) return;
+    try {
+      window.localStorage.setItem("algo:pair-monitor:hidden-columns:v1:" + slug, JSON.stringify(hiddenPairColumns));
+    } catch { /* Preferences are optional; the column picker still works for this session. */ }
+  }, [hiddenPairColumns, pairColumnPrefsLoaded, slug]);
+
+  useEffect(() => {
+    if (slug !== "synthetic-arbitrage") return;
+    let cancelled = false;
+    const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+    void fetch(base + "/api/v1/scanner/synthetic-cash-carry/universe", { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body?.detail || "Unable to load synthetic universe");
+        if (!cancelled && typeof body?.selection === "string") setControl(body.selection);
+        if (!cancelled && Array.isArray(body?.top15_stock_symbols)) {
+          setTop15StockSymbols(body.top15_stock_symbols.filter((symbol: unknown): symbol is string => typeof symbol === "string"));
+        }
+        if (!cancelled && body?.availability && typeof body.availability === "object") setUniverseAvailability(body.availability);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Unable to load synthetic universe");
+      });
+    return () => { cancelled = true; };
+  }, [slug]);
+
+  const changeControl = async (selection: string) => {
+    if (slug !== "synthetic-arbitrage") {
+      setControl(selection);
+      return;
+    }
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+      const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/universe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selection }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Universe update failed");
+      setControl(String(body?.selection ?? selection));
+      if (Array.isArray(body?.top15_stock_symbols)) {
+        setTop15StockSymbols(body.top15_stock_symbols.filter((symbol: unknown): symbol is string => typeof symbol === "string"));
+      }
+      if (body?.availability && typeof body.availability === "object") setUniverseAvailability(body.availability);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Universe update failed");
+    }
+  };
+
+  const load = async (showLoading = false) => {
+    const requestId = ++loadRequestRef.current;
+    if (!endpoint) {
+      rowsRef.current = [];
+      setRows([]);
+      setRowsStale(false);
+      setLoading(false);
+      return;
+    }
+    if (showLoading) setLoading(true);
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+      const response = await fetch(base + endpoint, { cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.detail || c.title + " HTTP " + response.status);
+      const data = Array.isArray(body?.data) ? body.data.filter((item: unknown): item is Row => !!item && typeof item === "object") : [];
+      if (requestId !== loadRequestRef.current) return;
+      setLiveApiLastOkAt(Date.now());
+      setLiveApiStatus("RESPONDING");
+      if (data.length > 0) {
+        rowsRef.current = data;
+        setRows(data);
+        setRowsStale(false);
+        if (slug === "synthetic-arbitrage") {
+          // Cache only real backend rows so a reload during a temporary scanner
+          // outage does not erase the last observed opportunities or their times.
+          try {
+            window.localStorage.setItem("algo:synthetic-arbitrage:last-live-opportunities:v1", JSON.stringify({
+              savedAt: Date.now(),
+              rows: data,
+            }));
+          } catch { /* Storage may be unavailable; live rendering still works. */ }
+        }
+      } else if (slug === "synthetic-arbitrage") {
+        // Empty snapshots can be transient while the scanner recalculates.
+        // Keep in-memory rows first, then fall back to the last real backend
+        // snapshot after reload. The banner marks these rows as STALE, not live.
+        let cachedRows: Row[] = [];
+        if (rowsRef.current.length === 0) {
+          try {
+            const cached = JSON.parse(window.localStorage.getItem("algo:synthetic-arbitrage:last-live-opportunities:v1") || "null");
+            if (Array.isArray(cached?.rows)) {
+              cachedRows = cached.rows.filter((item: unknown): item is Row => !!item && typeof item === "object");
+            }
+          } catch { /* Ignore invalid/unavailable cache and keep normal empty state. */ }
+        }
+        const retained = rowsRef.current.length > 0 ? rowsRef.current : cachedRows;
+        if (retained.length > 0) {
+          rowsRef.current = retained;
+          setRows(retained);
+          setRowsStale(true);
+        } else {
+          rowsRef.current = [];
+          setRows([]);
+          setRowsStale(false);
+        }
+      } else {
+        rowsRef.current = [];
+        setRows([]);
+        setRowsStale(false);
+      }
+      setError(null);
+    } catch (e) {
+      if (requestId !== loadRequestRef.current) return;
+      setLiveApiStatus("ERROR");
+      // Preserve the last good rows during a temporary API failure, including
+      // after a page reload. Cached rows are never presented as confirmed live.
+      if (slug === "synthetic-arbitrage") {
+        let cachedRows: Row[] = [];
+        if (rowsRef.current.length === 0) {
+          try {
+            const cached = JSON.parse(window.localStorage.getItem("algo:synthetic-arbitrage:last-live-opportunities:v1") || "null");
+            if (Array.isArray(cached?.rows)) {
+              cachedRows = cached.rows.filter((item: unknown): item is Row => !!item && typeof item === "object");
+            }
+          } catch { /* Ignore invalid/unavailable cache. */ }
+        }
+        const retained = rowsRef.current.length > 0 ? rowsRef.current : cachedRows;
+        if (retained.length > 0) {
+          rowsRef.current = retained;
+          setRows(retained);
+          setRowsStale(true);
+        }
+      }
+      setError(e instanceof Error ? e.message : "Backend unavailable");
+    } finally {
+      if (requestId === loadRequestRef.current) setLoading(false);
+    }
+  };
+
+  const loadPairs = async () => {
+    if (isCustom || !c.pairEndpoint) {
+      setPairRows(rows);
+      return;
+    }
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+      const response = await fetch(base + c.pairEndpoint, { cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(c.title + " pair monitor HTTP " + response.status);
+      const data = Array.isArray(body?.data) ? body.data.filter((item: unknown): item is Row => !!item && typeof item === "object") : [];
+      const responseStatus = String(body?.status ?? "UNKNOWN").toUpperCase();
+      // Keep the last real pair snapshot across reloads as well as transient API errors.
+      // Cached rows are historical observations only; the UI labels them STALE.
+      if (data.length > 0) {
+        setPairRows(data);
+        if (slug === "synthetic-arbitrage") {
+          try {
+            window.localStorage.setItem("algo:synthetic-arbitrage:last-pairs:v1", JSON.stringify({
+              savedAt: Date.now(),
+              rows: data,
+            }));
+          } catch { /* Storage may be unavailable; live rendering still works. */ }
+        }
+        setPairMonitorStatus(responseStatus === "SUCCESS" ? "LIVE" : responseStatus);
+      } else {
+        let cachedRows: Row[] = [];
+        if (slug === "synthetic-arbitrage" && pairRows.length === 0) {
+          try {
+            const cached = JSON.parse(window.localStorage.getItem("algo:synthetic-arbitrage:last-pairs:v1") || "null");
+            if (Array.isArray(cached?.rows)) {
+              cachedRows = cached.rows.filter((item: unknown): item is Row => !!item && typeof item === "object");
+            }
+          } catch { /* Ignore invalid/unavailable cache and keep normal empty state. */ }
+        }
+        const retained = pairRows.length > 0 ? pairRows : cachedRows;
+        if (retained.length > 0) {
+          setPairRows(retained);
+          setPairMonitorStatus("STALE");
+        } else {
+          setPairRows([]);
+          setPairMonitorStatus(responseStatus === "UNAVAILABLE" ? "UNAVAILABLE" : "WAITING");
+        }
+      }
+    } catch {
+      // On a transient error, preserve the last good snapshot and fall back to cache after reload.
+      let cachedRows: Row[] = [];
+      if (slug === "synthetic-arbitrage" && pairRows.length === 0) {
+        try {
+          const cached = JSON.parse(window.localStorage.getItem("algo:synthetic-arbitrage:last-pairs:v1") || "null");
+          if (Array.isArray(cached?.rows)) {
+            cachedRows = cached.rows.filter((item: unknown): item is Row => !!item && typeof item === "object");
+          }
+        } catch { /* Ignore invalid/unavailable cache and keep normal empty state. */ }
+      }
+      const retained = pairRows.length > 0 ? pairRows : cachedRows;
+      if (retained.length > 0) setPairRows(retained);
+      setPairMonitorStatus(retained.length > 0 ? "STALE" : "UNAVAILABLE");
+    }
+  };
+
+  const loadHistory = async () => {
+    if (isCustom || !c.historyEndpoint) return;
+    setHistoryLoading(true);
+    try {
+      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+      let historyUrl = c.historyEndpoint;
+      if (slug === "box-spread") {
+        const query = new URLSearchParams(c.historyEndpoint.split("?")[1] || "");
+        query.set("limit", "25");
+        query.set("offset", String((historyPage - 1) * 25));
+        query.set("expiry_type", historyExpiryView);
+        if (historySymbol) query.set("symbol", historySymbol);
+        else query.delete("symbol");
+        historyUrl = c.historyEndpoint.split("?")[0] + "?" + query.toString();
+      }
+      const response = await fetch(base + historyUrl, { cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(c.title + " history HTTP " + response.status);
+      const data = Array.isArray(body?.data) ? body.data : [];
+      setHistoryRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+      setHistoryTotalCount(slug === "box-spread" && Number.isFinite(Number(body?.total_count)) ? Math.max(0, Number(body.total_count)) : data.length);
+      setHistoryHealth(body?.persistence && typeof body.persistence === "object" ? body.persistence : null);
+      setHistoryError(null);
+    } catch (e) {
+      setHistoryError(e instanceof Error ? e.message : "History API unavailable");
+      // Keep last good history snapshot during transient backend failures.
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (slug !== "box-spread") return;
+    let cancelled = false;
+    let hasLoaded = false;
+    let inFlight = false;
+    const loadSelection = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      if (!hasLoaded) setIndexSelectionLoading(true);
+      try {
+        const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
+        const response = await fetch(base + "/api/v1/scanner/box-spread/index-selection", { cache: "no-store" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Unable to load saved index selection");
+        const symbols = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : [];
+        const weeklyOnly = Array.isArray(body?.weekly_only_symbols) ? body.weekly_only_symbols.filter((item: unknown): item is string => typeof item === "string") : [];
+        const runtime = body?.runtime?.supervisor;
+        const active = Array.isArray(runtime?.active_symbols) ? runtime.active_symbols.filter((item: unknown): item is string => typeof item === "string") : [];
+        const handoff = typeof runtime?.handoff?.state === "string" ? runtime.handoff.state : "UNKNOWN";
+        if (!cancelled) {
+          setSavedIndexSymbols(symbols);
+          setSavedWeeklyOnlySymbols(weeklyOnly);
+          setActiveIndexSymbols(active);
+          setIndexHandoffState(handoff);
+          // Polling refreshes saved/runtime status only; it must not overwrite an in-progress user draft.
+          if (!indexSelectionDraftInitialized.current) {
+            setIndexSelectionDraft(symbols.filter((symbol: string) => !weeklyOnly.includes(symbol)));
+            setWeeklyOnlyDraft(weeklyOnly);
+            indexSelectionDraftInitialized.current = true;
+          }
+          setIndexSelectionError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setIndexSelectionError(e instanceof Error ? e.message : "Index selection unavailable");
+      } finally {
+        inFlight = false;
+        hasLoaded = true;
+        if (!cancelled) setIndexSelectionLoading(false);
+      }
+    };
+    void loadSelection();
+    return () => { cancelled = true; };
+  }, [slug]);
+
+  const saveIndexSelection = async () => {
+    if (slug !== "box-spread" || (indexSelectionDraft.length === 0 && weeklyOnlyDraft.length === 0)) return;
+    const weeklyOnly = weeklyOnlyDraft;
+    const effectiveSymbols = Array.from(new Set([...indexSelectionDraft, ...weeklyOnly]));
+    setIndexSelectionSaving(true);
+    setIndexSelectionError(null);
+    setIndexSelectionMessage("");
+    try {
+      const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
+      const response = await fetch(base + "/api/v1/scanner/box-spread/index-selection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbols: effectiveSymbols, weekly_only_symbols: weeklyOnly }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Index selection save failed");
+      const saved = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : effectiveSymbols;
+      const savedWeeklyOnly = Array.isArray(body?.weekly_only_symbols) ? body.weekly_only_symbols.filter((item: unknown): item is string => typeof item === "string") : weeklyOnly;
+      setSavedIndexSymbols(saved);
+      setSavedWeeklyOnlySymbols(savedWeeklyOnly);
+      setIndexSelectionDraft(saved.filter((symbol: string) => !savedWeeklyOnly.includes(symbol)));
+      setWeeklyOnlyDraft(savedWeeklyOnly);
+      indexSelectionDraftInitialized.current = true;
+      const handoff = typeof body?.switch?.state === "string" ? body.switch.state : "SAVED";
+      setIndexHandoffState(handoff);
+      setIndexSelectionMessage(handoff === "STAGING"
+        ? "Selection saved. New feed is warming up; the previous live feed and its rows remain active until readiness is confirmed."
+        : (body?.message || "Index selection saved."));
+    } catch (e) {
+      setIndexSelectionError(e instanceof Error ? e.message : "Index selection save failed. Previous live selection remains active.");
+    } finally {
+      setIndexSelectionSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (slug !== "box-spread") { setIndexSpotRows([]); return; }
+    const spots = pagePushData?.index_spots;
+    if (Array.isArray(spots)) setIndexSpotRows(spots as unknown as Array<{ symbol: string; spot_price: number | null; spot_timestamp_ns: number | null; spot_age_seconds: number | null; status: string }>);
+  }, [slug, pagePushData]);
+
+  useEffect(() => {
+    if (slug !== "box-spread" || !pagePushData) return;
+    const opportunities = pagePushData.opportunities;
+    if (Array.isArray(opportunities)) {
+      const nextRows = opportunities.filter((item: unknown): item is Row => !!item && typeof item === "object");
+      rowsRef.current = nextRows;
+      setRows(nextRows);
+      setRowsStale(false);
+      setLiveApiLastOkAt(Date.now());
+      setLiveApiStatus("RESPONDING");
+      setLoading(false);
+      setError(null);
+    }
+    const health = pagePushData.runtime_health;
+    if (health && typeof health === "object") {
+      const runtime = health as Record<string, any>;
+      const feed = runtime.common_feed && typeof runtime.common_feed === "object" ? runtime.common_feed : {};
+      setFeedTicks(nullableNumber(feed.ticks_received));
+      setFeedAge(nullableNumber(feed.age_seconds));
+      setFeedExchangeFreshness(feed.exchange_freshness && typeof feed.exchange_freshness === "object" ? feed.exchange_freshness : null);
+      setFeedInstruments(nullableNumber(feed.active_instruments));
+      setFeedStatus(String(feed.status ?? "UNKNOWN").toUpperCase());
+      setFeedErrors({ delivery: Number(feed.delivery_errors ?? 0) || 0, normalizer: Number(feed.normalizer_errors ?? 0) || 0 });
+      const selected = runtime.runners?.box_spread;
+      setRunner(selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null);
+      setBoxDepthShadow(selected?.depth_shadow && typeof selected.depth_shadow === "object" ? selected.depth_shadow : null);
+    }
+    const selectionRuntime = pagePushData.index_selection_runtime;
+    if (selectionRuntime && typeof selectionRuntime === "object") {
+      const state = selectionRuntime as Record<string, any>;
+      setActiveIndexSymbols(Array.isArray(state.active_symbols) ? state.active_symbols.filter((item: unknown): item is string => typeof item === "string") : []);
+      setIndexHandoffState(String(state.handoff?.state ?? "UNKNOWN"));
+    }
+  }, [slug, pagePushData]);
+
+  useEffect(() => {
+    if (isCustom) return;
+    // History is a durable query, not a live feed. Refresh on filter/page
+    // changes or explicit user action instead of polling it every 10 seconds.
+    void loadHistory();
+  }, [isCustom, c.historyEndpoint, slug === "box-spread" ? historyExpiryView : "", slug === "box-spread" ? historySymbol : "", slug === "box-spread" ? historyPage : 1]);
+
+  useEffect(() => {
+    if (isCustom || c.pairEndpoint) return;
+    setPairRows(rows);
+  }, [isCustom, c.pairEndpoint, rows]);
+
+  useEffect(() => {
+    if (isCustom || !c.pairEndpoint) return;
+    void loadPairs();
+    const timer = window.setInterval(() => void loadPairs(), 1500);
+    return () => window.clearInterval(timer);
+  }, [isCustom, c.pairEndpoint, pairRows.length]);
+
+  useEffect(() => {
+    if (slug !== "synthetic-arbitrage") {
+      setScannerDiagnostics(null);
+      return;
+    }
+    let cancelled = false;
+    const loadScannerDiagnostics = async () => {
+      try {
+        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+        const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/diagnostics", { cache: "no-store" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error("scanner diagnostics HTTP " + response.status);
+        if (!cancelled) setScannerDiagnostics(body && typeof body === "object" ? body as Record<string, unknown> : null);
+      } catch {
+        if (!cancelled) setScannerDiagnostics({ status: "DIAGNOSTICS_UNAVAILABLE" });
+      }
+    };
+    void loadScannerDiagnostics();
+    const timer = window.setInterval(loadScannerDiagnostics, 1500);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [slug]);
+
+  useEffect(() => {
+    if (isCustom || slug === "box-spread") return;
+    let cancelled = false;
+    const loadRuntime = async () => {
+      try {
+        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+        const response = await fetch(base + "/api/v1/market-data/runtime/health", { cache: "no-store" });
+        if (!response.ok) throw new Error("runtime health");
+        const body = await response.json();
+        if (cancelled) return;
+        const feed = body?.common_feed ?? {};
+        // Number(null) and Number("") are 0; preserve missing backend values as unknown.
+        setFeedTicks(nullableNumber(feed.ticks_received));
+        setFeedAge(nullableNumber(feed.age_seconds));
+        setFeedExchangeFreshness(
+          feed.exchange_freshness && typeof feed.exchange_freshness === "object"
+            ? feed.exchange_freshness as Record<string, { age_seconds?: number | null; status?: string }>
+            : null,
+        );
+        setFeedInstruments(nullableNumber(feed.active_instruments));
+        setFeedStatus(String(feed.status ?? body?.feed_status ?? "UNKNOWN").toUpperCase());
+        setFeedErrors({
+          delivery: Number(feed.delivery_errors ?? 0) || 0,
+          normalizer: Number(feed.normalizer_errors ?? 0) || 0,
+        });
+        const rawCalendarRunner = body?.runners?.calendar_spread;
+        setCalendarRuntime(
+          slug === "calendar-spread" && rawCalendarRunner && typeof rawCalendarRunner === "object"
+            ? {
+                ...(rawCalendarRunner as Record<string, unknown>),
+                scanner_diagnostics:
+                  body?.scanner?.strategy === "calendar-spread" &&
+                  body?.scanner?.diagnostics && typeof body.scanner.diagnostics === "object"
+                    ? body.scanner.diagnostics as Record<string, unknown>
+                    : null,
+              }
+            : null,
+        );
+        const rawRunner = body?.runners?.[slug === "synthetic-arbitrage" ? "synthetic" : slug.replace("-", "_")];
+        const alternate = slug === "synthetic-arbitrage" ? body?.runners?.synthetic_arbitrage : slug === "box-spread" ? body?.runners?.box_spread : body?.runners?.calendar_spread;
+        const selected = rawRunner ?? alternate;
+        setRunner(selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null);
+        setBoxDepthShadow(slug === "box-spread" && selected?.depth_shadow && typeof selected.depth_shadow === "object" ? selected.depth_shadow : null);
+      } catch {
+        if (!cancelled) setFeedStatus("UNAVAILABLE");
+      }
+    };
+    void loadRuntime();
+    const timer = window.setInterval(loadRuntime, 1500);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [isCustom, slug]);
+
+  useEffect(() => {
+    if (isCustom) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    if (slug === "box-spread") {
+      // Box live rows arrive through the shared page WebSocket; REST remains
+      // available for explicit diagnostics, not a short-interval polling loop.
+      setLoading(true);
+      return;
+    }
+    void load(true);
+    const timer = window.setInterval(() => void load(), 1500);
+    return () => window.clearInterval(timer);
+  }, [endpoint, isCustom, slug]);
+
+  const filteredRows = useMemo(() => {
+    const indexOrder = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
+    let scopedRows = rows;
+    if (slug === "synthetic-arbitrage") {
+      // Aggregate INDEX shows each supported index separately; an individual
+      // selection must never display another index's opportunities.
+      scopedRows = rows.filter((row) => {
+        const symbol = String(row.underlying ?? "").trim().toUpperCase();
+        const instrumentClass = String(row.instrument_class ?? "").trim().toUpperCase();
+        if (instrumentClass !== "INDEX" || !indexOrder.includes(symbol)) return false;
+        return control === "INDEX" || symbol === control;
+      }).sort((a, b) => {
+        const ai = indexOrder.indexOf(String(a.underlying ?? "").trim().toUpperCase());
+        const bi = indexOrder.indexOf(String(b.underlying ?? "").trim().toUpperCase());
+        if (ai !== bi) return ai - bi;
+        return Number(b.timestamp_ns ?? 0) - Number(a.timestamp_ns ?? 0);
+      });
+    }
+    if (slug === "box-spread") {
+      // Keep weekly and monthly expiry opportunities in separate views; unknown
+      // expiry types are intentionally not guessed into either category.
+      scopedRows = scopedRows.filter((row) => String(row.expiry_type ?? "").trim().toUpperCase() === liveExpiryView);
+    }
+    const q = search.trim().toUpperCase();
+    if (!q) return scopedRows;
+    return scopedRows.filter((row) => Object.values(row).some((v) => String(v ?? "").toUpperCase().includes(q)));
+  }, [rows, search, slug, control, liveExpiryView]);
+
+  const signals = rows.filter((row) => isSignal(slug, row)).length;
+  const monitorRows = c.pairEndpoint ? pairRows : rows;
+  const visiblePairColumns = c.pairColumns.filter((column) => !hiddenPairColumns.includes(column));
+  const filteredPairRows = useMemo(() => {
+    const q = search.trim().toUpperCase();
+    if (!q) return monitorRows;
+    return monitorRows.filter((row) => Object.values(row).some((v) => String(v ?? "").toUpperCase().includes(q)));
+  }, [monitorRows, search]);
+  const lastScan = rows.reduce<string | null>((latest, row) => {
+    const raw = value(row, "timestamp_ns", "timestamp");
+    if (raw == null) return latest;
+    const current = String(raw);
+    return latest == null || current > latest ? current : latest;
+  }, null);
+
+  const diagnosticSummary = (scannerDiagnostics?.calculation_summary && typeof scannerDiagnostics.calculation_summary === "object"
+    ? scannerDiagnostics.calculation_summary : {}) as Row;
+  const diagnosticBlockers = (Array.isArray(scannerDiagnostics?.top_blockers) ? scannerDiagnostics.top_blockers : []) as Row[];
+  const diagnosticStatus = String(scannerDiagnostics?.status ?? "LOADING").replaceAll("_", " ");
+
+  const refresh = async () => {
+    setRefreshing(true);
+    await Promise.all([load(), loadHistory(), loadPairs()]);
+    setRefreshing(false);
+  };
+
+  const copyTableRows = async (kind: "history" | "pairs") => {
+    const source = kind === "history" ? historyRows : filteredPairRows;
+    const columns = kind === "history" && slug === "synthetic-arbitrage"
+      ? ["Time", "Underlying", "Expiry", "Strike", "Direction", "Edge", "Edge / Lot", "Gross P&L", "State"]
+      : c.pairColumns;
+    const render = kind === "history" ? historyCell : pairCell;
+    const payload = [columns.join("\t"), ...source.map((row) => columns.map((column) => render(slug, column, row)).join("\t"))].join("\n");
+    const ok = await copyTextWithFallback(payload);
+    if (ok) {
+      setCopyFallbackText("");
+      setCopyStatus(kind === "history" ? "History copied" : "Pair rows copied");
+    } else {
+      // Android WebViews may deny both Clipboard API and execCommand. Keep a
+      // selectable text copy of the exact table payload instead of a dead end.
+      setCopyFallbackText(payload);
+      setCopyStatus("Automatic copy blocked — tap the text below, then Select all and Copy");
+    }
+    window.setTimeout(() => setCopyStatus(""), 6000);
+  };
+
+  const metricValue = (metric: string) => {
+    if (loading) return "…";
+    const staleSuffix = slug === "synthetic-arbitrage" && rowsStale ? " · STALE" : "";
+    if (metric === "Eligible Contracts") return feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN");
+    if (metric === "Spread Opportunities" || metric === "Executable Edges" || metric === "Executable Gaps") return rows.length.toLocaleString("en-IN") + staleSuffix;
+    if (metric === "Signals") return signals.toLocaleString("en-IN") + staleSuffix;
+    if (metric === "Eligible Combos" || metric === "Eligible Boxes") return rows.length.toLocaleString("en-IN") + staleSuffix;
+    if (metric === "Last Scan") return rowsStale && slug === "synthetic-arbitrage" ? "STALE" : lastScan ? "LIVE" : "—";
+    return "—";
+  };
+
+  const normalizedHistoryFilter = historyFilter.trim().toUpperCase();
+  const filteredHistoryRows = historyRows.filter((row) => {
+    const symbol = String(row.underlying ?? row.symbol ?? "").toUpperCase();
+    const symbolMatches = slug === "box-spread"
+      ? (!historySymbol || symbol === historySymbol)
+      : (!normalizedHistoryFilter || symbol.includes(normalizedHistoryFilter));
+    const expiryType = String(row.expiry_type ?? "").trim().toUpperCase();
+    const expiryMatches = slug !== "box-spread" || expiryType === historyExpiryView;
+    return symbolMatches && expiryMatches;
+  });
+  const historyPageSize = 25;
+  const historyPageCount = Math.max(1, Math.ceil((slug === "box-spread" ? historyTotalCount : filteredHistoryRows.length) / historyPageSize));
+  const safeHistoryPage = Math.min(historyPage, historyPageCount);
+  const visibleHistoryRows = slug === "box-spread" ? filteredHistoryRows : filteredHistoryRows.slice((safeHistoryPage - 1) * historyPageSize, safeHistoryPage * historyPageSize);
+  const sortedHistoryRows = slug === "box-spread" ? [...visibleHistoryRows].sort((left, right) => {
+    const value = (row: Row) => historySort.key === "edge"
+      ? numberValue(row, "executable_edge", "box_edge", "edge")
+      : numberValue(row, "max_executable_lots", "maxExecutableLots", "max_executable_lot_count", "max_executable_qty");
+    const delta = value(left) - value(right);
+    return historySort.direction === "asc" ? delta : -delta;
+  }) : visibleHistoryRows;
+
+  return (
+    <div className={slug === "box-spread" ? "space-y-5 theme-text" : "min-h-screen space-y-5 theme-bg p-4 theme-text"}>
+      <div className="flex items-center justify-between gap-3">
+        {slug === "box-spread" ? (
+          <span className="text-lg font-black uppercase tracking-wide text-slate-950 sm:text-xl">Box Spread · Live Market Monitor</span>
+        ) : (
+          <Link href="/scanner" className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted hover:theme-border">
+            <ArrowLeft className="h-4 w-4" /> Cash Future Scanner
+          </Link>
+        )}
+        <span className={"inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold " +
+          (loading ? "theme-border theme-warning-bg theme-warning" : error ? "theme-border theme-danger-bg theme-danger" :
+          feedStatus === "LIVE" ? "theme-border theme-success-bg theme-success" : "theme-border theme-warning-bg theme-warning")}>
+          {loading ? "CONNECTING" : error ? "BACKEND ERROR" : feedStatus === "LIVE" ? "LIVE FEED" : feedStatus === "UNAVAILABLE" ? "FEED UNAVAILABLE" : slug === "box-spread" ? boxFeedDisplayStatus(feedStatus) : feedStatus.replaceAll("_", " ")}
+        </span>
+      </div>
+
+      {slug !== "box-spread" && <PageTitle eyebrow="Live Strategy Scanner" title={c.title} description={c.description} />}
+
+      {slug === "box-spread" ? (
+        <Card className="theme-border theme-surface-2 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px]">
+            <span className="font-bold theme-text">INDEX OPTIONS</span>
+            <span className="theme-muted">Feed <b className="theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN") + " ticks"}</b></span>
+            <span className="theme-muted">Runner <b className={runner?.running ? "theme-success" : "theme-warning"}>{runner?.running ? "RUNNING" : "STOPPED"}</b></span>
+            <span className="theme-muted">Eligible <b className="theme-text">{metricValue("Eligible Boxes")}</b></span>
+            <span className="theme-muted">Edges <b className="theme-text">{metricValue("Executable Edges")}</b></span>
+            <span className="theme-muted">Last Scan <b className="theme-text">{metricValue("Last Scan")}</b></span>
+            <span className="theme-muted">Feed age <b className="theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</b></span>
+            <span className="theme-muted">NSE <b className="theme-text">{boxExchangeStatus(feedExchangeFreshness?.NSE?.status)}</b></span>
+            <span className="theme-muted">NFO <b className="theme-text">{boxExchangeStatus(feedExchangeFreshness?.NFO?.status)}</b></span>
+            <span className="theme-muted">Instruments <b className="theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</b></span>
+            <span className="theme-muted">Errors <b className="theme-text">{Number(feedErrors?.delivery ?? 0) + Number(feedErrors?.normalizer ?? 0)}</b></span>
+            <span className="rounded-md border theme-border px-2 py-1 font-bold theme-warning">BROKER OFF</span>
+            <div className="w-full rounded-lg border theme-border theme-surface p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-semibold theme-text">Five-Level Depth Shadow</span>
+                <span className={"rounded-md border theme-border px-2 py-1 text-[10px] font-bold " + (boxDepthShadow?.enabled ? "theme-success" : "theme-muted")}>
+                  {boxDepthShadow?.enabled ? (boxDepthShadow.running ? "ENABLED · RUNNING" : "ENABLED · IDLE") : "DISABLED"}
+                </span>
+              </div>
+              <p className="mt-1 text-[11px] theme-muted">Shadow-only comparison; live scanner Edge and paper execution remain unchanged.</p>
+              {boxDepthShadow?.enabled ? (
+                <>
+                <div className="mt-2 grid grid-cols-2 gap-3 text-[11px] sm:grid-cols-4">
+                  <div><span className="theme-muted">Depth records</span><p className="font-semibold theme-text">{Number(boxDepthShadow.record_count ?? 0).toLocaleString("en-IN")}</p></div>
+                  <div><span className="theme-muted">Complete</span><p className="font-semibold theme-text">{Number(boxDepthShadow.comparison_diagnostics?.status_counts?.COMPLETE ?? 0).toLocaleString("en-IN")}</p></div>
+                  <div><span className="theme-muted">Incomplete</span><p className="font-semibold theme-text">{Number(boxDepthShadow.comparison_diagnostics?.status_counts?.INCOMPLETE ?? 0).toLocaleString("en-IN")}</p></div>
+                  <div><span className="theme-muted">Mean depth − L1 / unit</span><p className="font-semibold theme-text">{typeof boxDepthShadow.comparison_diagnostics?.complete_difference_sample?.mean_per_unit === "number" ? boxDepthShadow.comparison_diagnostics.complete_difference_sample.mean_per_unit.toFixed(2) : "—"}</p></div>
+                </div>
+                {Object.keys(boxDepthShadow.comparison_diagnostics?.incomplete_reasons ?? {}).length > 0 && (
+                  <div className="mt-3 border-t theme-border pt-2">
+                    <span className="text-[11px] font-semibold theme-muted">Incomplete comparison reasons</span>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {Object.entries(boxDepthShadow.comparison_diagnostics.incomplete_reasons as Record<string, number>)
+                        .sort((a, b) => Number(b[1]) - Number(a[1]))
+                        .map(([reason, count]) => (
+                          <span key={reason} className="rounded-md border theme-border px-2 py-1 text-[10px] theme-muted">
+                            {reason.replaceAll("_", " ")} <b className="theme-text">{Number(count).toLocaleString("en-IN")}</b>
+                          </span>
+                        ))}
+                    </div>
+                  </div>
+                )}
+                </>
+              ) : <p className="mt-1 text-[11px] theme-muted">No additional depth subscription is active.</p>}
+            </div>
+            <Link href="/custom-alert" className="ml-auto inline-flex min-h-8 items-center gap-1.5 rounded-lg border theme-border px-3 font-semibold theme-accent hover:theme-surface" aria-label="Open strategy alerts"><Bell className="h-3.5 w-3.5" /> Alerts</Link>
+          </div>
+        </Card>
+      ) : (
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Universe</p><p className="mt-2 text-sm font-semibold theme-text">{c.universe}</p></Card>
+        <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Common Market Data Feed</p><p className="mt-2 flex items-center gap-2 text-sm font-semibold theme-accent"><Activity className="h-4 w-4" />{feedTicks == null ? "CHECKING" : feedTicks.toLocaleString("en-IN") + " ticks"}</p></Card>
+        <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">{runnerLabel(slug)}</p><p className={"mt-2 text-sm font-semibold " + (runner?.running ? "theme-success" : "theme-warning")}>{runner?.running ? "RUNNING" : "STOPPED / UNAVAILABLE"}</p></Card>
+        <Card className="theme-border theme-surface p-4"><p className="text-xs theme-muted">Broker Orders</p><p className="mt-2 text-sm font-semibold theme-warning">OFF</p></Card>
+      </div>
+      )}
+
+      {slug === "box-spread" && (
+        <Card className="theme-border theme-surface p-4 theme-text shadow-xl" aria-label="Manual Box Spread index selection">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-black text-slate-950 sm:text-xl">Manual Index Subscription</h2>
+              <p className="mt-1 text-xs theme-muted">Saved selection is applied only after the replacement feed is live-ready. During staging, the previous feed remains active.</p>
+            </div>
+            <span className="rounded-lg border theme-border px-3 py-1.5 text-[10px] font-bold theme-muted">
+              {indexSelectionLoading ? "LOADING FEED STATE" : activeIndexSymbols.length + " ACTIVE INDICES"}
+            </span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">All Indices</button>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","SENSEX"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY + SENSEX</button>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","SENSEX","BANKNIFTY"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY + SENSEX + BANKNIFTY</button>
+          </div>
+          <div className="mt-3 rounded-lg border theme-border theme-surface-2 p-3">
+            <p className="text-xs font-extrabold theme-text">Expiry subscription mode</p>
+            <p className="mt-1 text-[11px] theme-muted">NIFTY/SENSEX default: Weekly + Monthly. Enable Weekly Only to subscribe just that index's weekly contracts.</p>
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {(["NIFTY", "SENSEX"] as const).map(symbol => (
+                <label key={symbol} className="flex min-h-10 items-center gap-2 rounded-lg border theme-border px-3 text-xs font-bold theme-text">
+                  <input type="checkbox" checked={weeklyOnlyDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading} onChange={event => { setWeeklyOnlyDraft(current => event.target.checked ? [...current.filter(item => item !== symbol), symbol] : current.filter(item => item !== symbol)); if (event.target.checked) setIndexSelectionDraft(current => current.filter(item => item !== symbol)); }} className="h-4 w-4 accent-emerald-600" />
+                  {symbol} Weekly Only
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+            {["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"].map(symbol => (
+              <label key={symbol} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3 text-xs font-bold theme-text">
+                <input type="checkbox" checked={indexSelectionDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading} onChange={(event) => { setIndexSelectionDraft(current => event.target.checked ? [...current.filter(item => item !== symbol), symbol] : current.filter(item => item !== symbol)); if (event.target.checked) setWeeklyOnlyDraft(current => current.filter(item => item !== symbol)); }} className="h-4 w-4 accent-emerald-600" />
+                {symbol}
+              </label>
+            ))}
+          </div>
+          <div className="mt-3 rounded-lg border theme-border theme-surface-2 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-extrabold theme-text">Actual Index Feed Status</p>
+              <span className="text-[10px] font-semibold theme-muted">Runtime subscription + latest spot tick · refresh 1s</span>
+            </div>
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"].map(symbol => {
+                const subscribed = activeIndexSymbols.includes(symbol);
+                const saved = savedIndexSymbols.includes(symbol);
+                const weeklyOnly = savedWeeklyOnlySymbols.includes(symbol);
+                const spot = indexSpotRows.find(row => row.symbol === symbol);
+                const age = spot?.spot_age_seconds;
+                const hasFreshTick = spot?.status === "LIVE" && typeof age === "number" && age <= 5;
+                const marketClosed = isOutsideNseRegularHours();
+                const status = hasFreshTick ? "LIVE · TICK RECEIVED"
+                  : subscribed && marketClosed ? "SUBSCRIBED · MARKET CLOSED"
+                  : subscribed ? "SUBSCRIBED · WAITING FOR TICK"
+                  : saved ? "SAVED · NOT ACTIVE YET" : "NOT SUBSCRIBED";
+                const tone = hasFreshTick ? "theme-success"
+                  : subscribed ? "theme-warning" : "theme-muted";
+                const quoteTime = spot?.spot_timestamp_ns
+                  ? new Date(spot.spot_timestamp_ns / 1_000_000).toLocaleTimeString("en-IN", {hour12:false,timeZone:"Asia/Kolkata"}) + " IST"
+                  : "—";
+                return <div key={symbol} className="rounded-lg border theme-border theme-surface p-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-extrabold theme-text">{symbol}</span>
+                    <span className={"text-[10px] font-extrabold " + tone}>{status}</span>
+                  </div>
+                  <p className="mt-1 text-[10px] theme-muted">Subscription: {subscribed ? "ACTIVE" : saved ? "PENDING / HANDOFF" : "OFF"}{weeklyOnly ? " · WEEKLY ONLY" : ""}</p>
+                  <p className="mt-1 text-[10px] theme-muted">Spot: {spot?.spot_price == null ? "—" : formatValue(spot.spot_price)} · Age: {typeof age === "number" ? age.toFixed(2) + "s" : "—"}</p>
+                  <p className="text-[10px] theme-muted">Last tick: {quoteTime}</p>
+                </div>;
+              })}
+            </div>
+            <p className="mt-2 text-[10px] theme-muted">LIVE तभी दिखेगा जब index subscribed हो और उसका spot tick 5 seconds के अंदर मिला हो। पुराना feed handoff के दौरान ACTIVE रह सकता है।</p>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1"><p className="text-[11px] theme-muted">Saved: {savedIndexSymbols.length ? savedIndexSymbols.join(" · ") : "Loading…"}</p><p className="text-[11px] theme-muted">Weekly Only: {savedWeeklyOnlySymbols.length ? savedWeeklyOnlySymbols.join(" · ") : "None"} · Other selected indices use available standard expiries.</p><p className="text-[11px] font-bold theme-text">Actually active: {activeIndexSymbols.length ? activeIndexSymbols.join(" · ") : "No active runner reported"}</p><p className="text-[10px] theme-muted">Feed handoff: {indexHandoffState}</p></div>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || (indexSelectionDraft.length === 0 && weeklyOnlyDraft.length === 0) || (new Set([...indexSelectionDraft, ...weeklyOnlyDraft]).size === savedIndexSymbols.length && [...indexSelectionDraft, ...weeklyOnlyDraft].every(symbol => savedIndexSymbols.includes(symbol)) && weeklyOnlyDraft.length === savedWeeklyOnlySymbols.length && weeklyOnlyDraft.every(symbol => savedWeeklyOnlySymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
+              {indexSelectionSaving ? "SAVING / SWITCHING…" : "Save & Apply Selection"}
+            </button>
+          </div>
+          {indexSelectionMessage && <p role="status" className="mt-3 rounded-lg border theme-border theme-success-bg p-3 text-xs theme-success">{indexSelectionMessage}</p>}
+          {indexSelectionError && <p role="alert" className="mt-3 rounded-lg border theme-border theme-danger-bg p-3 text-xs theme-danger">{indexSelectionError}. Previous saved selection is retained.</p>}
+        </Card>
+      )}
+
+      {slug === "box-spread" && (
+        <section id="box-overview" className="scroll-mt-24 space-y-3 rounded-2xl theme-border theme-surface p-4 theme-text shadow-xl" aria-label="Box Spread live index prices">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div><h2 className="text-lg font-black text-slate-950 sm:text-xl">Live Index Prices</h2><p className="mt-1 text-[10px] theme-muted">Direct spot-feed snapshots · refresh 1s · LIVE only when quote age is 5s or less</p></div>
+            <span className="rounded-lg border theme-border px-3 py-1.5 text-[10px] font-bold theme-muted">{activeIndexSymbols.length} SELECTED INDEX SPOTS</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+            {activeIndexSymbols.map(symbol => {
+              const item = indexSpotRows.find(row => row.symbol === symbol);
+              const age = item?.spot_age_seconds;
+              const live = item?.status === "LIVE" && typeof age === "number" && age <= 5;
+              const stale = item?.status === "STALE" || (typeof age === "number" && age > 5);
+              const stamp = item?.spot_timestamp_ns ? new Date(item.spot_timestamp_ns / 1_000_000).toLocaleTimeString("en-IN", {hour12:false,timeZone:"Asia/Kolkata"}) + " IST" : "Quote time —";
+              return <div key={symbol} className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
+                <div className="flex items-center justify-between gap-1"><p className="text-[11px] font-extrabold theme-text">{symbol}</p><span className={"h-2.5 w-2.5 rounded-full " + (live ? "bg-emerald-500" : stale ? "bg-amber-500" : "bg-slate-400")} /></div>
+                <p className="mt-2 truncate text-lg font-black tabular-nums theme-text">{live && item?.spot_price != null ? "₹" + Number(item.spot_price).toLocaleString("en-IN",{maximumFractionDigits:2}) : "—"}</p>
+                <p className={"mt-1 text-[9px] font-bold " + (live ? "theme-success" : stale ? "theme-warning" : "theme-muted")}>{live ? "LIVE" : stale ? "STALE" : "NO DATA"}</p>
+                <p className="mt-1 text-[9px] tabular-nums theme-muted">{typeof age === "number" ? age.toFixed(1) + "s old" : "No tick received"}</p>
+                <p className="mt-1 text-[9px] theme-muted">{stamp}</p>
+              </div>;
+            })}
+          </div>
+        </section>
+      )}
+      {slug === "box-spread" && (
+        <Card className="scroll-mt-24 theme-border theme-surface p-4 theme-text shadow-xl" aria-label="Box Spread system health" id="box-system-health">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="flex items-center gap-2 text-lg font-black text-slate-950 sm:text-xl"><Activity className="h-5 w-5 text-slate-800" /> System Health</h2>
+              <p className="mt-1 text-xs theme-muted">Common market-data feed and Box Spread runner diagnostics · exchange-level status, not per-index feed confirmation.</p>
+            </div>
+            <span className={"rounded-lg border px-3 py-1.5 text-[11px] font-bold " + (feedStatus === "LIVE" && runner?.running ? "theme-border theme-success-bg theme-success" : feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-border theme-danger-bg theme-danger" : "theme-border theme-warning-bg theme-warning")}>
+              {feedStatus === "LIVE" && runner?.running ? "FEED + RUNNER LIVE" : feedStatus === "UNAVAILABLE" || runner?.running === false ? "HEALTH ATTENTION" : "STATUS CHECKING"}
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Common Feed</p>
+              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN")}</p>
+              <p className="text-[10px] theme-muted">cumulative ticks</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Feed Age</p>
+              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</p>
+              <p className="text-[10px] theme-muted">oldest required exchange tick</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">NSE / NFO</p>
+              <p className="mt-1 text-sm font-bold theme-text">{boxExchangeStatus(feedExchangeFreshness?.NSE?.status)} / {boxExchangeStatus(feedExchangeFreshness?.NFO?.status)}</p>
+              <p className="text-[10px] theme-muted">NSE {typeof feedExchangeFreshness?.NSE?.age_seconds === "number" ? feedExchangeFreshness.NSE.age_seconds.toFixed(1) + "s" : "—"} · NFO {typeof feedExchangeFreshness?.NFO?.age_seconds === "number" ? feedExchangeFreshness.NFO.age_seconds.toFixed(1) + "s" : "—"}</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Box Runner</p>
+              <p className={"mt-1 text-sm font-bold " + (runner?.running ? "theme-success" : "theme-warning")}>{runner?.running ? "RUNNING" : "STOPPED / UNKNOWN"}</p>
+              <p className="text-[10px] theme-muted">{runner?.detail || "Runner detail unavailable"}</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Instruments</p>
+              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</p>
+              <p className="text-[10px] theme-muted">active common-feed instruments</p>
+            </div>
+            <div className="rounded-lg border theme-border theme-surface-2 p-3">
+              <p className="text-[10px] uppercase tracking-wide theme-muted">Feed Errors</p>
+              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedErrors == null ? "—" : (feedErrors.delivery + feedErrors.normalizer).toLocaleString("en-IN")}</p>
+              <p className="text-[10px] theme-muted">delivery {feedErrors?.delivery ?? "—"} · normalizer {feedErrors?.normalizer ?? "—"}</p>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border theme-border px-3 py-2 text-xs">
+            <span className="theme-muted">Scanner: <b className="theme-text">{String(scannerDiagnostics?.status ?? "not separately reported")}</b></span>
+            <span className="font-bold theme-warning">BROKER ORDERS OFF · NO ORDER ROUTING</span>
+          </div>
+        </Card>
+      )}
+      {slug !== "box-spread" && (
+      <Card className="theme-border theme-surface px-3 py-3">
+        <div className="flex items-center gap-2 text-xs font-semibold theme-text"><Filter className="h-4 w-4 theme-accent" /> Live Scanner Controls</div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(160px,0.7fr)_auto]">
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 theme-muted" />
+            <span className="sr-only">Search</span>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search symbol / underlying" className="min-h-9 w-full rounded-lg border theme-border theme-surface px-3 pl-9 text-xs theme-text" />
+          </label>
+          <select value={control} onChange={(e) => void changeControl(e.target.value)} className="min-h-9 w-full rounded-lg border theme-border theme-surface px-3 text-xs theme-text">
+            {c.controls.map((x) => <option key={x} value={x}>{slug === "synthetic-arbitrage" && x === "TOP15" ? "NIFTY TOP 15 LIQUID STOCKS (15)" : x}</option>)}
+          </select>
+          <button type="button" onClick={refresh} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border theme-border theme-surface px-3 text-xs font-semibold theme-text hover:theme-border">
+            <RefreshCw className={"h-4 w-4 " + (refreshing ? "animate-spin" : "")} /> Refresh
+          </button>
+        </div>
+        {slug === "synthetic-arbitrage" && (
+          <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs">
+            <p className="font-semibold theme-text">
+              {control === "INDEX" ? "INDEX-ONLY SCAN — all supported indices" : "INDEX-ONLY SCAN — " + control}
+            </p>
+            {control === "TOP15" || control === "ALL" ? (
+              <>
+                <p className="mt-2 leading-6 theme-muted">{top15StockSymbols.join(" • ")}</p>
+                <p className="mt-1 theme-muted">These names define the basket only; stocks are not separate dropdown choices.</p>
+              </>
+            ) : (
+              <p className="mt-1 theme-muted">{control === "INDEX" ? "All supported indices are scanned. Stock futures and stock options are disabled for this scanner." : "Only the selected index is scanned. Stock futures and stock options are disabled for this scanner."}</p>
+            )}
+            {control === "TOP15" && <p className="mt-1 theme-success">TOP15 scans the configured stock basket automatically. No individual stock selection is required; only stocks with eligible current futures and matching option expiry can be scanned.</p>}
+            {(control === "TOP15" || control === "ALL") && universeAvailability && (
+              <div className="mt-2 space-y-1 border-t theme-border pt-2">
+                <p className="theme-text">Eligible futures ({universeAvailability.eligible_future_symbols?.length ?? 0}/15): {(universeAvailability.eligible_future_symbols ?? []).join(" • ") || "Not yet checked"}</p>
+                <p className="theme-muted">Missing futures ({universeAvailability.missing_future_symbols?.length ?? 0}): {(universeAvailability.missing_future_symbols ?? []).join(" • ") || "None reported"}</p>
+                <p className="theme-text">Scan-ready targets ({universeAvailability.eligible_target_symbols?.filter((symbol) => top15StockSymbols.includes(symbol)).length ?? 0}/15): {(universeAvailability.eligible_target_symbols ?? []).filter((symbol) => top15StockSymbols.includes(symbol)).join(" • ") || "Not yet checked"}</p>
+                <p className="theme-muted">Missing matching option expiry: {(universeAvailability.missing_option_expiry_symbols ?? []).filter((symbol) => top15StockSymbols.includes(symbol)).join(" • ") || "None reported"}</p>
+                {control === "ALL" && <>
+                  <p className="theme-text">Eligible index futures ({universeAvailability.eligible_index_symbols?.length ?? 0}/{universeAvailability.configured_index_symbols?.length ?? 6}): {(universeAvailability.eligible_index_symbols ?? []).join(" • ") || "Not yet checked"}</p>
+                  <p className="theme-muted">Index symbols skipped (unresolvable token): {(universeAvailability.missing_index_underlyings ?? []).join(" • ") || "None reported"}</p>
+                  <p className="theme-muted">Indices missing matching option expiry: {(universeAvailability.missing_option_expiry_symbols ?? []).filter((symbol) => (universeAvailability.configured_index_symbols ?? []).includes(symbol)).join(" • ") || "None reported"}</p>
+                </>}
+                <p className="theme-muted">Availability is from the last backend universe check, not a guarantee of live quotes.</p>
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+      )}
+
+      {slug !== "box-spread" && (
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {c.metrics.map((metric) => (
+          <Card key={metric} className="theme-border theme-surface p-4">
+            <p className="text-xs theme-muted">{metric}</p>
+            <p className="mt-2 text-xl font-semibold theme-text">{metricValue(metric)}</p>
+          </Card>
+        ))}
+      </div>
+      )}
+
+      {slug !== "box-spread" && (
+      <Card className="theme-border theme-surface p-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+          <div><p className="text-xs theme-muted">Common Feed Ticks</p><p className="mt-1 text-lg font-semibold theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN")}</p><p className="text-[11px] theme-muted">Actual cumulative feed counter</p></div>
+          <div><p className="text-xs theme-muted">Feed Age (NSE/NFO)</p><p className="mt-1 text-lg font-semibold theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</p><p className="text-[11px] theme-muted">Oldest required exchange tick</p></div>
+          <div><p className="text-xs theme-muted">NSE / NFO Tick Status</p><p className="mt-1 text-sm font-semibold theme-text">NSE: {String(feedExchangeFreshness?.NSE?.status ?? "—")} {typeof feedExchangeFreshness?.NSE?.age_seconds === "number" ? "(" + feedExchangeFreshness.NSE.age_seconds.toFixed(1) + "s)" : ""}</p><p className="text-sm font-semibold theme-text">NFO: {String(feedExchangeFreshness?.NFO?.status ?? "—")} {typeof feedExchangeFreshness?.NFO?.age_seconds === "number" ? "(" + feedExchangeFreshness.NFO.age_seconds.toFixed(1) + "s)" : ""}</p></div>
+          <div><p className="text-xs theme-muted">Active Instruments</p><p className="mt-1 text-lg font-semibold theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</p></div>
+          <div><p className="text-xs theme-muted">Runner</p><p className={"mt-1 text-lg font-semibold " + (runner?.running ? "theme-success" : "theme-warning")}>{runner?.running ? "RUNNING" : "STOPPED"}</p></div>
+          <div><p className="text-xs theme-muted">Feed Delivery Errors</p><p className="mt-1 text-lg font-semibold theme-text">{feedErrors?.delivery ?? "—"}</p></div>
+          <div><p className="text-xs theme-muted">Normalizer Errors</p><p className="mt-1 text-lg font-semibold theme-text">{feedErrors?.normalizer ?? "—"}</p></div>
+        </div>
+      </Card>
+      )}
+
+      {slug === "synthetic-arbitrage" && (
+        <Card className="theme-border theme-surface p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold theme-text">Synthetic Scanner Health</h2>
+              <p className="mt-1 text-xs theme-muted">Scanner observations and completed calculations are separate from common-feed tick totals.</p>
+            </div>
+            <span className={"rounded-lg border px-3 py-1.5 text-xs font-semibold " + (String(scannerDiagnostics?.status ?? "UNKNOWN") === "SCANNING" ? "theme-success" : "theme-warning")}>{String(scannerDiagnostics?.status ?? "UNKNOWN")}</span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <div><p className="text-xs theme-muted">Observations</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.observations_received) ?? "—")}</p></div>
+            <div><p className="text-xs theme-muted">Completed scans</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.scan_evaluations) ?? "—")}</p></div>
+            <div><p className="text-xs theme-muted">Empty scans</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.empty_calculations) ?? "—")}</p></div>
+            <div><p className="text-xs theme-muted">Missing CE/PE events</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.missing_ce_or_pe_leg) ?? "—")}</p></div>
+            <div><p className="text-xs theme-muted">Missing CALL</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.missing_call_leg) ?? "—")}</p></div>
+            <div><p className="text-xs theme-muted">Missing PUT</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.missing_put_leg) ?? "—")}</p></div>
+            <div><p className="text-xs theme-muted">Last scan age</p><p className="mt-1 text-base font-semibold theme-text">{typeof scannerDiagnostics?.last_scan_age_seconds === "number" ? scannerDiagnostics.last_scan_age_seconds.toFixed(1) + "s" : "—"}</p></div>
+          </div>
+          {typeof scannerDiagnostics?.phase_reason === "string" && scannerDiagnostics.phase_reason && <p className="mt-2 rounded-lg border theme-border theme-surface-2 p-2 text-xs theme-muted">Runner phase: {String(scannerDiagnostics.phase ?? scannerDiagnostics.status ?? "UNKNOWN")} · {String(scannerDiagnostics.phase_reason).replaceAll("_", " ")}</p>}
+          {(() => {
+            const counters = (scannerDiagnostics?.counters && typeof scannerDiagnostics.counters === "object" ? scannerDiagnostics.counters : {}) as Record<string, unknown>;
+            const symbols = Object.keys(counters)
+              .filter((key) => /^(scan_evaluations|successful_pairs|opportunities_emitted|empty_calculations)_by_symbol:/.test(key))
+              .reduce((map, key) => {
+                const match = key.match(/^(scan_evaluations|successful_pairs|opportunities_emitted|empty_calculations)_by_symbol:(.+)$/);
+                if (!match) return map;
+                const symbol = match[2];
+                const row = map.get(symbol) ?? { underlying: symbol };
+                row[match[1]] = counters[key];
+                map.set(symbol, row);
+                return map;
+              }, new Map<string, Record<string, unknown>>());
+            const rows = Array.from(symbols.values()).sort((a, b) => String(a.underlying).localeCompare(String(b.underlying)));
+            return <div className="mt-4 border-t theme-border pt-3">
+              <div><h3 className="text-sm font-semibold theme-text">Per-symbol scan outcomes</h3><p className="mt-1 text-xs theme-muted">Calculation and emitted-result counts; these are not trading recommendations.</p></div>
+              {rows.length === 0 ? <p className="mt-2 rounded-lg border theme-border p-3 text-xs theme-muted">Per-symbol scan counters have not arrived yet. Refresh after the backend deployment completes.</p> : <div className="mt-2 overflow-x-auto rounded-lg border theme-border"><table className="w-full min-w-[560px] text-left text-xs"><thead className="theme-surface-2 theme-muted"><tr>{["Symbol", "Calculations", "Pairs evaluated", "Results emitted", "Empty calculations"].map((label) => <th key={label} className="px-3 py-2 font-semibold">{label}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={String(row.underlying)} className="border-t theme-border"><td className="px-3 py-2 font-semibold theme-text">{String(row.underlying)}</td><td className="px-3 py-2 theme-muted">{String(row.scan_evaluations ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(row.successful_pairs ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(row.opportunities_emitted ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(row.empty_calculations ?? "—")}</td></tr>)}</tbody></table></div>}
+            </div>;
+          })()}
+          <p className="mt-3 text-xs theme-muted">Zero signals can be a valid market result. A stale or incomplete scanner is shown as a health problem, not as a successful empty scan. Broker orders remain OFF.</p>
+        </Card>
+      )}
+
+      {error && <Card className="theme-border theme-danger-bg p-4 text-sm theme-danger">{error}</Card>}
+
+      {slug === "box-spread" && <div id="box-live-opportunities" className="scroll-mt-24"><LiveOpportunityGrid /></div>}
+
+      {slug !== "box-spread" && (
+        <Card className="overflow-hidden theme-border theme-surface">
+          <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Zap className="h-4 w-4 theme-accent" /> Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Real backend rows only. No fake scanner values are generated in the UI.</p>{slug === "box-spread" && <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Live opportunity expiry type">
+              <button type="button" onClick={() => setLiveExpiryView("MONTHLY")} aria-pressed={liveExpiryView === "MONTHLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (liveExpiryView === "MONTHLY" ? "border-violet-500 bg-violet-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Monthly)</button>
+              <button type="button" onClick={() => setLiveExpiryView("WEEKLY")} aria-pressed={liveExpiryView === "WEEKLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (liveExpiryView === "WEEKLY" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Weekly)</button>
+            </div>}{slug === "box-spread" && <div className="mt-2 rounded-lg border theme-border theme-surface-2 px-3 py-2 text-xs"><p className={"font-semibold " + (liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "theme-success" : liveApiStatus === "ERROR" || feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-danger" : "theme-warning")}>{liveApiStatus === "ERROR" ? "LIVE API ERROR" : liveApiStatus === "CHECKING" ? "CHECKING LIVE API…" : feedStatus === "LIVE" && runner?.running ? (filteredRows.length === 0 ? "LIVE CHECK OK · NO QUALIFYING OPPORTUNITY RIGHT NOW" : "LIVE CHECK OK · OPPORTUNITIES FOUND") : "LIVE STATUS NEEDS ATTENTION"}</p><p className="mt-1 theme-muted">API response: {liveApiLastOkAt === null ? "not received yet" : new Date(liveApiLastOkAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST"} · UI clock: {currentLiveTime || "—"}</p><p className="mt-1 theme-muted">{liveApiStatus === "ERROR" ? "API request failed; zero rows must NOT be interpreted as no opportunity." : feedStatus !== "LIVE" || !runner?.running ? "Feed/runner health is not confirmed live; zero rows may mean scanner/feed unavailable." : filteredRows.length === 0 ? "The live endpoint responded and the feed/runner report live, but no qualifying rows were returned for this check. This is not a guarantee that every possible contract was evaluated." : "Live endpoint returned qualifying rows. Quote timestamps and freshness are shown per row."}</p></div>}{rowsStale && slug === "synthetic-arbitrage" && rows.length > 0 && <p className="mt-2 rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs theme-warning">Showing last observed opportunities with their original Time values. Data is STALE — not confirmed live; waiting for a fresh scanner response.</p>}</div>
+            <div className="flex flex-col items-start gap-1 sm:items-end"><span className="text-xs font-semibold theme-text">{slug === "box-spread" ? "Current Live Time (IST): " + (currentLiveTime || "—") : ""}</span><span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • {slug === "box-spread" ? "WebSocket push" : "1.5s refresh"}</span></div>
+          </div>
+          <div className="grid gap-2 p-3 md:hidden">
+            {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live data…</div> : filteredRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">{slug === "box-spread" ? liveApiStatus === "ERROR" ? "LIVE API ERROR — zero rows are not proof of no opportunity." : liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "LIVE CHECK CONFIRMED · 0 qualifying opportunity rows returned on the latest check." : "WAITING FOR CONFIRMED LIVE STATUS — 0 rows returned; scanner/feed health is not yet confirmed." : "No live opportunity data"}</div> : filteredRows.map((row, index) => <div key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-mobile-live-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3">{slug === "synthetic-arbitrage" && <div className="mb-2 flex items-center justify-between gap-2 border-b theme-border pb-2"><span className="text-xs font-bold theme-accent">{String(row.underlying ?? "INDEX").toUpperCase()}</span><span className="text-[10px] theme-muted">INDEX OPPORTUNITY</span></div>}<div className="mb-2 text-sm font-bold theme-text">{formatCell(slug, c.columns[0], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.columns.slice(1).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className={"mt-0.5 break-words text-xs font-medium theme-muted " + syntheticCellTone(slug, column, row)}>{slug === "box-spread" && ["Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)"].includes(column) ? <BoxSpreadLegQuote row={row} column={column as BoxSpreadLegColumn} /> : formatCell(slug, column, row)}</div></div>)}</div></div>)}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="min-w-[1100px] w-full text-left text-sm">
+              <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{c.columns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
+              <tbody>
+                {loading ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">Loading live data…</td></tr> :
+                filteredRows.length === 0 ? <tr><td colSpan={c.columns.length} className="px-4 py-14 text-center text-sm theme-muted">{slug === "box-spread" ? liveApiStatus === "ERROR" ? "LIVE API ERROR — zero rows are not proof of no opportunity." : liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "LIVE CHECK CONFIRMED · 0 qualifying opportunity rows returned on the latest check." : "WAITING FOR CONFIRMED LIVE STATUS — 0 rows returned; scanner/feed health is not yet confirmed." : "No live opportunity data"}</td></tr> :
+                filteredRows.map((row, index) => <tr key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-" + index)} className={"border-b theme-border last:border-0 " + (slug === "synthetic-arbitrage" && (index === 0 || String(filteredRows[index - 1]?.underlying ?? "").toUpperCase() !== String(row.underlying ?? "").toUpperCase()) ? "border-t-2 theme-border" : "")}>
+                  {c.columns.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 0 ? "font-semibold theme-text" : "theme-muted") + " " + syntheticCellTone(slug, column, row)}>{slug === "box-spread" && ["Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)"].includes(column) ? <BoxSpreadLegQuote row={row} column={column as BoxSpreadLegColumn} /> : formatCell(slug, column, row)}</td>)}
+                </tr>)}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {slug === "synthetic-arbitrage" && (
+        <Card className="theme-border theme-surface p-4">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold theme-text">Synthetic Scanner Diagnostics</h2>
+              <p className="mt-1 text-xs theme-muted">Calculation health and actual backend blockers • refreshes every 1.5 seconds</p>
+            </div>
+            <span className={"rounded-lg border px-2.5 py-1 text-xs font-semibold " + (diagnosticStatus === "SCANNING" ? "theme-border theme-success-bg theme-success" : "theme-border theme-warning-bg theme-warning")}>{diagnosticStatus}</span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+            {([
+              ["Evaluations", diagnosticSummary.evaluations],
+              ["Successful pairs", diagnosticSummary.successful_pairs],
+              ["Opportunities emitted", diagnosticSummary.opportunities_emitted],
+              ["Empty calculations", diagnosticSummary.empty_calculations],
+              ["Last result count", diagnosticSummary.last_result_count],
+            ] as Array<[string, unknown]>).map(([label, raw]) => (
+              <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3">
+                <p className="text-xs theme-muted">{label}</p>
+                <p className="mt-1 text-lg font-semibold theme-text">{typeof raw === "number" ? raw.toLocaleString("en-IN") : "—"}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-xl border theme-border theme-surface-2 p-3">
+              <p className="text-xs theme-muted">Last observation age</p>
+              <p className="mt-1 text-sm font-semibold theme-text">{typeof scannerDiagnostics?.observation_age_seconds === "number" ? scannerDiagnostics.observation_age_seconds.toFixed(1) + "s" : "—"}</p>
+            </div>
+            <div className="rounded-xl border theme-border theme-surface-2 p-3">
+              <p className="text-xs theme-muted">Last successful calculation</p>
+              <p className="mt-1 text-sm font-semibold theme-text">{typeof scannerDiagnostics?.last_scan_age_seconds === "number" ? scannerDiagnostics.last_scan_age_seconds.toFixed(1) + "s ago" : "Not yet completed"}</p>
+              <p className="mt-1 text-[11px] theme-muted">This is calculation age, not merely the latest pair snapshot.</p>
+            </div>
+          </div>
+          <div className="mt-4">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold theme-text">Top blockers</p>
+              <p className="text-[10px] theme-muted">Cumulative events; categories may overlap</p>
+            </div>
+            {diagnosticBlockers.length === 0 ? (
+              <p className="mt-2 rounded-lg border theme-border p-3 text-xs theme-muted">{scannerDiagnostics?.status === "DIAGNOSTICS_UNAVAILABLE" || scannerDiagnostics?.status === "unavailable" ? "Diagnostics endpoint/provider unavailable; backend deployment may be pending." : "No reported blocker counters yet."}</p>
+            ) : (
+              <div className="mt-2 space-y-2">
+                {diagnosticBlockers.map((item, index) => (
+                  <div key={String(item.reason ?? index)} className="flex items-center justify-between gap-3 rounded-lg border theme-border px-3 py-2">
+                    <span className="min-w-0 break-words text-xs theme-muted">{String(item.reason ?? "Unknown blocker").replaceAll("_", " ")}</span>
+                    <span className="shrink-0 text-sm font-semibold theme-text">{typeof item.count === "number" ? item.count.toLocaleString("en-IN") : "—"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {(() => {
+            const readiness = (scannerDiagnostics?.atm_readiness_summary && typeof scannerDiagnostics.atm_readiness_summary === "object" ? scannerDiagnostics.atm_readiness_summary : {}) as Row;
+            const atmTracker = (scannerDiagnostics?.atm_tracker_diagnostics && typeof scannerDiagnostics.atm_tracker_diagnostics === "object" ? scannerDiagnostics.atm_tracker_diagnostics : {}) as Row;
+            const subscriptions = (scannerDiagnostics?.subscription_diagnostics && typeof scannerDiagnostics.subscription_diagnostics === "object" ? scannerDiagnostics.subscription_diagnostics : {}) as Row;
+            const atmSymbols = (Array.isArray(atmTracker.symbols) ? atmTracker.symbols : Array.isArray(readiness.not_ready_symbols) ? readiness.not_ready_symbols : []) as Row[];
+            const subscriptionSymbols = (Array.isArray(subscriptions.symbols) ? subscriptions.symbols : []) as Row[];
+            const underlyingFeed = (scannerDiagnostics?.underlying_feed && typeof scannerDiagnostics.underlying_feed === "object" ? scannerDiagnostics.underlying_feed : {}) as Row;
+            const rawFeedSymbols = underlyingFeed.symbols;
+            const feedSymbols: Row[] = Array.isArray(rawFeedSymbols)
+              ? rawFeedSymbols as Row[]
+              : rawFeedSymbols && typeof rawFeedSymbols === "object"
+                ? Object.entries(rawFeedSymbols as Record<string, unknown>).map(([symbol, item]) => ({
+                    ...(item && typeof item === "object" ? item as Row : {}),
+                    underlying: (item && typeof item === "object" ? (item as Row).underlying ?? (item as Row).symbol : undefined) ?? symbol,
+                  }))
+                : [];
+            const symbolRows = new Map<string, Row>();
+            for (const item of atmSymbols) symbolRows.set(String(item.underlying ?? item.symbol ?? "UNKNOWN").toUpperCase(), { ...item, diagnostic_source: "ATM" });
+            for (const item of subscriptionSymbols) {
+              const key = String(item.underlying ?? item.symbol ?? "UNKNOWN").toUpperCase();
+              const previous = symbolRows.get(key) ?? {};
+              symbolRows.set(key, {
+                ...previous,
+                ...item,
+                underlying: key,
+                // Subscription snapshots may omit ATM fields or provide nulls.
+                // Keep the real ATM tracker values so stock/index readiness is not hidden.
+                atm_ready: typeof item.atm_ready === "boolean" ? item.atm_ready : previous.atm_ready,
+                has_underlying_price: typeof item.has_underlying_price === "boolean" ? item.has_underlying_price : previous.has_underlying_price,
+                last_price: item.last_price ?? item.last_underlying_price ?? previous.last_price ?? previous.last_underlying_price,
+                last_underlying_price: item.last_underlying_price ?? item.last_price ?? previous.last_underlying_price ?? previous.last_price,
+                source_age_seconds: item.source_age_seconds ?? previous.source_age_seconds,
+                // Diagnostic endpoints can emit partial snapshots. Nulls must not erase concrete subscription counts.
+                future_count: item.future_count ?? previous.future_count,
+                call_count: item.call_count ?? previous.call_count,
+                put_count: item.put_count ?? previous.put_count,
+                complete_pair_count: item.complete_pair_count ?? previous.complete_pair_count,
+                subscription_count: item.subscription_count ?? previous.subscription_count,
+                expiry: item.expiry ?? previous.expiry,
+                atm_strike: item.atm_strike ?? previous.atm_strike,
+                feed_state: item.feed_state ?? previous.feed_state,
+                feed_reason: item.feed_reason ?? previous.feed_reason,
+                concrete_strike_count: typeof previous.concrete_strike_count === "number" ? previous.concrete_strike_count : item.concrete_strike_count,
+                reason: item.reason || previous.reason,
+              });
+            }
+            for (const item of feedSymbols) {
+              const key = String(item.underlying ?? item.symbol ?? item.name ?? "").toUpperCase();
+              if (!key) continue;
+              const previous = symbolRows.get(key) ?? {};
+              const tickAge = item.last_tick_age_seconds ?? item.receive_age_seconds ?? item.source_timestamp_age_seconds;
+              const feedState = item.state ?? item.status ?? item.feed_state
+                ?? (item.token_resolved === false ? "TOKEN_UNRESOLVED"
+                  : typeof tickAge === "number" ? (tickAge <= 5 ? "LIVE" : "STALE")
+                  : item.token_resolved === true ? "WAITING_FOR_TICK"
+                  : previous.feed_state ?? underlyingFeed.state);
+              const feedReason = feedState === "TOKEN_UNRESOLVED" ? "underlying_token_unresolved"
+                : feedState === "WAITING_FOR_TICK" ? "token_resolved_waiting_for_first_tick"
+                : feedState === "STALE" ? "underlying_tick_stale"
+                : undefined;
+              symbolRows.set(key, {
+                ...previous,
+                ...item,
+                underlying: key,
+                feed_state: feedState,
+                feed_reason: item.state_reason || item.reason || feedReason || previous.feed_reason,
+                token_resolved: typeof item.token_resolved === "boolean" ? item.token_resolved : previous.token_resolved,
+                // Normalize the feed's canonical last_price while preserving a previously observed real price if this diagnostic omits it.
+                last_price: item.last_price ?? item.last_underlying_price ?? previous.last_price ?? previous.last_underlying_price,
+                last_underlying_price: item.last_underlying_price ?? item.last_price ?? previous.last_underlying_price ?? previous.last_price,
+                last_tick_age_seconds: typeof tickAge === "number" ? tickAge : previous.last_tick_age_seconds,
+                // Prefer the actual underlying-feed tick age over an older ATM/subscription age.
+                // Otherwise the merged row can show stale feed age even after a fresh tick arrives.
+                source_age_seconds: typeof tickAge === "number" ? tickAge : previous.source_age_seconds,
+                // Feed-only snapshots must not blank subscription/ATM readiness values.
+                future_count: item.future_count ?? previous.future_count,
+                call_count: item.call_count ?? previous.call_count,
+                put_count: item.put_count ?? previous.put_count,
+                complete_pair_count: item.complete_pair_count ?? previous.complete_pair_count,
+                subscription_count: item.subscription_count ?? previous.subscription_count,
+                expiry: item.expiry ?? previous.expiry,
+                atm_strike: item.atm_strike ?? previous.atm_strike,
+                concrete_strike_count: item.concrete_strike_count ?? previous.concrete_strike_count,
+                reason: previous.reason || item.state_reason || item.reason || feedReason,
+              });
+            }
+            const counters = (scannerDiagnostics?.counters && typeof scannerDiagnostics.counters === "object" ? scannerDiagnostics.counters : {}) as Record<string, unknown>;
+            for (const [counterKey, value] of Object.entries(counters)) {
+              const match = counterKey.match(/^(scan_evaluations|successful_pairs|opportunities_emitted|empty_calculations|missing_atm_price|atm_provider_errors|config_provider_errors|scan_calculation_errors|latest_scan_result_count|latest_scan_at_ns|latest_scan_status)_by_symbol:(.+)$/);
+              if (!match) continue;
+              const key = match[2].toUpperCase();
+              const previous = symbolRows.get(key) ?? { underlying: key };
+              symbolRows.set(key, { ...previous, [match[1]]: value });
+            }
+            const rows = Array.from(symbolRows.values()).sort((a, b) => String(a.underlying ?? "").localeCompare(String(b.underlying ?? "")));
+            return <div className="mt-4 border-t theme-border pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div><h3 className="text-sm font-semibold theme-text">Per-symbol readiness</h3><p className="mt-1 text-xs theme-muted">Live diagnostics only; scan counters are cumulative since scanner start, and missing fields are shown as —.</p></div>
+                <span className="rounded-lg border theme-border px-2 py-1 text-xs theme-muted">{typeof readiness.ready_symbols === "number" ? readiness.ready_symbols : "—"} ready / {typeof readiness.tracked_symbols === "number" ? readiness.tracked_symbols : "—"} tracked</span>
+              </div>
+              {rows.length === 0 ? <p className="mt-2 rounded-lg border theme-border p-3 text-xs theme-muted">Per-symbol readiness has not been supplied by the backend yet. Check universe/ATM diagnostics endpoint.</p> : <><div className="mt-3 grid gap-2 md:hidden">{rows.map((item, index) => <div key={String(item.underlying ?? index)} className="rounded-lg border theme-border theme-surface-2 p-3"><div className="flex items-start justify-between gap-2"><div className="font-semibold theme-text">{String(item.underlying ?? item.symbol ?? "—")}</div><span className="rounded-md border theme-border px-2 py-1 text-[10px] font-semibold theme-muted">{String(item.feed_state ?? "FEED UNKNOWN").replaceAll("_", " ")}</span></div><div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs"><div><div className="theme-subtle">Scan outcome</div><div className="mt-0.5 theme-muted">{Number(item.opportunities_emitted ?? 0) > 0 ? "OPPORTUNITY EMITTED" : Number(item.scan_calculation_errors ?? 0) > 0 ? "CALCULATION ERROR" : Number(item.config_provider_errors ?? 0) > 0 ? "CONFIG ERROR" : Number(item.atm_provider_errors ?? 0) > 0 ? "ATM LOOKUP ERROR" : Number(item.missing_atm_price ?? 0) > 0 ? "ATM PRICE MISSING" : Number(item.scan_evaluations ?? 0) > 0 ? "CALCULATED · NO EDGE" : "NOT YET EVALUATED"}</div></div><div><div className="theme-subtle">Latest scan</div><div className="mt-0.5 theme-muted">{item.latest_scan_at_ns ? (Math.max(0, Date.now() - Number(item.latest_scan_at_ns) / 1_000_000) <= 5000 ? "FRESH" : "STALE") + " · " + (Number(item.latest_scan_result_count ?? 0) > 0 ? "RESULTS " + String(item.latest_scan_result_count) : String(item.latest_scan_status ?? "NO EDGE").replaceAll("_", " ")) + " · " + Math.max(0, Math.floor((Date.now() - Number(item.latest_scan_at_ns) / 1_000_000) / 1000)) + "s ago" : "NOT SCANNED"}</div></div><div><div className="theme-subtle">Feed age</div><div className="mt-0.5 theme-muted">{typeof (item.last_tick_age_seconds ?? item.source_age_seconds) === "number" ? Number(item.last_tick_age_seconds ?? item.source_age_seconds).toFixed(1) + "s" : "—"}</div></div><div><div className="theme-subtle">Token resolved</div><div className="mt-0.5 theme-muted">{item.token_resolved === true ? "YES" : item.token_resolved === false ? "NO" : "UNKNOWN"}</div></div><div><div className="theme-subtle">Underlying price</div><div className="mt-0.5 theme-muted">{String(item.last_price ?? item.last_underlying_price ?? item.underlying_price ?? item.price ?? "—")}</div></div><div><div className="theme-subtle">Expiry / ATM</div><div className="mt-0.5 theme-muted">{formatExpiry(item.expiry)} · ATM {String(item.atm_strike ?? "—")}</div></div><div><div className="theme-subtle">Futures / Calls / Puts</div><div className="mt-0.5 theme-muted">{String(item.future_count ?? "—")} / {String(item.call_count ?? "—")} / {String(item.put_count ?? "—")}</div></div><div className="col-span-2"><div className="theme-subtle">Feed blocker</div><div className="mt-0.5 break-words theme-muted">{String(item.feed_reason ?? item.state_reason ?? "—").replaceAll("_", " ")}</div></div><div className="col-span-2"><div className="theme-subtle">Reason / blocker</div><div className="mt-0.5 break-words theme-muted">{String(item.reason ?? item.blocker ?? "—").replaceAll("_", " ")}</div></div></div></div>)}</div><div className="mt-3 overflow-x-auto rounded-lg border theme-border"><table className="w-full min-w-[720px] text-left text-xs"><thead className="theme-surface-2 theme-muted"><tr>{["Symbol","Class","Status","Latest scan","Scan outcome (cumulative)","Feed state","Token","Expiry","Futures","Calls","Puts","CE/PE pairs","ATM strikes","Selected ATM","ATM misses","ATM errors","Config errors","Calculation errors","Calculations","Pairs evaluated","Results emitted","Empty scans","Underlying price","Feed age","Feed blocker","Reason"].map(label => <th key={label} className="px-3 py-2 font-semibold">{label}</th>)}</tr></thead><tbody>{rows.map((item, index) => <tr key={String(item.underlying ?? index)} className="border-t theme-border"><td className="px-3 py-2 font-semibold theme-text">{String(item.underlying ?? item.symbol ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.instrument_class ?? item.asset_class ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.status ?? (item.ready === true || item.atm_ready === true ? "READY" : item.ready === false || item.atm_ready === false ? "WAITING_FOR_ATM" : "—")).replaceAll("_", " ")}</td><td className="px-3 py-2 theme-muted">{item.latest_scan_at_ns ? (Math.max(0, Date.now() - Number(item.latest_scan_at_ns) / 1_000_000) <= 5000 ? "FRESH" : "STALE") + " · " + (item.latest_scan_status && item.latest_scan_status !== "COMPLETED" && item.latest_scan_status !== "RESULTS" && item.latest_scan_status !== "NO_EDGE" ? String(item.latest_scan_status).replaceAll("_", " ") : Number(item.latest_scan_result_count ?? 0) > 0 ? "RESULTS: " + String(item.latest_scan_result_count) : "NO EDGE") + " · " + quoteTimestamp({timestamp_ns: item.latest_scan_at_ns}) + " · " + Math.max(0, Math.floor((Date.now() - Number(item.latest_scan_at_ns) / 1_000_000) / 1000)) + "s ago" : "NOT SCANNED"}</td><td className="px-3 py-2 theme-muted">{Number(item.opportunities_emitted ?? 0) > 0 ? "OPPORTUNITY EMITTED" : Number(item.scan_calculation_errors ?? 0) > 0 ? "CALCULATION ERROR" : Number(item.config_provider_errors ?? 0) > 0 ? "CONFIG ERROR" : Number(item.atm_provider_errors ?? 0) > 0 ? "ATM LOOKUP ERROR" : Number(item.missing_atm_price ?? 0) > 0 ? "ATM PRICE MISSING" : Number(item.scan_evaluations ?? 0) > 0 ? "CALCULATED · NO EDGE" : Number(item.successful_pairs ?? 0) > 0 ? "PAIRS SEEN · NOT EVALUATED" : item.feed_state === "LIVE" && Number(item.complete_pair_count ?? 0) === 0 ? "WAITING FOR CE/PE PAIR" : "NOT YET EVALUATED"}</td><td className="px-3 py-2 theme-muted">{String(item.feed_state ?? "—").replaceAll("_", " ")}</td><td className="px-3 py-2 theme-muted">{item.token_resolved === true ? "YES" : item.token_resolved === false ? "NO" : "—"}</td><td className="px-3 py-2 theme-muted">{formatExpiry(item.expiry)}</td><td className="px-3 py-2 theme-muted">{String(item.future_count ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.call_count ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.put_count ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.complete_pair_count ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.concrete_strike_count ?? item.strike_count ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.atm_strike ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.missing_atm_price ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.atm_provider_errors ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.config_provider_errors ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.scan_calculation_errors ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.scan_evaluations ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.successful_pairs ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.opportunities_emitted ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.empty_calculations ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.last_price ?? item.underlying_price ?? item.last_underlying_price ?? item.price ?? (item.underlying_price_present === true || item.has_underlying_price === true ? "present" : "—"))}</td><td className="px-3 py-2 theme-muted">{typeof (item.last_tick_age_seconds ?? item.source_age_seconds) === "number" ? Number(item.last_tick_age_seconds ?? item.source_age_seconds).toFixed(1) + "s" : "—"}</td><td className="px-3 py-2 theme-muted">{String(item.feed_reason ?? "—").replaceAll("_", " ")}</td><td className="px-3 py-2 theme-muted">{String(item.reason ?? item.blocker ?? "—").replaceAll("_", " ")}</td></tr>)}</tbody></table></div></>}
+            </div>;
+          })()}
+        </Card>
+      )}
+
+      {slug !== "box-spread" && (
+      <Card className="theme-border theme-surface p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.pairTitle}</h2><p className="mt-1 text-xs theme-muted">Real backend pairs stay visible during brief empty/error snapshots; retained rows are clearly marked STALE.</p></div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => void copyTableRows("pairs")} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Copy rows</button>
+            <button type="button" onClick={() => setShowPairColumnPicker((open) => !open)} aria-expanded={showPairColumnPicker} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">{showPairColumnPicker ? "Close columns" : "Hide / Show columns"}</button>
+            <span className="text-xs font-semibold theme-muted">{monitorRows.length.toLocaleString("en-IN")} live pairs • {slug === "synthetic-arbitrage" ? "pair feed " + pairMonitorStatus.replaceAll("_", " ") + " • " : ""}1.5s refresh</span>
+          </div>
+        </div>
+        {showPairColumnPicker && <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-xs theme-muted">Uncheck a column to hide it from the live pair table and mobile cards. Your live data is not changed.</p><button type="button" onClick={() => setHiddenPairColumns([])} className="min-h-8 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Show all columns</button></div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">{c.pairColumns.map((column) => <label key={column} className="flex min-h-9 items-center gap-2 rounded-lg border theme-border px-2 text-xs theme-text"><input type="checkbox" checked={!hiddenPairColumns.includes(column)} onChange={(event) => setHiddenPairColumns((current) => event.target.checked ? current.filter((item) => item !== column) : [...current, column])} className="accent-current" />{column}</label>)}</div>
+          {visiblePairColumns.length === 0 && <p className="mt-3 text-xs theme-warning">All columns are hidden. Select at least one column or tap “Show all columns”.</p>}
+        </div>}
+        {slug === "synthetic-arbitrage" && pairMonitorStatus === "STALE" && <div role="status" className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm theme-text">STALE SNAPSHOT — backend pair data is temporarily empty or unavailable. Showing the last real rows with their original timestamps; these are not confirmed live opportunities.</div>}
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live pairs</p><p className="mt-1 text-lg font-semibold theme-text">{monitorRows.length.toLocaleString("en-IN")}</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Signals / edges</p><p className="mt-1 text-lg font-semibold theme-text">{signals.toLocaleString("en-IN")}</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Feed status</p><p className="mt-1 text-lg font-semibold theme-text">{feedStatus}</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Feed age</p><p className="mt-1 text-lg font-semibold theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Last completed scan</p><p className="mt-1 text-lg font-semibold theme-text">{slug === "synthetic-arbitrage" ? (typeof scannerDiagnostics?.last_scan_age_seconds === "number" ? scannerDiagnostics.last_scan_age_seconds.toFixed(1) + "s ago" : "Not yet") : (lastScan ? "LIVE" : "—")}</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Broker execution</p><p className="mt-1 text-lg font-semibold theme-warning">OFF</p></div>
+        </div>
+        <div className="mt-4 grid gap-2 md:hidden">
+          {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live pair monitor…</div> : filteredPairRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">{slug === "synthetic-arbitrage" && pairMonitorStatus === "UNAVAILABLE" ? "Pair monitor endpoint unavailable — check backend/API connectivity." : slug === "synthetic-arbitrage" && pairMonitorStatus === "WAITING" ? "Backend pair monitor is waiting for scanner observations." : "No live pair/combo observations"}</div> : filteredPairRows.map((row, index) => <div key={String(row.id ?? row.timestamp_ns ?? slug + "-mobile-pair-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{pairCell(slug, c.pairColumns[1], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{visiblePairColumns.filter((column) => column !== c.pairColumns[1]).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className="mt-0.5 break-words text-xs font-medium theme-muted">{pairCell(slug, column, row)}</div></div>)}</div></div>)}
+        </div>
+        <div className="mt-4 hidden overflow-x-auto md:block">
+          <table className="min-w-[1100px] w-full text-left text-sm">
+            <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{visiblePairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
+            <tbody>
+              {loading ? <tr><td colSpan={Math.max(visiblePairColumns.length, 1)} className="px-4 py-10 text-center theme-muted">Loading live pair monitor…</td></tr> :
+              filteredPairRows.length === 0 ? <tr><td colSpan={Math.max(visiblePairColumns.length, 1)} className="px-4 py-10 text-center theme-muted">{slug === "synthetic-arbitrage" && pairMonitorStatus === "UNAVAILABLE" ? "Pair monitor endpoint unavailable; check backend/API connectivity." : slug === "synthetic-arbitrage" && pairMonitorStatus === "WAITING" ? "Backend pair monitor is waiting for scanner observations." : "No live pair/combo observations"}</td></tr> :
+              filteredPairRows.map((row, index) => <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-pair-" + index)} className="border-b theme-border last:border-0">
+                {visiblePairColumns.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 1 ? "font-semibold theme-text" : "theme-muted")}>{pairCell(slug, column, row)}</td>)}
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Max Executable Lots:</span> top-of-book displayed-quantity estimate only; not full-depth aggregation and not a guarantee that all four legs fill together. <span className="font-semibold theme-text">Common feed:</span> {feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN") + " ticks"} • {feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN") + " instruments"} • runner {runner?.running ? "RUNNING" : "STOPPED"}.</div>
+      </Card>
+
+      )}
+
+      <Card className={"theme-border theme-surface p-4 " + (slug === "box-spread" ? "box-history-contrast" : "")}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div><h2 className="flex items-center gap-2 text-lg font-black text-slate-950 sm:text-xl"><Activity className="h-5 w-5 text-slate-800" /> {slug === "box-spread" ? "Recent Box Spread Snapshots (Last 24 Hours)" : "Post-Market " + c.title + " Pair History"}</h2><p className="mt-1 text-xs theme-muted">{slug === "box-spread" ? "Persisted scanner snapshots from the rolling last 24 hours · same source as the historical section, with a shorter time window." : "Real backend history/alert records for today's session. No synthetic rows are created in the UI."}</p></div>
+          <div className="flex items-center gap-2">
+            {slug === "box-spread" && <button type="button" onClick={() => void loadHistory()} disabled={historyLoading} aria-label="Refresh last 24 hours of Box Spread history" title="Reload the rolling last 24 hours of saved Box Spread snapshots" className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:cursor-wait disabled:opacity-50"><RefreshCw className={"h-3.5 w-3.5 " + (historyLoading ? "animate-spin" : "")} />{historyLoading ? "Refreshing…" : "Refresh 24h"}</button>}
+            <button type="button" onClick={() => void copyTableRows("history")} disabled={historyRows.length === 0} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">Copy history</button>
+            <span className="text-xs font-semibold theme-muted">{historyLoading ? "Loading…" : (slug === "box-spread" ? historyTotalCount : historyRows.length).toLocaleString("en-IN") + " saved"}</span>
+          </div>
+        </div>
+        {slug === "box-spread" && <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Post-market opportunity expiry type">
+          <button type="button" onClick={() => { setHistoryExpiryView("MONTHLY"); setHistoryPage(1); }} aria-pressed={historyExpiryView === "MONTHLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (historyExpiryView === "MONTHLY" ? "border-violet-500 bg-violet-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Monthly)</button>
+          <button type="button" onClick={() => { setHistoryExpiryView("WEEKLY"); setHistoryPage(1); }} aria-pressed={historyExpiryView === "WEEKLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (historyExpiryView === "WEEKLY" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Weekly)</button>
+          <label className="flex min-h-9 items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3 text-xs theme-muted">Underlying<select value={historySymbol} onChange={(event) => { setHistorySymbol(event.target.value); setHistoryPage(1); }} className="bg-transparent font-semibold theme-text outline-none" aria-label="Filter Box Spread history by underlying"><option value="">All indices</option><option value="NIFTY">NIFTY</option><option value="BANKNIFTY">BANKNIFTY</option><option value="FINNIFTY">FINNIFTY</option><option value="MIDCPNIFTY">MIDCPNIFTY</option><option value="SENSEX">SENSEX</option><option value="BANKEX">BANKEX</option></select></label>
+          <span className="self-center text-xs theme-muted">{historyTotalCount.toLocaleString("en-IN")} saved {historyExpiryView.toLowerCase()} rows</span>
+        </div>}
+        {slug === "synthetic-arbitrage" && <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <label className="flex min-h-10 flex-1 items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3">
+            <span className="text-xs theme-muted">Symbol</span>
+            <input value={historyFilter} onChange={(event) => { setHistoryFilter(event.target.value); setHistoryPage(1); }} placeholder="All stocks / indices" className="min-w-0 flex-1 bg-transparent text-sm theme-text outline-none" aria-label="Filter pair history by underlying symbol" />
+            {historyFilter && <button type="button" onClick={() => { setHistoryFilter(""); setHistoryPage(1); }} className="text-xs theme-muted">Clear</button>}
+          </label>
+          <span className="text-xs theme-muted">Showing {filteredHistoryRows.length === 0 ? 0 : (safeHistoryPage - 1) * historyPageSize + 1}–{Math.min(safeHistoryPage * historyPageSize, filteredHistoryRows.length)} of {filteredHistoryRows.length} matches</span>
+        </div>}
+        {slug === "box-spread" && <div className="mt-3 flex flex-wrap items-center gap-2" aria-label="Sort current Box Spread history page">
+           <span className="text-xs font-semibold theme-muted">Sort loaded 25 rows:</span>
+           <button type="button" aria-pressed={historySort.key === "edge"} onClick={() => setHistorySort(current => ({ key: "edge", direction: current.key === "edge" && current.direction === "desc" ? "asc" : "desc" }))} className={"min-h-9 rounded-lg border px-3 text-xs font-bold " + (historySort.key === "edge" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Box Edge {historySort.key === "edge" ? (historySort.direction === "desc" ? "↓" : "↑") : "↕"}</button>
+           <button type="button" aria-pressed={historySort.key === "lots"} onClick={() => setHistorySort(current => ({ key: "lots", direction: current.key === "lots" && current.direction === "desc" ? "asc" : "desc" }))} className={"min-h-9 rounded-lg border px-3 text-xs font-bold " + (historySort.key === "lots" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Max Executable Lots {historySort.key === "lots" ? (historySort.direction === "desc" ? "↓" : "↑") : "↕"}</button>
+         </div>}
+         {historyError && <div role="status" className="mt-3 rounded-lg border theme-border theme-warning-bg p-3 text-xs theme-warning">History refresh failed: {historyError}. Previously loaded rows are retained.</div>}
+        {slug === "synthetic-arbitrage" && historyHealth && <p className="mt-2 text-xs theme-muted">Storage: {historyHealth.storage || "UNKNOWN"} · Last saved: {historyHealth.last_save_at || "not reported"} · Last batch: {historyHealth.last_saved_count ?? 0} rows{historyHealth.last_error ? " · Save error: " + historyHealth.last_error : ""}</p>}
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{slug === "box-spread" ? "Recent snapshots (24h)" : "Saved observations"}</p><p className="mt-1 text-lg font-semibold theme-text">{(slug === "box-spread" ? historyTotalCount : historyRows.length).toLocaleString("en-IN")}</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">Live monitor</p><p className={"mt-1 text-lg font-semibold " + (pairMonitorStatus === "LIVE" ? "theme-success" : "theme-muted")}>{pairMonitorStatus}</p></div>
+          <div className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">History source</p><p className="mt-1 text-sm font-semibold theme-text">{slug === "box-spread" ? "Scanner snapshots · 24h" : slug === "synthetic-arbitrage" ? "Saved live pair snapshots (5s sampling)" : slug === "calendar-spread" ? "Scanner history" : "Alert history"}</p></div>
+        </div>
+        <div className="mt-4 grid gap-2 md:hidden">
+          {filteredHistoryRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">{(slug === "box-spread" ? historyTotalCount === 0 : historyRows.length === 0) ? "No saved pair snapshots yet. Keep this page open while the live pair monitor runs." : "No history rows match this filter or page."}</div> : sortedHistoryRows.map((row, index) => {
+            const cols = c.pairColumns;
+            return <div key={String(row.id ?? row.timestamp_ns ?? slug + "-mobile-history-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="mb-2 text-sm font-bold theme-text">{historyCell(slug, cols[1], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{cols.filter((column) => column !== cols[1]).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className="mt-0.5 break-words text-xs font-medium theme-muted">{historyCell(slug, column, row)}</div></div>)}</div></div>;
+          })}
+        </div>
+        <div className="mt-4 hidden overflow-x-auto md:block">
+          <table className="min-w-[1100px] w-full text-left text-sm">
+            <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{visiblePairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
+            <tbody>
+              {filteredHistoryRows.length === 0 ? <tr><td colSpan={Math.max(visiblePairColumns.length, 1)} className="px-4 py-10 text-center theme-muted">{(slug === "box-spread" ? historyTotalCount === 0 : historyRows.length === 0) ? "No saved pair snapshots yet. History begins collecting when the live pair endpoint is polled." : "No history rows match this filter or page."}</td></tr> :
+              sortedHistoryRows.map((row, index) => {
+                const cols = c.pairColumns;
+                return <tr key={String(row.id ?? row.timestamp_ns ?? slug + "-history-" + index)} className="border-b theme-border last:border-0">
+                  {cols.map((column, i) => <td key={column} className={"px-4 py-3 " + (i === 1 ? "font-semibold theme-text" : "theme-muted")}>{historyCell(slug, column, row)}</td>)}
+                </tr>;
+              })}
+            </tbody>
+          </table>
+        </div>
+        {(slug === "synthetic-arbitrage" || slug === "box-spread") && historyPageCount > 1 && <div className="mt-4 flex items-center justify-between gap-3">
+          <button type="button" disabled={safeHistoryPage <= 1} onClick={() => setHistoryPage((page) => Math.max(1, page - 1))} className="min-h-10 rounded-lg border theme-border px-4 text-xs font-semibold theme-text disabled:opacity-40">Previous</button>
+          <span className="text-xs theme-muted">Page {safeHistoryPage} of {historyPageCount} · 25 rows/page</span>
+          <button type="button" disabled={safeHistoryPage >= historyPageCount} onClick={() => setHistoryPage((page) => Math.min(historyPageCount, page + 1))} className="min-h-10 rounded-lg border theme-border px-4 text-xs font-semibold theme-text disabled:opacity-40">Next</button>
+        </div>}
+      </Card>
+
+      {copyStatus && <div role="status" aria-live="polite" className="rounded-xl border theme-border theme-surface p-3 text-sm theme-text">{copyStatus}</div>}
+      {copyFallbackText && <div className="space-y-2 rounded-xl border theme-border theme-surface p-3">
+        <label htmlFor="copy-fallback-text" className="text-xs font-semibold theme-text">Manual copy fallback</label>
+        <textarea id="copy-fallback-text" readOnly value={copyFallbackText} onFocus={(event) => event.currentTarget.select()} className="min-h-28 w-full rounded-lg border theme-border theme-surface-2 p-2 text-xs theme-text" />
+        <p className="text-xs theme-muted">Tap the text, choose Select all, then Copy. Rows are tab-separated for pasting into a spreadsheet.</p>
+        <button type="button" onClick={() => { setCopyFallbackText(""); setCopyStatus(""); }} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Close</button>
+      </div>}
+
+      {slug !== "box-spread" && (
+      <div className="grid gap-4 xl:grid-cols-3">
+        <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><Bell className="h-4 w-4 theme-accent" /> Strategy Alerts</div><p className="mt-2 text-xs leading-5 theme-muted">Scanner-wide alerts remain separate from live opportunity rendering.</p><Link href="/custom-alert" className="mt-3 inline-flex text-xs font-semibold theme-accent">Open alerts →</Link></Card>
+        <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner Safety Boundary</div><p className="mt-2 text-xs leading-5 theme-muted">This workspace reads live scanner output only. Broker orders remain OFF and no paper execution logic is changed.</p></Card>
+        {slug === "calendar-spread" && <Card className="theme-border theme-surface p-4">
+          <div className="text-sm font-semibold theme-text">Exchange Coverage Diagnostics</div>
+          <p className="mt-2 text-xs leading-5 theme-muted">This is the runner's actual contract/session/tick report. A closed exchange can have subscribed contracts but no valid live ticks; no historical quote is relabelled as live.</p>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {[
+              ["NFO contracts", (calendarRuntime?.contracts_by_exchange as Record<string, unknown> | undefined)?.NFO],
+              ["BFO contracts", (calendarRuntime?.contracts_by_exchange as Record<string, unknown> | undefined)?.BFO],
+              ["MCX contracts", (calendarRuntime?.contracts_by_exchange as Record<string, unknown> | undefined)?.MCX],
+              ["Stock futures", (calendarRuntime?.contracts_by_family as Record<string, unknown> | undefined)?.STOCK_FUTURE],
+              ["Index futures", (calendarRuntime?.contracts_by_family as Record<string, unknown> | undefined)?.INDEX_FUTURE],
+              ["Commodity futures", (calendarRuntime?.contracts_by_family as Record<string, unknown> | undefined)?.COMMODITY_FUTURE],
+            ].map(([label, value]) => <div key={String(label)} className="rounded-lg border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{String(label)}</p><p className="mt-1 text-base font-semibold theme-text">{value == null ? "—" : String(value)}</p></div>)}
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            {(["NFO", "BFO", "MCX"] as const).map((exchange) => {
+              const sessions = (calendarRuntime?.session_by_exchange ?? {}) as Record<string, { open?: boolean }>;
+              const received = (calendarRuntime?.diagnostics as Record<string, unknown> | undefined)?.records_received_by_exchange as Record<string, unknown> | undefined;
+              const emitted = (calendarRuntime?.diagnostics as Record<string, unknown> | undefined)?.records_emitted_by_exchange as Record<string, unknown> | undefined;
+              const sourceDropped = (calendarRuntime?.diagnostics as Record<string, unknown> | undefined)?.source_timestamp_dropped_by_exchange as Record<string, unknown> | undefined;
+              const sessionDropped = (calendarRuntime?.diagnostics as Record<string, unknown> | undefined)?.out_of_session_dropped_by_exchange as Record<string, unknown> | undefined;
+              const isOpen = sessions[exchange]?.open;
+              return <div key={exchange} className="rounded-lg border theme-border p-3"><div className="flex items-center justify-between gap-2"><span className="text-sm font-semibold theme-text">{exchange}</span><span className={"text-xs font-semibold " + (isOpen === true ? "theme-success" : isOpen === false ? "theme-warning" : "theme-muted")}>{isOpen === true ? "SESSION OPEN" : isOpen === false ? "SESSION CLOSED" : "SESSION UNKNOWN"}</span></div><p className="mt-2 text-xs theme-muted">Ticks received: {String(received?.[exchange] ?? 0)} · emitted: {String(emitted?.[exchange] ?? 0)}</p><p className="mt-1 text-xs theme-muted">Missing source time: {String(sourceDropped?.[exchange] ?? 0)} · out-of-session: {String(sessionDropped?.[exchange] ?? 0)}</p></div>;
+            })}
+          </div>
+          {calendarRuntime && <div className="mt-3 rounded-lg border theme-border p-3">
+            <p className="text-sm font-semibold theme-text">Why opportunities may be missing</p>
+            <p className="mt-1 text-xs theme-muted">Live scanner rejection counters from the backend; these are diagnostics, not generated opportunities.</p>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {[
+                ["Waiting for far expiry", "waiting_for_second_expiry"],
+                ["Invalid quotes", "invalid_quote"],
+                ["Stale ticks", "stale_tick"],
+                ["Stale pairs", "stale_pair"],
+                ["Timestamp mismatch", "timestamp_mismatch"],
+                ["Insufficient depth", "insufficient_depth"],
+                ["No positive edge", "no_positive_edge"],
+                ["Lot-size mismatch", "lot_size_mismatch"],
+                ["Qualified signals", "qualified"],
+              ].map(([label, key]) => {
+                const diag = (calendarRuntime?.scanner_diagnostics ?? {}) as Record<string, unknown>;
+                return <div key={key} className="rounded-lg border theme-border theme-surface-2 p-2">
+                  <p className="text-xs theme-muted">{label}</p>
+                  <p className="mt-1 text-sm font-semibold theme-text">{diag[key] == null ? "—" : String(diag[key])}</p>
+                </div>;
+              })}
+            </div>
+            {calendarRuntime?.scanner_diagnostics == null && <p className="mt-2 text-xs theme-muted">Scanner rejection counters are not available in this backend response yet.</p>}
+          </div>}
+          {!calendarRuntime && <p className="mt-3 rounded-lg border theme-border p-3 text-xs theme-muted">Calendar runner diagnostics are not available yet. Check backend deployment and runner health.</p>}
+        </Card>}
+        <Card className="theme-border theme-surface p-4"><div className="text-sm font-semibold theme-text">Session Diagnostics</div><p className="mt-2 text-xs leading-5 theme-muted">MCX can remain live after NSE closes. Calendar/commodity output therefore follows the common feed and actual exchange session rather than the NSE-only status.</p></Card>
+      </div>
+      )}
+    </div>
+  );
+}

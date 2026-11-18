@@ -1,0 +1,254 @@
+"""Lease-based notification outbox worker; transport is injected and credentials stay external."""
+from __future__ import annotations
+
+import json
+import uuid
+from typing import Any, Callable
+
+from sqlalchemy import or_, select, update
+
+from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent
+from app.models.iv_early_entry_notification import IVEarlyEntryNotificationOutbox
+
+
+class AmbiguousDeliveryError(RuntimeError):
+    """Transport failed after a send may have reached the remote provider."""
+
+
+class TelegramRateLimitError(RuntimeError):
+    """Telegram returned HTTP 429 with an optional Retry-After delay."""
+
+    def __init__(self, retry_after_seconds: float | None = None) -> None:
+        super().__init__("TELEGRAM_RATE_LIMITED")
+        self.retry_after_seconds = retry_after_seconds
+
+
+class TelegramRejectedError(RuntimeError):
+    """Telegram definitively rejected a message; retrying cannot fix it."""
+
+
+class TelegramOutboxWorker:
+    def __init__(
+        self, session_factory: Any, *, max_attempts: int = 6,
+        lease_seconds: int = 45, base_retry_seconds: int = 5,
+        config_retry_seconds: int = 60,
+    ) -> None:
+        if (max_attempts < 1 or lease_seconds < 1 or base_retry_seconds < 1
+                or config_retry_seconds < 1):
+            raise ValueError("retry and lease settings must be positive")
+        self.session_factory = session_factory
+        self.max_attempts = max_attempts
+        self.lease_ns = lease_seconds * 1_000_000_000
+        self.base_retry_ns = base_retry_seconds * 1_000_000_000
+        self.config_retry_ns = config_retry_seconds * 1_000_000_000
+
+    def process_one(
+        self, *, now_ns: int, sender: Callable[[dict[str, Any]], Any] | None,
+        configured: bool,
+    ) -> dict[str, Any]:
+        """Claim one due message. If config is absent, never attempt network delivery."""
+        session = self.session_factory()
+        claimed_id = None
+        claim_token = None
+        try:
+            with session.begin():
+                outbox = IVEarlyEntryNotificationOutbox
+
+                # Recover expired IN_FLIGHT sends first. This is a single
+                # conditional UPDATE with a scalar subquery, so the state
+                # transition is atomic even on SQLite (where FOR UPDATE is
+                # ignored). A send whose outcome is unknown is never replayed.
+                stale_id = (
+                    select(outbox.id)
+                    .where(
+                        outbox.status == "IN_FLIGHT",
+                        outbox.next_attempt_ns <= now_ns,
+                        outbox.lease_until_ns.is_not(None),
+                        outbox.lease_until_ns <= now_ns,
+                    )
+                    .order_by(outbox.next_attempt_ns.asc(), outbox.id.asc())
+                    .limit(1)
+                    .scalar_subquery()
+                )
+                stale_result = session.execute(
+                    update(outbox)
+                    .where(
+                        outbox.id == stale_id,
+                        outbox.status == "IN_FLIGHT",
+                        outbox.lease_until_ns <= now_ns,
+                    )
+                    .values(
+                        status="UNCERTAIN",
+                        lease_until_ns=None,
+                        lease_token=None,
+                        last_error="DELIVERY_OUTCOME_UNKNOWN_AFTER_EXPIRED_LEASE",
+                    )
+                    .returning(outbox.id, outbox.event_id)
+                ).first()
+                if stale_result is not None:
+                    stale_event = session.get(IVEarlyEntryAlertEvent, stale_result.event_id)
+                    if stale_event is not None:
+                        stale_event.delivery_status = "UNCERTAIN"
+                    return {
+                        "processed": True, "status": "UNCERTAIN",
+                        "outbox_id": stale_result.id,
+                    }
+
+                # Claim exactly one due row with one database-side UPDATE.
+                # Two workers may evaluate this statement concurrently, but
+                # only one can change the selected row from a due state to
+                # IN_FLIGHT and receive its ID from RETURNING.
+                claim_token = uuid.uuid4().hex
+                candidate_id = (
+                    select(outbox.id)
+                    .where(
+                        outbox.status.in_(("PENDING", "RETRY", "WAITING_CONFIG")),
+                        outbox.next_attempt_ns <= now_ns,
+                        or_(
+                            outbox.lease_until_ns.is_(None),
+                            outbox.lease_until_ns <= now_ns,
+                        ),
+                    )
+                    .order_by(outbox.next_attempt_ns.asc(), outbox.id.asc())
+                    .limit(1)
+                    .scalar_subquery()
+                )
+                claimed_id = session.execute(
+                    update(outbox)
+                    .where(
+                        outbox.id == candidate_id,
+                        outbox.status.in_(("PENDING", "RETRY", "WAITING_CONFIG")),
+                        outbox.next_attempt_ns <= now_ns,
+                        or_(
+                            outbox.lease_until_ns.is_(None),
+                            outbox.lease_until_ns <= now_ns,
+                        ),
+                    )
+                    .values(
+                        status="IN_FLIGHT",
+                        lease_until_ns=now_ns + self.lease_ns,
+                        lease_token=claim_token,
+                        attempts=outbox.attempts + 1,
+                    )
+                    .returning(outbox.id)
+                ).scalar_one_or_none()
+
+                if claimed_id is None:
+                    return {"processed": False, "reason": "NO_DUE_NOTIFICATION"}
+
+                row = session.get(IVEarlyEntryNotificationOutbox, claimed_id)
+                event = session.get(IVEarlyEntryAlertEvent, row.event_id)
+                if event is None or event.state != "EARLY_ENTRY":
+                    row.status = "SKIPPED"
+                    row.lease_until_ns = None
+                    row.lease_token = None
+                    row.last_error = "ALERT_NO_LONGER_ACTIVE"
+                    if event is not None:
+                        event.delivery_status = "SKIPPED"
+                    return {
+                        "processed": True, "status": "SKIPPED",
+                        "outbox_id": row.id,
+                    }
+                if not configured or sender is None:
+                    row.status = "WAITING_CONFIG"
+                    row.lease_until_ns = None
+                    row.lease_token = None
+                    row.next_attempt_ns = now_ns + self.config_retry_ns
+                    row.last_error = "TELEGRAM_CONFIGURATION_MISSING"
+                    event.delivery_status = "WAITING_CONFIG"
+                    return {
+                        "processed": True, "status": "WAITING_CONFIG",
+                        "outbox_id": row.id,
+                    }
+                payload = json.loads(row.payload_json)
+        finally:
+            session.close()
+
+        # Revalidate immediately before the external side effect. The first
+        # transaction claims the durable lease; this second transaction is
+        # the dispatch authorization point. If lifecycle invalidation won the
+        # race before this check, suppress the Telegram send.
+        session = self.session_factory()
+        try:
+            with session.begin():
+                row = (session.query(IVEarlyEntryNotificationOutbox)
+                       .filter(IVEarlyEntryNotificationOutbox.id == claimed_id)
+                       .with_for_update().one_or_none())
+                if (row is None or row.status != "IN_FLIGHT"
+                        or row.lease_token != claim_token):
+                    return {"processed": True, "status": "LEASE_LOST", "outbox_id": claimed_id}
+                event = (session.query(IVEarlyEntryAlertEvent)
+                         .filter(IVEarlyEntryAlertEvent.id == row.event_id)
+                         .with_for_update().one_or_none())
+                if event is None or event.state != "EARLY_ENTRY":
+                    row.status = "SKIPPED"
+                    row.lease_until_ns = None
+                    row.lease_token = None
+                    row.last_error = "ALERT_NO_LONGER_ACTIVE_BEFORE_DISPATCH"
+                    if event is not None:
+                        event.delivery_status = "SKIPPED"
+                    return {"processed": True, "status": "SKIPPED", "outbox_id": claimed_id}
+        finally:
+            session.close()
+
+        # A lifecycle change after dispatch authorization cannot retract an
+        # HTTP request already being issued; the database check above defines
+        # the ordering boundary and minimizes that unavoidable network race.
+        retry_after_seconds = None
+        try:
+            sender(payload)
+            final_status, error = "SENT", ""
+        except TelegramRateLimitError as exc:
+            # Preserve Retry-After outside the except block (Python clears the
+            # exception target after the handler) for the persistence phase.
+            retry_after_seconds = exc.retry_after_seconds
+            final_status = "RETRY"
+            error = "TELEGRAM_RATE_LIMITED"
+        except AmbiguousDeliveryError:
+            # A timeout/connection loss after POST may mean Telegram accepted
+            # the message. Never retry an outcome that could duplicate a send.
+            final_status = "UNCERTAIN"
+            error = "DELIVERY_OUTCOME_UNKNOWN_AFTER_TRANSPORT_FAILURE"
+        except TelegramRejectedError:
+            # Invalid chat IDs, revoked bot tokens and missing permissions are
+            # definitive 4xx/provider rejections. Retrying the same payload
+            # repeatedly only burns attempts and obscures the operator action.
+            final_status = "FAILED"
+            error = "TELEGRAM_API_REJECTED"
+        except Exception as exc:
+            # Unexpected transport/worker errors are treated as transient and
+            # retried with bounded exponential backoff. Definitive Telegram
+            # rejections are classified above and never reach this branch.
+            final_status = "RETRY"
+            error = f"{type(exc).__name__}: {exc}"[:2000]
+
+        session = self.session_factory()
+        try:
+            with session.begin():
+                row = session.get(IVEarlyEntryNotificationOutbox, claimed_id)
+                if (row is None or row.status != "IN_FLIGHT"
+                        or row.lease_token != claim_token):
+                    return {"processed": True, "status": "LEASE_LOST", "outbox_id": claimed_id}
+                row.status = final_status
+                row.lease_until_ns = None
+                row.lease_token = None
+                row.last_error = error
+                if final_status == "RETRY":
+                    if row.attempts >= self.max_attempts:
+                        row.status = "FAILED"
+                    else:
+                        delay = self.base_retry_ns * (2 ** min(row.attempts - 1, 8))
+                        if retry_after_seconds is not None:
+                            retry_after_ns = int(max(0.0, retry_after_seconds) * 1_000_000_000)
+                            delay = max(delay, retry_after_ns)
+                        row.next_attempt_ns = now_ns + delay
+                event = session.get(IVEarlyEntryAlertEvent, row.event_id)
+                if event is not None:
+                    event.delivery_status = row.status
+                persisted_status = row.status
+            return {"processed": True, "status": persisted_status, "outbox_id": claimed_id}
+        finally:
+            session.close()
+
+
+__all__ = ["AmbiguousDeliveryError", "TelegramRateLimitError", "TelegramRejectedError", "TelegramOutboxWorker"]

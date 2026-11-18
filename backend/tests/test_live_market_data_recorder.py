@@ -1,0 +1,85 @@
+from app.backtesting.historical_catalog import HistoricalCatalog
+from app.backtesting.high_resolution import EVENT_TIMEFRAME
+from app.market_data.live_recorder import LiveMarketDataRecorder
+
+
+def test_live_recorder_batches_and_persists_ticks(tmp_path):
+    catalog = HistoricalCatalog(str(tmp_path / "history.db"))
+    recorder = LiveMarketDataRecorder(catalog, batch_size=2)
+
+    assert recorder.on_tick({"token": "101", "symbol": "SBIN-EQ", "ltp": 800}) == 0
+    assert recorder.pending_count() == 1
+
+    assert recorder.on_tick({"token": "101", "symbol": "SBIN-EQ", "ltp": 801}) == 2
+    assert recorder.pending_count() == 0
+
+    rows = catalog.events(
+        source="angelone-live",
+        instrument="SBIN-EQ|101",
+        timeframe=EVENT_TIMEFRAME,
+    )
+    assert len(rows) == 2
+    assert rows[0].payload["ltp"] == 800
+    assert rows[1].payload["ltp"] == 801
+    catalog.close()
+
+
+def test_live_recorder_flushes_partial_batch(tmp_path):
+    catalog = HistoricalCatalog(str(tmp_path / "history.db"))
+    recorder = LiveMarketDataRecorder(catalog, batch_size=10)
+
+    recorder.on_tick({"token": "202", "symbol": "SBINAPR26", "ltp": 802})
+    assert recorder.flush() == 1
+    assert recorder.flush() == 0
+
+    rows = catalog.events(
+        source="angelone-live",
+        instrument="SBINAPR26|202",
+        timeframe=EVENT_TIMEFRAME,
+    )
+    assert len(rows) == 1
+    catalog.close()
+
+
+def test_live_recorder_requires_an_instrument(tmp_path):
+    catalog = HistoricalCatalog(str(tmp_path / "history.db"))
+    recorder = LiveMarketDataRecorder(catalog)
+
+    try:
+        recorder.on_tick({"ltp": 800})
+    except ValueError as exc:
+        assert "token or symbol" in str(exc)
+    else:
+        raise AssertionError("missing instrument must be rejected")
+    catalog.close()
+
+
+def test_timestamp_normalization_accepts_seconds_milliseconds_microseconds_and_ns():
+    fallback = 9_000_000_000_000_000_000
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": 1_750_000_000}, fallback) == 1_750_000_000_000_000_000
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": 1_750_000_000_000}, fallback) == 1_750_000_000_000_000_000
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": 1_750_000_000_000_000}, fallback) == 1_750_000_000_000_000_000
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": 1_750_000_000_000_000_000}, fallback) == 1_750_000_000_000_000_000
+
+
+def test_timestamp_normalization_skips_invalid_values_and_uses_fallback():
+    fallback = 1_234_567_890
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": "bad"}, fallback) == fallback
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": 0}, fallback) == fallback
+    assert LiveMarketDataRecorder._timestamp_ns({"timestamp": -1}, fallback) == fallback
+
+
+def test_live_recorder_persists_cadence_timeframe(tmp_path):
+    catalog = HistoricalCatalog(str(tmp_path / "history.db"))
+    recorder = LiveMarketDataRecorder(catalog, timeframe="1s", batch_size=2)
+
+    assert recorder.on_tick({"token": "303", "symbol": "NIFTY30SEP26CE", "ltp": 123.45}) == 0
+    assert recorder.on_tick({"token": "303", "symbol": "NIFTY30SEP26CE", "ltp": 123.55}) == 2
+
+    rows = catalog.records(
+        source="angelone-live",
+        instrument="NIFTY30SEP26CE|303",
+        timeframe="1s",
+    )
+    assert [row.payload["ltp"] for row in rows] == [123.45, 123.55]
+    catalog.close()

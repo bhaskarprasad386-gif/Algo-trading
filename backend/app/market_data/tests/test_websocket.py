@@ -1,0 +1,730 @@
+from types import SimpleNamespace
+
+from app.market_data import websocket as websocket_module
+from app.market_data.websocket import MarketDataWebSocket
+
+
+class FakeSocket:
+    instances = []
+
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+        self.on_open = None
+        self.on_data = None
+        self.on_error = None
+        self.on_close = None
+        self.subscriptions = []
+        self.unsubscriptions = []
+        self.closed = False
+        self.__class__.instances.append(self)
+
+    def connect(self):
+        self.on_open(self)
+
+    def subscribe(self, correlation_id, mode, payload):
+        self.subscriptions.append((correlation_id, mode, payload))
+
+    def unsubscribe(self, correlation_id, mode, payload):
+        self.unsubscriptions.append((correlation_id, mode, payload))
+
+    def close_connection(self):
+        self.closed = True
+
+
+def make_auth():
+    return SimpleNamespace(
+        smart_api=object(),
+        session_data={"jwtToken": "jwt", "feedToken": "feed"},
+        api_key="api-key",
+        client_id="client",
+        ensure_session_fresh=lambda max_age: None,
+    )
+
+
+def test_websocket_refreshes_auth_before_building_socket(monkeypatch):
+    calls = []
+    auth = make_auth()
+    auth.ensure_session_fresh = lambda max_age: calls.append(max_age)
+    client = MarketDataWebSocket(auth=auth)
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client._build_socket()
+    assert calls == [websocket_module.settings.ANGEL_SESSION_REFRESH_INTERVAL_SECONDS]
+
+
+def test_websocket_connect_subscribe_and_unsubscribe(monkeypatch):
+    FakeSocket.instances.clear()
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+
+    received = []
+    client = MarketDataWebSocket(auth=make_auth())
+    client.connect(1, ["101", "101", "202"], on_data=received.append)
+
+    socket = FakeSocket.instances[-1]
+    assert client.connected is True
+    assert client.tokens == ["101", "202"]
+    assert socket.subscriptions
+
+    socket.on_data(socket, {"token": "101", "last_traded_price": 12345})
+    assert received == [{"token": "101", "last_traded_price": 12345}]
+
+    client.subscribe(["303"])
+    assert client.tokens == ["303"]
+    assert socket.subscriptions[-1][2][0]["tokens"] == ["303"]
+
+    client.unsubscribe(["303"])
+    assert client.tokens == []
+    assert socket.unsubscriptions[-1][2][0]["tokens"] == ["303"]
+
+    client.close()
+    assert socket.closed is True
+    assert client.connected is False
+
+
+def test_websocket_connect_retries_after_start_failure(monkeypatch):
+    calls = {"count": 0}
+
+    class RetrySocket(FakeSocket):
+        def connect(self):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError("temporary failure")
+            self.on_open(self)
+
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", RetrySocket)
+
+    client = MarketDataWebSocket(auth=make_auth())
+    client.connect(
+        1,
+        ["101"],
+        reconnect_attempts=1,
+        reconnect_delay_seconds=0,
+    )
+
+    assert calls["count"] == 2
+    assert client.connected is True
+
+
+def test_websocket_unexpected_close_schedules_reconnect(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    scheduled = []
+    monkeypatch.setattr(client, "_schedule_reconnect", lambda: scheduled.append(True))
+    socket = client._build_socket()
+    client.websocket = socket
+    socket.on_close(socket)
+    assert scheduled == [True]
+
+
+def test_websocket_health_tracks_errors_and_resets_on_connect(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    socket = client._build_socket()
+    client.websocket = socket
+    socket.on_error(socket, "temporary")
+    health = client.health
+    assert health["error_count"] == 1
+    assert health["consecutive_failures"] == 1
+    assert health["last_error"] == "temporary"
+    socket.on_open(socket)
+    health = client.health
+    assert health["consecutive_failures"] == 0
+    assert health["last_error"] is None
+
+
+def test_websocket_reconnect_backoff_is_bounded(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    client.exchange_type = 1
+    client.tokens = ["101"]
+    client._reconnect_delay_seconds = 10.0
+    client._consecutive_failures = 6
+    sleeps = []
+    monkeypatch.setattr(websocket_module.time, "sleep", lambda value: sleeps.append(value))
+    monkeypatch.setattr(client, "connect", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("down")))
+    monkeypatch.setattr(client, "_schedule_reconnect", lambda: None)
+    client._reconnect_after_disconnect()
+    assert sleeps == [60.0]
+    assert client.health["error_count"] == 1
+    assert client.health["consecutive_failures"] == 7
+
+
+def test_websocket_supports_multiple_exchange_groups(monkeypatch):
+    FakeSocket.instances.clear()
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    client.connect(subscriptions={1: ["101"], 2: ["202"], 5: ["303"]})
+    socket = FakeSocket.instances[-1]
+    assert socket.subscriptions[-1][2] == [
+        {"exchangeType": 1, "tokens": ["101"]},
+        {"exchangeType": 2, "tokens": ["202"]},
+        {"exchangeType": 5, "tokens": ["303"]},
+    ]
+    client.subscribe_groups({4: ["404"]})
+    assert client.subscriptions[4] == ["404"]
+    assert {"exchangeType": 4, "tokens": ["404"]} in socket.subscriptions[-1][2]
+    client.unsubscribe_groups({4: ["404"]})
+    assert 4 not in client.subscriptions
+
+
+
+def test_websocket_can_disable_background_reconnect_for_shared_manager(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    scheduled = []
+    monkeypatch.setattr(client, "_schedule_reconnect", lambda: scheduled.append(True))
+    socket = client._build_socket()
+    socket.on_close(socket)
+    assert scheduled == []
+
+
+def test_websocket_marks_async_handshake_as_connecting(monkeypatch):
+    class AsyncSocket(FakeSocket):
+        def connect(self):
+            return None
+
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", AsyncSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"], reconnect_attempts=0)
+    assert client.connected is False
+    assert client.connecting is True
+
+
+def test_websocket_failure_callbacks_notify_manager_on_error_and_close(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    failures = []
+    client.connect(1, ["101"], on_failure=failures.append)
+    socket = client.websocket
+    socket.on_error(socket, "temporary DNS failure")
+    assert failures == ["temporary DNS failure"]
+    socket.on_close(socket)
+    assert failures == ["temporary DNS failure"]
+
+
+def test_websocket_error_then_close_requests_only_one_reconnect(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=True)
+    scheduled = []
+    monkeypatch.setattr(client, "_schedule_reconnect", lambda: scheduled.append(True))
+    socket = client._build_socket()
+    client.websocket = socket
+
+    socket.on_error(socket, "temporary DNS failure")
+    socket.on_close(socket)
+
+    assert scheduled == [True]
+
+
+def test_sdk_internal_error_handler_forwards_original_error_without_retrying(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    failures = []
+    client.on_failure = failures.append
+    socket = client._build_socket()
+    client.websocket = socket
+
+    socket._on_error(socket, RuntimeError("transport reset"))
+
+    assert failures == ["RuntimeError: transport reset"]
+    assert client.health["last_error"] == "RuntimeError: transport reset"
+
+
+def test_blocking_initial_subscribe_notifies_failure_and_does_not_stall_on_open(monkeypatch):
+    from threading import Event
+
+    release = Event()
+    class BlockingSubscribeSocket(FakeSocket):
+        def subscribe(self, correlation_id, mode, payload):
+            release.wait(timeout=1.0)
+
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", BlockingSubscribeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client._socket_operation_timeout_seconds = 0.02
+    failures = []
+    client.connect(1, ["101"], on_failure=failures.append)
+    assert failures == ["initial subscribe exceeded 0.02s"]
+    assert client.connected is False
+    assert FakeSocket.instances[-1].closed is True
+    release.set()
+    client.close()
+
+def test_websocket_rejects_missing_auth_tokens_before_opening_socket(monkeypatch):
+    FakeSocket.instances.clear()
+    auth = make_auth()
+    auth.session_data = {"jwtToken": "jwt", "feedToken": ""}
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=auth, auto_reconnect=False)
+
+    try:
+        client._build_socket()
+    except Exception as exc:
+        assert getattr(exc, "name", None) == "WebSocketAuthError"
+        assert getattr(exc, "message", "") == "JWT token or feed token is missing."
+    else:
+        raise AssertionError("missing feed token must prevent socket creation")
+
+    assert FakeSocket.instances == []
+
+
+
+def test_websocket_reconnect_scheduler_is_single_flight(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    created = []
+
+    class HeldThread:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.started = False
+            created.append(self)
+
+        def start(self):
+            self.started = True
+
+    monkeypatch.setattr(websocket_module, "Thread", HeldThread)
+    client._schedule_reconnect()
+    client._schedule_reconnect()
+
+    assert len(created) == 1
+    assert created[0].started is True
+    assert client.health["reconnect_count"] == 1
+    assert client._is_reconnecting is True
+
+
+
+def test_websocket_reconnect_scheduler_start_failure_releases_guard(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+
+    class BrokenThread:
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("thread start failed")
+
+    monkeypatch.setattr(websocket_module, "Thread", BrokenThread)
+    client._schedule_reconnect()
+
+    assert client._is_reconnecting is False
+    assert client._reconnect_thread is None
+    assert client.health["reconnect_count"] == 0
+
+
+def test_sdk_transport_error_preserves_original_error_and_disables_nested_retry(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    failures = []
+    socket = client._build_socket()
+    socket.on_error = lambda wsapp, error: failures.append(error)
+
+    original_error = OSError("remote closed websocket with code 1006")
+    socket._on_error(socket, original_error)
+
+    assert failures == [original_error]
+    assert socket.MAX_RETRY_ATTEMPT == 0
+
+
+def test_marking_auth_stale_forces_token_refresh_even_for_young_session():
+    from threading import RLock
+    import time
+    from app.algo.auth import AngelOneAuth
+
+    auth = object.__new__(AngelOneAuth)
+    auth._state_lock = RLock()
+    auth.is_logged_in = True
+    auth.smart_api = object()
+    auth.session_data = {
+        "jwtToken": "old-jwt",
+        "feedToken": "old-feed",
+        "refreshToken": "refresh-token",
+    }
+    auth._session_obtained_at = time.monotonic()
+    auth._force_fresh_session = False
+    calls = []
+
+    def fresh_token():
+        calls.append(True)
+        auth.session_data.update({"jwtToken": "new-jwt", "feedToken": "new-feed"})
+        auth._force_fresh_session = False
+        auth._session_obtained_at = time.monotonic()
+        return {"status": "success"}
+
+    auth.refresh_session = fresh_token
+    auth.mark_session_stale()
+    auth.ensure_session_fresh(3600)
+
+    assert calls == [True]
+    assert auth.session_data["jwtToken"] == "new-jwt"
+    assert auth.session_data["feedToken"] == "new-feed"
+    assert auth._force_fresh_session is False
+
+
+
+def test_reconnect_without_tokens_always_clears_single_flight_state(monkeypatch):
+    from threading import current_thread
+
+    client = MarketDataWebSocket(auth=make_auth())
+    client._reconnect_thread = current_thread()
+    client._is_reconnecting = True
+    client.exchange_type = None
+    client.tokens = []
+
+    client._reconnect_after_disconnect()
+
+    assert client._reconnect_thread is None
+    assert client._is_reconnecting is False
+
+
+def test_sdk_transport_uses_verified_tls_and_pong_timeout(monkeypatch):
+    import ssl
+    from app.market_data import websocket as websocket_module
+
+    calls = {}
+
+    class FakeWebSocketApp:
+        def __init__(self, url, **kwargs):
+            calls["url"] = url
+            calls["callbacks"] = kwargs
+
+        def run_forever(self, **kwargs):
+            calls["run_forever"] = kwargs
+            calls["callbacks"]["on_open"](self)
+
+    monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", FakeWebSocketApp)
+    sdk_socket = SimpleNamespace(
+        ROOT_URI="wss://smartapisocket.angelone.in/smart-stream",
+        auth_token="jwt",
+        api_key="api-key",
+        client_code="client",
+        feed_token="feed",
+        _on_open=lambda *args: None,
+        _on_error=lambda *args: None,
+        _on_close=lambda *args: None,
+        _on_data=lambda *args: None,
+        _on_ping=lambda *args: None,
+        _on_pong=lambda *args: None,
+    )
+
+    websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
+
+    assert calls["url"].startswith("wss://")
+    assert calls["run_forever"]["sslopt"]["cert_reqs"] == ssl.CERT_REQUIRED
+    assert calls["run_forever"]["ping_interval"] == 20
+    assert calls["run_forever"]["ping_timeout"] == 10
+    assert calls["callbacks"]["on_open"] is sdk_socket._on_open
+
+
+def test_websocket_close_waits_for_transport_and_reports_orphan(monkeypatch):
+    from threading import Event, Thread
+
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    release = Event()
+    transport = Thread(target=lambda: release.wait(timeout=2.0), daemon=True)
+    transport.start()
+    client._transport_thread = transport
+    client.websocket = FakeSocket.instances[-1] if FakeSocket.instances else FakeSocket("jwt", "api", "client", "feed")
+
+    client.close()
+    assert client.health["transport_close_timed_out"] is True
+    assert client.health["transport_thread_alive"] is True
+    release.set()
+    transport.join(timeout=1.0)
+    assert not transport.is_alive()
+
+
+def test_websocket_close_aborts_sdk_transport_before_connect_returns(monkeypatch):
+    from threading import Event, Thread
+
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    release = Event()
+    transport = Thread(target=lambda: release.wait(timeout=10.0), daemon=True)
+    transport.start()
+
+    class LowLevelSocket:
+        def abort(self):
+            release.set()
+
+    sdk_socket = SimpleNamespace(
+        close_connection=lambda: None,
+        _transport_thread=transport,
+        wsapp=SimpleNamespace(sock=LowLevelSocket()),
+    )
+    # Simulate connect() still waiting before it can copy this thread to
+    # client._transport_thread; close must discover it from the SDK socket.
+    client.websocket = sdk_socket
+    client._transport_thread = None
+
+    client.close()
+
+    assert not transport.is_alive()
+    assert client.health["transport_close_timed_out"] is False
+    assert client.health["transport_thread_alive"] is False
+
+
+def test_initial_subscribe_success_is_reported_separately(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"])
+    assert client.health["initial_subscribe_success"] is True
+    client.close()
+
+
+def test_lifecycle_observer_receives_open_error_and_close_without_auth_claim(monkeypatch):
+    FakeSocket.instances.clear()
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    observations = []
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"], on_lifecycle=lambda event, received_ns: observations.append((event, received_ns)))
+    socket = FakeSocket.instances[-1]
+    socket.on_error(socket, "temporary transport failure")
+    socket.on_close(socket)
+
+    assert [event for event, _ in observations] == ["OPEN", "ERROR", "CLOSED"]
+    assert all(isinstance(received_ns, int) and received_ns > 0 for _, received_ns in observations)
+    assert observations == sorted(observations, key=lambda item: item[1])
+    assert client.health["connected"] is False
+
+
+def test_lifecycle_observer_exception_does_not_break_socket_callbacks(monkeypatch):
+    FakeSocket.instances.clear()
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"], on_lifecycle=lambda *_: (_ for _ in ()).throw(RuntimeError("observer down")))
+    socket = FakeSocket.instances[-1]
+    socket.on_close(socket)
+    assert client.health["connected"] is False
+
+
+
+def test_reconnect_worker_cannot_reopen_socket_after_close_wins_race(monkeypatch):
+    from threading import Event, Thread
+
+    FakeSocket.instances.clear()
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    client.exchange_type = 1
+    client.tokens = ["101"]
+    entered_connect = Event()
+    release_connect = Event()
+    original_connect = client.connect
+
+    def pause_before_guard(**kwargs):
+        entered_connect.set()
+        assert release_connect.wait(timeout=2.0)
+        return original_connect(**kwargs)
+
+    monkeypatch.setattr(client, "connect", pause_before_guard)
+    worker = Thread(target=client._reconnect_after_disconnect, name="test-angel-reconnect")
+    worker.start()
+    assert entered_connect.wait(timeout=1.0)
+
+    # Shutdown advances the lifecycle generation while the reconnect worker
+    # is paused between capturing its generation and entering connect().
+    client.close()
+    release_connect.set()
+    worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    assert FakeSocket.instances == []
+    assert client.health["connected"] is False
+    assert client.health["connecting"] is False
+    assert client._stopping is True
+
+
+def test_stale_internal_reconnect_does_not_mutate_subscription_state(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth())
+    client.exchange_type = 1
+    client.tokens = ["101"]
+    client.subscriptions = {1: ["101"]}
+    expected_generation = client._lifecycle_generation
+    client.close()
+
+    client.connect(
+        subscriptions={2: ["202"]},
+        _expected_lifecycle_generation=expected_generation,
+    )
+
+    assert client.subscriptions == {1: ["101"]}
+    assert client.websocket is None
+    assert FakeSocket.instances == []
+
+
+def test_explicit_connect_can_restart_wrapper_after_close(monkeypatch):
+    FakeSocket.instances.clear()
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"])
+    first_socket = client.websocket
+    client.close()
+
+    client.connect(1, ["202"])
+
+    assert len(FakeSocket.instances) == 2
+    assert FakeSocket.instances[0] is first_socket
+    assert client.connected is True
+    assert client.tokens == ["202"]
+    client.close()
+
+
+
+def test_sdk_text_subscription_rejection_frame_is_forwarded_and_recorded(monkeypatch):
+    import json
+
+    class FakeWebSocketApp:
+        def __init__(self, url, **kwargs):
+            self.callbacks = kwargs
+
+        def run_forever(self, **kwargs):
+            self.callbacks["on_open"](self)
+            self.callbacks["on_data"](
+                self,
+                json.dumps({
+                    "correlationID": "market-data",
+                    "errorCode": "E1002",
+                    "errorMessage": "Invalid Request. Subscription Limit Exceeded",
+                }),
+                websocket_module.websocket_client.ABNF.OPCODE_TEXT,
+                False,
+            )
+
+    monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", FakeWebSocketApp)
+    sdk_socket = SimpleNamespace(
+        ROOT_URI="wss://smartapisocket.angelone.in/smart-stream",
+        auth_token="jwt", api_key="api-key", client_code="client", feed_token="feed",
+        _on_open=lambda *_: None, _on_error=lambda *_: None, _on_close=lambda *_: None,
+        _on_data=lambda *_: (_ for _ in ()).throw(AssertionError("text must not reach binary parser")),
+        _on_ping=lambda *_: None, _on_pong=lambda *_: None,
+    )
+    control = []
+    sdk_socket.on_control_message = lambda _ws, payload: control.append(payload)
+
+    websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
+
+    assert control == [{
+        "correlationID": "market-data",
+        "errorCode": "E1002",
+        "errorMessage": "Invalid Request. Subscription Limit Exceeded",
+    }]
+
+
+def test_sdk_binary_market_frames_still_use_original_sdk_parser(monkeypatch):
+    calls = []
+
+    class FakeWebSocketApp:
+        def __init__(self, url, **kwargs):
+            self.callbacks = kwargs
+
+        def run_forever(self, **kwargs):
+            self.callbacks["on_open"](self)
+            self.callbacks["on_data"](self, b"binary-tick", 2, False)
+
+    monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", FakeWebSocketApp)
+    sdk_socket = SimpleNamespace(
+        ROOT_URI="wss://smartapisocket.angelone.in/smart-stream",
+        auth_token="jwt", api_key="api-key", client_code="client", feed_token="feed",
+        _on_open=lambda *_: None, _on_error=lambda *_: None, _on_close=lambda *_: None,
+        _on_data=lambda *args: calls.append(args[1:]),
+        _on_ping=lambda *_: None, _on_pong=lambda *_: None,
+    )
+
+    websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
+
+    assert calls == [(b"binary-tick", 2, False)]
+
+
+def test_control_rejection_is_exposed_in_health_without_authentication_claim(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    observed = []
+    client.on_control_message = observed.append
+    client.connect(1, ["101"])
+    socket = client.websocket
+
+    socket.on_control_message(socket, {
+        "correlationID": "market-data",
+        "errorCode": "E1002",
+        "errorMessage": "Subscription Limit Exceeded",
+    })
+
+    health = client.health
+    assert health["subscription_response_state"] == "REJECTED"
+    assert health["subscription_rejection_count"] == 1
+    assert health["last_subscription_response"]["errorCode"] == "E1002"
+    assert observed[0]["correlationID"] == "market-data"
+    assert health["initial_subscribe_send_success"] is True
+    client.close()
+
+
+def test_successful_local_subscribe_send_is_not_reported_as_broker_ack(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"])
+    health = client.health
+    assert health["initial_subscribe_send_success"] is True
+    assert health["subscription_response_state"] == "SENT_UNCONFIRMED"
+    client.close()
+
+
+
+def test_broker_correlation_id_is_ten_alphanumeric_characters(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"], correlation_id="common-3-0")
+    sent_id = FakeSocket.instances[-1].subscriptions[0][0]
+    assert len(sent_id) == 10
+    assert sent_id.isalnum()
+    assert client.health["subscription_response_state"] == "SENT_UNCONFIRMED"
+    client.close()
+
+
+def test_control_error_frame_marks_subscription_rejected_without_auth_success(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.connect(1, ["101"], correlation_id="common-3-0")
+    socket = client.websocket
+
+    socket.on_control_message(socket, {
+        "correlationID": client.health["last_subscription_response"] or "response",
+        "errorCode": "E1002",
+        "errorMessage": "Invalid Request. Subscription Limit Exceeded",
+    })
+
+    health = client.health
+    assert health["subscription_response_state"] == "REJECTED"
+    assert health["subscription_rejection_count"] == 1
+    assert health["last_subscription_response"]["errorCode"] == "E1002"
+    client.close()
+
+
+
+def test_market_data_after_subscription_marks_data_seen(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    received = []
+    client.connect(1, ["101"], on_data=received.append)
+    socket = client.websocket
+    socket.on_data(socket, {"token": "101", "exchange_type": 1, "last_traded_price": 12345})
+    assert received
+    assert client.health["subscription_response_state"] == "DATA_SEEN"
+    client.close()
+
+
+def test_control_error_callback_is_observable_and_never_authenticates(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    observed = []
+    client.on_control_message = observed.append
+    client.connect(1, ["101"])
+    socket = client.websocket
+    socket.on_control_message(socket, {
+        "correlationID": client.health["subscription_response_state"],
+        "errorCode": "E1001",
+        "errorMessage": "Invalid Request Payload.",
+    })
+    assert observed[0]["errorCode"] == "E1001"
+    assert client.health["subscription_response_state"] == "REJECTED"
+    client.close()

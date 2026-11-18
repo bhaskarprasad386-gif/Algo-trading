@@ -1,0 +1,296 @@
+from datetime import datetime
+
+import pytest
+from zoneinfo import ZoneInfo
+
+from app.scanner.iv_skew_flip.engine import (
+    OptionQuote, Signal, black_scholes_price, confluence, evaluate_flip,
+    evaluate_gamma_blast, evaluate_skew, implied_volatility,
+)
+
+
+def test_implied_volatility_round_trip_for_call_and_put():
+    for kind in ("CE", "PE"):
+        premium = black_scholes_price(kind, 22000, 22000, 7 / 365, 0.22)
+        recovered = implied_volatility(kind, 22000, 22000, 7 / 365, premium)
+        assert recovered is not None
+        assert abs(recovered - 0.22) < 1e-6
+
+
+def test_implied_volatility_rejects_invalid_arbitrage_price():
+    assert implied_volatility("CE", 22000, 22000, 7 / 365, 30000) is None
+
+
+def test_gamma_blast_requires_oi_drop_and_premium_rise():
+    prior = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 1, 100, oi=100000, token="N1")
+    current = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 112, oi=90000, token="N1")
+    signal = evaluate_gamma_blast(current, prior)
+    assert signal.status == "SIGNAL"
+    assert signal.direction == "BULLISH"
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("underlying", "BANKNIFTY"),
+        ("expiry", "2026-11-19"),
+        ("strike", 22050),
+        ("option_type", "PE"),
+        ("token", "OTHER"),
+        ("token", ""),
+    ],
+)
+def test_gamma_blast_rejects_reference_from_different_contract(field, value):
+    from dataclasses import replace
+
+    prior = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 1, 100, oi=100000, token="N1")
+    current = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 112, oi=90000, token="N1")
+    mismatched_prior = replace(prior, **{field: value})
+    result = evaluate_gamma_blast(current, mismatched_prior)
+    assert result.status == "WAITING"
+    assert "same option contract" in result.reason
+
+
+def test_gamma_blast_rejects_non_chronological_reference_sample():
+    prior = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 100, oi=100000, token="N1")
+    current = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 112, oi=90000, token="N1")
+    result = evaluate_gamma_blast(current, prior)
+    assert result.status == "WAITING"
+    assert "ordered observations" in result.reason
+
+def _synthetic_chain(call_iv=0.24, put_iv=0.20):
+    from app.scanner.iv_skew_flip.engine import DEFAULT_CONFIGS, _expiry_years
+
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    now_ns = 1_800_000_000_000_000_000
+    config = DEFAULT_CONFIGS[0]
+    years = _expiry_years("12NOV2026", now)
+    assert years is not None
+    quotes = []
+    for strike in (21900, 21950, 22000, 22050, 22100):
+        for side, volatility in (("CE", call_iv), ("PE", put_iv)):
+            premium = black_scholes_price(side, 22000, strike, years, volatility)
+            quotes.append(OptionQuote("NIFTY", "12NOV2026", strike, side, now_ns - 1_000_000_000, premium, token=f"{strike}-{side}"))
+    return quotes, now, now_ns, config
+
+
+def test_iv_skew_generates_bullish_signal_from_synthetic_chain():
+    quotes, now, now_ns, config = _synthetic_chain()
+    signal = evaluate_skew(quotes, 22000, now, now_ns, config)
+    assert signal.status == "SIGNAL"
+    assert signal.direction == "BULLISH"
+    assert signal.value is not None and signal.value > config.bullish_skew_threshold
+
+
+def test_iv_flip_detects_confirmed_atm_crossover():
+    quotes, now, now_ns, config = _synthetic_chain()
+    signal = evaluate_flip(quotes, 22000, now, now_ns, config, previous_atm_diff=-0.20)
+    assert signal.status == "SIGNAL"
+    assert signal.direction == "BULLISH"
+
+
+def test_iv_flip_without_prior_opposite_side_does_not_signal():
+    quotes, now, now_ns, config = _synthetic_chain()
+    signal = evaluate_flip(quotes, 22000, now, now_ns, config, previous_atm_diff=None)
+    assert signal.status == "NEUTRAL"
+    assert signal.direction is None
+
+
+def test_confluence_does_not_double_count_correlated_iv_surface_signals():
+    rows = [
+        Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("IV_FLIP", "BULLISH", 0.2, 0.15, "SIGNAL", "test"),
+        Signal("GAMMA_BLAST", "BEARISH", 6.0, 5.0, "SIGNAL", "test"),
+    ]
+    result = confluence(rows)
+    assert result.status == "NEUTRAL"
+    assert result.direction is None
+
+
+def test_confluence_requires_independent_iv_and_gamma_families():
+    rows = [
+        Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("IV_FLIP", "BULLISH", 0.2, 0.15, "SIGNAL", "test"),
+        Signal("GAMMA_BLAST", "BULLISH", 6.0, 5.0, "SIGNAL", "test"),
+    ]
+    result = confluence(rows)
+    assert result.status == "SIGNAL"
+    assert result.direction == "BULLISH"
+    assert result.value == 2.0
+
+
+def test_confluence_does_not_mix_opposite_directions():
+    rows = [
+        Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("IV_FLIP", "BEARISH", -0.2, 0.15, "SIGNAL", "test"),
+        Signal("GAMMA_BLAST", None, None, None, "NEUTRAL", "test"),
+    ]
+    assert confluence(rows).status == "NEUTRAL"
+
+
+def test_expiry_years_accepts_angel_one_master_formats():
+    from app.scanner.iv_skew_flip.engine import _expiry_years
+
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    expected = _expiry_years("2026-11-12", now)
+    assert expected is not None and expected > 0
+    for expiry in ("12NOV2026", "12NOV26", "12-Nov-2026", "12-Nov-26"):
+        value = _expiry_years(expiry, now)
+        assert value is not None
+        assert abs(value - expected) < 1e-10
+
+
+@pytest.mark.parametrize("invalid_timestamp", [True, False, 0, -1])
+def test_iv_skew_rejects_invalid_provider_timestamps(invalid_timestamp):
+    from dataclasses import replace
+
+    quotes, now, now_ns, config = _synthetic_chain()
+    invalid_quotes = [replace(quote, timestamp_ns=invalid_timestamp) for quote in quotes]
+    signal = evaluate_skew(invalid_quotes, 22000, now, now_ns, config)
+    assert signal.status == "WAITING"
+    assert "ATM CE and PE" in signal.reason
+
+
+def test_iv_flip_rejects_boolean_provider_timestamp():
+    from dataclasses import replace
+
+    quotes, now, now_ns, config = _synthetic_chain()
+    invalid_quotes = [
+        replace(quote, timestamp_ns=True) if quote.strike == 22000 else quote
+        for quote in quotes
+    ]
+    signal = evaluate_flip(invalid_quotes, 22000, now, now_ns, config, previous_atm_diff=-0.20)
+    assert signal.status == "WAITING"
+    assert "ATM option quotes" in signal.reason
+
+
+@pytest.mark.parametrize("oi", [True, False, -1, 1.5, "90000"])
+def test_gamma_blast_rejects_invalid_open_interest_values(oi):
+    prior = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 1, 100, oi=100000, token="N1")
+    current = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 112, oi=oi, token="N1")
+    result = evaluate_gamma_blast(current, prior)
+    assert result.status == "WAITING"
+    assert "valid current" in result.reason
+
+
+def test_gamma_blast_requires_non_empty_exact_contract_token():
+    prior = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 1, 100, oi=100000)
+    current = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 112, oi=90000)
+    result = evaluate_gamma_blast(current, prior)
+    assert result.status == "WAITING"
+    assert "same option contract" in result.reason
+
+
+def test_iv_skew_does_not_shift_atm_when_atm_quotes_are_stale():
+    from dataclasses import replace
+
+    quotes, now, now_ns, config = _synthetic_chain()
+    stale_atm = [
+        replace(quote, timestamp_ns=now_ns - 10_000_000_000)
+        if quote.strike == 22000 else quote
+        for quote in quotes
+    ]
+    signal = evaluate_skew(stale_atm, 22000, now, now_ns, config)
+    assert signal.status == "WAITING"
+    assert "ATM CE and PE" in signal.reason
+
+
+def test_option_mark_rejects_wide_book_instead_of_falling_back_to_ltp():
+    quote = OptionQuote(
+        "NIFTY", "2026-11-12", 22000, "CE", 1,
+        ltp=100.0, bid=90.0, ask=110.0, token="wide-book",
+    )
+    assert quote.mark is None
+
+
+def test_confluence_suppresses_conflicting_signals_within_iv_surface_family():
+    rows = [
+        Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("IV_FLIP", "BEARISH", -0.2, 0.15, "SIGNAL", "test"),
+        Signal("GAMMA_BLAST", "BULLISH", 6.0, 5.0, "SIGNAL", "test"),
+    ]
+    result = confluence(rows)
+    assert result.status == "NEUTRAL"
+    assert result.direction is None
+
+
+def test_confluence_ignores_unreviewed_strategy_names():
+    rows = [
+        Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("UNREVIEWED_ALPHA", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+        Signal("UNREVIEWED_BETA", "BULLISH", 1.0, 0.8, "SIGNAL", "test"),
+    ]
+    result = confluence(rows)
+    assert result.status == "NEUTRAL"
+    assert result.direction is None
+
+
+def test_confluence_rejects_invalid_required_family_count():
+    import pytest
+
+    rows = [Signal("IV_SKEW", "BULLISH", 1.0, 0.8, "SIGNAL", "test")]
+    with pytest.raises(ValueError):
+        confluence(rows, required=True)
+    with pytest.raises(ValueError):
+        confluence(rows, required=0)
+
+
+@pytest.mark.parametrize("invalid_spot", [True, False, float("nan"), float("inf"), 0, -1])
+def test_iv_flip_rejects_invalid_spot(invalid_spot):
+    quotes, now, now_ns, config = _synthetic_chain()
+    signal = evaluate_flip(quotes, invalid_spot, now, now_ns, config, previous_atm_diff=-0.20)
+    assert signal.status == "WAITING"
+    assert "valid spot" in signal.reason
+
+
+def test_iv_flip_rejects_duplicate_fresh_atm_contracts():
+    from dataclasses import replace
+
+    quotes, now, now_ns, config = _synthetic_chain()
+    atm_call = next(q for q in quotes if q.strike == 22000 and q.option_type == "CE")
+    quotes.append(replace(atm_call, token="duplicate-atm-call"))
+    signal = evaluate_flip(quotes, 22000, now, now_ns, config, previous_atm_diff=-0.20)
+    assert signal.status == "WAITING"
+    assert "duplicate fresh ATM" in signal.reason
+
+
+@pytest.mark.parametrize(
+    "bid,ask",
+    [(101.0, 100.0), (0.0, 100.0), (-1.0, 100.0), (float("nan"), 100.0)],
+)
+def test_option_mark_rejects_invalid_two_sided_book_without_ltp_fallback(bid, ask):
+    quote = OptionQuote(
+        "NIFTY", "2026-11-12", 22000, "CE", 1,
+        ltp=100.0, bid=bid, ask=ask, token="invalid-book",
+    )
+    assert quote.mark is None
+
+
+@pytest.mark.parametrize("invalid_spot", [True, False, float("nan"), float("inf"), 0, -1])
+def test_iv_skew_rejects_invalid_spot(invalid_spot):
+    quotes, now, now_ns, config = _synthetic_chain()
+    signal = evaluate_skew(quotes, invalid_spot, now, now_ns, config)
+    assert signal.status == "WAITING"
+    assert "valid spot" in signal.reason
+
+
+
+def test_iv_skew_waits_when_strike_ladder_is_not_equidistant():
+    quotes, now, now_ns, config = _synthetic_chain()
+    quotes = [
+        quote for quote in quotes
+        if not (quote.strike == 22050)
+    ]
+    signal = evaluate_skew(quotes, 22000, now, now_ns, config)
+    assert signal.status == "WAITING"
+    assert "non-uniform strike ladder" in signal.reason
+
+
+def test_iv_skew_rejects_duplicate_fresh_contract_instead_of_overwriting():
+    from dataclasses import replace
+
+    quotes, now, now_ns, config = _synthetic_chain()
+    atm_call = next(q for q in quotes if q.strike == 22000 and q.option_type == "CE")
+    quotes.append(replace(atm_call, token="duplicate-atm-call"))
+    signal = evaluate_skew(quotes, 22000, now, now_ns, config)
+    assert signal.status == "WAITING"
+    assert "duplicate fresh option contract" in signal.reason

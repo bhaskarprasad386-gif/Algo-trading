@@ -1,0 +1,1 @@
+Fresh CI verification trigger for candle storage fix.

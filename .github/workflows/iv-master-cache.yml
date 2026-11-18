@@ -1,0 +1,76 @@
+name: IV Instrument Master Cache
+
+on:
+  schedule:
+    # 05:35 IST daily, independent of the VPS network path.
+    - cron: '5 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iv-instrument-master-cache
+  cancel-in-progress: false
+
+jobs:
+  fetch-validate-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend dependencies
+        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
+      - name: Fetch official master through independent runner and validate production IV universe
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+          IV_INSTRUMENT_MASTER_CACHE_PATH: ${{ runner.temp }}/iv_instrument_master_cache.json
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import time
+          from pathlib import Path
+          from app.scanner.iv_skew_flip.instruments import (
+              PRIMARY_MASTER_URL, ALTERNATE_MASTER_URL, _fetch_validated_master,
+              _write_snapshot, _read_recent_snapshot, _canonical_rows_digest,
+          )
+
+          errors = []
+          rows = None
+          # Host aliases currently share an AWS ELB; retry primary with backoff,
+          # then try the documented alternate hostname as a separate DNS/SNI check.
+          for label, url in (("primary", PRIMARY_MASTER_URL), ("alternate", ALTERNATE_MASTER_URL)):
+              for attempt in range(3):
+                  try:
+                      rows = _fetch_validated_master(url)
+                      print(f"{label}_validation=PASS rows={len(rows)}")
+                      break
+                  except Exception as exc:
+                      errors.append(f"{label}[{attempt + 1}]: {type(exc).__name__}: {exc}")
+                      print(errors[-1])
+                      if attempt < 2:
+                          time.sleep(2 ** attempt)
+              if rows is not None:
+                  break
+          if rows is None:
+              raise SystemExit("No official Angel One master passed production validation: " + " | ".join(errors))
+
+          _write_snapshot(rows)
+          cached = _read_recent_snapshot()
+          if cached is None or _canonical_rows_digest(cached[0]) != _canonical_rows_digest(rows):
+              raise SystemExit("IV snapshot failed production read-back integrity/freshness validation")
+          path = Path(__import__("os").environ["IV_INSTRUMENT_MASTER_CACHE_PATH"])
+          print(f"snapshot=PASS rows={len(rows)} sha256={_canonical_rows_digest(rows)} bytes={path.stat().st_size}")
+          PY
+      - name: Upload validated IV-only recovery snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: iv-instrument-master-validated
+          path: ${{ runner.temp }}/iv_instrument_master_cache.json
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,402 @@
+"""Bounded one-second Box Spread quote assembler and scanner."""
+from __future__ import annotations
+from threading import Lock
+from datetime import datetime
+from dataclasses import replace
+from collections import Counter
+from decimal import Decimal, InvalidOperation
+from app.backtesting.arbitrage_backtester import OptionQuote
+from app.core.config import settings
+from app.scanner.box_spread import BoxSpreadScanConfig, scan_box_snapshot
+
+class LiveBoxSpreadScanner:
+    def __init__(self, *, atm_provider, config_provider=None, on_result=None, policy=None):
+        self.atm_provider=atm_provider
+        self.config_provider=config_provider or (lambda _s: BoxSpreadScanConfig(min_executable_edge=float(settings.LIVE_BOX_SPREAD_MIN_ARBITRAGE_POINTS)))
+        self.on_result=on_result
+        self.policy=policy
+        self._lock=Lock(); self._buckets={}
+        self._diagnostic_counts=Counter()
+        self._symbol_diagnostic_counts={}
+        self._symbol_last_diagnostics={}
+        self._last_diagnostics={}
+        self._monitor_snapshots={}; self._atm_error_buckets=set()
+
+    @staticmethod
+    def _price(v):
+        from math import isfinite
+        try:
+            n = float(v)
+            return n if isfinite(n) and n > 0 else None
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    @staticmethod
+    def _quantity(value):
+        try:
+            number = float(value)
+            return int(number) if number >= 0 and number.is_integer() else None
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    @staticmethod
+    def _nonnegative_integer(value):
+        try:
+            number = float(value)
+            return int(number) if number >= 0 and number.is_integer() else None
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    @staticmethod
+    def _positive_integer_timestamp(value):
+        try:
+            number = Decimal(str(value))
+            return int(number) if number.is_finite() and number > 0 and number == number.to_integral_value() else None
+        except (InvalidOperation, TypeError, ValueError, OverflowError):
+            return None
+
+    @staticmethod
+    def _expiry(v):
+        text=str(v or "").strip().upper()
+        for fmt in ("%d%b%Y","%d%b%y","%Y-%m-%d","%d-%m-%Y"):
+            try:return int(datetime.strptime(text,fmt).strftime("%Y%m%d"))
+            except ValueError:pass
+        raise ValueError(f"invalid option expiry: {v!r}")
+
+    def _increment_diagnostic(self, name, amount=1, *, symbol=None):
+        """Increment aggregate and bounded per-underlying diagnostic counters."""
+        self._diagnostic_counts[name] += amount
+        if symbol:
+            counts = self._symbol_diagnostic_counts.setdefault(symbol, Counter())
+            counts[name] += amount
+
+    def _set_last_diagnostics(self, details):
+        self._last_diagnostics = dict(details)
+        symbol = str(details.get("symbol") or "").strip().upper()
+        if symbol:
+            self._symbol_last_diagnostics[symbol] = dict(details)
+
+    def diagnostics_snapshot(self):
+        """Return bounded counters and the last scan outcome; never includes raw quote payloads."""
+        with self._lock:
+            symbols = set(self._symbol_diagnostic_counts) | set(self._symbol_last_diagnostics)
+            return {
+                "counts": dict(self._diagnostic_counts),
+                "last_scan": dict(self._last_diagnostics),
+                "by_symbol": {
+                    symbol: {
+                        "counts": dict(self._symbol_diagnostic_counts.get(symbol, {})),
+                        "last_scan": dict(self._symbol_last_diagnostics.get(symbol, {})),
+                    }
+                    for symbol in sorted(symbols)
+                },
+                "active_buckets": len(self._buckets),
+            }
+
+    def observe(self,payload):
+        symbol=str(payload.get("underlying") or "").strip().upper()
+        with self._lock:
+            self._increment_diagnostic("ticks_seen", symbol=symbol)
+        cls=str(payload.get("instrument_class") or "").strip().upper()
+        ts = self._positive_integer_timestamp(payload.get("source_timestamp_ns"))
+        if ts is None:
+            with self._lock:
+                self._increment_diagnostic("invalid_identity_or_timestamp", symbol=symbol)
+            return ()
+        import time
+        if ts >= 1_000_000_000_000_000:
+            age_ns = time.time_ns() - ts
+            if age_ns > 5_000_000_000:
+                with self._lock:
+                    self._increment_diagnostic("stale_timestamp", symbol=symbol)
+                return ()
+            if age_ns < -1_000_000_000:
+                with self._lock:
+                    self._increment_diagnostic("future_timestamp", symbol=symbol)
+                return ()
+        typ=str(payload.get("option_type") or "").strip().upper()
+        strike=self._price(payload.get("strike"))
+        bid=self._price(payload.get("bid")); ask=self._price(payload.get("ask"))
+        if not symbol or cls not in {"STOCK","INDEX"} or ts<=0 or typ not in {"CE","PE"} or strike is None:
+            with self._lock:
+                self._increment_diagnostic("invalid_identity_or_timestamp", symbol=symbol)
+            return ()
+        if bid is None or ask is None:
+            with self._lock:
+                for side, value, raw in (("bid", bid, payload.get("bid")), ("ask", ask, payload.get("ask"))):
+                    if value is None:
+                        key = "missing_" + side + "_quote" if raw is None or str(raw).strip() == "" else "invalid_" + side + "_quote"
+                        self._increment_diagnostic(key, symbol=symbol)
+            return ()
+        if ask < bid:
+            with self._lock:
+                self._increment_diagnostic("crossed_market_quote", symbol=symbol)
+            return ()
+        with self._lock:
+            try:
+                expiry = self._expiry(payload.get("expiry"))
+            except (TypeError, ValueError):
+                self._increment_diagnostic("invalid_expiry", symbol=symbol)
+                return ()
+            self._increment_diagnostic("ticks_accepted_for_assembly", symbol=symbol)
+            key=self._matching_bucket_key(symbol,ts,expiry)
+            bucket=self._buckets.setdefault(key,{})
+            leg_key=(strike,typ)
+            previous=bucket.get(leg_key)
+            if previous is not None:
+                previous_ts = self._positive_integer_timestamp(previous.get("source_timestamp_ns"))
+                if previous_ts is not None and previous_ts > ts:
+                    self._increment_diagnostic("out_of_order_ticks", symbol=symbol)
+                    self._prune(ts)
+                    return ()
+            bucket[leg_key]=payload
+            grouped=[]
+            missing_or_non_executable_pairs=0
+            for s in sorted({k[0] for k in bucket}):
+                ce,pe=bucket.get((s,"CE")),bucket.get((s,"PE"))
+                if ce is None or pe is None:
+                    missing_or_non_executable_pairs += 1
+                    continue
+                try:
+                    ce_expiry=self._expiry(ce.get("expiry")); pe_expiry=self._expiry(pe.get("expiry"))
+                    ce_lot=self._nonnegative_integer(ce.get("lot_size"))
+                    pe_lot=self._nonnegative_integer(pe.get("lot_size"))
+                    if ce_expiry != pe_expiry or ce_lot is None or pe_lot is None or ce_lot <= 0 or ce_lot != pe_lot:
+                        self._increment_diagnostic("expiry_or_lot_mismatch", symbol=symbol)
+                        continue
+                    ce_volume=self._nonnegative_integer(ce.get("volume") or 0)
+                    pe_volume=self._nonnegative_integer(pe.get("volume") or 0)
+                    ce_oi=self._nonnegative_integer(ce.get("oi") or 0)
+                    pe_oi=self._nonnegative_integer(pe.get("oi") or 0)
+                    if None in (ce_volume, pe_volume, ce_oi, pe_oi):
+                        self._increment_diagnostic("malformed_leg_pair", symbol=symbol)
+                        continue
+                    ce_bid,ce_ask=self._price(ce.get("bid")),self._price(ce.get("ask"))
+                    pe_bid,pe_ask=self._price(pe.get("bid")),self._price(pe.get("ask"))
+                    if ce_bid is None or ce_ask is None or ce_ask < ce_bid or pe_bid is None or pe_ask is None or pe_ask < pe_bid:
+                        missing_or_non_executable_pairs += 1
+                        continue
+                    ce_ts=self._positive_integer_timestamp(ce.get("source_timestamp_ns"))
+                    pe_ts=self._positive_integer_timestamp(pe.get("source_timestamp_ns"))
+                    if ce_ts is None or pe_ts is None:
+                        self._increment_diagnostic("malformed_leg_pair", symbol=symbol)
+                        continue
+                    grouped.append(OptionQuote(
+                        max(ce_ts,pe_ts),symbol,ce_expiry,s,ce_bid,ce_ask,pe_bid,pe_ask,ce_lot,cls,
+                        min(ce_volume, pe_volume),
+                        min(ce_oi, pe_oi),
+                        self._price(ce.get("ltp")),self._price(pe.get("ltp")),ce_ts,pe_ts,
+                        self._quantity(ce.get("bid_qty")),self._quantity(ce.get("ask_qty")),
+                        self._quantity(pe.get("bid_qty")),self._quantity(pe.get("ask_qty")),
+                    ))
+                except (ValueError,TypeError):
+                    self._increment_diagnostic("malformed_leg_pair", symbol=symbol)
+                    continue
+            if missing_or_non_executable_pairs:
+                self._increment_diagnostic("missing_or_non_executable_strike_pairs", missing_or_non_executable_pairs, symbol=symbol)
+            timestamps=[int(value.get("source_timestamp_ns") or 0) for value in bucket.values() if isinstance(value,dict)]
+            if not timestamps:
+                self._prune(ts); return ()
+            anchor_ts=max(timestamps)
+            try:
+                atm=self.atm_provider(symbol,anchor_ts)
+            except Exception:
+                # A transient spot/ATM source failure must not escape the quote
+                # callback and interrupt option-feed assembly for this runner.
+                if key not in self._atm_error_buckets:
+                    self._increment_diagnostic("atm_provider_errors", symbol=symbol)
+                    self._atm_error_buckets.add(key)
+                self._set_last_diagnostics({"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_provider_error"})
+                self._prune(ts); return ()
+            self._atm_error_buckets.discard(key)
+            if atm is None:
+                self._increment_diagnostic("atm_unavailable", symbol=symbol)
+                self._set_last_diagnostics({"symbol":symbol,"expiry":expiry,"grouped_strikes":len(grouped),"result_count":0,"outcome":"atm_unavailable"})
+                self._prune(ts); return ()
+            if not grouped:
+                self._increment_diagnostic("no_executable_grouped_strikes", symbol=symbol)
+                self._set_last_diagnostics({"symbol":symbol,"expiry":expiry,"grouped_strikes":0,"result_count":0,"outcome":"waiting_for_complete_executable_call_put_pairs"})
+                self._prune(ts); return ()
+            scan_stats={}
+            scan_config = self.config_provider(symbol)
+            results=scan_box_snapshot(grouped,atm_strike=float(atm),instrument_class=cls,
+                                      config=scan_config,policy=self.policy,diagnostics=scan_stats)
+            # Rule entries can use a custom threshold below the global UI scanner
+            # threshold, while retaining the scanner's original liquidity and
+            # strike-distance policy. The normal /live result is unchanged.
+            entry_config = replace(scan_config, min_executable_edge=-1_000_000_000.0)
+            entry_results = scan_box_snapshot(
+                grouped, atm_strike=float(atm), instrument_class=cls,
+                config=entry_config, policy=self.policy,
+            )
+            # Preserve all edge values separately for open-position exits. This does
+            # not alter the normal scanner's configured entry threshold.
+            monitor_config = replace(
+                scan_config,
+                min_executable_edge=-1_000_000_000.0,
+                # Exit monitoring must continue when liquidity deteriorates.
+                # Entry scanner keeps its original volume/OI/spread requirements.
+                min_option_volume=0,
+                min_option_oi=0,
+                max_option_spread_pct=1_000_000_000.0,
+            )
+            monitor_results = scan_box_snapshot(
+                grouped, atm_strike=float(atm), instrument_class=cls,
+                config=monitor_config, policy=self.policy, include_nonpositive=True, include_all_strike_pairs=True,
+            )
+            monitor_updated_ns = max(
+                stamp for result in monitor_results for stamp in (
+                    result.low.call_timestamp_ns or result.low.timestamp_ns,
+                    result.low.put_timestamp_ns or result.low.timestamp_ns,
+                    result.high.call_timestamp_ns or result.high.timestamp_ns,
+                    result.high.put_timestamp_ns or result.high.timestamp_ns,
+                )
+            ) if monitor_results else 0
+            # Scanner.observe handles one symbol/expiry bucket at a time. Keep
+            # independent latest snapshots so a NIFTY tick cannot erase SENSEX
+            # or another expiry's open-position monitor data.
+            self._monitor_snapshots[(symbol, expiry)] = {
+                "updated_at_ns": monitor_updated_ns,
+                "data": tuple(monitor_results),
+                "entry_data": tuple(entry_results),
+            }
+            self._increment_diagnostic("snapshots_scanned", symbol=symbol)
+            for name,value in scan_stats.items():
+                self._increment_diagnostic("scan_"+name, int(value), symbol=symbol)
+            self._set_last_diagnostics({"symbol":symbol,"expiry":expiry,"atm_strike":float(atm),
+                "grouped_strikes":len(grouped),"result_count":len(results),
+                "min_executable_edge":float(scan_config.min_executable_edge),
+                "outcome":"qualified" if results else "no_qualifying_box",
+                "scan":scan_stats})
+            self._prune(ts)
+        if results and self.on_result is not None:self.on_result(results)
+        return results
+
+    def shared_quote_snapshot(self, *, max_age_seconds: float = 5.0, now_ns: int | None = None):
+        """Return a read-only copy of validated quotes already assembled by Box Spread.
+
+        No subscriptions, instrument fetches, or bucket mutations occur here.
+        CE and PE records are exposed independently; neither side requires its
+        opposite option type to be present.
+        """
+        import time
+        from math import isfinite
+
+        try:
+            max_age = float(max_age_seconds)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("max_age_seconds must be a finite number in (0, 60]")
+        if not isfinite(max_age) or not 0.0 < max_age <= 60.0:
+            raise ValueError("max_age_seconds must be a finite number in (0, 60]")
+        wall_now = time.time_ns() if now_ns is None else int(now_ns)
+        max_age_ns = int(max_age * 1_000_000_000)
+
+        with self._lock:
+            copied = [(key, dict(bucket)) for key, bucket in self._buckets.items()]
+
+        latest = {}
+        for (symbol, bucket_anchor_ns, expiry), bucket in copied:
+            for (strike, option_type), raw in bucket.items():
+                if not isinstance(raw, dict):
+                    continue
+                stamp = self._positive_integer_timestamp(raw.get("source_timestamp_ns"))
+                bid = self._price(raw.get("bid"))
+                ask = self._price(raw.get("ask"))
+                lot_size = self._nonnegative_integer(raw.get("lot_size"))
+                if stamp is None or bid is None or ask is None or ask < bid or lot_size is None or lot_size <= 0:
+                    continue
+                age_ns = wall_now - stamp
+                if age_ns < -1_000_000_000 or age_ns > max_age_ns:
+                    continue
+                row = {
+                    "underlying": symbol,
+                    "instrument_class": str(raw.get("instrument_class") or "").strip().upper(),
+                    "expiry": int(expiry),
+                    "strike": float(strike),
+                    "option_type": option_type,
+                    "lot_size": lot_size,
+                    "timestamp_ns": stamp,
+                    "quote_age_seconds": round(max(0.0, age_ns / 1_000_000_000), 3),
+                    "freshness": "LIVE",
+                    "bid": bid,
+                    "ask": ask,
+                    "bid_qty": self._quantity(raw.get("bid_qty")),
+                    "ask_qty": self._quantity(raw.get("ask_qty")),
+                    "ltp": self._price(raw.get("ltp")),
+                    "volume": self._nonnegative_integer(raw.get("volume") or 0),
+                    "oi": self._nonnegative_integer(raw.get("oi") or 0),
+                    "bucket_timestamp_ns": int(bucket_anchor_ns),
+                }
+                identity = (symbol, int(expiry), float(strike), option_type)
+                previous = latest.get(identity)
+                if previous is None or stamp > previous["timestamp_ns"]:
+                    latest[identity] = row
+
+        rows = sorted(latest.values(), key=lambda row: (
+            row["underlying"], row["expiry"], row["strike"], row["option_type"]
+        ))
+        groups = {}
+        for row in rows:
+            groups.setdefault((row["underlying"], row["expiry"]), []).append(row)
+        snapshots = []
+        for (symbol, expiry), contracts in sorted(groups.items()):
+            latest_stamp = max(item["timestamp_ns"] for item in contracts)
+            try:
+                atm = self.atm_provider(symbol, latest_stamp)
+            except Exception:
+                atm = None
+            snapshots.append({
+                "underlying": symbol,
+                "expiry": expiry,
+                "atm_strike": float(atm) if atm is not None else None,
+                "updated_at_ns": latest_stamp,
+                "contract_count": len(contracts),
+                "ce_count": sum(item["option_type"] == "CE" for item in contracts),
+                "pe_count": sum(item["option_type"] == "PE" for item in contracts),
+                "data": contracts,
+            })
+        return {
+            "source": "box-spread-live-scanner",
+            "read_only": True,
+            "freshness_limit_seconds": max_age,
+            "captured_at_ns": wall_now,
+            "contract_count": len(rows),
+            "groups": snapshots,
+        }
+
+    def monitor_snapshot(self):
+        """Return latest all-edge results for independent open-position evaluation."""
+        with self._lock:
+            snapshots = tuple(self._monitor_snapshots.values())
+            return {
+                "updated_at_ns": max((item["updated_at_ns"] for item in snapshots), default=0),
+                "data": tuple(result for item in snapshots for result in item["data"]),
+                "entry_data": tuple(result for item in snapshots for result in item.get("entry_data", ())),
+            }
+
+    TIMESTAMP_TOLERANCE_NS=3_000_000_000
+
+    def _matching_bucket_key(self,symbol,ts,expiry):
+        candidates=[key for key in self._buckets if key[0]==symbol and key[2]==expiry and abs(key[1]-ts)<=self.TIMESTAMP_TOLERANCE_NS]
+        return min(candidates,key=lambda key:abs(key[1]-ts)) if candidates else (symbol,ts,expiry)
+
+    MAX_ACTIVE_BUCKETS = 256
+
+    def _prune(self,ts):
+        cutoff=ts-self.TIMESTAMP_TOLERANCE_NS
+        retained={k:v for k,v in self._buckets.items() if k[1]>=cutoff}
+        if len(retained) > self.MAX_ACTIVE_BUCKETS:
+            newest=sorted(retained, key=lambda key: (key[1], key[0], key[2]))[-self.MAX_ACTIVE_BUCKETS:]
+            retained={key:retained[key] for key in newest}
+        pruned=len(self._buckets)-len(retained)
+        if pruned:
+            self._diagnostic_counts["pruned_buckets"] += pruned
+        self._buckets=retained
+        self._atm_error_buckets.intersection_update(retained)
+        active_monitor_keys = {(key[0], key[2]) for key in retained}
+        self._monitor_snapshots = {
+            key: value for key, value in self._monitor_snapshots.items()
+            if key in active_monitor_keys
+        }
+
+__all__=["LiveBoxSpreadScanner"]

@@ -1,0 +1,59 @@
+name: Dual Broker Readiness Bootstrap CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/app/market_data/common_websocket.py"
+      - "backend/app/market_data/provider_readiness.py"
+      - "backend/app/market_data/provider_readiness_bridge.py"
+      - "backend/app/market_data/shoonya_websocket.py"
+      - "backend/tests/test_provider_readiness.py"
+      - "backend/tests/test_provider_readiness_bridge.py"
+      - "backend/tests/test_shoonya_market_data.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dual-broker-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  readiness-regression:
+    name: Dual broker readiness regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      PYTHONPATH: ..
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Compile broker lifecycle modules
+        working-directory: backend
+        run: |
+          python -m py_compile app/market_data/common_websocket.py
+          python -m py_compile app/market_data/provider_readiness.py
+          python -m py_compile app/market_data/provider_readiness_bridge.py
+          python -m py_compile app/market_data/shoonya_websocket.py
+      - name: Run dual broker readiness lifecycle regressions
+        working-directory: backend
+        run: |
+          python -m pytest -q \
+            tests/test_provider_readiness.py \
+            tests/test_provider_readiness_bridge.py \
+            tests/test_shoonya_market_data.py

@@ -1,0 +1,175 @@
+import pytest
+
+from app.backtesting.ledger import BacktestLedger, Checkpoint, LedgerRecord, LEDGER_SCHEMA_VERSION
+
+
+def test_sqlite_ledger_persists_run_records_and_checkpoint(tmp_path):
+    path = tmp_path / "backtest.sqlite"
+    ledger = BacktestLedger(str(path))
+    ledger.start_run("run-1", "cash-future", "1.0", 10_000_000, strategy_hash="abc", metadata={"seed": 42})
+    ledger.append(LedgerRecord("run-1", "FILL", 100, {"order_id": "o1", "price": 101.5}))
+    ledger.checkpoint(Checkpoint("run-1", 7, 100, {"cash": 9_999_000, "position": 10}))
+    ledger.close()
+
+    reopened = BacktestLedger(str(path))
+    assert reopened.run_metadata("run-1")["initial_capital"] == 10_000_000
+    assert reopened.records("run-1")[0].payload["price"] == 101.5
+    checkpoint = reopened.load_checkpoint("run-1")
+    assert checkpoint.event_index == 7
+    assert checkpoint.state["position"] == 10
+    reopened.close()
+
+
+def test_checkpoint_is_updated_atomically():
+    ledger = BacktestLedger()
+    ledger.start_run("run-2", "s", "1", 1000)
+    ledger.checkpoint(Checkpoint("run-2", 1, 10, {"x": 1}))
+    ledger.checkpoint(Checkpoint("run-2", 2, 20, {"x": 2}))
+    assert ledger.load_checkpoint("run-2").state["x"] == 2
+    history = ledger.checkpoint_history("run-2")
+    assert [(c.event_index, c.timestamp_ns) for c in history] == [(1, 10), (2, 20)]
+    ledger.close()
+
+
+def test_checkpoint_history_survives_reopen(tmp_path):
+    path = tmp_path / "checkpoint-history.sqlite"
+    ledger = BacktestLedger(str(path))
+    ledger.start_run("run-history", "s", "1", 1000)
+    ledger.checkpoint(Checkpoint("run-history", 1, 10, {"x": 1}))
+    ledger.checkpoint(Checkpoint("run-history", 2, 20, {"x": 2}))
+    ledger.close()
+
+    reopened = BacktestLedger(str(path))
+    history = reopened.checkpoint_history("run-history")
+    assert [c.state["x"] for c in history] == [1, 2]
+    assert reopened.load_checkpoint("run-history").state["x"] == 2
+    reopened.close()
+
+
+def test_run_schema_and_source_fingerprint_persist_through_reopen(tmp_path):
+    path = tmp_path / "identity.sqlite"
+    ledger = BacktestLedger(str(path))
+    ledger.start_run("identity", "s", "1", 1000, schema_version=LEDGER_SCHEMA_VERSION,
+                     data_source_fingerprint="sha256:abc")
+    ledger.close()
+
+    reopened = BacktestLedger(str(path))
+    metadata = reopened.run_metadata("identity")
+    assert metadata["schema_version"] == LEDGER_SCHEMA_VERSION
+    assert metadata["data_source_fingerprint"] == "sha256:abc"
+    reopened.validate_resume("identity", schema_version=LEDGER_SCHEMA_VERSION,
+                             data_source_fingerprint="sha256:abc")
+    reopened.close()
+
+
+def test_resume_rejects_schema_version_mismatch():
+    ledger = BacktestLedger()
+    ledger.start_run("schema-mismatch", "s", "1", 1000, schema_version=LEDGER_SCHEMA_VERSION)
+    with pytest.raises(ValueError, match="schema_version mismatch"):
+        ledger.validate_resume("schema-mismatch", schema_version=LEDGER_SCHEMA_VERSION + 1)
+    ledger.close()
+
+
+def test_resume_rejects_data_source_fingerprint_mismatch():
+    ledger = BacktestLedger()
+    ledger.start_run("source-mismatch", "s", "1", 1000, data_source_fingerprint="sha256:old")
+    with pytest.raises(ValueError, match="data_source_fingerprint mismatch"):
+        ledger.validate_resume("source-mismatch", data_source_fingerprint="sha256:new")
+    ledger.close()
+
+
+def test_resume_rejects_missing_fingerprint_for_fingerprinted_run():
+    ledger = BacktestLedger()
+    ledger.start_run("source-missing", "s", "1", 1000, data_source_fingerprint="sha256:old")
+    with pytest.raises(ValueError, match="data_source_fingerprint mismatch"):
+        ledger.validate_resume("source-missing")
+    ledger.close()
+
+
+def test_checkpoint_does_not_change_run_identity():
+    ledger = BacktestLedger()
+    ledger.start_run("identity-stable", "s", "1", 1000, data_source_fingerprint="sha256:stable")
+    ledger.checkpoint(Checkpoint("identity-stable", 1, 10, {"x": 1}))
+    ledger.checkpoint(Checkpoint("identity-stable", 2, 20, {"x": 2}))
+    ledger.validate_resume("identity-stable", data_source_fingerprint="sha256:stable")
+    metadata = ledger.run_metadata("identity-stable")
+    assert metadata["schema_version"] == LEDGER_SCHEMA_VERSION
+    assert metadata["data_source_fingerprint"] == "sha256:stable"
+    ledger.close()
+
+
+def test_duplicate_run_id_is_rejected():
+    ledger = BacktestLedger()
+    ledger.start_run("run-3", "s", "1", 1000)
+    with pytest.raises(ValueError, match="already exists"):
+        ledger.start_run("run-3", "s", "2", 2000)
+    ledger.close()
+
+
+def test_records_and_checkpoints_require_existing_run():
+    ledger = BacktestLedger()
+    with pytest.raises(ValueError, match="unknown run_id"):
+        ledger.append(LedgerRecord("missing", "FILL", 1, {}))
+    with pytest.raises(ValueError, match="unknown run_id"):
+        ledger.checkpoint(Checkpoint("missing", 1, 1, {}))
+    ledger.close()
+
+
+def test_append_batch_is_atomic_and_persists_all_records():
+    ledger = BacktestLedger()
+    ledger.start_run("run-4", "s", "1", 1000)
+    count = ledger.append_batch(
+        LedgerRecord("run-4", "EVENT", i, {"value": i}) for i in range(3)
+    )
+    assert count == 3
+    assert [r.payload["value"] for r in ledger.records("run-4")] == [0, 1, 2]
+    ledger.close()
+
+
+def test_append_batch_rolls_back_when_any_record_is_invalid():
+    ledger = BacktestLedger()
+    ledger.start_run("run-5", "s", "1", 1000)
+    with pytest.raises(ValueError, match="timestamp_ns cannot be negative"):
+        ledger.append_batch([
+            LedgerRecord("run-5", "EVENT", 1, {"value": 1}),
+            LedgerRecord("run-5", "EVENT", -1, {"value": 2}),
+        ])
+    assert ledger.records("run-5") == ()
+    ledger.close()
+
+def test_append_and_checkpoint_rolls_back_journal_when_checkpoint_write_fails():
+    ledger = BacktestLedger()
+    ledger.start_run("atomic-ledger", "s", "1", 1000)
+    ledger._db.execute("""
+        CREATE TRIGGER fail_checkpoint_insert
+        BEFORE INSERT ON checkpoints
+        BEGIN
+            SELECT RAISE(ABORT, 'checkpoint write failed');
+        END;
+    """)
+    with pytest.raises(Exception, match="checkpoint write failed"):
+        ledger.append_and_checkpoint(
+            [LedgerRecord("atomic-ledger", "EVENT", 10, {"sequence": 1})],
+            Checkpoint("atomic-ledger", 1, 10, {"cursor": 1}),
+        )
+    assert ledger.records("atomic-ledger") == ()
+    assert ledger.load_checkpoint("atomic-ledger") is None
+    assert ledger.checkpoint_history("atomic-ledger") == ()
+    ledger.close()
+
+
+
+def test_iter_records_chronological_orders_by_timestamp_with_stable_tie_breaker():
+    ledger = BacktestLedger()
+    ledger.start_run("chrono", "strategy", "1", 1000)
+    ledger.append(LedgerRecord("chrono", "TRADE", 30, {"name": "late"}))
+    ledger.append(LedgerRecord("chrono", "TRADE", 10, {"name": "early"}))
+    ledger.append(LedgerRecord("chrono", "TRADE", 20, {"name": "middle"}))
+    ledger.append(LedgerRecord("chrono", "TRADE", 20, {"name": "middle-2"}))
+
+    records = list(ledger.iter_records_chronological("chrono", "TRADE", fetch_size=2))
+
+    assert [record.timestamp_ns for record in records] == [10, 20, 20, 30]
+    assert [record.payload["name"] for record in records] == [
+        "early", "middle", "middle-2", "late"
+    ]

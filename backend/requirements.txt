@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+python-dotenv
+pyotp
+smartapi-python
+requests
+loguru
+sqlalchemy
+logzero
+websocket-client
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt==4.3.0
+httpx
+google-auth
+pypdf>=5.0,<7

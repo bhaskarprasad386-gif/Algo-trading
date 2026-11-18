@@ -1,0 +1,62 @@
+name: Android Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mobile/android/**"
+      - ".github/workflows/android-build.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "mobile/android/**"
+      - ".github/workflows/android-build.yml"
+  workflow_dispatch:
+    inputs:
+      backend_base_url:
+        description: 'Backend HTTP base URL (must end with /)'
+        required: false
+        default: 'https://algo-trading-backend-2.onrender.com/'
+        type: string
+      backend_ws_url:
+        description: 'Backend WebSocket URL'
+        required: false
+        default: 'wss://algo-trading-backend-2.onrender.com'
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile/android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.2'
+
+      - name: Compile Android debug build
+        env:
+          BACKEND_BASE_URL: ${{ github.event.inputs.backend_base_url || 'https://algo-trading-backend-2.onrender.com/' }}
+          BACKEND_WS_URL: ${{ github.event.inputs.backend_ws_url || 'wss://algo-trading-backend-2.onrender.com' }}
+        run: |
+          gradle assembleDebug --no-daemon \
+            -PbackendBaseUrl="$BACKEND_BASE_URL" \
+            -PbackendWsUrl="$BACKEND_WS_URL"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: algo-trading-debug-apk
+          path: mobile/android/**/build/outputs/apk/**/*.apk
+          if-no-files-found: error

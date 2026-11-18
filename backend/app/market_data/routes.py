@@ -1,0 +1,586 @@
+from datetime import date, datetime, time, timedelta
+from threading import Lock
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Query, HTTPException, Depends, Request
+from pydantic import BaseModel, Field
+
+from app.core.exceptions import TradingAppException
+from app.core.logger import app_logger
+from .shoonya_owner_auth import ShoonyaOwnerLogin, login_shoonya_owner, require_shoonya_owner_access
+from .registry import InstrumentDescriptor
+from .contracts import InstrumentKey
+
+router = APIRouter(
+    prefix="/api/v1/market-data",
+    tags=["Market Data"],
+)
+
+_CLOSED_OVERVIEW_CACHE: dict[str, dict] = {}
+_CLOSED_OVERVIEW_CACHE_LOCK = Lock()
+_live_cash_future_runner_snapshot_provider = None
+_shoonya_snapshot_provider = None
+_shoonya_supervisor_provider = None
+
+
+def configure_live_cash_future_runner_snapshot(provider) -> None:
+    """Configure the process-local Cash-Future common runner snapshot provider."""
+    global _live_cash_future_runner_snapshot_provider
+    _live_cash_future_runner_snapshot_provider = provider
+
+
+def configure_shoonya_snapshot(provider) -> None:
+    """Configure the isolated Shoonya shadow-feed diagnostics provider."""
+    global _shoonya_snapshot_provider
+    _shoonya_snapshot_provider = provider
+
+
+def configure_shoonya_supervisor(provider) -> None:
+    """Configure the process-local Shoonya supervisor control reference."""
+    global _shoonya_supervisor_provider
+    _shoonya_supervisor_provider = provider
+
+
+class ShoonyaInstrumentInput(BaseModel):
+    exchange: str = Field(min_length=1, max_length=16)
+    segment: str = Field(min_length=1, max_length=16)
+    token: str = Field(min_length=1, max_length=64)
+    symbol: str = Field(min_length=1, max_length=128)
+    instrument_type: str = Field(min_length=1, max_length=16)
+    expiry: str | None = Field(default=None, max_length=32)
+    strike: float | None = Field(default=None, gt=0)
+    option_type: str | None = Field(default=None, pattern="^(CE|PE)$")
+    lot_size: int | None = Field(default=None, gt=0)
+    tick_size: float | None = Field(default=None, gt=0)
+    underlying: str | None = Field(default=None, max_length=64)
+
+    def to_descriptor(self) -> InstrumentDescriptor:
+        exchange = self.exchange.strip().upper()
+        segment = self.segment.strip().upper()
+        instrument_type = self.instrument_type.strip().lower()
+        if exchange not in {"NSE", "NFO", "BSE", "BFO", "MCX", "NCDEX"}:
+            raise ValueError("unsupported Shoonya exchange")
+        if instrument_type not in {"equity", "index", "future", "option", "commodity"}:
+            raise ValueError("unsupported instrument_type")
+        if instrument_type == "option":
+            if self.strike is None or self.option_type is None or not self.expiry:
+                raise ValueError("option subscriptions require expiry, strike and option_type")
+        elif self.option_type is not None or self.strike is not None:
+            raise ValueError("strike and option_type are only valid for options")
+        return InstrumentDescriptor(
+            key=InstrumentKey(exchange, segment, self.token.strip()),
+            symbol=self.symbol.strip(),
+            instrument_type=instrument_type,
+            exchange=exchange,
+            segment=segment,
+            expiry=self.expiry,
+            strike=self.strike,
+            option_type=self.option_type,
+            lot_size=self.lot_size,
+            tick_size=self.tick_size,
+            underlying=self.underlying.strip().upper() if self.underlying else None,
+        )
+
+
+class ShoonyaSubscriptionRequest(BaseModel):
+    instruments: list[ShoonyaInstrumentInput] = Field(min_length=1, max_length=500)
+
+
+def _shoonyadescriptors(payload: ShoonyaSubscriptionRequest) -> list[InstrumentDescriptor]:
+    """Convert a batch and reject duplicate broker-token identities before mutation."""
+    descriptors = [item.to_descriptor() for item in payload.instruments]
+    seen: dict[tuple[str, str], InstrumentDescriptor] = {}
+    for descriptor in descriptors:
+        adapter_key = (descriptor.key.exchange.strip().upper(), descriptor.key.token.strip())
+        previous = seen.get(adapter_key)
+        if previous is not None:
+            if previous == descriptor:
+                raise ValueError(f"duplicate Shoonya instrument in request: {adapter_key}")
+            raise ValueError(f"conflicting Shoonya token descriptors in request: {adapter_key}")
+        seen[adapter_key] = descriptor
+    return descriptors
+
+
+@router.post("/shoonya/owner-auth/login")
+def shoonya_owner_login(payload: ShoonyaOwnerLogin, request: Request):
+    """Issue a short-lived token scoped only to Shoonya shadow-feed controls."""
+    return login_shoonya_owner(payload, request)
+
+
+@router.get("/shoonya-health")
+def get_shoonya_health():
+    """Expose sanitized Shoonya shadow-feed state without credentials or control actions."""
+    from app.core.config import settings
+
+    if not settings.SHOONYA_MARKET_DATA_ENABLED:
+        return {
+            "broker": "shoonya",
+            "enabled": False,
+            "mode": "shadow_only",
+            "state": "DISABLED",
+            "order_routing_enabled": False,
+            "strategy_fanout_enabled": False,
+        }
+    provider = _shoonya_snapshot_provider
+    if provider is None:
+        return {
+            "broker": "shoonya",
+            "enabled": True,
+            "mode": "shadow_only",
+            "state": "NOT_INITIALIZED",
+            "order_routing_enabled": False,
+            "strategy_fanout_enabled": False,
+        }
+    return provider()
+
+
+@router.post("/shoonya/subscriptions")
+def add_shoonya_subscriptions(
+    payload: ShoonyaSubscriptionRequest,
+    _owner_id: int = Depends(require_shoonya_owner_access),
+):
+    """Subscribe explicit instruments on the isolated Shoonya shadow feed."""
+    from app.core.config import settings
+
+    if not settings.SHOONYA_MARKET_DATA_ENABLED:
+        raise HTTPException(status_code=409, detail="Shoonya market data is disabled by server configuration")
+    supervisor = _shoonya_supervisor_provider() if callable(_shoonya_supervisor_provider) else _shoonya_supervisor_provider
+    if supervisor is None:
+        raise HTTPException(status_code=503, detail="Shoonya supervisor is not initialized")
+    try:
+        descriptors = _shoonyadescriptors(payload)
+        count = supervisor.subscribe(descriptors)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Shoonya supervisor is not available") from exc
+    return {"broker": "shoonya", "mode": "shadow_only", "subscribed": count,
+            "order_routing_enabled": False, "strategy_fanout_enabled": False}
+
+
+@router.delete("/shoonya/subscriptions")
+def remove_shoonya_subscriptions(
+    payload: ShoonyaSubscriptionRequest,
+    _owner_id: int = Depends(require_shoonya_owner_access),
+):
+    """Unsubscribe explicit instruments from the isolated Shoonya shadow feed."""
+    supervisor = _shoonya_supervisor_provider() if callable(_shoonya_supervisor_provider) else _shoonya_supervisor_provider
+    if supervisor is None:
+        raise HTTPException(status_code=503, detail="Shoonya supervisor is not initialized")
+    try:
+        descriptors = _shoonyadescriptors(payload)
+        count = supervisor.unsubscribe(descriptors)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"broker": "shoonya", "mode": "shadow_only", "unsubscribed": count,
+            "order_routing_enabled": False, "strategy_fanout_enabled": False}
+
+
+
+def _nse_market_is_open(now: datetime) -> bool:
+    """Return NSE session state using the versioned holiday calendar."""
+    from app.backtesting.nse_2026_holidays import NSE_EQUITY_TRADING_HOLIDAYS_2026
+    current = now.astimezone(ZoneInfo("Asia/Kolkata")) if now.tzinfo else now.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+    if current.date() in NSE_EQUITY_TRADING_HOLIDAYS_2026 or current.weekday() >= 5:
+        return False
+    return time(9, 15) <= current.time() < time(15, 30)
+
+
+
+def _mcx_market_is_open(now: datetime) -> bool:
+    """Return scheduled MCX non-agri hours in India time; quote health is separate."""
+    current = now.astimezone(ZoneInfo("Asia/Kolkata")) if now.tzinfo else now.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+    if current.weekday() >= 5:
+        return False
+    return time(9, 0) <= current.time() < time(23, 30)
+
+@router.get("/ltp")
+def get_ltp(
+    exchange: str = Query(...),
+    tradingsymbol: str = Query(...),
+    symboltoken: str = Query(...),
+):
+    """Get latest traded price for an instrument."""
+    from app.market_data.client import MarketDataClient
+
+    try:
+        app_logger.info(f"LTP request: {exchange} {tradingsymbol} {symboltoken}")
+        return MarketDataClient().ltp(
+            exchange=exchange,
+            tradingsymbol=tradingsymbol,
+            symboltoken=symboltoken,
+        )
+    except TradingAppException:
+        raise
+    except Exception as e:
+        app_logger.error(f"LTP error: {e}")
+        raise HTTPException(status_code=502, detail="Market data provider request failed") from e
+
+
+@router.get("/ltp-by-symbol")
+def get_ltp_by_symbol(
+    tradingsymbol: str = Query(..., min_length=1),
+    exchange: str = Query("NSE"),
+):
+    """Resolve an NSE/BSE symbol through the Angel One master and fetch its LTP."""
+    from app.market_data.client import MarketDataClient
+    from app.market_data.instruments import InstrumentMaster
+
+    symbol = tradingsymbol.strip().upper()
+    segment = exchange.strip().upper()
+    try:
+        instrument = InstrumentMaster().get_instrument(symbol, segment)
+        if not instrument:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Instrument not found: {segment} {symbol}",
+            )
+
+        token = str(instrument.get("token", ""))
+        if not token:
+            raise HTTPException(status_code=502, detail="Instrument token is missing")
+
+        response = MarketDataClient().ltp(
+            exchange=segment,
+            tradingsymbol=symbol,
+            symboltoken=token,
+        )
+        data = response.get("data") or {}
+        return {
+            "status": True,
+            "exchange": segment,
+            "tradingsymbol": symbol,
+            "symboltoken": token,
+            "ltp": data.get("ltp"),
+            "raw": response,
+        }
+    except HTTPException:
+        raise
+    except TradingAppException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Symbol LTP error for {segment} {symbol}: {e}")
+        raise HTTPException(status_code=502, detail="Market data provider request failed") from e
+
+
+@router.get("/historical")
+def get_historical(
+    exchange: str = Query(...),
+    symboltoken: str = Query(...),
+    interval: str = Query(...),
+    from_date: str = Query(...),
+    to_date: str = Query(...),
+):
+    """Get historical candle data."""
+    from app.market_data.client import MarketDataClient
+    from app.market_data.historical import HistoricalDataClient
+
+    try:
+        app_logger.info(f"Historical request: {exchange} {symboltoken} {interval}")
+        market_client = MarketDataClient()
+        historical_client = HistoricalDataClient(market_client)
+        return historical_client.get_candles(
+            exchange=exchange,
+            symboltoken=symboltoken,
+            interval=interval,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except TradingAppException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Historical error: {e}")
+        raise HTTPException(status_code=502, detail="Historical market data provider request failed") from e
+
+
+@router.get("/live-health")
+def get_live_data_health():
+    """Return bounded live-data persistence and freshness health for the control center."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
+    from app.core.config import settings
+    from app.market_data.common_strategy_feed import shared_common_manager_snapshot
+
+    ist = ZoneInfo("Asia/Kolkata")
+    now = datetime.now(ist)
+    # Use the same holiday-aware NSE session calculation as the market overview.
+    market_open = _nse_market_is_open(now)
+    catalog = DailyMarketDataShardCatalog(settings.BACKTEST_DATA_DB)
+    try:
+        sources = []
+        for source, timeframe in (("angelone-live-1s", "1s"), ("angelone-live", "event")):
+            count = catalog.count(source=source, timeframe=timeframe)
+            instruments = catalog.instruments(source=source, timeframe=timeframe)
+            watermarks = [catalog.watermark(source=source, instrument=i, timeframe=timeframe) for i in instruments]
+            latest_ns = max((v for v in watermarks if v is not None), default=None)
+            raw_age_seconds = None if latest_ns is None else (now.timestamp() * 1_000_000_000 - latest_ns) / 1_000_000_000
+            # A timestamp materially in the future is invalid, not a zero-age live quote.
+            age_seconds = None if raw_age_seconds is None or raw_age_seconds < -5.0 else max(0.0, raw_age_seconds)
+            status = "LIVE" if market_open and age_seconds is not None and age_seconds <= 5 else (
+                "STALE" if market_open and age_seconds is not None else "NO_DATA"
+            )
+            sources.append({
+                "source": source, "timeframe": timeframe, "records": count,
+                "instruments": len(instruments), "latest_timestamp_ns": latest_ns,
+                "age_seconds": age_seconds, "status": status,
+            })
+        one_second = next(x for x in sources if x["source"] == "angelone-live-1s")
+        common = shared_common_manager_snapshot()
+        # NSE cash (Angel exchange type 1) and NFO derivatives (type 2) are
+        # the critical feeds for the cash-future and synthetic scanners. Do not
+        # let a fresh BFO/MCX tick mask stale or absent NSE/NFO observations.
+        now_ns = int(now.timestamp() * 1_000_000_000)
+        timestamps_by_exchange = (
+            common.get("latest_tick_timestamp_ns_by_exchange_type", {}) if common else {}
+        )
+        exchange_freshness: dict[str, dict[str, object]] = {}
+        for exchange_type, exchange_name in ((1, "NSE"), (2, "NFO")):
+            raw_timestamp = timestamps_by_exchange.get(str(exchange_type))
+            if raw_timestamp is None:
+                raw_timestamp = timestamps_by_exchange.get(exchange_type)
+            try:
+                timestamp_ns = int(raw_timestamp) if raw_timestamp is not None else None
+            except (TypeError, ValueError, OverflowError):
+                timestamp_ns = None
+            raw_age = (
+                (now_ns - timestamp_ns) / 1_000_000_000
+                if timestamp_ns is not None else None
+            )
+            age = (
+                None if raw_age is None or raw_age < -5.0
+                else max(0.0, raw_age)
+            )
+            exchange_freshness[exchange_name] = {
+                "exchange_type": exchange_type,
+                "latest_tick_timestamp_ns": timestamp_ns,
+                "age_seconds": age,
+                "status": (
+                    "LIVE" if market_open and age is not None and age <= 5.0
+                    else "STALE" if market_open and (age is not None or (common or {}).get("ticks_received", 0) > 0)
+                    else "NO_DATA" if market_open
+                    else "CLOSED"
+                ),
+            }
+        known_primary_ages = [
+            item["age_seconds"] for item in exchange_freshness.values()
+            if item["age_seconds"] is not None
+        ]
+        runtime_age = max(known_primary_ages) if known_primary_ages else None
+        runtime_live = market_open and all(
+            item["status"] == "LIVE" for item in exchange_freshness.values()
+        )
+        primary_any_data = any(
+            item["latest_tick_timestamp_ns"] is not None
+            for item in exchange_freshness.values()
+        )
+        # Runtime tick freshness and persisted-source freshness are different signals.
+        # Never report persisted rows or an unrelated exchange's ticks as NSE/NFO health.
+        runtime_status = (
+            "CLOSED" if not market_open else
+            "LIVE" if runtime_live else
+            "STALE" if primary_any_data or (common or {}).get("ticks_received", 0) > 0 else
+            "NO_DATA"
+        )
+        feed_status = runtime_status
+        return {
+            "status": "success", "market_session": "OPEN" if market_open else "CLOSED",
+            "checked_at": now.isoformat(), "persisted": one_second["records"] > 0,
+            "raw_market_data_persistence": bool(settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED),
+            "source": one_second["source"], "timeframe": one_second["timeframe"],
+            "records": one_second["records"], "instruments": one_second["instruments"],
+            "latest_timestamp_ns": one_second["latest_timestamp_ns"],
+            "age_seconds": one_second["age_seconds"], "feed_status": feed_status,
+            "runtime_feed": {
+                "initialized": common is not None,
+                "ticks_received": common.get("ticks_received", 0) if common else 0,
+                "active_instruments": common.get("active_instruments", 0) if common else 0,
+                "socket_groups": common.get("socket_groups", 0) if common else 0,
+                "connected_groups": common.get("connected_groups", []) if common else [],
+                "disconnected_groups": common.get("disconnected_groups", []) if common else [],
+                "connect_failures": common.get("connect_failures", 0) if common else 0,
+                "last_connect_failure": common.get("last_connect_failure") if common else None,
+                "recovery_attempts": common.get("recovery_attempts", 0) if common else 0,
+                "last_recovery_at": common.get("last_recovery_at") if common else None,
+                "delivery_errors": common.get("delivery_errors", 0) if common else 0,
+                "status": runtime_status,
+                "age_seconds": runtime_age,
+                "exchange_freshness": exchange_freshness,
+                "required_exchange_types": [1, 2],
+            },
+            "sources": sources, "live_orders": "OFF",
+        }
+    finally:
+        catalog.close()
+
+
+@router.get("/common-feed-health")
+def get_common_feed_health():
+    """Return process-local Angel common WebSocket telemetry; raw ticks are never persisted."""
+    from app.core.config import settings
+    from app.market_data.common_strategy_feed import shared_common_manager_snapshot
+
+    snapshot = shared_common_manager_snapshot()
+    runner_snapshot = (
+        _live_cash_future_runner_snapshot_provider()
+        if _live_cash_future_runner_snapshot_provider is not None
+        else None
+    )
+    return {
+        "status": "success",
+        "initialized": snapshot is not None,
+        "raw_market_data_persistence": bool(settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED),
+        "live_orders": "OFF",
+        "cash_future_runner": runner_snapshot,
+        "feed": snapshot or {
+            "subscriptions": 0,
+            "active_instruments": 0,
+            "socket_groups": 0,
+            "max_socket_sessions": 3,
+            "consumers": [],
+            "delivery_errors": 0,
+            "ticks_received": 0,
+            "ticks_by_exchange_type": {},
+            "last_tick": None,
+            "connected_groups": [],
+            "disconnected_groups": [],
+            "connect_failures": 0,
+            "last_connect_failure": None,
+            "recovery_attempts": 0,
+            "last_recovery_at": None,
+        },
+    }
+
+
+@router.get("/overview")
+def get_market_overview():
+    """Return a bounded live overview for configured NSE/BSE indices and MCX commodities."""
+    from app.market_data.client import MarketDataClient
+    from app.market_data.historical import HistoricalDataClient
+    from app.market_data.instruments import InstrumentMaster
+
+    index_specs = [
+        *(("NSE", symbol) for symbol in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY")),
+        *(("BSE", symbol) for symbol in ("SENSEX", "BANKEX")),
+    ]
+    commodity_specs = [("MCX", symbol) for symbol in ("GOLD", "SILVER", "CRUDEOIL", "NATURALGAS")]
+    master = InstrumentMaster()
+    client = MarketDataClient()
+    historical_client = HistoricalDataClient(client)
+    ist = ZoneInfo("Asia/Kolkata")
+    now = datetime.now(ist)
+    market_open = _nse_market_is_open(now)
+    mcx_market_open = _mcx_market_is_open(now)
+    cache_key = now.date().isoformat()
+    if not market_open and not mcx_market_open:
+        with _CLOSED_OVERVIEW_CACHE_LOCK:
+            cached = _CLOSED_OVERVIEW_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+    def last_trading_closes(exchange, token):
+        """Return latest and prior trading-day closes for closed-market fallback."""
+        now = datetime.now(ist)
+        from_date = (now - timedelta(days=10)).strftime("%Y-%m-%d 00:00")
+        to_date = now.strftime("%Y-%m-%d %H:%M")
+        response = historical_client.get_candles(
+            exchange=exchange,
+            symboltoken=token,
+            interval="ONE_DAY",
+            from_date=from_date,
+            to_date=to_date,
+        )
+        candles = response.get("data") or []
+        if not isinstance(candles, list):
+            return None, None
+        valid = [
+            row for row in candles
+            if isinstance(row, (list, tuple)) and len(row) >= 5 and row[4] is not None
+        ]
+        if not valid:
+            return None, None
+        latest = float(valid[-1][4])
+        prior = float(valid[-2][4]) if len(valid) >= 2 else latest
+        return latest, prior
+
+    def resolve(specs):
+        resolved = []
+        errors = []
+        for exchange, symbol in specs:
+            try:
+                instrument = master.resolve_index_instrument(symbol, exchange) if exchange in {"NSE", "BSE"} else master.get_instrument(symbol, exchange)
+                if not instrument:
+                    errors.append({"exchange": exchange, "symbol": symbol, "error": "instrument_not_found"})
+                    continue
+                resolved.append((exchange, symbol, str(instrument.get("token", ""))))
+            except Exception as exc:
+                errors.append({"exchange": exchange, "symbol": symbol, "error": str(exc)})
+        return resolved, errors
+
+    def fetch(specs):
+        resolved, errors = resolve(specs)
+        by_exchange = {}
+        for exchange, symbol, token in resolved:
+            if token:
+                by_exchange.setdefault(exchange, []).append({"symbol": symbol, "symboltoken": token})
+        rows = []
+        for exchange, instruments in by_exchange.items():
+            try:
+                by_token = {}
+                exchange_open = market_open if exchange in {"NSE", "BSE"} else mcx_market_open
+                if exchange_open:
+                    payload = client.quote_many(exchange, instruments).get("data") or {}
+                    fetched = payload.get("fetched") or payload.get("data") or []
+                    if isinstance(fetched, dict):
+                        fetched = [fetched]
+                    by_token = {
+                        str(row.get("symbolToken", row.get("token", ""))): row
+                        for row in fetched
+                        if isinstance(row, dict)
+                    }
+                for item in instruments:
+                    quote = by_token.get(item["symboltoken"], {})
+                    fallback_ltp = None
+                    fallback_previous = None
+                    status = "LIVE" if quote else "NO_QUOTE"
+                    if not exchange_open:
+                        try:
+                            fallback_ltp, fallback_previous = last_trading_closes(exchange, item["symboltoken"])
+                            if fallback_ltp is not None:
+                                status = "CLOSED_LAST_CLOSE"
+                        except Exception as fallback_exc:
+                            errors.append({
+                                "exchange": exchange,
+                                "symbol": item["symbol"],
+                                "error": f"last_close_fallback_failed: {fallback_exc}",
+                            })
+                    ltp = quote.get("ltp") if quote.get("ltp") is not None else fallback_ltp
+                    close = quote.get("close") if quote.get("close") is not None else fallback_previous
+                    rows.append({"exchange": exchange, "symbol": item["symbol"], "token": item["symboltoken"],
+                                 "ltp": ltp, "open": quote.get("open"), "high": quote.get("high"),
+                                 "low": quote.get("low"), "close": close, "change_percent": quote.get("percentChange"),
+                                 "volume": quote.get("tradeVolume"), "oi": quote.get("opnInterest"),
+                                 "bid": (quote.get("depth", {}).get("buy", [{}])[0].get("price") if quote.get("depth") else None),
+                                 "ask": (quote.get("depth", {}).get("sell", [{}])[0].get("price") if quote.get("depth") else None),
+                                 "status": status})
+            except Exception as exc:
+                errors.extend({"exchange": exchange, "symbol": item["symbol"], "error": str(exc)} for item in instruments)
+        return rows, errors
+
+    indices, index_errors = fetch(index_specs)
+    commodities, commodity_errors = fetch(commodity_specs)
+    result = {
+        "status": "success",
+        "mode": "live",
+        "market_session": "OPEN" if market_open else "CLOSED",
+        "nse_market_session": "OPEN" if market_open else "CLOSED",
+        "mcx_market_session": "OPEN" if mcx_market_open else "CLOSED",
+        "indices": indices,
+        "commodities": commodities,
+        "errors": index_errors + commodity_errors,
+    }
+    if not market_open and not mcx_market_open:
+        with _CLOSED_OVERVIEW_CACHE_LOCK:
+            _CLOSED_OVERVIEW_CACHE.clear()
+            _CLOSED_OVERVIEW_CACHE[cache_key] = result
+    return result

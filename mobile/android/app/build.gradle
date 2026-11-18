@@ -1,0 +1,85 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+def configuredAppVersionCode = project.findProperty('appVersionCode')?.toString()?.trim()
+def configuredAppVersionName = project.findProperty('appVersionName')?.toString()?.trim()
+
+def resolvedAppVersionCode = configuredAppVersionCode ?: '1'
+def resolvedAppVersionName = configuredAppVersionName ?: '1.0'
+
+android {
+    namespace 'com.algotrading.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.algotrading.app"
+        minSdk 24
+        targetSdk 34
+        versionCode resolvedAppVersionCode.toInteger()
+        versionName resolvedAppVersionName
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    def backendBaseUrl = project.findProperty("backendBaseUrl") ?: "https://algo-trading-backend-2.onrender.com/"
+    def backendWsUrl = project.findProperty("backendWsUrl") ?: "wss://algo-trading-backend-2.onrender.com"
+
+    if (backendBaseUrl.startsWith("http://")) {
+        throw new GradleException("backendBaseUrl must use HTTPS")
+    }
+    if (backendWsUrl.startsWith("ws://")) {
+        throw new GradleException("backendWsUrl must use WSS")
+    }
+    if (backendBaseUrl.contains("10.0.2.2") || backendWsUrl.contains("10.0.2.2")) {
+        throw new GradleException("emulator-only backend host 10.0.2.2 is not allowed")
+    }
+
+    if (project.hasProperty("androidKeystorePath") && project.hasProperty("androidKeystorePassword") && project.hasProperty("androidKeyAlias") && project.hasProperty("androidKeyPassword")) {
+        signingConfigs {
+            release {
+                storeFile file(project.property("androidKeystorePath"))
+                storePassword project.property("androidKeystorePassword")
+                keyAlias project.property("androidKeyAlias")
+                keyPassword project.property("androidKeyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            buildConfigField 'String', 'BACKEND_BASE_URL', "\"${backendBaseUrl}\""
+            buildConfigField 'String', 'BACKEND_WS_URL', "\"${backendWsUrl}\""
+        }
+        release {
+            if (project.hasProperty("androidKeystorePath")) signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            buildConfigField 'String', 'BACKEND_BASE_URL', "\"${backendBaseUrl}\""
+            buildConfigField 'String', 'BACKEND_WS_URL', "\"${backendWsUrl}\""
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions { jvmTarget = '17' }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.4'
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'com.squareup.retrofit2:retrofit:2.11.0'
+    implementation 'com.squareup.retrofit2:converter-gson:2.11.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+    testImplementation 'junit:junit:4.13.2'
+}

@@ -1,0 +1,681 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from app.scanner.iv_skew_flip.engine import OptionQuote, ScannerConfig, black_scholes_price
+from app.scanner.iv_skew_flip.sampler import IVOneSecondSampler, SpotSnapshot
+
+
+class QuoteSource:
+    def __init__(self):
+        self._universe = type("Universe", (), {"expiry": "2026-11-12"})()
+        self.quotes = ()
+
+    def latest_quotes(self):
+        return self.quotes
+
+
+def _sampler(source, clock_ns):
+    return IVOneSecondSampler(
+        quote_source=source,
+        spot_provider=lambda: SpotSnapshot(21950.0, clock_ns()),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=clock_ns,
+    )
+
+
+def test_one_second_sampler_calculates_iv_and_samples_oi_from_fresh_quotes():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    years = (datetime(2026, 11, 12, 15, 30, tzinfo=ZoneInfo("Asia/Kolkata")) - now).total_seconds() / (365 * 24 * 60 * 60)
+    rows = []
+    for token, strike, side, oi in (
+        ("ce-token", 21950.0, "CE", 12000),
+        ("pe-token", 21950.0, "PE", 15000),
+    ):
+        premium = black_scholes_price(side, 21950.0, strike, years, 0.20)
+        rows.append(OptionQuote(
+            "NIFTY", "2026-11-12", strike, side, now_ns,
+            premium, premium - 0.5, premium + 0.5, oi, 10, token,
+            oi_timestamp_ns=now_ns,
+        ))
+    source.quotes = tuple(rows)
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
+    assert result["cadence_seconds"] == 1
+    assert result["status"] == "LIVE"
+    assert result["sample_count"] == 2
+    assert all(value is not None and 15 < value < 25 for value in result["iv_values"].values())
+    assert result["oi_values"] == {"ce-token": 12000, "pe-token": 15000}
+    assert result["oi_live_count"] == 2
+    assert result["iv_live_count"] == 2
+    assert result["history_samples_by_token"] == {"ce-token": 1, "pe-token": 1}
+    assert len(result["live_metrics"]) == 2
+    assert {row["token"] for row in result["live_metrics"]} == {"ce-token", "pe-token"}
+    assert all(row["oi_live"] and row["iv_live"] for row in result["live_metrics"])
+    assert all(row["iv_unit"] == "PERCENT" for row in result["live_metrics"])
+    assert all(row["iv_input"] == "BID_ASK_MIDPOINT" for row in result["live_metrics"])
+    assert all(row["source_age_ms"] == 0.0 for row in result["live_metrics"])
+
+    # A one-second UI refresh may reuse the same still-fresh broker quote,
+    # but it must not pretend that OI changed or create duplicate history rows.
+    result = sampler.sample_once(now_ns=now_ns + 1_000_000_000, now=now, spot=SpotSnapshot(21950, now_ns + 1_000_000_000))
+    assert result["sample_count"] == 2
+    assert result["history_samples_by_token"] == {"ce-token": 1, "pe-token": 1}
+    assert all(row["oi_change_1s"] is None for row in result["live_metrics"])
+    assert all(row["iv_change_1s"] is None for row in result["live_metrics"])
+    assert all(row["ltp_change_1s"] is None for row in result["live_metrics"])
+
+
+def test_one_second_sampler_records_new_oi_only_on_new_source_tick():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    premium = 100.0
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        premium, 99.5, 100.5, 10000, 100, "ce-token", oi_timestamp_ns=now_ns,
+    ),)
+    sampler = _sampler(source, lambda: now_ns + 1_000_000_000)
+    sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns + 1_000_000_000,
+        premium + 5, 104.5, 105.5, 9400, 150, "ce-token", oi_timestamp_ns=now_ns + 1_000_000_000,
+    ),)
+    result = sampler.sample_once(
+        now_ns=now_ns + 1_000_000_000, now=now,
+        spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
+    )
+    assert result["oi_values"]["ce-token"] == 9400
+    assert result["history_samples_by_token"]["ce-token"] == 2
+    metric = result["live_metrics"][0]
+    assert metric["change_interval_seconds"] == 1.0
+    assert metric["oi_change_1s"] == -600
+    assert metric["oi_change_pct_1s"] == -6.0
+    assert metric["ltp_change_1s"] == 5.0
+    assert metric["ltp_change_pct_1s"] == 5.0
+    assert metric["volume"] == 150
+    assert metric["volume_change_1s"] == 50
+    assert metric["volume_change_pct_1s"] == 50.0
+    assert metric["iv_change_1s"] is not None
+
+
+def test_one_second_sampler_fails_closed_without_fresh_spot():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    sampler = IVOneSecondSampler(
+        quote_source=source,
+        spot_provider=lambda: SpotSnapshot(21950, now_ns - 10_000_000_000),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns,
+    )
+    result = sampler.sample_once(now_ns=now_ns, now=now)
+    assert result["status"] == "WAITING"
+    assert result["sample_count"] == 0
+    assert result["reason"] == "fresh spot snapshot unavailable"
+
+
+import pytest
+
+
+@pytest.mark.parametrize("spot", [
+    SpotSnapshot(float("nan"), 1_800_000_000_000_000_000),
+    SpotSnapshot(float("inf"), 1_800_000_000_000_000_000),
+    SpotSnapshot(float("-inf"), 1_800_000_000_000_000_000),
+    SpotSnapshot(True, 1_800_000_000_000_000_000),
+    SpotSnapshot(21950.0, True),
+    SpotSnapshot(21950.0, 0),
+])
+def test_sampler_rejects_invalid_spot_snapshot_values(spot):
+    source = QuoteSource()
+    now_ns = 1_800_000_000_000_000_000
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(
+        now_ns=now_ns,
+        now=datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+        spot=spot,
+    )
+    assert result["status"] == "WAITING"
+    assert result["reason"] == "fresh spot snapshot unavailable"
+
+
+@pytest.mark.parametrize("spot", [
+    (True, 1_800_000_000_000_000_000),
+    (21950.0, True),
+    (21950.0, 1_800_000_000_000_000_000.0),
+    (float("nan"), 1_800_000_000_000_000_000),
+    (float("inf"), 1_800_000_000_000_000_000),
+])
+def test_sampler_rejects_invalid_spot_tuple_values(spot):
+    source = QuoteSource()
+    now_ns = 1_800_000_000_000_000_000
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(
+        now_ns=now_ns,
+        now=datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+        spot=spot,
+    )
+    assert result["status"] == "WAITING"
+
+
+@pytest.mark.parametrize("oi", [True, -1, 1.5, "1000"])
+def test_sampler_does_not_publish_invalid_oi_values(oi):
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, oi, 10, "ce-token",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
+    assert result["oi_values"]["ce-token"] is None
+    assert sampler.oi_reference("ce-token") is None
+
+
+@pytest.mark.parametrize("timestamp_ns", [True, False, 0, -1])
+def test_sampler_rejects_invalid_option_source_timestamps(timestamp_ns):
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", timestamp_ns,
+        100.0, 99.5, 100.5, 1000, 10, "ce-token",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
+    assert result["sample_count"] == 0
+    assert result["status"] == "WAITING"
+
+
+def test_sampler_retains_last_iv_when_spot_becomes_stale_but_marks_it_not_live():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "ce-token",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    live = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    assert live["status"] == "LIVE"
+    assert live["sample_count"] == 1
+    last_iv = live["iv_values"]["ce-token"]
+    waiting = sampler.sample_once(
+        now_ns=now_ns + 10_000_000_000,
+        now=now,
+        spot=SpotSnapshot(21950, now_ns),
+    )
+    assert waiting["status"] == "WAITING"
+    assert waiting["sample_count"] == 0
+    assert waiting["iv_live_count"] == 0
+    assert waiting["display_metric_count"] == 1
+    assert waiting["live_metrics"][0]["iv"] == last_iv
+    assert waiting["live_metrics"][0]["iv_live"] is False
+    assert waiting["live_metrics"][0]["iv_status"] == "LAST"
+    assert waiting["oi_values"] == {"ce-token": 10000}
+    assert waiting["iv_values"] == {"ce-token": last_iv}
+    assert waiting["reason"] == "fresh spot snapshot unavailable"
+
+
+def test_sampler_retains_last_iv_when_option_quote_disappears():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "vanished-ce",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    first = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    last_iv = first["iv_values"]["vanished-ce"]
+    source.quotes = ()
+    second = sampler.sample_once(
+        now_ns=now_ns + 1_000_000_000, now=now,
+        spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
+    )
+    assert second["sample_count"] == 0
+    assert second["iv_live_count"] == 0
+    assert second["display_metric_count"] == 1
+    assert second["live_metrics"][0]["iv"] == last_iv
+    assert second["live_metrics"][0]["iv_status"] == "LAST"
+
+
+
+def test_sampler_inherits_recent_oi_history_only_for_same_selected_contracts():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (
+        OptionQuote("NIFTY", "2026-11-12", 21950, "CE", now_ns - 310_000_000_000,
+                    100.0, 99.5, 100.5, 10000, 10, "shared-ce"),
+        OptionQuote("NIFTY", "2026-11-12", 21950, "PE", now_ns - 310_000_000_000,
+                    100.0, 99.5, 100.5, 12000, 10, "shared-pe"),
+    )
+    previous = _sampler(source, lambda: now_ns)
+    previous.sample_once(
+        now_ns=now_ns - 310_000_000_000, now=now,
+        spot=SpotSnapshot(21950, now_ns - 310_000_000_000),
+    )
+    current = _sampler(QuoteSource(), lambda: now_ns)
+    universe = type("Universe", (), {
+        "underlying": "NIFTY",
+        "expiry": "2026-11-12",
+        "contracts": (
+            type("Contract", (), {"token": "shared-ce", "strike": 21950.0, "option_type": "CE"})(),
+            type("Contract", (), {"token": "new-token", "strike": 22000.0, "option_type": "CE"})(),
+        ),
+    })()
+
+    copied = current.inherit_history(previous, universe)
+    assert copied == 1
+    assert current.oi_reference("shared-ce") is not None
+    assert current.oi_reference("shared-pe") is None
+    assert current.oi_reference("new-token") is None
+
+
+def test_sampler_does_not_inherit_history_across_expiry():
+    now_ns = 1_800_000_000_000_000_000
+    source = QuoteSource()
+    previous = _sampler(source, lambda: now_ns)
+    current = _sampler(QuoteSource(), lambda: now_ns)
+    universe = type("Universe", (), {
+        "underlying": "NIFTY",
+        "expiry": "2026-11-19",
+        "contracts": (),
+    })()
+    assert current.inherit_history(previous, universe) == 0
+
+
+def test_sampler_persists_source_ticks_and_restores_history_after_restart():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.core.database import Base
+    from app.models.iv_option_observation import IVOptionObservation
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (
+        OptionQuote(
+            "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+            100.0, 99.5, 100.5, 10000, 250, "durable-ce", oi_timestamp_ns=now_ns,
+        ),
+        OptionQuote(
+            "NIFTY", "2026-11-12", 22000, "PE", now_ns,
+            100.0, 99.5, 100.5, None, 125, "durable-iv-only",
+        ),
+    )
+    first = IVOneSecondSampler(
+        quote_source=source,
+        spot_provider=lambda: SpotSnapshot(21950, now_ns),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns,
+        history_session_factory=Session,
+    )
+    result = first.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    assert result["history_persistence"] == "ENABLED"
+    assert result["history_persisted_count"] == 2
+
+    # Concurrent refreshes of the same broker tick must remain idempotent.
+    from concurrent.futures import ThreadPoolExecutor
+
+    def repeat_refresh(_):
+        return first.sample_once(
+            now_ns=now_ns + 1_000_000_000, now=now,
+            spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(repeat_refresh, range(8)))
+    with Session() as session:
+        rows = session.query(IVOptionObservation).all()
+        assert len(rows) == 2
+        durable = next(row for row in rows if row.token == "durable-ce")
+        iv_only = next(row for row in rows if row.token == "durable-iv-only")
+        assert durable.volume == 250
+        assert durable.oi == 10000
+        assert durable.oi_timestamp_ns == now_ns
+        assert durable.bid == 99.5
+        assert durable.ask == 100.5
+        assert durable.spot_price == 21950.0
+        assert durable.spot_timestamp_ns == now_ns
+        assert iv_only.oi is None
+        assert iv_only.spot_price == 21950.0
+
+    # A fresh sampler instance recovers the source-time history from SQL.
+    restarted = IVOneSecondSampler(
+        quote_source=QuoteSource(),
+        spot_provider=lambda: SpotSnapshot(21950, now_ns + 2_000_000_000),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns + 2_000_000_000,
+        history_session_factory=Session,
+    )
+    restored = restarted.sample_once(
+        now_ns=now_ns + 2_000_000_000, now=now,
+        spot=SpotSnapshot(21950, now_ns + 2_000_000_000),
+    )
+    assert restored["history_samples_by_token"] == {"durable-ce": 1, "durable-iv-only": 1}
+    restored_ce = restarted.history_snapshot("durable-ce")[-1]
+    assert restored_ce.oi_timestamp_ns == now_ns
+    assert restarted.history_snapshot("durable-iv-only")[-1].oi_timestamp_ns is None
+    engine.dispose()
+
+
+def test_sampler_keeps_live_metrics_and_retries_history_after_storage_failure():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "retry-ce",
+    ),)
+    attempts = []
+
+    def unavailable_storage():
+        attempts.append(True)
+        raise RuntimeError("database temporarily unavailable")
+
+    sampler = IVOneSecondSampler(
+        quote_source=source,
+        spot_provider=lambda: SpotSnapshot(21950, now_ns),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns,
+        history_session_factory=unavailable_storage,
+    )
+    # Skip restore so this test isolates the write path.
+    sampler._history_loaded = True
+    first = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    assert first["status"] == "LIVE"
+    assert first["sample_count"] == 1
+    assert first["history_samples_by_token"] == {"retry-ce": 1}
+    assert "database temporarily unavailable" in first["history_persistence_error"]
+
+    second = sampler.sample_once(
+        now_ns=now_ns + 1_000_000_000, now=now,
+        spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
+    )
+    assert second["sample_count"] == 1
+    assert second["history_samples_by_token"] == {"retry-ce": 1}
+    assert len(attempts) == 2
+    assert "database temporarily unavailable" in second["history_persistence_error"]
+
+
+def test_sampler_does_not_label_wide_book_as_a_valid_iv_input():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 90.0, 110.0, 10000, 10, "wide-book",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    metric = result["live_metrics"][0]
+    assert metric["iv"] is None
+    assert metric["iv_live"] is False
+    assert metric["iv_input"] is None
+
+
+def test_sampler_accepts_spot_source_age_within_five_seconds_but_not_receive_time_only():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "five-second-ce",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    within_limit = sampler.sample_once(
+        now_ns=now_ns, now=now,
+        spot=SpotSnapshot(21950.0, now_ns - 4_500_000_000, now_ns),
+    )
+    assert within_limit["sample_count"] == 1
+    assert within_limit["status"] == "LIVE"
+
+    beyond_limit = sampler.sample_once(
+        now_ns=now_ns + 5_100_000_000, now=now,
+        spot=SpotSnapshot(21950.0, now_ns, now_ns + 5_100_000_000),
+    )
+    assert beyond_limit["sample_count"] == 0
+    assert beyond_limit["status"] == "WAITING"
+
+
+def test_sampler_rejects_old_source_spot_even_when_transport_frame_is_recent():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "receive-time-ce",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    # A recent transport frame must not launder a source observation that is
+    # older than the strict 5s market-data freshness limit.
+    spot = SpotSnapshot(21950.0, now_ns - 10_000_000_000, now_ns)
+    result = sampler.sample_once(now_ns=now_ns, now=now, spot=spot)
+    assert result["sample_count"] == 0
+    assert result["live_metrics"] == []
+    assert result["status"] != "LIVE"
+
+
+
+def test_sampler_keeps_iv_live_when_oi_observation_is_five_minutes_old():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    premium = 100.0
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        premium, 99.5, 100.5, 10000, 10, "oi-age-ce",
+        oi_timestamp_ns=now_ns - 301_000_000_000,
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    metric = result["live_metrics"][0]
+    assert metric["oi"] == 10000
+    assert metric["oi_live"] is False
+    assert metric["oi_stale"] is True
+    assert metric["oi_age_ms"] == 301_000.0
+    assert metric["oi_status"] == "LAST"
+    assert result["oi_live_count"] == 0
+    assert result["oi_stale_count"] == 1
+    assert result["oi_missing_count"] == 0
+    # OI staleness is independent: valid fresh option price/spot still yields IV.
+    assert metric["iv_live"] is True
+
+
+def test_sampler_reports_volume_change_only_on_new_monotonic_source_ticks():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 250, "volume-change-ce",
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
+
+    next_ns = now_ns + 1_000_000_000
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", next_ns,
+        101.0, 100.5, 101.5, 10100, 275, "volume-change-ce",
+    ),)
+    result = sampler.sample_once(
+        now_ns=next_ns, now=now, spot=SpotSnapshot(21950, next_ns),
+    )
+    metric = result["live_metrics"][0]
+    assert metric["volume"] == 275
+    assert metric["volume_change_1s"] == 25
+    assert metric["volume_change_pct_1s"] == 10.0
+
+    # A cumulative-volume reset is not presented as a negative trade volume.
+    reset_ns = next_ns + 1_000_000_000
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", reset_ns,
+        101.0, 100.5, 101.5, 10100, 5, "volume-change-ce",
+    ),)
+    reset = sampler.sample_once(
+        now_ns=reset_ns, now=now, spot=SpotSnapshot(21950, reset_ns),
+    )
+    assert reset["live_metrics"][0]["volume_change_1s"] is None
+    assert reset["live_metrics"][0]["volume_change_pct_1s"] is None
+
+
+
+def test_snapshot_separates_raw_live_samples_from_display_carried_iv():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "ce-token",
+    ),)
+    sampler = _sampler(source, lambda: now_ns + 1_000_000_000)
+    first = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    last_iv = first["live_samples"][0].iv
+    assert last_iv is not None
+
+    # A fresh broker quote can exist while its current mark/IV is unavailable.
+    # UI continuity may retain last-good IV, but alert logic must see None.
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns + 1_000_000_000,
+        None, None, None, 10000, 10, "ce-token",
+    ),)
+    second = sampler.sample_once(
+        now_ns=now_ns + 1_000_000_000, now=now,
+        spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
+    )
+    assert second["live_samples"][0].iv is None
+    assert second["samples"][0].iv == last_iv
+
+
+def test_sampler_persists_and_restores_oi_source_timestamp_separately_from_price_tick():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.core.database import Base
+    from app.models.iv_option_observation import IVOptionObservation
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 250, "oi-source-ce", oi_timestamp_ns=now_ns,
+    ),)
+    sampler = IVOneSecondSampler(
+        quote_source=source, spot_provider=lambda: SpotSnapshot(21950, now_ns),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns, history_session_factory=Session,
+    )
+    sampler.sample_once(now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns))
+    price_tick_ns = now_ns + 1_000_000_000
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", price_tick_ns,
+        101.0, 100.5, 101.5, 10000, 275, "oi-source-ce", oi_timestamp_ns=now_ns,
+    ),)
+    sampler.sample_once(now_ns=price_tick_ns, now=now, spot=SpotSnapshot(21950, price_tick_ns))
+    with Session() as session:
+        rows = session.query(IVOptionObservation).order_by(IVOptionObservation.source_timestamp_ns.asc()).all()
+        assert len(rows) == 2
+        assert rows[0].oi_timestamp_ns == now_ns
+        assert rows[1].source_timestamp_ns == price_tick_ns
+        assert rows[1].oi_timestamp_ns == now_ns
+
+    restarted = IVOneSecondSampler(
+        quote_source=QuoteSource(), spot_provider=lambda: SpotSnapshot(21950, price_tick_ns + 1_000_000_000),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: price_tick_ns + 1_000_000_000, history_session_factory=Session,
+    )
+    restarted.sample_once(
+        now_ns=price_tick_ns + 1_000_000_000, now=now,
+        spot=SpotSnapshot(21950, price_tick_ns + 1_000_000_000),
+    )
+    restored = restarted.history_snapshot("oi-source-ce")[-1]
+    assert restored.source_timestamp_ns == price_tick_ns
+    assert restored.oi_timestamp_ns == now_ns
+    engine.dispose()
+
+
+def test_sampler_does_not_invent_oi_freshness_for_legacy_rows_without_oi_timestamp():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.core.database import Base
+    from app.models.iv_option_observation import IVOptionObservation
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    now_ns = 1_800_000_000_000_000_000
+    with Session() as session:
+        session.add(IVOptionObservation(
+            token="legacy-oi", underlying="NIFTY", expiry="2026-11-12",
+            strike=21950, option_type="CE", source_timestamp_ns=now_ns,
+            spot_timestamp_ns=now_ns, spot_price=21950, sampled_at_ns=now_ns,
+            iv=20, oi=10000, bid=99, ask=101, ltp=100, mark=100, volume=250,
+        ))
+        session.commit()
+    restarted = IVOneSecondSampler(
+        quote_source=QuoteSource(), spot_provider=lambda: SpotSnapshot(21950, now_ns + 1_000_000_000),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns + 1_000_000_000, history_session_factory=Session,
+    )
+    restarted.sample_once(
+        now_ns=now_ns + 1_000_000_000,
+        now=datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+        spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
+    )
+    restored = restarted.history_snapshot("legacy-oi")[-1]
+    assert restored.oi == 10000
+    assert restored.oi_timestamp_ns is None
+    engine.dispose()
+
+
+
+def test_sampler_does_not_infer_oi_timestamp_from_price_quote_timestamp():
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 100, "ce-token",
+        # Broker sent a price quote and OI value but no OI observation time.
+        oi_timestamp_ns=None,
+    ),)
+    sampler = _sampler(source, lambda: now_ns)
+    result = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    assert result["oi_values"]["ce-token"] == 10000
+    assert result["oi_live_count"] == 0
+    assert result["live_metrics"][0]["oi_live"] is False
+    assert sampler.history_snapshot("ce-token")[-1].oi_timestamp_ns is None

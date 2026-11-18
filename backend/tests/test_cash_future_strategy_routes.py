@@ -1,0 +1,640 @@
+from datetime import date, datetime, timedelta, timezone
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from app.backtesting.cash_future_strategy_routes import (
+    StrategyPointRequest,
+    StrategyRunRequest,
+    _build_builder_strategy,
+    _gap_threshold_implementation_hash,
+    router,
+)
+from app.backtesting.cash_future_strategy_runner import (
+    CashFutureStrategyConfig,
+    run_cash_future_strategy,
+)
+from app.backtesting.ledger import BacktestLedger, LedgerRecord
+from app.scanner.cash_future_history import CashFutureHistoryPoint
+from app.backtesting.provenance import provenance_hash
+from app.backtesting.contract_master import ContractMasterCatalog, ContractRecord
+from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
+from app.core.config import settings
+
+
+from app.backtesting.ledger import BacktestLedger, LedgerRecord
+from app.backtesting.provenance import provenance_hash
+from app.core.config import settings
+
+
+def payload(*, gap: float, timestamp: datetime, contract_month: str = "SEP"):
+    return {
+        "timestamp": timestamp.isoformat(),
+        "symbol": "ABC",
+        "contract_month": contract_month,
+        "cash_price": 100.0,
+        "future_price": 100.0 + gap,
+        "gap": gap,
+        "gap_pct": gap,
+        "lot_size": 100,
+        "margin_required": 10000.0,
+        "expiry_date": "2026-09-30",
+    }
+
+
+def client():
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app)
+
+
+
+def test_strategy_run_route_executes_accumulated_live_1s_source(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "BACKTEST_DATA_DB", str(tmp_path / "live-data.db"))
+    monkeypatch.setattr(settings, "BACKTEST_CONTRACT_DB", str(tmp_path / "live-contracts.db"))
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", str(tmp_path / "live-ledger.db"))
+    contracts = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+    data = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+    try:
+        contracts.upsert_snapshot(date(2026, 9, 28), [
+            ContractRecord("NFO", "ABC26SEP FUT", "101", date(2026, 9, 30), "STOCK_FUTURE", "ABC", 75)
+        ])
+        timestamp_ns = int(datetime(2026, 9, 28, 9, 30, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+        data.ingest([
+            HistoricalRecord("angelone-live-1s", "ABC-EQ|1", "1s", timestamp_ns, {"ltp": 100.0, "close": 100.0, "bid": 99.9, "ask": 100.1}),
+            HistoricalRecord("angelone-live-1s", "ABC26SEP FUT|101", "1s", timestamp_ns, {"ltp": 110.0, "close": 110.0, "bid": 109.9, "ask": 110.1}),
+        ])
+    finally:
+        data.close()
+        contracts.close()
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "cash-future",
+            "strategy_version": "1",
+            "start_date": "2026-09-28",
+            "end_date": "2026-09-28",
+            "spot_instrument": "ABC-EQ",
+            "exchange": "NFO",
+            "underlying": "ABC",
+            "timeframe": "1s",
+            "source": "angelone-live-1s",
+            "mode": "CURRENT",
+            "execution_model": "bid_ask",
+            "initial_capital": 10000000,
+            "cash_lots": 1,
+            "future_lots": 1,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["strategy_id"] == "cash-future"
+    assert body["signal_count"] == 1
+    assert body["trade_count"] == 0
+    assert body["signals"][0]["timestamp"].startswith("2026-09-28T15:00:00")
+
+
+
+def test_strategy_run_route_executes_live_1s_bid_ask_trade_and_persists_result(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "BACKTEST_DATA_DB", str(tmp_path / "live-trade-data.db"))
+    monkeypatch.setattr(settings, "BACKTEST_CONTRACT_DB", str(tmp_path / "live-trade-contracts.db"))
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", str(tmp_path / "live-trade-ledger.db"))
+    contracts = ContractMasterCatalog(settings.BACKTEST_CONTRACT_DB)
+    data = HistoricalCatalog(settings.BACKTEST_DATA_DB)
+    try:
+        contracts.upsert_snapshot(date(2026, 9, 28), [
+            ContractRecord("NFO", "ABC26SEP FUT", "101", date(2026, 9, 30), "STOCK_FUTURE", "ABC", 75)
+        ])
+        first_ns = int(datetime(2026, 9, 28, 9, 30, tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+        second_ns = first_ns + 1_000_000_000
+        data.ingest([
+            HistoricalRecord("angelone-live-1s", "ABC-EQ|1", "1s", first_ns, {"ltp": 100.0, "close": 100.0, "bid": 99.9, "ask": 100.1}),
+            HistoricalRecord("angelone-live-1s", "ABC26SEP FUT|101", "1s", first_ns, {"ltp": 110.0, "close": 110.0, "bid": 109.9, "ask": 110.1}),
+            HistoricalRecord("angelone-live-1s", "ABC-EQ|1", "1s", second_ns, {"ltp": 102.0, "close": 102.0, "bid": 101.9, "ask": 102.1}),
+            HistoricalRecord("angelone-live-1s", "ABC26SEP FUT|101", "1s", second_ns, {"ltp": 106.0, "close": 106.0, "bid": 105.9, "ask": 106.1}),
+        ])
+    finally:
+        data.close()
+        contracts.close()
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "cash-future", "strategy_version": "1",
+            "start_date": "2026-09-28", "end_date": "2026-09-28",
+            "spot_instrument": "ABC-EQ", "exchange": "NFO", "underlying": "ABC",
+            "timeframe": "1s", "source": "angelone-live-1s", "mode": "CURRENT",
+            "execution_model": "bid_ask", "initial_capital": 10000000,
+            "target": 5.0, "cash_lots": 1, "future_lots": 1,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["strategy_id"] == "cash-future"
+    assert body["signal_count"] == 2
+    assert body["trade_count"] == 1
+    assert body["trades"][0]["execution_model"] == "bid_ask"
+    assert abs(body["trades"][0]["net_profit"] - 420.0) < 1e-9
+    assert abs(body["analysis"]["net_pnl"] - 420.0) < 1e-9
+
+
+
+def test_strategy_run_result_pages_return_trade_signal_and_equity_with_cursor(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", str(tmp_path / "paged-results.db"))
+    start = datetime(2026, 9, 2, 10, 0)
+    points = [payload(gap=10, timestamp=start), payload(gap=4, timestamp=start + timedelta(minutes=1))]
+    response = client().post("/api/v1/backtesting/cash-future/strategy-run", json={
+        "strategy_id": "cash-future", "strategy_version": "1",
+        "start_date": "2026-09-02", "end_date": "2026-09-02",
+        "initial_capital": 10_000_000, "target": 5.0,
+        "checkpoint_interval": 1, "points": points,
+    })
+    assert response.status_code == 200
+    run_id = response.json()["run_id"]
+
+    trade_page = client().get(f"/api/v1/backtesting/cash-future/strategy-run/{run_id}/results/trade?limit=1")
+    signal_page = client().get(f"/api/v1/backtesting/cash-future/strategy-run/{run_id}/results/signal?limit=1")
+    equity_page = client().get(f"/api/v1/backtesting/cash-future/strategy-run/{run_id}/results/equity?limit=1")
+    assert trade_page.status_code == signal_page.status_code == equity_page.status_code == 200
+    assert trade_page.json()["total"] == 1
+    assert signal_page.json()["total"] == 2
+    assert equity_page.json()["total"] >= 2
+    assert len(trade_page.json()["data"]) == 1
+    assert len(signal_page.json()["data"]) == 1
+    assert len(equity_page.json()["data"]) == 1
+    assert trade_page.json()["next_cursor"] is None
+    assert signal_page.json()["next_cursor"] is not None
+    cursor = signal_page.json()["next_cursor"]
+    next_page = client().get(f"/api/v1/backtesting/cash-future/strategy-run/{run_id}/results/signal?limit=1&after_id={cursor}")
+    assert next_page.status_code == 200
+    assert len(next_page.json()["data"]) == 1
+    assert next_page.json()["next_cursor"] is None
+
+
+def test_strategy_run_route_executes_historical_buy_sell():
+    start = datetime(2026, 9, 2, 10, 0)
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "start_date": start.date().isoformat(),
+            "end_date": start.date().isoformat(),
+            "initial_capital": 10_000_000,
+            "target": 5.0,
+            "stop_loss": 2.0,
+            "points": [
+                payload(gap=10, timestamp=start),
+                payload(gap=4, timestamp=start + timedelta(hours=1)),
+                payload(gap=3, timestamp=start + timedelta(days=1)),
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["strategy_id"] == "gap_threshold"
+    assert body["signal_count"] == 2
+    assert body["trade_count"] == 1
+    assert body["net_profit"] == 600.0
+    assert body["final_capital"] == 10_000_600.0
+    assert body["final_available_capital"] == 10_000_600.0
+    assert body["final_reserved_margin"] == 0.0
+    assert body["blocked_entry_count"] == 0
+
+
+def test_strategy_run_route_exposes_unrealized_equity_separately_from_final_capital():
+    start = datetime(2026, 9, 2, 10, 0)
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "start_date": start.date().isoformat(),
+            "end_date": start.date().isoformat(),
+            "initial_capital": 10_000_000,
+            "points": [payload(gap=10, timestamp=start)],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["net_profit"] == 0.0
+    assert body["final_capital"] == 10_000_000.0
+    assert body["final_available_capital"] == 9_990_000.0
+    assert body["final_reserved_margin"] == 10_000.0
+    assert body["equity_curve"][-1]["unrealized_pnl"] == 0.0
+    assert body["analysis"]["final_equity"] == 10_000_000.0
+
+
+def test_strategy_run_route_marks_nonzero_unrealized_pnl_on_open_position():
+    start = datetime(2026, 9, 2, 10, 0)
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "start_date": start.date().isoformat(),
+            "end_date": start.date().isoformat(),
+            "initial_capital": 10_000_000,
+            "target": 5.0,
+            "points": [
+                payload(gap=10, timestamp=start),
+                payload(gap=8, timestamp=start + timedelta(hours=1)),
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["trade_count"] == 0
+    assert body["net_profit"] == 0.0
+    assert body["final_capital"] == 10_000_000.0
+    assert body["final_available_capital"] == 9_990_000.0
+    assert body["final_reserved_margin"] == 10_000.0
+    assert body["equity_curve"][-1]["unrealized_pnl"] == 200.0
+    assert body["equity_curve"][-1]["equity"] == 10_000_200.0
+    assert body["analysis"]["final_equity"] == 10_000_200.0
+
+
+def test_strategy_run_route_rejects_unknown_strategy():
+    now = datetime(2026, 9, 2, 10, 0)
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "does_not_exist",
+            "points": [payload(gap=10, timestamp=now)],
+        },
+    )
+    assert response.status_code == 404
+    assert "unknown Cash-Future strategy" in response.json()["detail"]
+
+
+def test_strategy_run_route_preserves_contract_isolation_error():
+    now = datetime(2026, 9, 2, 10, 0)
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "gap_threshold",
+            "points": [
+                payload(gap=10, timestamp=now, contract_month="SEP"),
+                payload(gap=-1, timestamp=now + timedelta(hours=1), contract_month="OCT"),
+            ],
+        },
+    )
+    assert response.status_code == 422
+    assert "multiple contract months" in response.json()["detail"]
+
+
+def test_strategy_run_route_returns_output_analysis():
+    start = datetime(2026, 9, 2, 10, 0)
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "start_date": start.date().isoformat(),
+            "end_date": start.date().isoformat(),
+            "initial_capital": 10_000_000,
+            "target": 5.0,
+            "points": [
+                payload(gap=10, timestamp=start),
+                payload(gap=4, timestamp=start + timedelta(hours=1)),
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    analysis = response.json()["analysis"]
+    assert analysis["initial_capital"] == 10_000_000
+    assert analysis["final_equity"] == 10_000_600.0
+    assert analysis["net_pnl"] == 600.0
+    assert analysis["roi"] == 0.00006
+    assert analysis["trade_count"] == 1
+    assert analysis["wins"] == 1
+    assert analysis["losses"] == 0
+    assert analysis["profit_factor"] is None
+    assert analysis["monthly_pnl"] == {"2026-09": 600.0}
+    assert analysis["yearly_pnl"] == {"2026": 600.0}
+
+
+def test_strategy_run_result_page_returns_bounded_records_and_cursor(monkeypatch, tmp_path):
+    ledger_db = str(tmp_path / "ledger.db")
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
+    ledger = BacktestLedger(ledger_db)
+    ledger.start_run("page-route", "strategy", "1", 100_000.0)
+    for index in range(3):
+        ledger.append(LedgerRecord("page-route", "equity", index, {"value": index}))
+
+    from app.backtesting.cash_future_strategy_routes import _result_page
+
+    first = _result_page(ledger, "page-route", "equity", 2, None)
+    assert [record["value"] for record in first["data"]] == [0, 1]
+    assert first["next_cursor"] is not None
+    assert first["total"] == 3
+
+    second = _result_page(
+        ledger, "page-route", "equity", 2, first["next_cursor"]
+    )
+    assert [record["value"] for record in second["data"]] == [2]
+    assert second["next_cursor"] is None
+    ledger.close()
+
+
+def test_strategy_run_result_page_rejects_unknown_run():
+    ledger = BacktestLedger()
+    from app.backtesting.cash_future_strategy_routes import _result_page
+
+    try:
+        try:
+            _result_page(ledger, "missing", "equity", 10, None)
+        except ValueError as exc:
+            assert "unknown run_id" in str(exc)
+        else:
+            raise AssertionError("unknown run must fail")
+    finally:
+        ledger.close()
+
+
+def test_strategy_run_persists_provenance_for_direct_points(monkeypatch, tmp_path):
+    ledger_db = str(tmp_path / "ledger.db")
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
+    start = datetime(2026, 9, 2, 10, 0)
+    request = {
+        "strategy_id": "gap_threshold",
+        "strategy_version": "1",
+        "initial_capital": 10_000_000,
+        "points": [payload(gap=10, timestamp=start), payload(gap=4, timestamp=start + timedelta(hours=1))],
+        "stop_loss": 2.0,
+        "target": 5.0,
+    }
+    response = client().post("/api/v1/backtesting/cash-future/strategy-run", json=request)
+    assert response.status_code == 200
+    run_id = response.json()["run_id"]
+    ledger = BacktestLedger(ledger_db)
+    try:
+        metadata = ledger.run_metadata(run_id)
+        assert metadata is not None
+        assert len(metadata["strategy_hash"]) == 64
+        assert len(metadata["data_source_fingerprint"]) == 64
+        assert len(metadata["metadata"]["strategy_config_hash"]) == 64
+    finally:
+        ledger.close()
+
+
+
+def test_strategy_run_route_honors_backdate_start_and_end_dates():
+    day1 = datetime(2026, 9, 1, 10, 0)
+    day2 = datetime(2026, 9, 2, 10, 0)
+    day3 = datetime(2026, 9, 3, 10, 0)
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "start_date": "2026-09-02",
+            "end_date": "2026-09-02",
+            "initial_capital": 10_000_000,
+            "target": 5.0,
+            "points": [
+                payload(gap=10, timestamp=day1),
+                payload(gap=10, timestamp=day2),
+                payload(gap=4, timestamp=day2 + timedelta(hours=1)),
+                payload(gap=1, timestamp=day3),
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["signal_count"] == 2
+    assert body["trade_count"] == 1
+    assert body["net_profit"] == 600.0
+    assert [item["timestamp"] for item in body["signals"]] == [
+        day2.isoformat(),
+        (day2 + timedelta(hours=1)).isoformat(),
+    ]
+
+def test_strategy_run_resume_route_continues_from_checkpoint_without_duplicates(monkeypatch, tmp_path):
+    ledger_db = str(tmp_path / "resume-api.db")
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
+    start = datetime(2026, 9, 2, 10, 0)
+    points = [
+        payload(gap=10, timestamp=start),
+        payload(gap=8, timestamp=start + timedelta(hours=1)),
+        payload(gap=4, timestamp=start + timedelta(hours=2)),
+    ]
+    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": [StrategyPointRequest(**item).model_dump(mode="json") for item in points]})
+    config = CashFutureStrategyConfig(
+        initial_capital=10_000_000,
+        start_date=start.date(),
+        end_date=start.date(),
+        checkpoint_interval=2,
+    )
+    ledger = BacktestLedger(ledger_db)
+    try:
+        run_cash_future_strategy(
+            tuple(CashFutureHistoryPoint(**{**item, "timestamp": datetime.fromisoformat(item["timestamp"]), "expiry_date": date.fromisoformat(item["expiry_date"])}) for item in points[:2]),
+            _build_builder_strategy(StrategyRunRequest(
+                strategy_id="gap_threshold",
+                initial_capital=10_000_000,
+                start_date=start.date(),
+                end_date=start.date(),
+                target=5.0,
+                points=points[:2],
+            )),
+            strategy_id="gap_threshold",
+            strategy_version="1",
+            config=config,
+            ledger=ledger,
+            run_id="cash-future-resume-api",
+            strategy_hash=_gap_threshold_implementation_hash(),
+            strategy_config_hash=provenance_hash({
+                "cash_side": "BUY", "future_side": "SELL", "holding_mode": "POSITIONAL",
+                "stop_loss": None, "target": 5.0
+            }),
+            data_source_fingerprint=fingerprint,
+        )
+    finally:
+        ledger.close()
+
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run/cash-future-resume-api/resume",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "start_date": start.date().isoformat(),
+            "end_date": start.date().isoformat(),
+            "initial_capital": 10_000_000,
+            "target": 5.0,
+            "checkpoint_interval": 2,
+            "points": points,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["signal_count"] == 3
+    assert body["trade_count"] == 1
+    assert body["net_profit"] == 600.0
+    assert len(body["signals"]) == 3
+    assert len(body["trades"]) == 1
+
+
+
+def test_strategy_run_resume_route_accepts_cash_future_alias(monkeypatch, tmp_path):
+    ledger_db = str(tmp_path / "resume-cash-future-alias.db")
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
+    start = datetime(2026, 9, 2, 10, 0)
+    points = [payload(gap=10, timestamp=start), payload(gap=4, timestamp=start + timedelta(hours=1))]
+    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": [StrategyPointRequest(**item).model_dump(mode="json") for item in points]})
+    ledger = BacktestLedger(ledger_db)
+    try:
+        run_cash_future_strategy(
+            tuple(CashFutureHistoryPoint(**{**item, "timestamp": datetime.fromisoformat(item["timestamp"]), "expiry_date": date.fromisoformat(item["expiry_date"])}) for item in points[:1]),
+            _build_builder_strategy(StrategyRunRequest(strategy_id="cash-future", initial_capital=10_000_000, target=5.0, points=points[:1])),
+            strategy_id="cash-future", strategy_version="1",
+            config=CashFutureStrategyConfig(initial_capital=10_000_000, checkpoint_interval=1),
+            ledger=ledger, run_id="cash-future-resume-alias",
+            strategy_hash=_gap_threshold_implementation_hash(),
+            strategy_config_hash=provenance_hash({"cash_side": "BUY", "future_side": "SELL", "holding_mode": "POSITIONAL", "stop_loss": None, "target": 5.0}),
+            data_source_fingerprint=fingerprint,
+        )
+    finally:
+        ledger.close()
+    response = client().post("/api/v1/backtesting/cash-future/strategy-run/cash-future-resume-alias/resume", json={"strategy_id": "cash-future", "strategy_version": "1", "initial_capital": 10_000_000, "target": 5.0, "checkpoint_interval": 1, "points": points})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["strategy_id"] == "cash-future"
+    assert body["trade_count"] == 1
+    assert body["net_profit"] == 600.0
+
+
+def test_strategy_run_resume_route_rejects_mismatched_data(monkeypatch, tmp_path):
+    ledger_db = str(tmp_path / "resume-mismatch.db")
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
+    start = datetime(2026, 9, 2, 10, 0)
+    points = [payload(gap=10, timestamp=start), payload(gap=8, timestamp=start + timedelta(hours=1))]
+    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": [StrategyPointRequest(**item).model_dump(mode="json") for item in points]})
+    ledger = BacktestLedger(ledger_db)
+    try:
+        run_cash_future_strategy(
+            tuple(CashFutureHistoryPoint(**{**item, "timestamp": datetime.fromisoformat(item["timestamp"]), "expiry_date": date.fromisoformat(item["expiry_date"])}) for item in points),
+            lambda current, history: "NONE",
+            strategy_id="gap_threshold",
+            strategy_version="1",
+            config=CashFutureStrategyConfig(initial_capital=10_000_000, checkpoint_interval=1),
+            ledger=ledger,
+            run_id="resume-mismatch",
+            strategy_hash=_gap_threshold_implementation_hash(),
+            strategy_config_hash=provenance_hash({"cash_side": "BUY", "future_side": "SELL", "stop_loss": None, "target": None}),
+            data_source_fingerprint=fingerprint,
+        )
+    finally:
+        ledger.close()
+
+    changed = [dict(item) for item in points]
+    changed[1]["future_price"] = 107.0
+    changed[1]["gap"] = 7.0
+    changed[1]["gap_pct"] = 7.0
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run/resume-mismatch/resume",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "initial_capital": 10_000_000,
+            "checkpoint_interval": 1,
+            "points": changed,
+        },
+    )
+    assert response.status_code == 422
+    assert "data_source_fingerprint" in response.json()["detail"]
+
+
+def test_strategy_run_resume_route_rejects_mismatched_strategy_configuration(monkeypatch, tmp_path):
+    ledger_db = str(tmp_path / "resume-config-mismatch.db")
+    monkeypatch.setattr(settings, "BACKTEST_LEDGER_DB", ledger_db)
+    start = datetime(2026, 9, 2, 10, 0)
+    points = [payload(gap=10, timestamp=start), payload(gap=8, timestamp=start + timedelta(hours=1))]
+    fingerprint = provenance_hash({"input_identity": "cash_future_points:v1", "points": [StrategyPointRequest(**item).model_dump(mode="json") for item in points]})
+    stored_config_hash = provenance_hash({"cash_side": "BUY", "future_side": "SELL", "stop_loss": None, "target": 5.0})
+    ledger = BacktestLedger(ledger_db)
+    try:
+        run_cash_future_strategy(tuple(CashFutureHistoryPoint(**{**item, "timestamp": datetime.fromisoformat(item["timestamp"]), "expiry_date": date.fromisoformat(item["expiry_date"])}) for item in points), _build_builder_strategy(StrategyRunRequest(strategy_id="gap_threshold", initial_capital=10_000_000, target=5.0, points=points)), strategy_id="gap_threshold", strategy_version="1", config=CashFutureStrategyConfig(initial_capital=10_000_000, checkpoint_interval=1), ledger=ledger, run_id="resume-config-mismatch", strategy_hash=_gap_threshold_implementation_hash(), strategy_config_hash=stored_config_hash, data_source_fingerprint=fingerprint)
+    finally:
+        ledger.close()
+    response = client().post("/api/v1/backtesting/cash-future/strategy-run/resume-config-mismatch/resume", json={"strategy_id": "gap_threshold", "strategy_version": "1", "initial_capital": 10_000_000, "checkpoint_interval": 1, "points": points})
+    assert response.status_code == 422
+    assert "strategy configuration hash mismatch" in response.json()["detail"]
+
+
+def test_strategy_run_route_honors_exact_backdated_time_window():
+    day = datetime(2026, 9, 2, 10, 0)
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "gap_threshold",
+            "start_date": "2026-09-02",
+            "end_date": "2026-09-02",
+            "start_timestamp": (day + timedelta(minutes=30)).isoformat(),
+            "end_timestamp": (day + timedelta(hours=1)).isoformat(),
+            "initial_capital": 10_000_000,
+            "target": 2.0,
+            "points": [
+                payload(gap=10, timestamp=day),
+                payload(gap=10, timestamp=day + timedelta(minutes=30)),
+                payload(gap=8, timestamp=day + timedelta(hours=1)),
+                payload(gap=4, timestamp=day + timedelta(hours=2)),
+            ],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["timestamp"] for item in body["signals"]] == [
+        (day + timedelta(minutes=30)).isoformat(),
+        (day + timedelta(hours=1)).isoformat(),
+    ]
+    assert body["trade_count"] == 1
+    assert body["trades"][0]["entry_time"] == (day + timedelta(minutes=30)).isoformat()
+    assert body["trades"][0]["exit_time"] == (day + timedelta(hours=1)).isoformat()
+    assert body["net_profit"] == 200.0
+
+
+def test_strategy_run_route_reconciles_backdated_cash_buy_future_sell_with_scaled_lots():
+    start = datetime(2026, 9, 2, 10, 0)
+    entry = payload(gap=10, timestamp=start)
+    entry.update({"cash_bid": 99.0, "cash_ask": 101.0, "future_bid": 109.0, "future_ask": 111.0})
+    exit_point = payload(gap=4, timestamp=start + timedelta(minutes=1))
+    exit_point.update({"cash_bid": 102.0, "cash_ask": 103.0, "future_bid": 104.0, "future_ask": 105.0})
+    response = client().post(
+        "/api/v1/backtesting/cash-future/strategy-run",
+        json={
+            "strategy_id": "gap_threshold",
+            "strategy_version": "1",
+            "start_date": start.date().isoformat(),
+            "end_date": start.date().isoformat(),
+            "start_timestamp": start.isoformat(),
+            "end_timestamp": (start + timedelta(minutes=1)).isoformat(),
+            "initial_capital": 10_000_000,
+            "execution_model": "bid_ask",
+            "charges_per_trade": 25.0,
+            "funding_cost_per_trade": 15.0,
+            "slippage_per_share": 0.50,
+            "cash_lots": 2,
+            "future_lots": 2,
+            "target": 2.0,
+            "points": [entry, exit_point],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["trade_count"] == 1
+    assert body["analysis"]["net_pnl"] == 760.0
+    trade = body["trades"][0]
+    assert trade["cash_side"] == "BUY"
+    assert trade["future_side"] == "SELL"
+    assert trade["lot_size"] == 200
+    assert trade["gross_profit"] == 800.0
+    assert trade["net_profit"] == 760.0
+    assert trade["entry_time"] == start.isoformat()
+    assert trade["exit_time"] == (start + timedelta(minutes=1)).isoformat()
