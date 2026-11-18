@@ -5,14 +5,15 @@ on:
 
 concurrency:
   group: vps-read-only-diagnostic
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   diagnostic:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
-      - name: Run read-only VPS diagnostic
+      - name: Collect read-only VPS and runtime baseline
+        id: collect
         env:
           VPS_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -26,34 +27,121 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" > "$SSH_KNOWN_HOSTS"
           test -s "$SSH_KNOWN_HOSTS"
           SSH_OPTS=(-i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o UserKnownHostsFile="$SSH_KNOWN_HOSTS" -o StrictHostKeyChecking=yes)
-          ssh "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE_SCRIPT'
+          set +e
+          ssh "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE_SCRIPT' > "$RUNNER_TEMP/vps-read-only-diagnostic.txt" 2>&1
           set -u
-          echo "=== DNS ==="
-          getent hosts apiconnect.angelone.in || true
-          echo "=== RESOLVER ==="
-          resolvectl status 2>/dev/null | sed -n '1,80p' || cat /etc/resolv.conf
-          echo "=== ANGEL_HTTPS ==="
-          curl -I --connect-timeout 5 --max-time 10 https://apiconnect.angelone.in 2>&1 || true
+          export TZ=UTC
+          echo "=== COLLECTION ==="
+          date -Is
+          hostname -f 2>/dev/null || hostname
+          echo "=== DEPLOYMENT_STATE ==="
+          if git -C /opt/Algo-Trading rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            git -C /opt/Algo-Trading rev-parse HEAD
+            git -C /opt/Algo-Trading status --short --branch
+          else
+            echo "APP_GIT_CHECKOUT_UNAVAILABLE"
+          fi
+          echo "=== PRIOR_DEPLOYMENT_MARKERS ==="
+          find /tmp -maxdepth 1 -type f -name 'algo-trading-deploy-*.started' -printf '%f %TY-%Tm-%TdT%TH:%TM:%TSZ\n' 2>/dev/null | sort | tail -20
           echo "=== SERVICE ==="
-          systemctl show algo-trading.service -p MainPID -p ActiveState -p SubState -p NRestarts -p MemoryCurrent -p MemoryPeak
+          systemctl show algo-trading.service -p MainPID -p ActiveState -p SubState -p NRestarts -p MemoryCurrent -p MemoryPeak -p ExecMainStartTimestamp 2>&1 || true
+          echo "=== RESOURCE ==="
+          df -h / /opt 2>&1 || true
+          df -i / /opt 2>&1 || true
+          free -h 2>&1 || true
           echo "=== HEALTH ==="
-          curl --fail --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/health || true
-          echo
+          curl --silent --show-error --connect-timeout 2 --max-time 8 --write-out '\nHTTP_STATUS=%{http_code} TOTAL_SECONDS=%{time_total}\n' http://127.0.0.1:8000/health 2>&1 || true
+          echo "=== RUNTIME_HEALTH_SAMPLES ==="
+          for sample in 1 2 3; do
+            echo "SAMPLE=$sample UTC=$(date -Is)"
+            curl --silent --show-error --connect-timeout 2 --max-time 12 http://127.0.0.1:8000/api/v1/market-data/runtime/health 2>&1 | python3 -c '
+          import json, re, sys
+          try:
+              d=json.load(sys.stdin)
+              secret=re.compile(r"(token|secret|password|credential|client_code|account_id|authorization)", re.I)
+              def clean(v):
+                  if isinstance(v, dict):
+                      return {k: ("[REDACTED]" if secret.search(str(k)) else clean(x)) for k,x in v.items()}
+                  if isinstance(v, list): return [clean(x) for x in v]
+                  if isinstance(v, str):
+                      v=re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._-]+", r"\1[REDACTED]", v)
+                      return v
+                  return v
+              print(json.dumps(clean(d), sort_keys=True))
+          except Exception as e:
+              print(json.dumps({"parse_error": type(e).__name__}))
+          ' || true
+            sleep 10
+          done
           echo "=== LIVE_HEALTH ==="
-          curl --fail --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/live-health || true
+          curl --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/live-health 2>&1 | head -c 12000 || true
           echo
-          echo "=== COMMON_FEED ==="
-          curl --fail --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/common-feed-health || true
+          echo "=== MARKET_OVERVIEW ==="
+          curl --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/overview 2>&1 | head -c 12000 || true
           echo
-          echo "=== SCANNER_LIVE_FAST ==="
-          curl --fail --silent --show-error --connect-timeout 2 --max-time 12 "http://127.0.0.1:8000/api/v1/scanner/cash-future/live/fast?limit=20" || true
-          echo
-          echo "=== CASH_FUTURE_HEALTH ==="
-          curl --fail --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/live-cash-future/health || true
-          echo
-          echo "=== RECENT_ANGEL_WS_LOGS ==="
-          journalctl -u algo-trading.service --since "30 minutes ago" --no-pager 2>/dev/null | grep -Ei "angel|websocket|dns|name resolution|login|connect" | tail -120 || true
-          echo "=== RECENT_RESTARTS ==="
+          echo "=== DIAGNOSTIC_ERROR_SUMMARY ==="
+          curl --silent --show-error --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/diagnostics/errors?limit=50 2>/dev/null | python3 -c '
+          import json,sys
+          try:
+              d=json.load(sys.stdin)
+              rows=d if isinstance(d,list) else d.get("errors", d.get("items", [])) if isinstance(d,dict) else []
+              print(json.dumps({"count":len(rows),"items":[{k:x.get(k) for k in ("timestamp","severity","component","code")} for x in rows[:50] if isinstance(x,dict)]},sort_keys=True))
+          except Exception as e: print(json.dumps({"parse_error":type(e).__name__}))
+          ' || true
+          echo "=== DASHBOARD_WEBSOCKET_5_MINUTES ==="
+          python3 - <<'PY'
+          import json, time, statistics
+          try:
+              import websocket
+          except Exception as exc:
+              print(json.dumps({"status":"UNAVAILABLE","reason":type(exc).__name__}))
+              raise SystemExit(0)
+          url="ws://127.0.0.1:8000/ws/dashboard"
+          intervals=[]; count=0; last=None; errors=[]
+          start=time.monotonic()
+          try:
+              ws=websocket.create_connection(url, timeout=8, enable_multithread=False)
+              ws.settimeout(8)
+              while time.monotonic()-start < 300:
+                  try:
+                      msg=ws.recv()
+                      now=time.monotonic()
+                      if msg is None: continue
+                      count += 1
+                      if last is not None: intervals.append(now-last)
+                      last=now
+                  except websocket.WebSocketTimeoutException:
+                      errors.append("receive_timeout")
+                  except Exception as exc:
+                      errors.append(type(exc).__name__); break
+              ws.close()
+              ordered=sorted(intervals)
+              def percentile(p):
+                  if not ordered: return None
+                  return round(ordered[min(len(ordered)-1, int((len(ordered)-1)*p))], 4)
+              print(json.dumps({"status":"COMPLETED","duration_seconds":round(time.monotonic()-start,2),
+                "messages":count,"interval_count":len(intervals),"interval_seconds":{"p50":percentile(.50),"p95":percentile(.95),"max":round(max(intervals),4) if intervals else None},
+                "errors":errors[:20]},sort_keys=True))
+          except Exception as exc:
+              print(json.dumps({"status":"FAILED","error":type(exc).__name__}))
+          PY
+          echo "=== RECENT_SERVICE_RESTARTS ==="
           journalctl -u algo-trading.service --since "30 minutes ago" --no-pager 2>/dev/null | grep -Ei "Started|Stopped|Main process|restart|signal" | tail -80 || true
           echo "=== READ_ONLY_DONE ==="
           REMOTE_SCRIPT
+          SSH_STATUS=$?
+          set -e
+          echo "ssh_exit_code=$SSH_STATUS" >> "$RUNNER_TEMP/vps-read-only-diagnostic.txt"
+          rm -f /tmp/vps_key /tmp/vps_known_hosts
+          if [ "$SSH_STATUS" -ne 0 ]; then
+            echo "VPS diagnostic SSH failed; partial output retained as artifact."
+            exit 1
+          fi
+      - name: Upload short-retention diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vps-read-only-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/vps-read-only-diagnostic.txt
+          if-no-files-found: warn
+          retention-days: 3
