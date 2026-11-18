@@ -937,6 +937,28 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   };
 
   useEffect(() => {
+    if (slug !== "box-spread" || !pagePushData) return;
+    const selection = pagePushData.index_selection as { symbols?: unknown; weekly_only_symbols?: unknown } | undefined;
+    if (!selection || !Array.isArray(selection.symbols) || !Array.isArray(selection.weekly_only_symbols)) return;
+    const nextSymbols = selection.symbols.filter((item): item is string => typeof item === "string");
+    const nextWeeklyOnly = selection.weekly_only_symbols.filter((item): item is string => typeof item === "string");
+    const previousSymbols = savedIndexSymbols.slice().sort();
+    const previousWeeklyOnly = savedWeeklyOnlySymbols.slice().sort();
+    const draftSymbols = Array.from(new Set([...indexSelectionDraft, ...weeklyOnlyDraft])).sort();
+    const draftIsClean = indexSelectionDraftInitialized.current
+      && draftSymbols.length === previousSymbols.length
+      && draftSymbols.every((symbol, index) => symbol === previousSymbols[index])
+      && weeklyOnlyDraft.slice().sort().join("|") === previousWeeklyOnly.join("|");
+    setSavedIndexSymbols(nextSymbols);
+    setSavedWeeklyOnlySymbols(nextWeeklyOnly);
+    // Synchronize other sessions without destroying an unsaved local draft.
+    if (draftIsClean) {
+      setIndexSelectionDraft(nextSymbols.filter(symbol => !nextWeeklyOnly.includes(symbol)));
+      setWeeklyOnlyDraft(nextWeeklyOnly);
+    }
+  }, [slug, pagePushData, savedIndexSymbols, savedWeeklyOnlySymbols, indexSelectionDraft, weeklyOnlyDraft]);
+
+  useEffect(() => {
     if (slug !== "box-spread") { setIndexSpotRows([]); return; }
     const spots = pagePushData?.index_spots;
     if (Array.isArray(spots)) setIndexSpotRows(spots as unknown as Array<{ symbol: string; spot_price: number | null; spot_timestamp_ns: number | null; spot_age_seconds: number | null; status: string }>);
