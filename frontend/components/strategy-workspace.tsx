@@ -604,6 +604,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [indexSelectionMessage, setIndexSelectionMessage] = useState("");
   const [indexSelectionError, setIndexSelectionError] = useState<string | null>(null);
   const indexSelectionDraftInitialized = useRef(false);
+  const indexSelectionRequestSequence = useRef(0);
 
   useEffect(() => {
     const updateClock = () => setCurrentLiveTime(new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }));
@@ -863,6 +864,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     let hasLoaded = false;
     let inFlight = false;
     const loadSelection = async () => {
+      const requestSequence = ++indexSelectionRequestSequence.current;
       if (inFlight) return;
       inFlight = true;
       if (!hasLoaded) setIndexSelectionLoading(true);
@@ -876,7 +878,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         const runtime = body?.runtime?.supervisor;
         const active = Array.isArray(runtime?.active_symbols) ? runtime.active_symbols.filter((item: unknown): item is string => typeof item === "string") : [];
         const handoff = typeof runtime?.handoff?.state === "string" ? runtime.handoff.state : "UNKNOWN";
-        if (!cancelled) {
+        if (!cancelled && requestSequence === indexSelectionRequestSequence.current) {
           setSavedIndexSymbols(symbols);
           setSavedWeeklyOnlySymbols(weeklyOnly);
           setActiveIndexSymbols(active);
@@ -942,6 +944,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     if (!selection || !Array.isArray(selection.symbols) || !Array.isArray(selection.weekly_only_symbols)) return;
     const nextSymbols = selection.symbols.filter((item): item is string => typeof item === "string");
     const nextWeeklyOnly = selection.weekly_only_symbols.filter((item): item is string => typeof item === "string");
+    // Push becomes authoritative immediately; discard an initial/refresh REST result still in flight.
+    indexSelectionRequestSequence.current += 1;
     const previousSymbols = savedIndexSymbols.slice().sort();
     const previousWeeklyOnly = savedWeeklyOnlySymbols.slice().sort();
     const draftSymbols = Array.from(new Set([...indexSelectionDraft, ...weeklyOnlyDraft])).sort();
