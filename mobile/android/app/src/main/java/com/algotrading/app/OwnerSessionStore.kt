@@ -25,16 +25,25 @@ internal interface OwnerSessionCipher {
     fun reset() {}
 }
 
+internal data class OwnerSession(val accessToken: String, val expiresAtEpochMs: Long)
+
 /** Stores only ciphertext in app-private, non-backed-up storage. */
 internal class EncryptedOwnerSessionStore(
     private val file: File,
     private val cipher: OwnerSessionCipher,
 ) {
     @Synchronized
-    fun save(token: String) {
+    fun save(token: String, expiresAtEpochMs: Long) {
         require(token.isNotBlank()) { "owner session token cannot be blank" }
         require(token.length <= MAX_TOKEN_LENGTH) { "owner session token is too large" }
-        val encrypted = cipher.encrypt(token.toByteArray(StandardCharsets.UTF_8))
+        require(expiresAtEpochMs > System.currentTimeMillis()) { "owner session expiry must be in the future" }
+        val tokenBytes = token.toByteArray(StandardCharsets.UTF_8)
+        val payload = ByteBuffer.allocate(12 + tokenBytes.size)
+            .putLong(expiresAtEpochMs)
+            .putInt(tokenBytes.size)
+            .put(tokenBytes)
+            .array()
+        val encrypted = cipher.encrypt(payload)
         val parent = file.parentFile ?: throw IllegalStateException("owner session directory is unavailable")
         if (!parent.exists() && !parent.mkdirs()) {
             throw IllegalStateException("owner session directory could not be created")
@@ -57,14 +66,22 @@ internal class EncryptedOwnerSessionStore(
     }
 
     @Synchronized
-    fun load(): String? {
+    fun load(nowEpochMs: Long = System.currentTimeMillis()): OwnerSession? {
         if (!file.isFile) return null
         return try {
-            val token = String(cipher.decrypt(file.readBytes()), StandardCharsets.UTF_8)
-            if (token.isBlank() || token.length > MAX_TOKEN_LENGTH) {
+            val payload = ByteBuffer.wrap(cipher.decrypt(file.readBytes()))
+            if (payload.remaining() < 12) throw GeneralSecurityException("owner session payload is truncated")
+            val expiresAtEpochMs = payload.long
+            val tokenLength = payload.int
+            if (tokenLength <= 0 || tokenLength > MAX_TOKEN_LENGTH || payload.remaining() != tokenLength) {
+                throw GeneralSecurityException("owner session payload length is invalid")
+            }
+            val tokenBytes = ByteArray(tokenLength).also(payload::get)
+            val token = String(tokenBytes, StandardCharsets.UTF_8)
+            if (token.isBlank() || expiresAtEpochMs <= nowEpochMs + EXPIRY_SKEW_MS) {
                 clear()
                 null
-            } else token
+            } else OwnerSession(token, expiresAtEpochMs)
         } catch (_: Exception) {
             // Corrupt ciphertext or an invalidated Keystore key is never
             // treated as an authenticated session. Force a fresh login.
@@ -84,6 +101,7 @@ internal class EncryptedOwnerSessionStore(
 
     companion object {
         private const val MAX_TOKEN_LENGTH = 8192
+        private const val EXPIRY_SKEW_MS = 30_000L
     }
 }
 
