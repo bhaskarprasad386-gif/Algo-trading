@@ -250,17 +250,17 @@ def test_postgres_concurrent_state_writers_cannot_reopen_verified_flat(postgres_
         assert sequences == list(range(len(sequences)))
         assert sum(
             event.event == "RECOVERY_STATE_CHANGED"
-            and '"state": "FLAT_AFTER_UNWIND"' in event.details_json
+            and '"state":"FLAT_AFTER_UNWIND"' in event.details_json
             for event in events
         ) == 1
         # Once FLAT commits, every later non-FLAT transition must be rejected.
         flat_index = next(
             index for index, event in enumerate(events)
             if event.event == "RECOVERY_STATE_CHANGED"
-            and '"state": "FLAT_AFTER_UNWIND"' in event.details_json
+            and '"state":"FLAT_AFTER_UNWIND"' in event.details_json
         )
         assert all(
-            '"state": "FLAT_AFTER_UNWIND"' in event.details_json
+            '"state":"FLAT_AFTER_UNWIND"' in event.details_json
             or event.event != "RECOVERY_STATE_CHANGED"
             for event in events[flat_index + 1:]
         )
