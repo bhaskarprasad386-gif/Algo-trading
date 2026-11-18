@@ -406,3 +406,57 @@ def test_four_leg_fill_completion_is_atomic_and_reaches_filled_only_after_last_l
         IntentStatus.PARTIALLY_FILLED.value,
         IntentStatus.FILLED.value,
     ]
+
+
+def test_partial_fill_callbacks_accumulate_per_leg_before_four_leg_completion(db):
+    _submitting_intent(db)
+    legs = (
+        ("cb", "NFO:CE", "BUY"),
+        ("cs", "NFO:CE-HIGH", "SELL"),
+        ("pb", "NFO:PE", "BUY"),
+        ("ps", "NFO:PE-HIGH", "SELL"),
+    )
+    for index, (leg_id, symbol, side) in enumerate(legs, start=1):
+        record_broker_order(
+            db, account_id="acct-1", intent_id="intent-1", leg_id=leg_id,
+            broker="angel_one", broker_order_id=f"partial-order-{index}",
+            symbol=symbol, side=side, quantity=50,
+            accepted_at_ns=1200 + index,
+        )
+
+    first = record_fill(
+        db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+        broker="angel_one", broker_fill_id="partial-fill-a",
+        broker_order_id="partial-order-1", quantity=20,
+        fill_price="100.10", occurred_at_ns=1301,
+    )
+    assert first["filled_quantity"] == 20
+    assert first["leg_status"] == "PARTIALLY_FILLED"
+    assert first["intent_status"] == IntentStatus.PARTIALLY_FILLED.value
+
+    second = record_fill(
+        db, account_id="acct-1", intent_id="intent-1", leg_id="cb",
+        broker="angel_one", broker_fill_id="partial-fill-b",
+        broker_order_id="partial-order-1", quantity=30,
+        fill_price="100.20", occurred_at_ns=1302,
+    )
+    assert second["filled_quantity"] == 50
+    assert second["leg_status"] == "FILLED"
+    assert second["intent_status"] == IntentStatus.PARTIALLY_FILLED.value
+
+    for index, (leg_id, _symbol, _side) in enumerate(legs[1:], start=2):
+        result = record_fill(
+            db, account_id="acct-1", intent_id="intent-1", leg_id=leg_id,
+            broker="angel_one", broker_fill_id=f"partial-fill-{index}",
+            broker_order_id=f"partial-order-{index}", quantity=50,
+            fill_price="80.00", occurred_at_ns=1300 + index,
+        )
+        if index < len(legs):
+            assert result["intent_status"] == IntentStatus.PARTIALLY_FILLED.value
+        else:
+            assert result["intent_status"] == IntentStatus.FILLED.value
+
+    restored = get_intent(db, account_id="acct-1", intent_id="intent-1")
+    assert restored.intent.status is IntentStatus.FILLED
+    assert all(leg.filled_quantity == leg.quantity == 50 for leg in restored.legs)
+    assert db.query(ExecutionFillRecord).count() == 5
