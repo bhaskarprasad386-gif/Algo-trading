@@ -64,6 +64,7 @@ def _snapshot(record):
     legs = tuple(ExecutionLeg(
         leg_id=x.leg_id, instrument=x.instrument, side=OrderSide(x.side),
         quantity=x.quantity, order_type=x.order_type, limit_price=x.limit_price,
+        filled_quantity=x.filled_quantity, status=x.status,
     ) for x in record.legs)
     intent = ExecutionIntent(
         intent_id=record.intent_id, account_id=record.account_id,
@@ -192,7 +193,7 @@ def record_fill(
     canonical = json.dumps({
         "intent_id": intent_id, "leg_id": leg_id, "broker": broker,
         "broker_order_id": broker_order_id, "quantity": quantity,
-        "fill_price": format(price, "f"), "occurred_at_ns": occurred_at_ns,
+        "fill_price": format(price.normalize(), "f"), "occurred_at_ns": occurred_at_ns,
     }, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
