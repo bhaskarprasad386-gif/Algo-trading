@@ -398,7 +398,11 @@ def test_box_spread_role_to_option_type_mapping_is_enforced():
 def test_short_box_spread_requires_all_four_sides_to_be_reversed():
     intent = make_intent()
     short_legs = tuple(
-        replace(leg, side="SELL" if leg.side == "BUY" else "BUY")
+        replace(
+            leg,
+            side="SELL" if leg.side == "BUY" else "BUY",
+            limit_price=Decimal("100.00") if leg.side == "BUY" else Decimal("100.10"),
+        )
         for leg in intent.legs
     )
     intent = replace(intent, legs=short_legs, direction="SHORT")
