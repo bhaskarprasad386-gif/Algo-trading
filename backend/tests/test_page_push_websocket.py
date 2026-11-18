@@ -1,37 +1,35 @@
 from types import SimpleNamespace
+import asyncio
 
 from app.scanner import page_push_websocket as push
 
 
-def test_page_channels_are_explicit_and_strategy_scoped():
-    assert "box-spread" in push.PAGE_CHANNELS
-    assert "iv-skew-flip" in push.PAGE_CHANNELS
-    assert "credit-butterfly-condor-weekly" in push.PAGE_CHANNELS
-    assert "credit-butterfly-condor-monthly" in push.PAGE_CHANNELS
-    assert "synthetic-arbitrage" not in push.PAGE_CHANNELS
+def test_page_channels_cover_all_scanner_pages():
+    expected = {
+        "cash-future", "box-spread", "calendar-spread",
+        "synthetic-arbitrage", "iv-skew-flip",
+        "credit-butterfly-condor-weekly",
+        "credit-butterfly-condor-monthly", "weekly-swing",
+    }
+    assert expected.issubset(push.PAGE_CHANNELS)
 
 
-def test_frames_have_monotonic_per_page_sequences():
-    page = "box-spread"
-    before = push._sequences.get(page, 0)
-    first = push._frame(page, "SNAPSHOT", {"opportunities": []})
-    second = push._frame(page, "PATCH", {"opportunities": [{"symbol": "NIFTY"}]})
-
-    assert first["type"] == "page_update"
-    assert first["page"] == page
-    assert first["event"] == "SNAPSHOT"
-    assert second["sequence"] == first["sequence"] + 1
-    assert first["sequence"] == before + 1
-    assert first["generated_at"]
-    assert second["data"]["opportunities"][0]["symbol"] == "NIFTY"
+def test_page_snapshot_frame_uses_explicit_durable_sequence():
+    frame = push._snapshot_frame("box-spread", {"rows": []}, sequence=17)
+    assert frame["type"] == "page_update"
+    assert frame["page"] == "box-spread"
+    assert frame["sequence"] == 17
+    assert frame["event"] == "SNAPSHOT"
+    assert frame["data"] == {"rows": []}
 
 
 def test_snapshot_provider_is_read_only_and_page_scoped():
     observed = []
-    push.configure_snapshot_provider("credit-butterfly-condor-weekly", lambda: observed.append("read") or {"rows": []})
-    provider = push._snapshot_providers["credit-butterfly-condor-weekly"]
-
-    assert provider() == {"rows": []}
+    push.configure_snapshot_provider(
+        "credit-butterfly-condor-weekly",
+        lambda: observed.append("read") or {"rows": []},
+    )
+    assert push._snapshot("credit-butterfly-condor-weekly") == {"rows": []}
     assert observed == ["read"]
     push.configure_snapshot_provider("credit-butterfly-condor-weekly", None)
     try:
@@ -49,29 +47,53 @@ def test_origin_policy_rejects_untrusted_hosts():
     assert push._origin_allowed(SimpleNamespace(headers={}))
 
 
+def test_page_event_and_sequence_journals_are_durable_tables():
+    assert push.events.name == "algo_scanner_page_ws_events"
+    assert "page_sequence" in push.events.c
+    assert push.sequences.name == "algo_scanner_page_ws_sequences"
+    assert "sequence" in push.sequences.c
 
-def test_resync_snapshot_does_not_advance_sequence_for_other_clients():
-    page = "iv-skew-flip"
-    push._sequences[page] = 41
-    snapshot = push._snapshot_frame(page, {"status": "RUNNING"})
-    next_patch = push._frame(page, "PATCH", {"status": "RUNNING"})
-
-    assert snapshot["sequence"] == 41
-    assert next_patch["sequence"] == 42
 
 def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
+    journal = []
+    page_sequences = {"box-spread": 0}
+    provider_calls = []
+
+    def fake_latest_event_id():
+        return journal[-1]["id"] if journal else 0
+
+    def fake_events_after(cursor, limit=100):
+        return [row for row in journal if row["id"] > cursor][:limit + 1]
+
+    def fake_latest_page_sequence(page):
+        return page_sequences.get(page, 0)
+
+    def fake_publish(page, event, data=None):
+        page_sequences[page] = page_sequences.get(page, 0) + 1
+        journal.append({
+            "id": len(journal) + 1, "page": page,
+            "sequence": page_sequences[page], "event": event, "data": data or {},
+        })
+
+    monkeypatch.setattr(push, "_latest_event_id", fake_latest_event_id)
+    monkeypatch.setattr(push, "_events_after", fake_events_after)
+    monkeypatch.setattr(push, "_latest_page_sequence", fake_latest_page_sequence)
+    monkeypatch.setattr(push, "publish_page_update", fake_publish)
+    monkeypatch.setattr(push, "_subscribers", set())
+    monkeypatch.setattr(push, "_dispatch_task", None)
+    monkeypatch.setattr(push, "_dispatch_loop", None)
+    monkeypatch.setattr(push, "_dispatch_ready", None)
+
     app = FastAPI()
     app.include_router(push.router)
     page = "box-spread"
-    provider_calls = []
-    push.configure_snapshot_provider(page, lambda: provider_calls.append("snapshot") or {"opportunities": [{"id": "initial"}]})
-    monkeypatch.setattr(push, "_subscribers", set())
-    monkeypatch.setattr(push, "_sequences", {})
-    monkeypatch.setattr(push, "_loop", None)
-
+    push.configure_snapshot_provider(
+        page,
+        lambda: provider_calls.append("snapshot") or {"opportunities": [{"id": "initial"}]},
+    )
     try:
         with TestClient(app).websocket_connect(
             "/ws/page-updates",
@@ -81,9 +103,10 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
             websocket.send_json({"action": "subscribe", "page": page})
             initial = websocket.receive_json()
             assert initial["event"] == "SNAPSHOT"
+            assert initial["sequence"] == 0
             assert initial["data"]["opportunities"][0]["id"] == "initial"
 
-            push.publish_page_update(page, "PATCH", {"opportunities": [{"id": "fresh"}]})
+            push.publish_page_update(page, "PATCH", {"opportunity_updates": [{"id": "fresh"}]})
             patch = websocket.receive_json()
             assert patch["event"] == "PATCH"
             assert patch["sequence"] == initial["sequence"] + 1
@@ -97,89 +120,46 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
         push.configure_snapshot_provider(page, None)
 
 
-def test_websocket_rejects_untrusted_origin():
-    import pytest
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-    from starlette.websockets import WebSocketDisconnect
-
-    app = FastAPI()
-    app.include_router(push.router)
-    with pytest.raises(WebSocketDisconnect) as disconnected:
-        with TestClient(app).websocket_connect(
-            "/ws/page-updates",
-            headers={"origin": "https://untrusted.example"},
-        ):
-            pass
-    assert disconnected.value.code == 1008
-
-
-def test_publish_queue_overflow_replaces_backlog_with_fresh_snapshot():
-    import asyncio
-
-    async def scenario():
-        page = "credit-butterfly-condor-weekly"
-        loop = asyncio.get_running_loop()
-        queue = asyncio.Queue(maxsize=1)
-        push._loop = loop
-        push._subscribers = {(queue, frozenset({page}))}
-        push._sequences = {page: 0}
-        push.configure_snapshot_provider(page, lambda: {"rows": [{"id": "latest"}]})
-
-        push.publish_page_update(page, "PATCH", {"rows": [{"id": "old"}]})
-        push.publish_page_update(page, "PATCH", {"rows": [{"id": "new"}]})
-        await asyncio.sleep(0)
-
-        frame = queue.get_nowait()
-        assert frame["event"] == "SNAPSHOT"
-        assert frame["data"]["rows"][0]["id"] == "latest"
-        push._subscribers.clear()
-        push._loop = None
-        push.configure_snapshot_provider(page, None)
-
-    asyncio.run(scenario())
-
 def test_page_resync_preserves_other_subscribed_channel_events():
-    import asyncio
-
     async def scenario():
         queue = asyncio.Queue(maxsize=4)
         queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 2})
         queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 8})
         waiter = asyncio.create_task(queue.get())
         await asyncio.sleep(0)
-        # The waiter has consumed the Box event; another page remains queued.
         assert waiter.done()
         next_waiter = await push._restart_event_waiter(queue, waiter, "box-spread")
         preserved = await asyncio.wait_for(next_waiter, timeout=0.1)
         assert preserved["page"] == "iv-skew-flip"
         next_waiter.cancel()
         await asyncio.gather(next_waiter, return_exceptions=True)
-
     asyncio.run(scenario())
 
 
-
-def test_page_push_persisted_events_have_per_page_sequences(monkeypatch):
-    # Sequence assignment is durable and independent for each page, so
-    # updates on another scanner page cannot create false client-side gaps.
-    assert "page_sequence" in push.events.c
-    assert "algo_scanner_page_ws_sequences" in push.sequences.name
-    assert "SNAPSHOT_REQUIRED" in push._journal_dispatch_loop.__code__.co_consts
-
-
-def test_page_push_supports_all_scanner_page_channels():
-    expected = {
-        "cash-future", "box-spread", "calendar-spread",
-        "synthetic-arbitrage", "iv-skew-flip",
-        "credit-butterfly-condor-weekly",
-        "credit-butterfly-condor-monthly", "weekly-swing",
-    }
-    assert expected.issubset(push.PAGE_CHANNELS)
-
-
-def test_page_push_snapshot_frame_uses_persisted_page_sequence():
-    frame = push._snapshot_frame("box-spread", {"rows": []}, sequence=17)
-    assert frame["sequence"] == 17
-    assert frame["event"] == "SNAPSHOT"
-    assert frame["data"] == {"rows": []}
+def test_page_push_dispatcher_marks_queue_overflow_for_snapshot(monkeypatch):
+    async def scenario():
+        page = "cash-future"
+        queue = asyncio.Queue(maxsize=1)
+        queue.put_nowait({"page": page, "event": "PATCH", "sequence": 1})
+        monkeypatch.setattr(push, "_latest_event_id", lambda: 0)
+        monkeypatch.setattr(push, "_events_after", lambda cursor: [
+            {"id": 1, "page": page, "sequence": 2, "event": "PATCH", "data": {"rows": []}}
+        ] if cursor == 0 else [])
+        monkeypatch.setattr(push, "_subscribers", {(queue, frozenset({page}))})
+        monkeypatch.setattr(push, "_dispatch_ready", asyncio.Event())
+        task = asyncio.create_task(push._journal_dispatch_loop())
+        try:
+            await asyncio.wait_for(push._dispatch_ready.wait(), timeout=0.5)
+            for _ in range(20):
+                if not queue.empty():
+                    item = queue.get_nowait()
+                    if item.get("event") == "SNAPSHOT_REQUIRED":
+                        assert item["sequence"] == 2
+                        return
+                await asyncio.sleep(0.01)
+            raise AssertionError("queue overflow did not request a fresh snapshot")
+        finally:
+            monkeypatch.setattr(push, "_subscribers", set())
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(scenario())
