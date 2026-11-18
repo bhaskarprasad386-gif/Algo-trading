@@ -343,6 +343,33 @@ configure_live_box_spread_websocket_depth(
 )
 
 
+_box_shadow_page_cache = None
+_box_shadow_page_cache_at = 0.0
+
+
+def _box_shadow_page_snapshot():
+    """Bound shadow evaluation cost while keeping page pushes near-live."""
+    global _box_shadow_page_cache, _box_shadow_page_cache_at
+    now = time_module.monotonic()
+    if _box_shadow_page_cache is not None and now - _box_shadow_page_cache_at < 1.0:
+        return _box_shadow_page_cache
+    try:
+        payload = get_box_shadow_snapshot(5.0, 2.0)
+    except Exception:
+        payload = {
+            "strategy": "box-spread-shadow", "runtime_state": "SNAPSHOT_UNAVAILABLE",
+            "execution_mode": "SHADOW_ONLY", "order_routing_enabled": False,
+            "result_count": 0, "results": [], "live_coverage": [],
+        }
+    _box_shadow_page_cache = payload if isinstance(payload, dict) else {
+        "strategy": "box-spread-shadow", "runtime_state": "SNAPSHOT_UNAVAILABLE",
+        "execution_mode": "SHADOW_ONLY", "order_routing_enabled": False,
+        "result_count": 0, "results": [], "live_coverage": [],
+    }
+    _box_shadow_page_cache_at = now
+    return _box_shadow_page_cache
+
+
 def _box_page_push_snapshot():
     """Compose reconnect state from existing Box runner/feed snapshots only."""
     try:
@@ -375,16 +402,9 @@ def _box_page_push_snapshot():
         payload["index_selection_runtime"] = supervisor if isinstance(supervisor, dict) else {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}
     except Exception:
         payload["index_selection_runtime"] = {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}
-    # Shadow panel is part of the same Box page snapshot. This getter is read-only
-    # and evaluates only the runner's existing shared quote/depth snapshot.
-    try:
-        payload["shadow"] = get_box_shadow_snapshot(5.0, 2.0)
-    except Exception:
-        payload["shadow"] = {
-            "strategy": "box-spread-shadow", "runtime_state": "SNAPSHOT_UNAVAILABLE",
-            "execution_mode": "SHADOW_ONLY", "order_routing_enabled": False,
-            "result_count": 0, "results": [], "live_coverage": [],
-        }
+    # Shadow panel is part of the same page snapshot, with a one-second
+    # evaluation cache so 250 ms scanner bursts do not repeat the calculation.
+    payload["shadow"] = _box_shadow_page_snapshot()
     return payload
 
 
