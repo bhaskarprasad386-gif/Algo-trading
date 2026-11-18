@@ -140,7 +140,7 @@ def make_evidence(intent, *, stale_symbol=None, insufficient_symbol=None, edge=D
             bid_depth=10 if leg.symbol == insufficient_symbol else 1000,
             ask_depth=10 if leg.symbol == insufficient_symbol else 1000,
             tick_size=Decimal("0.05"), lot_size=25,
-            observed_at_ns=900_000_000 if leg.symbol == stale_symbol else 1_000_000_000-index*10_000_000,
+            observed_at_ns=0 if leg.symbol == stale_symbol else 1_000_000_000-index*10_000_000,
         )
     return PreflightEvidence(
         quotes=quotes, edge=EdgeCheck(edge, Decimal("1"), "snapshot-1"),
