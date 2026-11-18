@@ -204,8 +204,8 @@ class DurableRecoveryJournal:
                 RecoveryControlRecord.intent_id == intent_id,
             ).with_for_update()).scalar_one_or_none()
             if (control is None or not control.frozen or not control.risk_reserved
-                or control.state == RecoveryState.FLAT.value):
-                raise RuntimeError("frozen risk-reserved recovery intent is required")
+                or control.state != RecoveryState.RECOVERING.value):
+                raise RuntimeError("frozen risk-reserved EMERGENCY_UNWIND intent is required")
             lease = db.execute(select(RecoveryInstrumentLeaseRecord).where(
                 RecoveryInstrumentLeaseRecord.account_id == account_id,
                 RecoveryInstrumentLeaseRecord.intent_id == intent_id,
@@ -245,7 +245,7 @@ class DurableRecoveryJournal:
                 RecoveryControlRecord.intent_id == intent_id,
             ).with_for_update()).scalar_one_or_none()
             if (control is None or not control.frozen or not control.risk_reserved
-                or control.state == RecoveryState.FLAT.value):
+                or control.state != RecoveryState.RECOVERING.value):
                 return False
             lease = db.execute(select(RecoveryInstrumentLeaseRecord).where(
                 RecoveryInstrumentLeaseRecord.account_id == account_id,
