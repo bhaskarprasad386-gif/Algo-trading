@@ -264,3 +264,44 @@ def test_postgres_concurrent_state_writers_cannot_reopen_verified_flat(postgres_
             or event.event != "RECOVERY_STATE_CHANGED"
             for event in events[flat_index + 1:]
         )
+
+
+
+def test_postgres_concurrent_verified_flat_release_is_idempotent(postgres_journal):
+    journal, factory = postgres_journal
+    account_id = "acct-release-race"
+    intent_id = "intent-release-race"
+    assert journal.acquire_instrument_leases(
+        account_id=account_id, intent_id=intent_id,
+        symbols=("NFO:CE", "NFO:PE"),
+    )
+    journal.set_state(
+        account_id=account_id, intent_id=intent_id,
+        state=RecoveryState.FLAT, reason="broker positions reconciled flat",
+    )
+
+    def release(_):
+        DurableRecoveryJournal(factory).release_risk_reservation(
+            account_id=account_id, intent_id=intent_id,
+        )
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        list(pool.map(release, range(12)))
+
+    with factory() as db:
+        control = db.execute(select(RecoveryControlRecord).where(
+            RecoveryControlRecord.account_id == account_id,
+            RecoveryControlRecord.intent_id == intent_id,
+        )).scalar_one()
+        leases = db.execute(select(RecoveryInstrumentLeaseRecord).where(
+            RecoveryInstrumentLeaseRecord.account_id == account_id,
+            RecoveryInstrumentLeaseRecord.intent_id == intent_id,
+        )).scalars().all()
+        events = db.execute(select(RecoveryJournalEventRecord).where(
+            RecoveryJournalEventRecord.control_id == control.id,
+        ).order_by(RecoveryJournalEventRecord.sequence)).scalars().all()
+        assert control.state == RecoveryState.FLAT.value
+        assert control.risk_reserved is False
+        assert leases == []
+        assert [event.sequence for event in events] == list(range(len(events)))
+        assert sum(event.event == "RISK_RESERVATION_RELEASED" for event in events) == 1
