@@ -369,11 +369,13 @@ export default function BoxSpreadPaperTrading() {
           if (frame?.type !== "paper_update" || frame?.channel !== "box-spread-paper-private") return;
           const sequence = Number(frame.sequence);
           const eventId = String(frame.event_id ?? "");
-          if (!Number.isSafeInteger(sequence) || sequence < 1) return;
-          if (eventId && privateEventIdsRef.current.has(eventId)) return;
           const isSnapshot = frame.event_type === "SNAPSHOT";
+          if (!Number.isSafeInteger(sequence) || sequence < (isSnapshot ? 0 : 1)) return;
+          if (eventId && privateEventIdsRef.current.has(eventId)) return;
           if (!isSnapshot && sequence <= privateSequenceRef.current) return;
-          if (!isSnapshot && privateSequenceRef.current > 0 && sequence !== privateSequenceRef.current + 1) {
+          // Every non-snapshot event must immediately follow the accepted
+          // bootstrap/resync snapshot, including when its sequence is zero.
+          if (!isSnapshot && sequence !== privateSequenceRef.current + 1) {
             setPrivateWsStatus("STALE");
             socket?.send(JSON.stringify({ action: "resync" }));
             return;
