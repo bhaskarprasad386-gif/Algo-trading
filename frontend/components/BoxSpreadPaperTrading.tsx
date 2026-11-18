@@ -299,7 +299,7 @@ export default function BoxSpreadPaperTrading() {
       try {
         const ticketBody = await request("/ws-ticket", { method: "POST" });
         if (stopped || typeof ticketBody.ticket !== "string") return;
-        const wsUrl = api.replace(/^http/i, "ws") + "/ws/box-spread-paper";
+        const wsUrl = new URL(api).origin.replace(/^http/i, "ws") + "/ws/box-spread-paper";
         socket = new WebSocket(wsUrl);
         privateWsRef.current = socket;
         socket.onopen = () => {
@@ -375,6 +375,7 @@ export default function BoxSpreadPaperTrading() {
   }, [token, loadOpportunities, pagePush.status]);
 
   async function togglePaperExecution() {
+    if (privateWsStatus !== "LIVE") { setError("Private live state is not synchronized; execution control is paused."); return; }
     setControlBusy(true); setError(null); setMessage(null);
     try {
       const body = await request("/execution-control", {
@@ -415,6 +416,7 @@ export default function BoxSpreadPaperTrading() {
 
   async function confirmManualEntry(event: FormEvent) {
     event.preventDefault();
+    if (privateWsStatus !== "LIVE") { setError("Private live state is not synchronized; entry controls are paused."); return; }
     if (!manualEntryOpportunity) return;
     setBusy(true); setError(null); setMessage(null); setLedger(null);
     try {
@@ -448,6 +450,7 @@ export default function BoxSpreadPaperTrading() {
   }
 
   async function loadExitPreview() {
+    if (privateWsStatus !== "LIVE") { setError("Private live state is not synchronized; exit controls are paused."); return; }
     if (selectedTrade == null) return;
     setBusy(true); setError(null); setMessage(null);
     try {
@@ -492,6 +495,7 @@ export default function BoxSpreadPaperTrading() {
 
   async function confirmBasketExit(event: FormEvent) {
     event.preventDefault();
+    if (privateWsStatus !== "LIVE") { setError("Private live state is not synchronized; exit controls are paused."); return; }
     if (selectedTrade == null || !exitPreview) return;
     setBusy(true); setError(null); setMessage(null);
     try {
@@ -631,7 +635,7 @@ export default function BoxSpreadPaperTrading() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] theme-muted">{closed ? "Realized result from persisted exit fills." : "Open quantity and marks are based on persisted fills and fresh backend quotes only."}</p>
         <div className="flex flex-wrap gap-2">
-          {!closed && <button type="button" onClick={() => { setSelectedTrade(trade.trade_id); setExitPreview(null); }} className="rounded-lg border border-emerald-600/50 px-3 py-2 text-xs font-semibold text-emerald-600">Manage position</button>}
+          {!closed && <button type="button" disabled={privateWsStatus !== "LIVE"} onClick={() => { setSelectedTrade(trade.trade_id); setExitPreview(null); }} className="rounded-lg border border-emerald-600/50 px-3 py-2 text-xs font-semibold text-emerald-600 disabled:opacity-40">Manage position</button>}
           <button type="button" onClick={() => void loadLedger(trade.trade_id)} className="rounded-lg border theme-border px-3 py-2 text-xs font-semibold theme-text">Full fill ledger</button>
         </div>
       </div>

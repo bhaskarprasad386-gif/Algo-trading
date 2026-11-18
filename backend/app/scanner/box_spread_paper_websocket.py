@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy import Column, Float, MetaData, String, Table, delete, insert
 from app.core.database import engine
+from app.core.config import settings
 
 router = APIRouter(tags=["box-spread-paper-private-ws"])
 CHANNEL = "box-spread-paper-private"
@@ -112,6 +113,13 @@ def _origin_allowed(websocket: WebSocket) -> bool:
     except ValueError:
         return False
     host = (parsed.hostname or "").lower()
+    configured = {
+        item.strip().rstrip("/")
+        for item in settings.BOX_SPREAD_PAPER_WS_ALLOWED_ORIGINS.split(",")
+        if item.strip()
+    }
+    if origin.rstrip("/") in configured:
+        return parsed.scheme in {"https", "http"}
     return parsed.scheme in {"https", "http"} and (
         host in {"localhost", "127.0.0.1"}
         or host.endswith(".vercel.app")
