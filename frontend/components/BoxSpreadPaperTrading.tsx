@@ -159,7 +159,6 @@ export default function BoxSpreadPaperTrading() {
         request("/execution-control"),
       ]);
       setBalance(String(accountBody.virtual_balance));
-      setPrivateSnapshotComplete(false);
       setExecutionEnabled(controlBody.enabled === true);
       setTrades([...(Array.isArray(openBody.data) ? openBody.data : []), ...(Array.isArray(closedBody.data) ? closedBody.data : [])]);
       setPortfolioSummary(summaryBody as PortfolioSummary);
