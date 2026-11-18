@@ -86,6 +86,9 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         // must still carry a positive sequence.
         if (!Number.isSafeInteger(sequence) || sequence < 0) return;
         if (eventType === "SNAPSHOT") {
+          // Never let a delayed recovery snapshot rewind an already-live
+          // channel's sequence cursor or replace newer pushed market state.
+          if (hasSnapshotRef.current && sequence < sequenceRef.current) return;
           sequenceRef.current = sequence;
           hasSnapshotRef.current = true;
           resyncPendingRef.current = false;
