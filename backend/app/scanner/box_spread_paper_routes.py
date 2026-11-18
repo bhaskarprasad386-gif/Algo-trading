@@ -1653,17 +1653,17 @@ def recovery(account_key: str = "default"):
 
 
 
-def build_paper_private_snapshot():
+def build_paper_private_snapshot(account_key: str = "default"):
     """Return the authenticated single-owner paper read model for WS bootstrap/resync."""
     return {
         "mode": "PAPER_ONLY",
         "broker_orders_enabled": False,
-        "account": account(account_key="default"),
-        "portfolio_summary": portfolio_summary(account_key="default"),
+        "account": account(account_key=account_key),
+        "portfolio_summary": portfolio_summary(account_key=account_key),
         "execution_control": get_execution_control(),
-        "positions": trades(account_key="default", limit=500, offset=0,
+        "positions": trades(account_key=account_key, limit=500, offset=0,
                              include_ledger=True, position_state="ALL"),
-        "recovery": recovery(account_key="default"),
+        "recovery": recovery(account_key=account_key),
     }
 
 
