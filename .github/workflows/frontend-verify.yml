@@ -36,8 +36,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Build Next.js and Cloudflare Worker (explicit build chain)
-        run: npm run build
+      - name: Build Next.js application
+        run: npm run build:next
+
+      - name: Build Cloudflare OpenNext Worker
+        run: npm run build:cloudflare
 
       - name: Validate Wrangler Worker bundle (dry run)
         run: npx wrangler deploy --dry-run
