@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.database import Base
 from app.execution.durable_recovery_journal import DurableRecoveryJournal
 from app.models.execution_recovery_journal import (
-    RecoveryBudgetRecord, RecoveryInstrumentLeaseRecord,
+    RecoveryBudgetRecord, RecoveryInstrumentLeaseRecord, RecoveryCoordinatorOwnerRecord,
 )
 
 
@@ -143,3 +143,27 @@ def test_postgres_concurrent_close_approvals_consume_each_attempt_once(postgres_
         )).scalar_one()
         assert budget.attempts_used == 3
         assert budget.notional_used == Decimal("300")
+
+
+
+def test_postgres_concurrent_coordinator_owner_claim_has_exactly_one_winner(postgres_journal):
+    journal, factory = postgres_journal
+
+    def claim(worker_id):
+        return journal.claim_recovery_coordinator_owner(
+            account_id="acct-coordinator-race", intent_id="intent-coordinator-race",
+            owner_token=f"worker-{worker_id}",
+        )
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        outcomes = list(pool.map(claim, range(12)))
+
+    accepted = [generation for generation in outcomes if generation is not None]
+    assert accepted == [1]
+    with factory() as db:
+        owners = db.execute(select(RecoveryCoordinatorOwnerRecord).where(
+            RecoveryCoordinatorOwnerRecord.account_id == "acct-coordinator-race",
+            RecoveryCoordinatorOwnerRecord.intent_id == "intent-coordinator-race",
+        )).scalars().all()
+        assert len(owners) == 1
+        assert owners[0].owner_generation == 1
