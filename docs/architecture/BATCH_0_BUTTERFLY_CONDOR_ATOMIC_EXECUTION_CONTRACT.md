@@ -15,7 +15,7 @@ The shadow scanner:
 - Represents a Butterfly as three strike legs with a 2x middle-leg ratio; a Condor is four legs.
 - Exposes depth readiness, but this is still a scanner/shadow result, not a live execution authorization.
 
-The current multi-leg watchdog only returns a WAIT/ROLLBACK/SQUARE_OFF decision. It does not itself cancel broker orders, reconcile uncertain acknowledgements, or close broker-side fills. The generic broker adapter contract also does not establish a portable atomic basket-order API.
+The current multi-leg watchdog only returns a WAIT/ROLLBACK/SQUARE_OFF decision. It does not itself cancel broker orders, reconcile uncertain acknowledgements, or close broker-side fills. The generic broker adapter contract also does not establish a portable atomic basket-order API. A new broker-neutral emergency recovery coordinator has been added, but it remains fail-closed until a broker adapter supplies authoritative reconciled snapshots, cancellation, fresh quotes and bounded LIMIT/IOC close capability, and a durable journal supplies kill-switch, attempt-ID and risk-reservation operations.
 
 **Conclusion:** These strategies are currently shadow/scanner calculations, not proven live multi-leg execution strategies. Do not connect their alerts directly to a broker adapter until the acceptance gates below are implemented and tested.
 
@@ -74,8 +74,9 @@ If any leg rejects, partially fills outside the permitted synchronized ratio, ti
 - Immediately freeze the intent: stop submitting unsent legs and prevent new entry attempts for that intent.
 - Cancel all confirmed working/unfilled orders using deterministic client IDs; cancellation acknowledgement alone is not proof that no late fill occurred.
 - Reconcile broker order book, trade book and positions for every leg. Late fills received during cancellation are included in residual exposure.
-- Calculate the exact net residual position per instrument and account from confirmed fills—not from requested quantities or local optimistic state.
-- Submit idempotent emergency close/unwind orders for the confirmed residual positions using pre-approved side-aware price collars and a separately bounded emergency loss/slippage budget.
+- Calculate the exact residual per basket instrument from an authoritative broker order/trade/position snapshot and the durable pre-entry position baseline. Broker account positions are net positions and may include pre-existing holdings; never close the entire symbol position merely because the current basket touched that symbol.
+- Require an explicit broker snapshot consistency flag proving order/trade/position reconciliation. If it is missing, stale, or inconsistent, stop and escalate; never infer flatness from a cancel acknowledgement.
+- Submit idempotent emergency close/unwind orders for the confirmed residual positions using fresh bid/ask, displayed depth, lot/tick rules, LIMIT/IOC orders and a separately bounded slippage budget. Persist a monotonically increasing recovery-attempt ID before each external submission.
 - Continue reconciliation until every residual is confirmed flat or a terminal manual-review state is reached. Do not claim the basket is rolled back merely because cancel requests were sent.
 - If an unwind order is rejected, unavailable, partially filled, or its status is unknown, latch the account/strategy entry kill switch, raise a high-priority operator alert, retain the risk reservation, and require explicit recovery/manual review. Never hide an open leg.
 - Persist the full event trail: alert snapshot, approved prices, submissions, acknowledgements, fills, cancels, late fills, unwind orders, realized slippage/P&L, state transitions and operator actions.
@@ -143,3 +144,18 @@ Every scenario must be covered in pure unit tests and broker-adapter contract/in
 7. Prove the complete workflow in Paper first. Keep Live routing disabled until all broker-specific acceptance gates and operational recovery tests pass.
 
 This shared invariant applies equally to Box Spread, Credit Butterfly and Condor. It must not alter Box Spread scanner subscriptions, the existing server WebSocket, or unrelated runners.
+
+
+## 10. Recovery coordinator implementation boundary
+
+`backend/app/execution/emergency_recovery.py` implements the deterministic cancel/reconcile/close/verify workflow behind explicit broker and journal protocols. It:
+
+- Latches the strategy entry kill switch before recovery side effects.
+- Cancels non-terminal entry orders and refuses to close while any order remains non-terminal, avoiding a late-fill/over-close race.
+- Requires the broker snapshot to be both authoritative and explicitly positions-reconciled, and verifies broker/account identity on every read.
+- Requires a durable pre-entry position baseline for every basket instrument and closes only the account-position delta attributable to this intent, preserving pre-existing holdings.
+- Uses fresh, non-crossed bid/ask, depth, lot size and tick size to construct bounded side-aware LIMIT/IOC closes; it never sends a generic market order.
+- Uses durable monotonic recovery attempt IDs for idempotency, re-reads broker state between attempts, and allows only a configured number of attempts.
+- Releases risk reservation only after a reconciled broker snapshot proves every basket residual is flat and all orders are terminal. Any uncertainty leaves the kill switch latched and escalates to manual review.
+
+This is not yet a live broker integration: the supported broker adapters and durable recovery journal must implement the protocol and pass adapter contract tests before the coordinator can be enabled. Live routing remains disabled.
