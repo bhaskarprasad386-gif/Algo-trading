@@ -124,11 +124,11 @@ def test_postgres_concurrent_close_approvals_consume_each_attempt_once(postgres_
             account_id="acct-approval", intent_id="intent-approval", symbol="NFO:OPT",
         )
 
-    def approve(_):
+    def approve(worker_id):
         return journal.approve_emergency_close(
             account_id="acct-approval", intent_id="intent-approval", symbol="NFO:OPT",
             side="SELL", quantity=1, limit_price=Decimal("100"),
-            notional=Decimal("100"),
+            notional=Decimal("100"), client_order_id=f"close-{worker_id}",
         )
 
     with ThreadPoolExecutor(max_workers=12) as pool:
