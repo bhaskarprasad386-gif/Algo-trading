@@ -396,3 +396,16 @@ def test_lost_close_ack_without_broker_order_visibility_blocks_resubmission():
     assert not broker.closes
     assert not journal.released
     assert "not yet reconciled" in result.reason
+
+
+def test_terminal_prior_close_is_reconciled_before_new_bounded_attempt():
+    broker, journal = FakeBroker(50), FakeJournal()
+    journal.pending_authorizations = ("REC-previously-authorized",)
+    broker.orders.append(RecoveryOrder(
+        broker_order_id="close-previous", client_order_id="REC-previously-authorized",
+        symbol="NFO:CE", role="RECOVERY", status="CANCELLED", remaining_quantity=0,
+    ))
+    result = run(broker, journal, policy=RecoveryPolicy(max_attempts=2))
+    assert result.state is RecoveryState.FLAT
+    assert journal.reconciled_authorizations == ["REC-previously-authorized"]
+    assert len(broker.closes) == 1
