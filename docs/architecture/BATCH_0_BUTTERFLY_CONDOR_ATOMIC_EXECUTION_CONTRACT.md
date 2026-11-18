@@ -156,6 +156,7 @@ This shared invariant applies equally to Box Spread, Credit Butterfly and Condor
 - Requires a durable pre-entry position baseline for every basket instrument and closes only the account-position delta attributable to this intent, preserving pre-existing holdings.
 - Uses fresh, non-crossed bid/ask, depth, lot size and tick size to construct bounded side-aware LIMIT/IOC closes; it never sends a generic market order.
 - Uses durable monotonic recovery attempt IDs for idempotency, re-reads broker state between attempts, and allows only a configured number of attempts.
+- Requires an exclusive instrument lease and complete position attribution; a baseline alone is insufficient if another strategy or manual order can change the same account/instrument during the basket.
 - Releases risk reservation only after a reconciled broker snapshot proves every basket residual is flat and all orders are terminal. Any uncertainty leaves the kill switch latched and escalates to manual review.
 
 This is not yet a live broker integration: the supported broker adapters and durable recovery journal must implement the protocol and pass adapter contract tests before the coordinator can be enabled. Live routing remains disabled.
