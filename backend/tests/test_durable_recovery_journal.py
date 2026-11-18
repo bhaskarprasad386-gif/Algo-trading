@@ -10,7 +10,7 @@ from app.execution.durable_recovery_journal import DurableRecoveryJournal
 from app.execution.emergency_recovery import RecoveryState
 from app.models.execution_recovery_journal import (
     RecoveryBudgetRecord, RecoveryControlRecord, RecoveryInstrumentLeaseRecord,
-    RecoveryJournalEventRecord, RecoveryKillSwitchRecord,
+    RecoveryJournalEventRecord, RecoveryKillSwitchRecord, RecoveryCoordinatorOwnerRecord,
 )
 
 
@@ -456,3 +456,37 @@ def test_pending_close_authorization_blocks_risk_and_lease_release_even_if_flat_
         account_id="acct-release-pending", intent_id="intent-release-pending",
         symbols=("OPT:CE",),
     )
+
+
+
+def test_coordinator_owner_is_durable_and_never_expires_on_adapter_restart(journal):
+    durable, factory = journal
+    generation = durable.claim_recovery_coordinator_owner(
+        account_id="acct-owner", intent_id="intent-owner", owner_token="worker-secret-a",
+    )
+    assert generation == 1
+    assert durable.assert_recovery_coordinator_owner(
+        account_id="acct-owner", intent_id="intent-owner",
+        owner_token="worker-secret-a", owner_generation=1,
+    )
+    assert not durable.assert_recovery_coordinator_owner(
+        account_id="acct-owner", intent_id="intent-owner",
+        owner_token="worker-secret-b", owner_generation=1,
+    )
+
+    restarted = DurableRecoveryJournal(factory)
+    assert restarted.claim_recovery_coordinator_owner(
+        account_id="acct-owner", intent_id="intent-owner", owner_token="worker-after-restart",
+    ) is None
+    assert not restarted.assert_recovery_coordinator_owner(
+        account_id="acct-owner", intent_id="intent-owner",
+        owner_token="worker-after-restart", owner_generation=1,
+    )
+    with factory() as db:
+        row = db.execute(select(RecoveryCoordinatorOwnerRecord).where(
+            RecoveryCoordinatorOwnerRecord.account_id == "acct-owner",
+            RecoveryCoordinatorOwnerRecord.intent_id == "intent-owner",
+        )).scalar_one()
+        assert row.owner_generation == 1
+        assert row.owner_token_hash != "worker-secret-a"
+        assert row.owner_token_hash != "worker-after-restart"
