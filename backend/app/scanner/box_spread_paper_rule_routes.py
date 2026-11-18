@@ -296,6 +296,11 @@ def _record(rule_id: int, account_key: str, event: str, outcome: str, reason: st
                 BoxSpreadPaperRuleEvaluation.id.in_(stale_ids)
             ))
         session.commit()
+    # Notify authenticated paper clients after the evaluation transaction commits.
+    try:
+        publish_paper_update("RULE_EVALUATIONS_CHANGED")
+    except Exception:
+        pass
 
 
 async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any], rule_enabled: bool):
