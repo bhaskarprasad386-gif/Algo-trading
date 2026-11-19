@@ -26,7 +26,7 @@ export default function WeeklySwingScannerPage() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [universeStatus, setUniverseStatus] = useState<UniverseStatus | null>(null);
-  const { data: pagePushData, status: pagePushStatus } = usePagePush("weekly-swing");
+  const { data: pagePushData, status: pagePushStatus, resync: pagePushResync } = usePagePush("weekly-swing");
   const pagePushStatusRef = useRef(pagePushStatus);
   const statusRequestSequenceRef = useRef(0);
   const statusPushSequenceRef = useRef(0);
@@ -93,6 +93,10 @@ export default function WeeklySwingScannerPage() {
   }
 
   async function refreshNifty200Status() {
+    if (isPagePushLive()) {
+      pagePushResync();
+      return;
+    }
     const requestSequence = ++statusRequestSequenceRef.current;
     const pushSequenceAtStart = statusPushSequenceRef.current;
     try {
@@ -114,6 +118,10 @@ export default function WeeklySwingScannerPage() {
   }
 
   async function resumeNifty200Updates() {
+    if (isPagePushLive()) {
+      pagePushResync();
+      return;
+    }
     const requestSequence = ++statusRequestSequenceRef.current;
     const pushSequenceAtStart = statusPushSequenceRef.current;
     setLoading(true); setError("");
