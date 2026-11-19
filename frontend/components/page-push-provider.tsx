@@ -201,7 +201,10 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
             if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
             resyncTimerRef.current = undefined;
             setStatus("RECONNECTING");
-            resync();
+            // Avoid a tight resync loop when the snapshot provider is busy:
+            // close this socket and let the existing exponential reconnect
+            // backoff retry a fresh subscription snapshot.
+            socket.close();
             return;
           }
           sequenceRef.current = sequence;
