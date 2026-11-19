@@ -152,6 +152,9 @@ export function SyntheticTracePanel() {
           return result.ok;
         }));
         const successfullyDeleted = deletedIds.filter((_, index) => deleteResults[index]);
+        // A newer page-push event supersedes this bootstrap cleanup too; don't
+        // let its delayed DELETE results rewrite tombstones from current state.
+        if (bootstrapPushSequence !== tracePushSequenceRef.current) return;
         if (successfullyDeleted.length) writeDeleted(readDeleted().filter((id) => !successfullyDeleted.includes(id)));
       } catch {
         // The local copy remains available when the API/database is offline.
