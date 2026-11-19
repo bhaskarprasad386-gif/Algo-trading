@@ -118,10 +118,20 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
 
     def fake_publish(page, event, data=None):
         page_sequences[page] = page_sequences.get(page, 0) + 1
+        frame = {
+            "type": "page_update", "page": page, "sequence": page_sequences[page],
+            "event": event, "data": data or {},
+        }
         journal.append({
             "id": len(journal) + 1, "page": page,
             "sequence": page_sequences[page], "event": event, "data": data or {},
         })
+        # This round-trip test controls the publisher and avoids relying on the
+        # background journal poller's timing. Dispatcher replay/overflow have
+        # separate tests above.
+        for queue, channels in tuple(push._subscribers):
+            if page in channels:
+                queue.put_nowait(frame)
 
     monkeypatch.setattr(push, "_latest_event_id", fake_latest_event_id)
     monkeypatch.setattr(push, "_events_after", fake_events_after)
