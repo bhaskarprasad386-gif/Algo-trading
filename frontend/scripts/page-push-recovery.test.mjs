@@ -354,3 +354,12 @@ test("workspace reconnect snapshot identifies absent live and pair collections",
   assert.equal(workspaceSnapshotMissing({ __event: "SNAPSHOT", live: { data: [] } }, "pairs"), true);
   assert.equal(workspaceSnapshotMissing({ __event: "PATCH" }, "live"), true);
 });
+
+test("workspace reconnect snapshot detects absent diagnostics, universe, and health", () => {
+  for (const key of ["diagnostics", "universe", "runtime_health"]) {
+    assert.equal(workspaceSnapshotMissing({ __event: "SNAPSHOT" }, key), true);
+  }
+  assert.equal(workspaceSnapshotMissing({ diagnostics: {}, universe: {}, runtime_health: {} }, "diagnostics"), false);
+  assert.equal(workspaceSnapshotMissing({ diagnostics: {}, universe: {}, runtime_health: {} }, "universe"), false);
+  assert.equal(workspaceSnapshotMissing({ diagnostics: {}, universe: {}, runtime_health: {} }, "runtime_health"), false);
+});
