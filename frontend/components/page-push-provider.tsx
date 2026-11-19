@@ -53,7 +53,14 @@ function applyCollectionMutations(
     if (mutation.operation !== "DELETE" && !item) continue;
     if (mutation.operation === "ADD" && item?.[keyField] === undefined) continue;
     if (item && item[keyField] !== undefined && String(item[keyField]) !== String(key)) continue;
-    const matchesKey = (row: unknown) => row && typeof row === "object" && !Array.isArray(row) && String((row as Record<string, unknown>)[keyField]) === String(key);
+    const matchesKey = (row: unknown) => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+      const rowKey = (row as Record<string, unknown>)[keyField];
+      // Missing, blank, or boolean identities must never collide with a valid
+      // string/number key (e.g. the literal string "undefined").
+      if ((typeof rowKey !== "string" && typeof rowKey !== "number") || !String(rowKey).trim()) return false;
+      return String(rowKey) === String(key);
+    };
     const findIndex = current.findIndex(matchesKey);
     const rows = [...current];
     if (mutation.operation === "DELETE") {
