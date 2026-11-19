@@ -181,6 +181,22 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           // Never let a delayed recovery snapshot rewind an already-live
           // channel's sequence cursor or replace newer pushed market state.
           if (hasSnapshotRef.current && sequence < sequenceRef.current) return;
+          const snapshotData = message.data && typeof message.data === "object"
+            ? message.data as Record<string, unknown>
+            : {};
+          if (snapshotData.snapshot_status === "UNAVAILABLE") {
+            // A transport snapshot is not authoritative when its provider failed.
+            // Keep REST recovery enabled and retry through bounded reconnect/resync.
+            sequenceRef.current = sequence;
+            hasSnapshotRef.current = false;
+            setLastMessageAt(Date.now());
+            resyncPendingRef.current = false;
+            if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
+            resyncTimerRef.current = undefined;
+            setStatus("RECONNECTING");
+            resync();
+            return;
+          }
           sequenceRef.current = sequence;
           hasSnapshotRef.current = true;
           setLastMessageAt(Date.now());
@@ -188,7 +204,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
           resyncTimerRef.current = undefined;
           setStatus("LIVE");
-          setData({ ...(message.data && typeof message.data === "object" ? message.data as Record<string, unknown> : {}), __event: "SNAPSHOT" });
+          setData({ ...snapshotData, __event: "SNAPSHOT" });
           return;
         }
         // A saturated server queue deliberately drops intermediate frames and
