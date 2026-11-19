@@ -1064,6 +1064,21 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           ? pagePushData.keys.filter((key): key is string => typeof key === "string")
           : [];
       const removed = (key: string) => event === "REMOVE" && removedKeys.includes(key);
+      // Full reconnect snapshots must clear retained live/pair collections when omitted.
+      if (event === "SNAPSHOT" && workspaceSnapshotMissing(pagePushData, "live")) {
+        loadRequestRef.current += 1;
+        rowsRef.current = [];
+        setRows([]);
+        setRowsStale(false);
+        setLoading(false);
+        setError(null);
+        setLiveApiStatus("WAITING");
+      }
+      if (event === "SNAPSHOT" && workspaceSnapshotMissing(pagePushData, "pairs")) {
+        pairRequestSequence.current += 1;
+        setPairRows([]);
+        setPairMonitorStatus("WAITING");
+      }
       const live = pagePushData.live as Record<string, any> | undefined;
       const pairs = pagePushData.pairs as Record<string, any> | undefined;
       if (removed("live")) {
