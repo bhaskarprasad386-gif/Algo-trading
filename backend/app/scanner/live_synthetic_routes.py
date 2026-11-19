@@ -242,6 +242,8 @@ def live(
         "status": "success",
         "scanner": "synthetic-cash-carry-live-1s",
         "mode": "paper-safe",
+        "history_revision": _pair_history_last_saved_at,
+        "history_saved_count": _pair_history_last_saved_count,
         "data": rows,
         "opportunity_count": sum(float(row["executable_edge"] or 0) > 0 for row in rows),
     }
