@@ -424,6 +424,9 @@ async def page_updates(websocket: WebSocket) -> None:
                         channels = frozenset((*channels, page))
                         _set_channels(queue, channels)
                         event_task = await _restart_event_waiter(queue, event_task, page)
+                        initial_frame = await asyncio.to_thread(_consistent_snapshot_frame, page)
+                        await websocket.send_json(initial_frame)
+                        client_sequences[page] = int(initial_frame.get("sequence") or 0)
                     elif message["action"] == "unsubscribe":
                         channels = frozenset(item for item in channels if item != page)
                         _set_channels(queue, channels)
