@@ -24,3 +24,40 @@ test("fresh early-entry detection respects seen IDs and state", () => {
   assert.deepEqual(freshEarlyEntryAlerts(rows,seen),[rows[2]]);
   assert.deepEqual([...seen],[5]);
 });
+
+import { applyCollectionMutations } from "../lib/page-push-collections.mjs";
+
+const mutation = (operation, key, item) => ({collection:"rows",operation,key_field:"id",key,item});
+
+test("collection ADD is idempotent and collapses duplicate identities", () => {
+  const initial={rows:[{id:"x",old:true},{id:"x",duplicate:true},{id:"y"}]};
+  const next=applyCollectionMutations(initial,[mutation("ADD","x",{id:"x",value:2})]);
+  assert.deepEqual(next.rows,[{id:"x",value:2},{id:"y"}]);
+  assert.deepEqual(initial.rows,[{id:"x",old:true},{id:"x",duplicate:true},{id:"y"}]);
+});
+
+test("collection UPDATE merges and never resurrects missing rows", () => {
+  const state={rows:[{id:1,a:1},{id:2}]};
+  assert.deepEqual(applyCollectionMutations(state,[mutation("UPDATE",1,{id:1,b:2})]).rows,[{id:1,a:1,b:2},{id:2}]);
+  assert.deepEqual(applyCollectionMutations(state,[mutation("UPDATE",3,{id:3,b:2})]).rows,state.rows);
+});
+
+test("DELETE removes all matching identities and subsequent UPDATE cannot recreate", () => {
+  const state={rows:[{id:"gone"},{id:"gone"},{id:"stay"}]};
+  const deleted=applyCollectionMutations(state,[mutation("DELETE","gone")]);
+  assert.deepEqual(deleted.rows,[{id:"stay"}]);
+  assert.deepEqual(applyCollectionMutations(deleted,[mutation("UPDATE","gone",{id:"gone",value:1})]).rows,[{id:"stay"}]);
+});
+
+test("invalid collection, identity, operation and malformed items are ignored", () => {
+  const state={rows:[{id:"a"}]};
+  const bad=[
+    {collection:"__proto__",operation:"ADD",key_field:"id",key:"b",item:{id:"b"}},
+    {collection:"rows",operation:"ADD",key_field:"constructor",key:"b",item:{id:"b"}},
+    {collection:"rows",operation:"UPSERT",key_field:"id",key:"b",item:{id:"b"}},
+    {collection:"rows",operation:"ADD",key_field:"id",key:"",item:{id:""}},
+    {collection:"rows",operation:"ADD",key_field:"id",key:"b",item:{id:"different"}},
+    {collection:"rows",operation:"ADD",key_field:"id",key:"b",item:[]},
+  ];
+  assert.deepEqual(applyCollectionMutations(state,bad),state);
+});
