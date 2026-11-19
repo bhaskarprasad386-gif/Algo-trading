@@ -61,6 +61,7 @@ function ScannerContent() {
   const liveRequestSequenceRef = useRef(0);
   const pairLiveRequestSequenceRef = useRef(0);
   const refreshPushBaselineRef = useRef<number | null>(null);
+  const refreshPushDataBaselineRef = useRef<Record<string, unknown> | null>(null);
   const refreshPushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = async () => {
@@ -162,18 +163,21 @@ function ScannerContent() {
 
   useEffect(() => {
     const baseline = refreshPushBaselineRef.current;
-    if (refreshing && String(pagePushData?.__event ?? "").toUpperCase() === "SNAPSHOT" && baseline !== null && pagePushLastMessageAt !== null && pagePushLastMessageAt > baseline) {
+    const baselineData = refreshPushDataBaselineRef.current;
+    if (refreshing && String(pagePushData?.__event ?? "").toUpperCase() === "SNAPSHOT" && baselineData !== pagePushData && baseline !== null && pagePushLastMessageAt !== null) {
       refreshPushBaselineRef.current = null;
+      refreshPushDataBaselineRef.current = null;
       if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
       refreshPushTimeoutRef.current = null;
       setRefreshing(false);
     }
-  }, [pagePushLastMessageAt, refreshing]);
+  }, [pagePushData, pagePushLastMessageAt, refreshing]);
 
   useEffect(() => () => {
     if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
     refreshPushTimeoutRef.current = null;
     refreshPushBaselineRef.current = null;
+    refreshPushDataBaselineRef.current = null;
   }, []);
 
 
@@ -376,9 +380,11 @@ function ScannerContent() {
       if (pagePushStatus === "LIVE") {
         // Complete refresh only after a newer authoritative page frame arrives.
         refreshPushBaselineRef.current = pagePushLastMessageAt ?? 0;
+        refreshPushDataBaselineRef.current = pagePushData;
         refreshPushTimeoutRef.current = setTimeout(() => {
           refreshPushTimeoutRef.current = null;
           refreshPushBaselineRef.current = null;
+          refreshPushDataBaselineRef.current = null;
           setRefreshing(false);
         }, 8000);
         pagePushResync();
@@ -393,6 +399,7 @@ function ScannerContent() {
       }
     } catch {
       refreshPushBaselineRef.current = null;
+      refreshPushDataBaselineRef.current = null;
       if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
       refreshPushTimeoutRef.current = null;
       setRefreshing(false);
