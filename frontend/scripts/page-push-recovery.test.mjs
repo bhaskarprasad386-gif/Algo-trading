@@ -159,3 +159,26 @@ test("stale WebSocket callbacks are ignored after transport replacement", () => 
   assert.equal(isCurrentPagePushSocket(currentSocket, oldSocket), false);
   assert.equal(isCurrentPagePushSocket(null, oldSocket), false);
 });
+\n\ntest("trace saves for the same ID execute sequentially", async () => {
+  const registry = new Map();
+  let releaseFirst;
+  const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+  const order = [];
+  const first = trackTraceSave(registry, "same", async () => {
+    order.push("first-start");
+    await firstGate;
+    order.push("first-end");
+    return { ok: true };
+  });
+  const second = trackTraceSave(registry, "same", async () => {
+    order.push("second-start");
+    return { ok: true };
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(order, ["first-start"]);
+  releaseFirst();
+  await Promise.all([first, second]);
+  assert.deepEqual(order, ["first-start", "first-end", "second-start"]);
+  assert.equal(registry.has("same"), false);
+});
