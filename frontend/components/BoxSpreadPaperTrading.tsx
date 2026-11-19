@@ -309,6 +309,7 @@ export default function BoxSpreadPaperTrading() {
       setOpportunityStatus("EMPTY");
       setOpportunityError(null);
       setLastOpportunityCheck(Date.now());
+      return;
     }
     const isSnapshot = event === "SNAPSHOT";
     // The Box page publisher emits PATCH frames containing a complete page
