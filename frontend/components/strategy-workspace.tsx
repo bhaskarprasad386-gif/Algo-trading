@@ -605,6 +605,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [indexSelectionError, setIndexSelectionError] = useState<string | null>(null);
   const indexSelectionDraftInitialized = useRef(false);
   const historyRequestSequence = useRef(0);
+  const pairRequestSequence = useRef(0);
   const syntheticHistoryPushRevision = useRef<string | null>(null);
   const calendarHistoryPushRevision = useRef<string | null>(null);
   const indexSelectionRequestSequence = useRef(0);
@@ -788,6 +789,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   };
 
   const loadPairs = async () => {
+    const requestSequence = ++pairRequestSequence.current;
     if (isCustom || !c.pairEndpoint) {
       setPairRows(rows);
       return;
@@ -796,6 +798,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(base + c.pairEndpoint, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
+      if (requestSequence !== pairRequestSequence.current) return;
       if (!response.ok) throw new Error(c.title + " pair monitor HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data.filter((item: unknown): item is Row => !!item && typeof item === "object") : [];
       const responseStatus = String(body?.status ?? "UNKNOWN").toUpperCase();
@@ -1020,7 +1023,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         rowsRef.current = nextRows; setRows(nextRows); setRowsStale(false);
         setLoading(false); setLiveApiLastOkAt(Date.now()); setLiveApiStatus("RESPONDING"); setError(null);
       }
-      if (Array.isArray(pairs?.data)) setPairRows(pairs.data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+      if (Array.isArray(pairs?.data)) {
+        // Pushed pair data invalidates any REST response started before this frame.
+        pairRequestSequence.current += 1;
+        setPairRows(pairs.data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+      }
       if (slug === "synthetic-arbitrage" && pagePushData.diagnostics && typeof pagePushData.diagnostics === "object") {
         setScannerDiagnostics(pagePushData.diagnostics as Record<string, unknown>);
       }
