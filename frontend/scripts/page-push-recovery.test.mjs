@@ -321,3 +321,26 @@ test("REMOVE without stale deleted collection payload still preserves unrelated 
   assert.equal("opportunities" in next, false);
   assert.equal(next.status, "DEGRADED");
 });
+
+import { scannerSnapshotState } from "../lib/page-push-recovery.mjs";
+
+test("reconnect scanner snapshot replaces retained collections and clears missing ones", () => {
+  const normalized = scannerSnapshotState({ __event: "SNAPSHOT", rows: [{ id: 1 }], stats: { last_observation_at: "2026-11-19T12:00:00Z" } });
+  assert.deepEqual(normalized.rows, [{ id: 1 }]);
+  assert.deepEqual(normalized.pairs, []);
+  assert.deepEqual(normalized.stats, { last_observation_at: "2026-11-19T12:00:00Z" });
+  assert.equal(normalized.scanAt, "2026-11-19T12:00:00Z");
+  const empty = scannerSnapshotState({ __event: "SNAPSHOT" });
+  assert.deepEqual(empty.rows, []);
+  assert.deepEqual(empty.pairs, []);
+  assert.deepEqual(empty.stats, {});
+  assert.equal(empty.scanAt, null);
+});
+
+test("scanner snapshot normalization rejects malformed collections and stats", () => {
+  const normalized = scannerSnapshotState({ rows: "stale", pairs: null, stats: [] });
+  assert.deepEqual(normalized.rows, []);
+  assert.deepEqual(normalized.pairs, []);
+  assert.deepEqual(normalized.stats, {});
+  assert.equal(normalized.scanAt, null);
+});
