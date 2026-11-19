@@ -373,7 +373,6 @@ def save_trace_opportunity(request: TraceOpportunityRequest):
     try:
         result["trace_opportunities"] = list_trace_opportunities(500).get("data", [])
         _publish_synthetic_trace_update({"trace_opportunities": result["trace_opportunities"]})
-        _publish_trace_collection_mutation("DELETE", key=trace_id)
         mutation_item = {
             **request.snapshot,
             "trace_id": request.trace_id,
@@ -426,6 +425,7 @@ def delete_trace_opportunity(trace_id: str):
     try:
         result["trace_opportunities"] = list_trace_opportunities(500).get("data", [])
         _publish_synthetic_trace_update({"trace_opportunities": result["trace_opportunities"]})
+        _publish_trace_collection_mutation("DELETE", key=trace_id)
     except Exception:
         pass
     return result
