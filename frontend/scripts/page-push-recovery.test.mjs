@@ -88,3 +88,19 @@ test("live push invalidates pending runtime-health and diagnostics recovery", ()
     latestSequence:latestSequenceAfterPush, responseValid:true
   }),true);
 });
+
+
+test("workspace cleanup invalidates row REST recovery when scanner page changes", () => {
+  let sequence = 21;
+  const requestStarted = sequence;
+  // Cleanup runs on endpoint/slug/custom-mode transition.
+  sequence += 1;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:requestStarted, latestSequence:sequence, responseValid:true
+  }),false);
+  // The next scanner recovery request owns the new sequence and may apply.
+  const nextRequest = ++sequence;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:nextRequest, latestSequence:sequence, responseValid:true
+  }),true);
+});
