@@ -214,3 +214,19 @@ test("control frames are sent successfully when transport send is healthy", () =
   assert.equal(sendPagePushFrame(socket, { action: "resync", page: "calendar-spread" }), true);
   assert.equal(sent, JSON.stringify({ action: "resync", page: "calendar-spread" }));
 });
+
+test("manual IV runtime status refresh cannot overwrite a newer pushed runtime", () => {
+  let latestSequence = 4;
+  const requestSequence = ++latestSequence;
+  // A page push supersedes the in-flight manual status refresh.
+  latestSequence += 1;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence, latestSequence, responseValid:true
+  }),false);
+  // A manual refresh started after the push is still allowed to apply.
+  const replacementSequence = ++latestSequence;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:replacementSequence,
+    latestSequence, responseValid:true
+  }),true);
+});
