@@ -1121,7 +1121,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         if (slug === "calendar-spread") setCalendarRuntime(null);
       } else {
         const health = pagePushData.runtime_health;
-        if (health && typeof health === "object") {
+        if (health && typeof health === "object" && !removed("runtime_health")) {
           runtimeHealthRequestSequence.current += 1;
           const runtime = health as Record<string, any>;
           const feed = runtime.common_feed && typeof runtime.common_feed === "object" ? runtime.common_feed : {};
