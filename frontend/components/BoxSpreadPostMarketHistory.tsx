@@ -143,6 +143,7 @@ export default function BoxSpreadPostMarketHistory() {
     return (sortDirection === "desc" ? -1 : 1) * (Number(av) - Number(bv));
   }), [rows, sortKey, sortDirection]);
   const selectSort = async (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => {
+    const sortRequestId = ++sortingRequestSequence.current;
     const nextDirection = sortKey === key ? (sortDirection === "desc" ? "asc" : "desc") : "desc";
     setSortKey(key);
     setSortDirection(nextDirection);
@@ -161,20 +162,23 @@ export default function BoxSpreadPostMarketHistory() {
         if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
         const body = (await response.json()) as SnapshotResponse;
         if (body?.strategy !== "box-spread" || !Array.isArray(body.data)) throw new Error("Unexpected snapshot history response");
+        if (sortRequestId !== sortingRequestSequence.current) return;
         allRows.push(...body.data);
         nextOffset += body.data.length;
         more = body.has_more === true && body.data.length > 0;
       }
+      if (sortRequestId !== sortingRequestSequence.current) return;
       setRows(mergeSnapshots([], allRows));
       setOffset(nextOffset);
       setHasMore(false);
       setTotal(allRows.length);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load complete history for sorting");
-    } finally { setSortingAll(false); }
+    } finally { if (sortRequestId === sortingRequestSequence.current) setSortingAll(false); }
   };
   const sortMark = (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
   const requestSequence = useRef(0);
+  const sortingRequestSequence = useRef(0);
   const appendInFlight = useRef(false);
 
   const load = useCallback(async (append = false, pageOffset = 0) => {
@@ -226,6 +230,8 @@ export default function BoxSpreadPostMarketHistory() {
   }, [days, expiryType, selectedIndex]);
 
   useEffect(() => {
+    sortingRequestSequence.current += 1;
+    setSortingAll(false);
     // Do not display rows from the previous expiry/window under the new filter
     // while its request is in flight or after that request fails.
     appendInFlight.current = false;
@@ -240,7 +246,10 @@ export default function BoxSpreadPostMarketHistory() {
 
   useEffect(() => {
     if (pagePushData?.history_revision == null) return;
-    // Refresh this component’s active filters when a durable save is announced.
+    // Cancel a long all-history sort so an older completed page set cannot
+    // overwrite the refreshed slice following the durable-save notification.
+    sortingRequestSequence.current += 1;
+    setSortingAll(false);
     void load(false);
   }, [pagePushData?.history_revision, load]);
 
