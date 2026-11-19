@@ -253,10 +253,7 @@ export default function BoxSpreadPostMarketHistory() {
     void load(false);
   }, [pagePushData?.history_revision, load]);
 
-  const refresh = () => {
-    setOffset(0);
-    void load(false);
-  };
+  const refresh = () => {    sortingRequestSequence.current += 1;    setSortingAll(false);    setOffset(0);    void load(false);  };
 
   return (
     <Card className="scroll-mt-24 theme-border theme-surface theme-text box-history-contrast p-4 shadow-xl sm:p-5 ring-1 ring-slate-400/70 dark:ring-slate-500/70" id="box-history">
