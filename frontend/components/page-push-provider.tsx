@@ -80,7 +80,6 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let watchdogTimer: ReturnType<typeof setInterval> | undefined;
     let lastTransportAt = 0;
-    let lastPageUpdateAt = 0;
     let retryMs = 1000;
 
     const connect = () => {
@@ -129,7 +128,6 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           if (hasSnapshotRef.current && sequence < sequenceRef.current) return;
           sequenceRef.current = sequence;
           hasSnapshotRef.current = true;
-          lastPageUpdateAt = Date.now();
           setLastMessageAt(lastPageUpdateAt);
           resyncPendingRef.current = false;
           setStatus("LIVE");
@@ -156,7 +154,6 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           return;
         }
         sequenceRef.current = sequence;
-        lastPageUpdateAt = Date.now();
         setLastMessageAt(lastPageUpdateAt);
         if (eventType === "PATCH" && message.data && typeof message.data === "object") {
           setData((previous) => {
@@ -201,12 +198,9 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         socketRef.current?.close();
         return;
       }
-      // Heartbeats can keep transport alive while page data itself has stalled.
-      if (hasSnapshotRef.current && lastPageUpdateAt && now - lastPageUpdateAt > 15000) {
-        setStatus("RECONNECTING");
-        if (now - lastPageUpdateAt > 30000) socketRef.current?.close();
-        else resync();
-      }
+      // Heartbeats establish transport liveness, but page data may legitimately be quiet
+      // (e.g. market closed or a scanner has no new observations). Market/feed freshness
+      // is reported by the page payload; do not force resync/reconnect on silence.
     }, 10000);
     sequenceRef.current = 0;
     hasSnapshotRef.current = false;
