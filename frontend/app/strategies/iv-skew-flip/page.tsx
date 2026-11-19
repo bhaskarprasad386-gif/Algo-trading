@@ -486,9 +486,12 @@ export default function IVSkewFlipPage() {
       }catch{/* keep the last successful durable history response */}
     };
     void poll();
+    // Durable history loads once per expiry selection. REST polling is recovery-only
+    // when the page WebSocket is unavailable.
+    if(pagePushStatus==="LIVE")return()=>{active=false;};
     const timer=window.setInterval(()=>{if(active)void poll();},10000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[base,requestedExpiry]);
+  },[base,requestedExpiry,pagePushStatus]);
   const activeWeeklyExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
