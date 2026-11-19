@@ -131,7 +131,9 @@ function ScannerContent() {
       }
     };
     void loadMarketSession();
-    // Market session is small metadata not present in scanner page-push frames;\n    // keep its lightweight REST refresh running even while scanner rows are pushed.\n
+    // Market session is small metadata not present in scanner page-push frames;
+    // keep its lightweight REST refresh running even while scanner rows are pushed.
+
     const sessionTimer = window.setInterval(loadMarketSession, 15000);
     return () => { cancelled = true; window.clearInterval(sessionTimer); };
   }, [pagePushStatus]);
