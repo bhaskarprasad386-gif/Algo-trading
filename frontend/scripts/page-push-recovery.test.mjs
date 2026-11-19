@@ -73,3 +73,18 @@ test("page snapshots cannot rewind an established WebSocket sequence", () => {
   assert.equal(shouldAcceptPageSnapshot({hasSnapshot:true,currentSequence:90,incomingSequence:89}),false);
   assert.equal(shouldAcceptPageSnapshot({hasSnapshot:true,currentSequence:90,incomingSequence:Number.NaN}),false);
 });
+
+test("live push invalidates pending runtime-health and diagnostics recovery", () => {
+  const requestStartedAtSequence = 12;
+  // An authoritative push advances the shared request sequence to 13.
+  const latestSequenceAfterPush = 13;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:requestStartedAtSequence,
+    latestSequence:latestSequenceAfterPush, responseValid:true
+  }),false);
+  // A replacement recovery request after the push may still apply.
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:latestSequenceAfterPush,
+    latestSequence:latestSequenceAfterPush, responseValid:true
+  }),true);
+});
