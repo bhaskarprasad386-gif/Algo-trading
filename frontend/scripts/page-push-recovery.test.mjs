@@ -113,3 +113,12 @@ test("universe mutation sequencing ignores older response", () => {
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:first,latestSequence:sequence,responseValid:true}),false);
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:second,latestSequence:sequence,responseValid:true}),true);
 });
+
+
+test("local trace add or delete invalidates an in-flight initial restore", () => {
+  const bootstrapSequence = 0;
+  // A local add/delete increments the shared trace recovery sequence.
+  const latestSequence = 1;
+  assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:bootstrapSequence,latestSequence,responseValid:true}),false);
+  assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:latestSequence,latestSequence,responseValid:true}),true);
+});
