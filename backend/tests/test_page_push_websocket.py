@@ -242,6 +242,13 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
             # when a concurrent cursor/reset signal races this isolated round-trip.
             # We still require the initial snapshot plus explicit resync snapshots.
             assert len(provider_calls) >= expected_snapshot_calls + 1
+
+            # Explicitly release this channel before the TestClient portal exits.
+            # This exercises the supported unsubscribe lifecycle and avoids leaving
+            # server-side queue state for abrupt client teardown to clean up.
+            websocket.send_json({"action": "unsubscribe", "page": page})
+            unsubscribed = websocket.receive_json()
+            assert unsubscribed == {"type": "unsubscribed", "page": page}
     finally:
         push.configure_snapshot_provider(page, None)
 
