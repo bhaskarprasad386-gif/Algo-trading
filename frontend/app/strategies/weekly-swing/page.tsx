@@ -73,6 +73,7 @@ export default function WeeklySwingScannerPage() {
     statusPushSequenceRef.current += 1;
     const body = pagePushData as unknown as UniverseStatus;
     setUniverseStatus(body);
+    setLoading(false);
     if (body.status === "completed") {
       setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
       setLoading(false);
