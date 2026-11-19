@@ -385,3 +385,11 @@ test("synthetic trace reconnect snapshot clears absent live opportunities", () =
   assert.equal(syntheticTraceSnapshotMissing({ __event: "PATCH" }, "live"), true);
   assert.equal(syntheticTraceSnapshotMissing({ __event: "SNAPSHOT" }, "other"), false);
 });
+
+
+import { boxShadowSnapshotMissing } from "../lib/page-push-recovery.mjs";
+test("Box Spread shadow reconnect snapshot clears absent diagnostics", () => {
+  assert.equal(boxShadowSnapshotMissing({ __event: "SNAPSHOT", shadow: {} }), false);
+  assert.equal(boxShadowSnapshotMissing({ __event: "SNAPSHOT" }), true);
+  assert.equal(boxShadowSnapshotMissing({ __event: "SNAPSHOT", shadow: [] }), true);
+});
