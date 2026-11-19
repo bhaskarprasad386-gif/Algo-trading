@@ -413,6 +413,8 @@ export default function IVSkewFlipPage() {
   const [alertFetchError,setAlertFetchError]=useState("");
   const seenAlertIds=useRef<Set<number>>(new Set());
   const alertFetchSequenceRef=useRef(0);
+  const basketRegistryRequestSequenceRef=useRef(0);
+  const lastBasketRegistryPushRef=useRef<unknown>(null);
   const durableHistoryRequestSequenceRef=useRef(0);
   const durableHistoryRefreshTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
   const lastPushedHistoryCountRef=useRef<number|null>(null);
@@ -466,10 +468,11 @@ export default function IVSkewFlipPage() {
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
+      const requestSequence=++basketRegistryRequestSequenceRef.current;
       try{
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/baskets`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&response.ok)setBasketRegistry(body as BasketRegistry);
+        if(active&&requestSequence===basketRegistryRequestSequenceRef.current&&response.ok)setBasketRegistry(body as BasketRegistry);
       }catch{/* keep last known basket registry state */}
     };
     void poll();
@@ -599,9 +602,17 @@ export default function IVSkewFlipPage() {
         setChartHistory(null);
         setEarlyAlertLive(null);
       }
-      if(removedKeys.includes("basket_registry"))setBasketRegistry(null);
+      if(removedKeys.includes("basket_registry")){
+        basketRegistryRequestSequenceRef.current+=1;
+        lastBasketRegistryPushRef.current=null;
+        setBasketRegistry(null);
+      }
     }
-    if(pagePushData.basket_registry&&typeof pagePushData.basket_registry==="object")setBasketRegistry(pagePushData.basket_registry as BasketRegistry);
+    if(pagePushData.basket_registry&&typeof pagePushData.basket_registry==="object"&&lastBasketRegistryPushRef.current!==pagePushData.basket_registry){
+      lastBasketRegistryPushRef.current=pagePushData.basket_registry;
+      basketRegistryRequestSequenceRef.current+=1;
+      setBasketRegistry(pagePushData.basket_registry as BasketRegistry);
+    }
     if(pagePushData.runtime&&typeof pagePushData.runtime==="object"){
       alertFetchSequenceRef.current+=1;
       const pushedRuntime=pagePushData.runtime as Runtime;
