@@ -298,7 +298,19 @@ export default function BoxSpreadPaperTrading() {
     if (!data) return;
     // Invalidate any in-flight REST fallback before applying pushed market data.
     opportunityRequestSequenceRef.current += 1;
-    const isSnapshot = data.__event === "SNAPSHOT";
+    const event = String(data.__event ?? "").toUpperCase();
+    const removedKeys = Array.isArray(data.remove_keys)
+      ? data.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(data.keys)
+        ? data.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (event === "REMOVE" && removedKeys.includes("opportunities")) {
+      setOpportunities([]);
+      setOpportunityStatus("EMPTY");
+      setOpportunityError(null);
+      setLastOpportunityCheck(Date.now());
+    }
+    const isSnapshot = event === "SNAPSHOT";
     // The Box page publisher emits PATCH frames containing a complete page
     // snapshot (including the full opportunities array), not per-row deltas.
     // Accept that authoritative list on every push; retain delta merging only
