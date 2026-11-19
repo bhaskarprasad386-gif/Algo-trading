@@ -413,6 +413,8 @@ export default function IVSkewFlipPage() {
   const [alertFetchError,setAlertFetchError]=useState("");
   const seenAlertIds=useRef<Set<number>>(new Set());
   const alertFetchSequenceRef=useRef(0);
+  const durableHistoryRequestSequenceRef=useRef(0);
+  const lastPushedHistoryCountRef=useRef<number|null>(null);
   const selectedNifty="NIFTY_WEEKLY" as const;
   const [busy,setBusy]=useState(false);
   const [snapshotBusy,setSnapshotBusy]=useState(false);
@@ -478,10 +480,11 @@ export default function IVSkewFlipPage() {
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
+      const requestSequence=++durableHistoryRequestSequenceRef.current;
       try{
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY${requestedExpiry?`&expiry=${encodeURIComponent(requestedExpiry)}`:""}`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
+        if(active&&requestSequence===durableHistoryRequestSequenceRef.current&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
       }catch{/* keep the last successful durable history response */}
     };
     void poll();
@@ -491,6 +494,24 @@ export default function IVSkewFlipPage() {
     const timer=window.setInterval(()=>{if(active)void poll();},10000);
     return()=>{active=false;window.clearInterval(timer);};
   },[base,requestedExpiry,pagePushStatus]);
+  // Refresh durable history only when the live runtime reports new persisted observations.
+  // This is event-triggered REST, not periodic polling while the page WebSocket is LIVE.
+  useEffect(()=>{
+    const pushedRuntime=pagePushData?.runtime&&typeof pagePushData.runtime==="object"?pagePushData.runtime as Runtime:null;
+    const sampler=pushedRuntime?.option_chains?.NIFTY_WEEKLY?.sampler as Row|undefined;
+    const count=Number(sampler?.history_persisted_count);
+    if(!Number.isFinite(count)||count<0||lastPushedHistoryCountRef.current===count)return;
+    lastPushedHistoryCountRef.current=count;
+    const requestSequence=++durableHistoryRequestSequenceRef.current;
+    let active=true;
+    const expiry=requestedExpiry;
+    const url=base+"/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY"+(expiry?"&expiry="+encodeURIComponent(expiry):"");
+    void fetch(url,{cache:"no-store"}).then(async response=>{
+      const body=await response.json();
+      if(active&&requestSequence===durableHistoryRequestSequenceRef.current&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
+    }).catch(()=>{/* keep the last successful durable history response */});
+    return()=>{active=false;};
+  },[base,pagePushData,requestedExpiry]);
   const activeWeeklyExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
