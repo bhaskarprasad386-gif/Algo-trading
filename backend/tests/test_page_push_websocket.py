@@ -130,7 +130,6 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
     monkeypatch.setattr(push, "_subscribers", set())
     monkeypatch.setattr(push, "_dispatch_task", None)
     monkeypatch.setattr(push, "_dispatch_loop", None)
-    monkeypatch.setattr(push, "_dispatch_ready", None)
 
     app = FastAPI()
     app.include_router(push.router)
