@@ -8,6 +8,13 @@ export function isCurrentRecoveryResponse({ active, requestSequence, latestSeque
     requestSequence === latestSequence && responseValid === true;
 }
 
+/** Reject delayed snapshots that would rewind an established page sequence. */
+export function shouldAcceptPageSnapshot({ hasSnapshot, currentSequence, incomingSequence }) {
+  return Number.isSafeInteger(incomingSequence) &&
+    (hasSnapshot !== true || incomingSequence >= currentSequence);
+}
+
+
 /** Merge durable alert rows by ID, with incoming rows replacing older versions. */
 export function mergeUniqueAlerts(current, incoming, compare, limit = 100) {
   const merged = new Map();
