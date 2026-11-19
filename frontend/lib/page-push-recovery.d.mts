@@ -39,3 +39,5 @@ export function workspaceSnapshotMissing(snapshot: unknown, collection: string):
 export function ivSkewSnapshotMissing(snapshot: unknown, key: string): boolean;
 
 export function syntheticTraceSnapshotMissing(snapshot: unknown, collection: string): boolean;
+
+export function boxShadowSnapshotMissing(snapshot: unknown): boolean;
