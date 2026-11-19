@@ -18,6 +18,15 @@ test("alert merge replaces duplicate IDs, sorts and bounds rows", () => {
   assert.equal(rows[0].observed_at_ns,30);
 });
 
+test("live alert push preserves loaded older pages after pagination", () => {
+  const current = Array.from({length:65},(_,index)=>({id:index+1,observed_at_ns:1000-index,state:"EARLY_ENTRY"}));
+  const pushed = [{id:66,observed_at_ns:2000,state:"EARLY_ENTRY"}];
+  const rows = mergeUniqueAlerts(current,pushed,(a,b)=>b.observed_at_ns-a.observed_at_ns,Number.POSITIVE_INFINITY);
+  assert.equal(rows.length,66);
+  assert.equal(rows[0].id,66);
+  assert.equal(rows.at(-1).id,65);
+});
+
 test("fresh early-entry detection respects seen IDs and state", () => {
   const seen=new Set([5]);
   const rows=[{id:5,state:"EARLY_ENTRY"},{id:6,state:"WATCH"},{id:7,state:"EARLY_ENTRY"}];
