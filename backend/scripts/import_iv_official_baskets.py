@@ -28,6 +28,13 @@ from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
 from app.scanner.page_push_websocket import publish_page_update
 
 
+def _publish_basket_registry_push(registry: dict) -> None:
+    """Fan out a committed registry update; page snapshots remain recovery source."""
+    if not isinstance(registry, dict):
+        raise ValueError("basket registry snapshot must be an object")
+    _publish_basket_registry_push(registry)
+
+
 NIFTY_ROSTER_URL = "https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv"
 BANK_ROSTER_URL = "https://www.niftyindices.com/IndexConstituent/ind_niftybanklist.csv"
 ARCHIVE_BASE = "https://www.niftyindices.com/Indices_-_Market_Capitalisation_and_Weightage"
