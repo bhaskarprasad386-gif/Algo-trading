@@ -270,7 +270,10 @@ def _run_nifty200_scan():
                 finally:
                     with _SCAN_LOCK:
                         _SCAN_STATE["scanned"] += 1
-                    _notify_page_update()
+            # Publish once per completed batch, not once per symbol. This keeps
+            # the durable public journal bounded while the browser still sees
+            # scan progress promptly.
+            _notify_page_update()
             if batch_start + SCAN_BATCH_SIZE < len(symbols):
                 remaining = SCAN_BATCH_INTERVAL_SECONDS - (time.monotonic() - batch_started)
                 if remaining > 0:
