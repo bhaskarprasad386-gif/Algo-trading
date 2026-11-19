@@ -115,7 +115,8 @@ function ScannerContent() {
       if (requestSequence !== pairHistoryRequestSequenceRef.current) return;
       setPairHistory(Array.isArray(body?.data) ? body.data : []);
     } catch {
-      if (requestSequence === pairHistoryRequestSequenceRef.current) setPairHistory([]);
+      // Preserve the last confirmed durable history during a transient REST
+      // failure; an empty error response must not erase previously loaded rows.
     }
   };
 
