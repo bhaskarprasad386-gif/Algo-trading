@@ -536,7 +536,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const pageChannel = slug === "box-spread" ? "box-spread"
     : slug === "calendar-spread" ? "calendar-spread"
     : slug === "synthetic-arbitrage" ? "synthetic-arbitrage" : "none";
-  const { data: pagePushData, status: pagePushStatus } = usePagePush(pageChannel);
+  const { data: pagePushData, status: pagePushStatus, resync: pagePushResync } = usePagePush(pageChannel);
   const endpoint =
     slug === "calendar-spread" ? "/api/v1/scanner/calendar-spread/live?limit=50" :
     slug === "synthetic-arbitrage" ? "/api/v1/scanner/synthetic-cash-carry/live?limit=50" :
@@ -1352,8 +1352,18 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const refresh = async () => {
     setRefreshing(true);
-    await Promise.all([load(), loadHistory(), loadPairs()]);
-    setRefreshing(false);
+    try {
+      if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) {
+        // Live scanner rows and pair data are WebSocket-authoritative; manual refresh
+        // requests an authoritative snapshot instead of creating duplicate REST traffic.
+        pagePushResync();
+        await loadHistory();
+      } else {
+        await Promise.all([load(), loadHistory(), loadPairs()]);
+      }
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const copyTableRows = async (kind: "history" | "pairs") => {
