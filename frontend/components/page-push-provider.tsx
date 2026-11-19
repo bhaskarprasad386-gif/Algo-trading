@@ -76,7 +76,10 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         setLastMessageAt(Date.now());
         const sequence = Number(message.sequence);
         const eventType = String(message.event || "");
-        if (!Number.isSafeInteger(sequence) || sequence <= 0) return;
+        // A newly created page channel legitimately starts at sequence 0.
+        // Accept that authoritative initial snapshot; later PATCH/REMOVE frames
+        // must still carry a positive sequence.
+        if (!Number.isSafeInteger(sequence) || sequence < 0) return;
         if (eventType === "SNAPSHOT") {
           sequenceRef.current = sequence;
           resyncPendingRef.current = false;
