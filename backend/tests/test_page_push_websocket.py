@@ -86,7 +86,8 @@ def test_snapshot_provider_is_read_only_and_page_scoped():
 
 
 def test_origin_policy_rejects_untrusted_hosts():
-    assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.vercel.app"}))
+    assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.vercel.app"}))
+    assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.bhaskarprasad386.workers.dev"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "http://localhost:3000"}))
     assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://evil.example"}))
     assert push._origin_allowed(SimpleNamespace(headers={}))
