@@ -35,3 +35,5 @@ export function sendPagePushFrame(socket: WebSocket, frame: Record<string, unkno
 export function scannerSnapshotState(snapshot: unknown): { rows: Record<string, unknown>[]; pairs: Record<string, unknown>[]; stats: Record<string, unknown>; scanAt: string | null };
 
 export function workspaceSnapshotMissing(snapshot: unknown, collection: string): boolean;
+
+export function ivSkewSnapshotMissing(snapshot: unknown, key: string): boolean;
