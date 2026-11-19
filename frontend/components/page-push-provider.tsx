@@ -128,7 +128,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           if (hasSnapshotRef.current && sequence < sequenceRef.current) return;
           sequenceRef.current = sequence;
           hasSnapshotRef.current = true;
-          setLastMessageAt(lastPageUpdateAt);
+          setLastMessageAt(Date.now());
           resyncPendingRef.current = false;
           setStatus("LIVE");
           setData({ ...(message.data && typeof message.data === "object" ? message.data as Record<string, unknown> : {}), __event: "SNAPSHOT" });
@@ -154,7 +154,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           return;
         }
         sequenceRef.current = sequence;
-        setLastMessageAt(lastPageUpdateAt);
+        setLastMessageAt(Date.now());
         if (eventType === "PATCH" && message.data && typeof message.data === "object") {
           setData((previous) => {
             const payload = message.data as Record<string, unknown>;
