@@ -249,6 +249,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     <PagePushContext.Provider value={{ page, status, data, lastMessageAt, resync }}>
       {children}
     </PagePushContext.Provider>
+  );
 }
 
 export function usePagePush(expectedPage: string): { status: PagePushStatus; data: Record<string, unknown> | null; lastMessageAt: number | null; resync: () => void } {
