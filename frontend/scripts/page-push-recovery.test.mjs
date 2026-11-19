@@ -104,3 +104,18 @@ test("workspace cleanup invalidates row REST recovery when scanner page changes"
     active:true, requestSequence:nextRequest, latestSequence:sequence, responseValid:true
   }),true);
 });
+
+
+test("universe mutation response cannot overwrite newer universe push", () => {
+  let sequence = 30;
+  const pendingMutation = sequence;
+  // An authoritative universe push supersedes the in-flight save response.
+  sequence += 1;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:pendingMutation, latestSequence:sequence, responseValid:true
+  }),false);
+  const nextMutation = ++sequence;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:nextMutation, latestSequence:sequence, responseValid:true
+  }),true);
+});
