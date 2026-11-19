@@ -21,6 +21,14 @@ def test_page_sequence_gap_is_detected_from_zero_baseline():
     assert push._sequence_gap(8, 10)
 
 
+def test_duplicate_and_stale_frames_do_not_trigger_resync():
+    assert not push._requires_resync(1, 1)
+    assert not push._requires_resync(3, 2)
+    assert not push._requires_resync(0, 1)
+    assert push._requires_resync(0, 3)
+    assert push._requires_resync(3, 3, snapshot_required=True)
+
+
 
 def test_keyed_collection_change_publisher_emits_add_update_delete_contract(monkeypatch):
     published = []
