@@ -610,6 +610,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const calendarHistoryPushRevision = useRef<string | null>(null);
   const indexSelectionRequestSequence = useRef(0);
   const runtimeHealthRequestSequence = useRef(0);
+  const universeMutationRequestSequence = useRef(0);
   const scannerDiagnosticsRequestSequence = useRef(0);
   const refreshPushBaselineRef = useRef<Record<string, unknown> | null>(null);
   const refreshPushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -682,6 +683,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setControl(selection);
       return;
     }
+    const requestSequence = ++universeMutationRequestSequence.current;
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/universe", {
@@ -691,6 +693,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Universe update failed");
+      if (requestSequence !== universeMutationRequestSequence.current) return;
       setControl(String(body?.selection ?? selection));
       if (Array.isArray(body?.top15_stock_symbols)) {
         setTop15StockSymbols(body.top15_stock_symbols.filter((symbol: unknown): symbol is string => typeof symbol === "string"));
@@ -698,7 +701,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       if (body?.availability && typeof body.availability === "object") setUniverseAvailability(body.availability);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Universe update failed");
+      if (requestSequence === universeMutationRequestSequence.current) setError(e instanceof Error ? e.message : "Universe update failed");
     }
   };
 
@@ -1094,8 +1097,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           scannerDiagnosticsRequestSequence.current += 1;
           setScannerDiagnostics(pagePushData.diagnostics as Record<string, unknown>);
         }
-        if (removed("universe")) setUniverseAvailability(null);
-        else if (pagePushData.universe && typeof pagePushData.universe === "object") setUniverseAvailability(pagePushData.universe as Record<string, any>);
+        if (removed("universe")) {
+          universeMutationRequestSequence.current += 1;
+          setUniverseAvailability(null);
+        } else if (pagePushData.universe && typeof pagePushData.universe === "object") {
+          universeMutationRequestSequence.current += 1;
+          setUniverseAvailability(pagePushData.universe as Record<string, any>);
+        }
       }
       if (removed("runtime_health")) {
         runtimeHealthRequestSequence.current += 1;
