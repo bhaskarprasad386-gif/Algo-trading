@@ -373,3 +373,8 @@ test("IV Skew Flip reconnect snapshot resets missing runtime and basket registry
   assert.equal(ivSkewSnapshotMissing({ runtime: {}, basket_registry: {} }, "basket_registry"), false);
   assert.equal(ivSkewSnapshotMissing({ runtime: [] }, "runtime"), true);
 });
+
+test("page-push recovery helpers used by the workspace are exported", () => {
+  assert.equal(typeof applyPagePushRemovePayload, "function");
+  assert.equal(typeof workspaceSnapshotMissing, "function");
+});
