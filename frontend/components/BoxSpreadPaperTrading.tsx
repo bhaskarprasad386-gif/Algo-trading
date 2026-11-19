@@ -185,7 +185,9 @@ export default function BoxSpreadPaperTrading() {
         .then(body => { if (recoveryRequestSequence === recoveryRequestSequenceRef.current) setRecoveryTrades(Array.isArray(body.data) ? body.data : []); })
         .catch(() => { /* Preserve the last durable recovery snapshot on transient API errors. */ });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to load paper ledger");
+      if (requestSequence === privateLedgerRequestSequenceRef.current) {
+        setError(e instanceof Error ? e.message : "Unable to load paper ledger");
+      }
     }
   }, [account, request, openPage, closedPage, positionSearch, positionDirection]);
 
