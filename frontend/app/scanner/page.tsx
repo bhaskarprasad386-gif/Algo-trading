@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Zap } from "lucide-react";
@@ -55,8 +55,14 @@ function ScannerContent() {
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [lastLiveScanAt, setLastLiveScanAt] = useState<string | null>(null);
   const { data: pagePushData, status: pagePushStatus } = usePagePush("cash-future");
+  const pairHistoryRevisionRef = useRef<string | null>(null);
+  const pairHistoryRequestSequenceRef = useRef(0);
+  // Prevent delayed REST recovery from overwriting authoritative page pushes.
+  const liveRequestSequenceRef = useRef(0);
+  const pairLiveRequestSequenceRef = useRef(0);
 
   const load = async () => {
+    const requestSequence = ++liveRequestSequenceRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -64,14 +70,16 @@ function ScannerContent() {
       const response = await fetch(`${base}/api/v1/scanner/cash-future/live/fast?limit=500`, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail || `Scanner HTTP ${response.status}`);
+      if (requestSequence !== liveRequestSequenceRef.current) return;
       const data = Array.isArray(body?.data) ? body.data : [];
       setRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
       if (typeof body?.scan_at === "string") setLastLiveScanAt(body.scan_at);
     } catch (e) {
+      if (requestSequence !== liveRequestSequenceRef.current) return;
       setRows([]);
       setError(e instanceof Error ? e.message : "Backend unavailable");
     } finally {
-      setLoading(false);
+      if (requestSequence === liveRequestSequenceRef.current) setLoading(false);
     }
   };
 
@@ -80,10 +88,12 @@ function ScannerContent() {
   }, [requestedMarket]);
 
   const loadPairLive = async () => {
+    const requestSequence = ++pairLiveRequestSequenceRef.current;
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(`${base}/api/v1/scanner/cash-future/live/pairs?max_age_seconds=120&limit=500`, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
+      if (requestSequence !== pairLiveRequestSequenceRef.current) return;
       setPairRows(Array.isArray(body?.data) ? body.data : []);
       const stats = body?.stats && typeof body.stats === "object" ? body.stats : {};
       setPairBackendStats(stats);
@@ -94,13 +104,15 @@ function ScannerContent() {
   };
 
   const loadPairHistory = async () => {
+    const requestSequence = ++pairHistoryRequestSequenceRef.current;
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(`${base}/api/v1/scanner/cash-future/live/history?days=1&limit=100`, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
+      if (requestSequence !== pairHistoryRequestSequenceRef.current) return;
       setPairHistory(Array.isArray(body?.data) ? body.data : []);
     } catch {
-      setPairHistory([]);
+      if (requestSequence === pairHistoryRequestSequenceRef.current) setPairHistory([]);
     }
   };
 
@@ -125,6 +137,11 @@ function ScannerContent() {
   }, [pagePushStatus]);
 
   useEffect(() => {
+    // A LIVE transition invalidates any in-flight REST recovery request.
+    if (pagePushStatus === "LIVE") {
+      liveRequestSequenceRef.current += 1;
+      pairLiveRequestSequenceRef.current += 1;
+    }
     if (marketSession === "OPEN") {
       if (pagePushStatus !== "LIVE") { void load(); void loadPairLive(); }
     } else if (pagePushStatus !== "LIVE") {
@@ -141,6 +158,21 @@ function ScannerContent() {
 
   useEffect(() => {
     if (!pagePushData) return;
+    // Any page push supersedes outstanding REST fallback payloads, including REMOVE.
+    liveRequestSequenceRef.current += 1;
+    pairLiveRequestSequenceRef.current += 1;
+    const event = String(pagePushData.__event ?? "").toUpperCase();
+    const removedKeys = Array.isArray(pagePushData.remove_keys)
+      ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(pagePushData.keys)
+        ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (event === "REMOVE") {
+      if (removedKeys.includes("rows")) { setRows([]); setLoading(false); setError(null); }
+      if (removedKeys.includes("pairs")) setPairRows([]);
+      if (removedKeys.includes("stats")) setPairBackendStats({});
+      if (removedKeys.includes("scan_at")) setLastLiveScanAt(null);
+    }
     if (Array.isArray(pagePushData.rows)) {
       setRows(pagePushData.rows.filter((item: unknown): item is Row => !!item && typeof item === "object"));
       setLoading(false); setError(null);
@@ -149,6 +181,25 @@ function ScannerContent() {
     if (pagePushData.stats && typeof pagePushData.stats === "object") setPairBackendStats(pagePushData.stats as Row);
     if (typeof pagePushData.scan_at === "string") setLastLiveScanAt(pagePushData.scan_at);
   }, [pagePushData]);
+
+
+  useEffect(() => {
+    const stats = pagePushData?.stats;
+    if (!stats || typeof stats !== "object") return;
+    const revision = (stats as Record<string, unknown>).pair_events_persisted;
+    if (revision === undefined || revision === null) return;
+    const nextRevision = String(revision);
+    if (pairHistoryRevisionRef.current === null) {
+      pairHistoryRevisionRef.current = nextRevision;
+      return;
+    }
+    if (pairHistoryRevisionRef.current === nextRevision) return;
+    pairHistoryRevisionRef.current = nextRevision;
+    // The durable history API owns pagination and filtering; the push counter
+    // invalidates its cached slice when new observations are appended.
+    void loadPairHistory();
+  }, [pagePushData]);
+
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toUpperCase();

@@ -24,6 +24,7 @@ def test_calendar_rejects_stale_quote_before_alert_or_signal(monkeypatch):
     scanner = LiveCalendarSpreadScanner(minimum_gap_points=0)
     assert scanner.update(record) is None
     assert scanner.snapshot() == ()
+    assert scanner.history_revision is None
 
 
 def test_synthetic_rejects_stale_quote_at_ingress(monkeypatch):

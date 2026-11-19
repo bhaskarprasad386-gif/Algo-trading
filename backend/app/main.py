@@ -69,8 +69,8 @@ from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot, live as calendar_spread_live_page, pairs as calendar_spread_pairs_page, pair_diagnostics as calendar_spread_diagnostics_page, feed_diagnostics as calendar_spread_feed_page
 from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs, live as synthetic_live_page, pairs as synthetic_pairs_page, diagnostics as synthetic_diagnostics_page
-from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router
-from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_shared_snapshot as configure_live_box_spread_shared_snapshot, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, index_spot_snapshot as get_live_box_index_spot_snapshot, set_expiry_types as set_live_box_expiry_types
+from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router, list_trace_opportunities as get_synthetic_trace_opportunities
+from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_shared_snapshot as configure_live_box_spread_shared_snapshot, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, index_spot_snapshot as get_live_box_index_spot_snapshot, set_expiry_types as set_live_box_expiry_types, butterfly_condor_shadow as get_box_shadow_snapshot, edge_timing_analysis as get_box_edge_timing_analysis
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
 from app.scanner.iv_skew_flip.alerts import AlertCooldownStore
 from app.scanner.iv_skew_flip.angelone_option_snapshot import capture_angelone_option_snapshot
@@ -335,12 +335,95 @@ def _live_box_spread_spot_snapshot(symbol: str):
 
 configure_live_box_spread_spot(_live_box_spread_spot_snapshot)
 configure_live_box_spread_websocket_spot(_live_box_spread_spot_snapshot)
+
+
+_box_spot_page_push_lock = threading.Lock()
+_last_box_spot_page_push_at: dict[str, float] = {}
+BOX_SPOT_PAGE_PUSH_MIN_INTERVAL_SECONDS = 0.10
+
+
+def _publish_box_spot_page_update(symbol: str, price: float, timestamp_ns: int | None) -> None:
+    """Push each underlying tick independently of the option scanner callback."""
+    normalized = str(symbol or "").strip().upper()
+    if not normalized:
+        return
+    now = time_module.monotonic()
+    with _box_spot_page_push_lock:
+        last = _last_box_spot_page_push_at.get(normalized, 0.0)
+        if now - last < BOX_SPOT_PAGE_PUSH_MIN_INTERVAL_SECONDS:
+            return
+        _last_box_spot_page_push_at[normalized] = now
+    try:
+        snapshot = _live_box_spread_spot_snapshot(normalized) or {}
+        source_timestamp = snapshot.get("spot_timestamp_ns") or timestamp_ns
+        age_seconds = snapshot.get("spot_age_seconds")
+        try:
+            age = float(age_seconds) if age_seconds is not None else None
+        except (TypeError, ValueError, OverflowError):
+            age = None
+        payload = {
+            "symbol": normalized,
+            "spot_price": snapshot.get("spot_price", price),
+            "spot_timestamp_ns": source_timestamp,
+            "spot_age_seconds": age,
+            "status": "LIVE" if age is not None and 0 <= age <= 5.0 else "STALE" if age is not None else "NO_DATA",
+        }
+        publish_page_update("box-spread", "PATCH", {"index_spots": [payload]})
+    except Exception:
+        app_logger.debug("Box Spread spot page push skipped for %s", normalized, exc_info=True)
 configure_live_box_spread_websocket_depth(
     lambda opportunity: (
         live_box_spread_runner.depth_shadow.depth_for_opportunity(opportunity)
         if live_box_spread_runner is not None else {}
     )
 )
+
+
+_box_shadow_page_cache = None
+_box_shadow_page_cache_at = 0.0
+_box_edge_timing_page_cache = None
+_box_edge_timing_page_cache_at = 0.0
+
+
+def _box_edge_timing_page_snapshot():
+    """Bound full-history aggregation cost while sharing it over the page socket."""
+    global _box_edge_timing_page_cache, _box_edge_timing_page_cache_at
+    now = time_module.monotonic()
+    if _box_edge_timing_page_cache is not None and now - _box_edge_timing_page_cache_at < 30.0:
+        return _box_edge_timing_page_cache
+    try:
+        payload = get_box_edge_timing_analysis()
+        if isinstance(payload, dict) and payload.get("strategy") == "box-spread":
+            _box_edge_timing_page_cache = payload
+            _box_edge_timing_page_cache_at = now
+    except Exception as exc:
+        app_logger.warning("Box Spread edge-timing page snapshot unavailable: {}", exc)
+    return _box_edge_timing_page_cache
+
+
+
+
+def _box_shadow_page_snapshot():
+    """Bound shadow evaluation cost while keeping page pushes near-live."""
+    global _box_shadow_page_cache, _box_shadow_page_cache_at
+    now = time_module.monotonic()
+    if _box_shadow_page_cache is not None and now - _box_shadow_page_cache_at < 1.0:
+        return _box_shadow_page_cache
+    try:
+        payload = get_box_shadow_snapshot(5.0, 2.0)
+    except Exception:
+        payload = {
+            "strategy": "box-spread-shadow", "runtime_state": "SNAPSHOT_UNAVAILABLE",
+            "execution_mode": "SHADOW_ONLY", "order_routing_enabled": False,
+            "result_count": 0, "results": [], "live_coverage": [],
+        }
+    _box_shadow_page_cache = payload if isinstance(payload, dict) else {
+        "strategy": "box-spread-shadow", "runtime_state": "SNAPSHOT_UNAVAILABLE",
+        "execution_mode": "SHADOW_ONLY", "order_routing_enabled": False,
+        "result_count": 0, "results": [], "live_coverage": [],
+    }
+    _box_shadow_page_cache_at = now
+    return _box_shadow_page_cache
 
 
 def _box_page_push_snapshot():
@@ -375,6 +458,21 @@ def _box_page_push_snapshot():
         payload["index_selection_runtime"] = supervisor if isinstance(supervisor, dict) else {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}
     except Exception:
         payload["index_selection_runtime"] = {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}
+    try:
+        payload["index_selection"] = {
+            "symbols": list(_get_box_spread_index_selection()),
+            "weekly_only_symbols": list(_get_box_spread_weekly_only_symbols()),
+        }
+    except Exception:
+        payload["index_selection"] = {"symbols": [], "weekly_only_symbols": []}
+    # Shadow panel is part of the same page snapshot, with a one-second
+    # evaluation cache so 250 ms scanner bursts do not repeat the calculation.
+    payload["shadow"] = _box_shadow_page_snapshot()
+    # This is a durable-history aggregate, not a quote-by-quote calculation.
+    # Recompute at most every 30 seconds and distribute through the page channel.
+    edge_timing = _box_edge_timing_page_snapshot()
+    if edge_timing is not None:
+        payload["edge_timing_analysis"] = edge_timing
     return payload
 
 
@@ -394,12 +492,31 @@ def _cash_future_page_push_snapshot():
     }
 
 
+def _scanner_page_push_runtime_health(runner_name, runner):
+    """Read-only feed and runner health included in scanner reconnect/live frames."""
+    try:
+        common_feed = shared_common_manager().snapshot()
+        feed_health = _summarize_primary_exchange_feed(common_feed)
+        common_feed["age_seconds"] = feed_health["age_seconds"]
+        common_feed["status"] = feed_health["status"]
+        common_feed["exchange_freshness"] = feed_health["exchange_freshness"]
+        return {
+            "common_feed": common_feed,
+            "runners": {runner_name: None if runner is None else runner.snapshot()},
+        }
+    except Exception:
+        return {"common_feed": {"status": "UNAVAILABLE"}, "runners": {runner_name: None}}
+
+
 def _calendar_spread_page_push_snapshot():
+    runner = live_calendar_spread_runner
     return {
         "live": calendar_spread_live_page(limit=200),
         "pairs": calendar_spread_pairs_page(limit=500),
         "pair_diagnostics": calendar_spread_diagnostics_page(limit=500),
         "feed_diagnostics": calendar_spread_feed_page(),
+        "history_revision": None if live_calendar_spread_scanner is None else live_calendar_spread_scanner.history_revision,
+        "runtime_health": _scanner_page_push_runtime_health("calendar_spread", runner),
     }
 
 
@@ -411,12 +528,26 @@ def _synthetic_page_push_snapshot():
         "diagnostics": synthetic_diagnostics_page(),
         "universe": dict(_live_synthetic_universe_status),
         "runner": None if runner is None else runner.snapshot(),
+        "runtime_health": _scanner_page_push_runtime_health("synthetic", runner),
     }
 
 
 configure_page_push_snapshot("cash-future", _cash_future_page_push_snapshot)
 configure_page_push_snapshot("calendar-spread", _calendar_spread_page_push_snapshot)
-configure_page_push_snapshot("synthetic-arbitrage", _synthetic_page_push_snapshot)
+def _synthetic_page_push_recovery_snapshot():
+    # Durable trace rows are loaded only for subscribe/reconnect recovery, not
+    # on each market-data push.
+    payload = _synthetic_page_push_snapshot()
+    try:
+        payload["trace_opportunities"] = get_synthetic_trace_opportunities(500).get("data", [])
+    except Exception:
+        # Preserve browser-local traces if the database cannot supply the
+        # authoritative reconnect list; an empty list would look like deletion.
+        payload.pop("trace_opportunities", None)
+    return payload
+
+
+configure_page_push_snapshot("synthetic-arbitrage", _synthetic_page_push_recovery_snapshot)
 configure_paper_private_ws_snapshot(build_paper_private_snapshot)
 configure_paper_market_ws_snapshot(build_paper_market_snapshot)
 
@@ -1267,7 +1398,7 @@ def _publish_synthetic_page_update(*, force: bool = False) -> None:
         return
     _last_synthetic_page_push_at = now
     try:
-        publish_page_update("synthetic-arbitrage", "SNAPSHOT", _synthetic_page_push_snapshot())
+        publish_page_update("synthetic-arbitrage", "PATCH", _synthetic_page_push_snapshot())
     except Exception as exc:
         app_logger.warning("Synthetic page push skipped: {}", exc)
 
@@ -1364,6 +1495,7 @@ async def _live_box_spread_loop() -> None:
                 future_master=master,
                 auth=AngelOneAuth(),
                 on_results=lambda results: _update_live_box_spread_results(results),
+                    on_spot_price=_publish_box_spot_page_update,
             )
             live_box_spread_runner = runner
             worker, worker_errors = _start_box_spread_runner_worker(runner)
@@ -1376,6 +1508,7 @@ async def _live_box_spread_loop() -> None:
                     future_master=runner.master,
                     auth=AngelOneAuth(),
                     on_results=lambda results: _update_live_box_spread_results(results),
+                    on_spot_price=_publish_box_spot_page_update,
                     consumer_namespace=f"box-stage-{uuid.uuid4().hex[:12]}",
                     publish_enabled=False,
                     publication_gate=runner.publication_gate,
@@ -1641,7 +1774,8 @@ def _update_live_box_spread_results(results: tuple) -> None:
             pass
     _publish_credit_butterfly_condor_pages()
     if selected_results:
-        publish_live_box_spread_opportunities(selected_results)
+        # The page socket must publish the merged fresh rows, not just this callback's bucket.
+        publish_live_box_spread_opportunities(live_box_spread_latest_results)
 
 
 _last_calendar_spread_page_push_at = 0.0
@@ -1968,13 +2102,28 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
         # Expiry routing is updated by on_active only after the candidate
         # is fully ready and publisher ownership has transferred.
 
-    return {
+    result = {
         "status": "success",
         "symbols": list(saved),
         "weekly_only_symbols": list(weekly_only),
         "switch": switch,
         "message": "Selection saved. Only selected Box Spread indices will be subscribed after the safe session handoff.",
     }
+    # Saved selection is public scanner configuration, not account/ledger data.
+    # Broadcast only after persistence and any staged handoff were accepted.
+    try:
+        supervisor_snapshot = (
+            live_box_spread_supervisor.snapshot()
+            if live_box_spread_supervisor is not None
+            else {"active_symbols": [], "handoff": {"state": "not_running"}}
+        )
+        publish_page_update("box-spread", "PATCH", {
+            "index_selection": {"symbols": list(saved), "weekly_only_symbols": list(weekly_only)},
+            "index_selection_runtime": supervisor_snapshot,
+        })
+    except Exception as exc:
+        app_logger.warning("Unable to push saved Box Spread index selection: {}", exc)
+    return result
 
 
 @app.post("/api/v1/scanner/box-spread/index-selection")

@@ -171,7 +171,7 @@ def publish(results):
     # The shared page gateway owns its own browser-facing event loop. Publish
     # directly from this callback so the new UI does not depend on a legacy
     # /ws/live-opportunities client keeping that socket's loop registered.
-    publish_page_update("box-spread", "PATCH", {"opportunity_updates": rows})
+    publish_page_update("box-spread", "PATCH", {"opportunities": rows})
     loop = _loop
     if loop is None or not loop.is_running():
         return

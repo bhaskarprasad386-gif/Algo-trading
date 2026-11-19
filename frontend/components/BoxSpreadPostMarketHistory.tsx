@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { Archive, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
+import { usePagePush } from "@/components/page-push-provider";
 
 type Snapshot = {
   symbol: string;
@@ -106,6 +107,7 @@ const quoteTime = (value: number | string | null | undefined) => {
 };
 
 export default function BoxSpreadPostMarketHistory() {
+  const { data: pagePushData } = usePagePush("box-spread");
   const [days, setDays] = useState(1);
   const [expiryType, setExpiryType] = useState("ALL");
   const [selectedIndex, setSelectedIndex] = useState("ALL");
@@ -145,6 +147,7 @@ export default function BoxSpreadPostMarketHistory() {
     setSortKey(key);
     setSortDirection(nextDirection);
     if (!hasMore || sortingAll) return;
+    const sortRequestId = ++sortingRequestSequence.current;
     setSortingAll(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -159,20 +162,23 @@ export default function BoxSpreadPostMarketHistory() {
         if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
         const body = (await response.json()) as SnapshotResponse;
         if (body?.strategy !== "box-spread" || !Array.isArray(body.data)) throw new Error("Unexpected snapshot history response");
+        if (sortRequestId !== sortingRequestSequence.current) return;
         allRows.push(...body.data);
         nextOffset += body.data.length;
         more = body.has_more === true && body.data.length > 0;
       }
+      if (sortRequestId !== sortingRequestSequence.current) return;
       setRows(mergeSnapshots([], allRows));
       setOffset(nextOffset);
       setHasMore(false);
       setTotal(allRows.length);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load complete history for sorting");
-    } finally { setSortingAll(false); }
+    } finally { if (sortRequestId === sortingRequestSequence.current) setSortingAll(false); }
   };
   const sortMark = (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
   const requestSequence = useRef(0);
+  const sortingRequestSequence = useRef(0);
   const appendInFlight = useRef(false);
 
   const load = useCallback(async (append = false, pageOffset = 0) => {
@@ -224,6 +230,8 @@ export default function BoxSpreadPostMarketHistory() {
   }, [days, expiryType, selectedIndex]);
 
   useEffect(() => {
+    sortingRequestSequence.current += 1;
+    setSortingAll(false);
     // Do not display rows from the previous expiry/window under the new filter
     // while its request is in flight or after that request fails.
     appendInFlight.current = false;
@@ -235,7 +243,19 @@ export default function BoxSpreadPostMarketHistory() {
     void load(false);
   }, [load]); // Filter changes intentionally reset pagination.
 
+
+  useEffect(() => {
+    if (pagePushData?.history_revision == null) return;
+    // Cancel a long all-history sort so an older completed page set cannot
+    // overwrite the refreshed slice following the durable-save notification.
+    sortingRequestSequence.current += 1;
+    setSortingAll(false);
+    void load(false);
+  }, [pagePushData?.history_revision, load]);
+
   const refresh = () => {
+    sortingRequestSequence.current += 1;
+    setSortingAll(false);
     setOffset(0);
     void load(false);
   };

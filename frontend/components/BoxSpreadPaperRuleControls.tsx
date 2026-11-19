@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 type Config = {
@@ -22,16 +22,20 @@ const defaults: Config = {
   monitor: { interval_seconds: 20, entry_window_minutes: 15 },
 };
 
-export default function BoxSpreadPaperRuleControls({ api, token, account, selection }: { api: string; token: string | null; account: string; selection: { expiryType: "WEEKLY"|"MONTHLY"; symbols: string[]; lots: number } }) {
+export default function BoxSpreadPaperRuleControls({ api, token, account, selection, refreshVersion = 0 }: { api: string; token: string | null; account: string; refreshVersion?: number; selection: { expiryType: "WEEKLY"|"MONTHLY"; symbols: string[]; lots: number } }) {
   const [rules,setRules]=useState<Rule[]>([]);
   const [config,setConfig]=useState<Config>(defaults);
   const [name,setName]=useState("NIFTY/SENSEX weekly edge rule");
   const [enabled,setEnabled]=useState(false);
   const [editingId,setEditingId]=useState<number|null>(null);
   const [evaluations,setEvaluations]=useState<Evaluation[]>([]);
+  const [historyRuleId,setHistoryRuleId]=useState<number|null>(null);
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState<string|null>(null);
   const [notice,setNotice]=useState<string|null>(null);
+  const rulesRequestSequence=useRef(0);
+  const historyRequestSequence=useRef(0);
+  const historyRuleIdRef=useRef<number|null>(historyRuleId);
 
   const request=useCallback(async(path:string,init?:RequestInit)=>{
     const response=await fetch(api+path,{...init,cache:"no-store",headers:{"Content-Type":"application/json",...(token ? { Authorization:"Bearer "+token } : {}),...(init?.headers??{})},signal:AbortSignal.timeout(12000)});
@@ -42,10 +46,17 @@ export default function BoxSpreadPaperRuleControls({ api, token, account, select
 
   const load=useCallback(async()=>{
     if(!token)return;
-    try{const body=await request("/rules?account_key="+encodeURIComponent(account));setRules(Array.isArray(body.data)?body.data:[]);setError(null);}
-    catch(e){setError(e instanceof Error?e.message:"Unable to load rules");}
+    const requestSequence=++rulesRequestSequence.current;
+    try{const body=await request("/rules?account_key="+encodeURIComponent(account));if(requestSequence!==rulesRequestSequence.current)return;setRules(Array.isArray(body.data)?body.data:[]);setError(null);}
+    catch(e){if(requestSequence===rulesRequestSequence.current)setError(e instanceof Error?e.message:"Unable to load rules");}
   },[account,request,token]);
-  useEffect(()=>{void load();},[load]);
+  useEffect(()=>{void load();},[load,refreshVersion]);
+  const loadHistory=useCallback(async(id:number)=>{
+    const requestSequence=++historyRequestSequence.current;
+    try{const body=await request("/rules/"+id+"/evaluations?account_key="+encodeURIComponent(account)+"&limit=30");if(requestSequence!==historyRequestSequence.current||historyRuleIdRef.current!==id)return;setEvaluations(Array.isArray(body.data)?body.data:[]);}
+    catch(e){if(requestSequence===historyRequestSequence.current&&historyRuleIdRef.current===id)setError(e instanceof Error?e.message:"Unable to load evaluation history");}
+  },[account,request,historyRuleId]);
+  useEffect(()=>{if(historyRuleId!==null)void loadHistory(historyRuleId);},[historyRuleId,loadHistory,refreshVersion]);
   useEffect(()=>{setConfig(current=>({...current,entry:{...current.entry,expiry_type:selection.expiryType,symbols:selection.symbols,lots:selection.lots}}));},[selection.expiryType,selection.symbols.join(","),selection.lots]);
 
   async function save(event:FormEvent){
@@ -58,10 +69,12 @@ export default function BoxSpreadPaperRuleControls({ api, token, account, select
     finally{setBusy(false);}
   }
   function edit(rule:Rule){setEditingId(rule.rule_id);setName(rule.name);setEnabled(rule.enabled);setConfig(rule.config);setNotice("Editing rule #"+rule.rule_id);}
-  function newRule(){setEditingId(null);setName("Custom Box Spread rule");setEnabled(false);setConfig(defaults);setEvaluations([]);setNotice("New disabled rule draft.");}
+  function newRule(){historyRuleIdRef.current=null;historyRequestSequence.current+=1;setEditingId(null);setName("Custom Box Spread rule");setEnabled(false);setConfig(defaults);setEvaluations([]);setHistoryRuleId(null);setNotice("New disabled rule draft.");}
   async function history(id:number){
-    try{const body=await request("/rules/"+id+"/evaluations?account_key="+encodeURIComponent(account)+"&limit=30");setEvaluations(Array.isArray(body.data)?body.data:[]);setNotice("Recent evaluations for rule #"+id);}
-    catch(e){setError(e instanceof Error?e.message:"Unable to load evaluation history");}
+    historyRuleIdRef.current=id;
+    setHistoryRuleId(id);
+    await loadHistory(id);
+    setNotice("Live evaluation history for rule #"+id);
   }
   const entry=(key:keyof Config["entry"],value:unknown)=>setConfig(c=>({...c,entry:{...c.entry,[key]:value} as Config["entry"]}));
   const exit=(key:keyof Config["exit"],value:unknown)=>setConfig(c=>({...c,exit:{...c.exit,[key]:value} as Config["exit"]}));

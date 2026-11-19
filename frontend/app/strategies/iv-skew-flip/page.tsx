@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
+import { isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts } from "@/lib/page-push-recovery.mjs";
 
 type Row = Record<string, unknown>;
 type EarlyAlert = { id: number; observed_at_ns_text?: string; strategy: string; expiry: string; strike: number; direction: string; option_type: string; state: string; observed_at_ns: number; spot: number; premium?: number | null; iv_change_points?: number | null; volume_ratio?: number | null; reason?: string; delivery_status?: string; metadata?: Row };
@@ -51,7 +52,23 @@ const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null
 const fmt = (v: unknown, digits = 2) => n(v) === null ? "—" : (v as number).toLocaleString("en-IN", { maximumFractionDigits: digits });
 const delta = (v: unknown, suffix = "", digits = 2) => n(v) === null ? "—" : `${Number(v) > 0 ? "+" : ""}${fmt(v, digits)}${suffix}`;
 const age = (v: unknown) => n(v) === null ? "—" : n(v)! < 1000 ? `${Math.round(n(v)!)} ms` : `${(n(v)! / 1000).toFixed(1)} s`;
-const compareAlertTime = (a: EarlyAlert,b: EarlyAlert) => {
+const playEarlyAlertTone = () => {
+  try {
+    const AudioCtor=window.AudioContext||(window as Window & {webkitAudioContext?:typeof AudioContext}).webkitAudioContext;
+    if(!AudioCtor)return;
+    const ctx=new AudioCtor();
+    const oscillator=ctx.createOscillator();
+    const gain=ctx.createGain();
+    oscillator.type="sine";oscillator.frequency.value=880;
+    gain.gain.setValueAtTime(0.0001,ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.12,ctx.currentTime+0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.24);
+    oscillator.connect(gain);gain.connect(ctx.destination);
+    oscillator.onended=()=>{void ctx.close();};
+    oscillator.start();oscillator.stop(ctx.currentTime+0.25);
+  }catch{/* audio is optional and browser-controlled */}
+};
+const compareAlertTime = (a: EarlyAlert,b:EarlyAlert) => {
   const left=String(a.observed_at_ns_text??a.observed_at_ns);
   const right=String(b.observed_at_ns_text??b.observed_at_ns);
   if(left.length!==right.length)return right.length-left.length;
@@ -395,6 +412,7 @@ export default function IVSkewFlipPage() {
   const [alertAudioEnabled,setAlertAudioEnabled]=useState(false);
   const [alertFetchError,setAlertFetchError]=useState("");
   const seenAlertIds=useRef<Set<number>>(new Set());
+  const alertFetchSequenceRef=useRef(0);
   const selectedNifty="NIFTY_WEEKLY" as const;
   const [busy,setBusy]=useState(false);
   const [snapshotBusy,setSnapshotBusy]=useState(false);
@@ -409,22 +427,19 @@ export default function IVSkewFlipPage() {
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
+      const requestSequence=++alertFetchSequenceRef.current;
       try{
         const response=await fetch(`${base}/api/latest-alert?limit=30`,{cache:"no-store"});
         const body=await response.json();
         if(!response.ok)throw new Error(apiError(body,"Early alert API unavailable"));
-        if(!active||body.status!=="ok")return;
+        if(!isCurrentRecoveryResponse({active,requestSequence,latestSequence:alertFetchSequenceRef.current,responseValid:body.status==="ok"}))return;
         const rows=Array.isArray(body.alerts)?body.alerts as EarlyAlert[]:[];
         const newest=rows.filter(row=>Number.isFinite(row.id));
         const previous=seenAlertIds.current;
-        const fresh=newest.filter(row=>!previous.has(row.id)&&row.state==="EARLY_ENTRY");
+        const fresh=freshEarlyEntryAlerts(newest,previous);
         newest.forEach(row=>previous.add(row.id));
         if(previous.size>500){const keep=new Set(newest.map(row=>row.id));seenAlertIds.current=keep;}
-        setEarlyAlerts(current=>{
-          const merged=new Map<number,EarlyAlert>();
-          [...current,...newest].forEach(row=>merged.set(row.id,row));
-          return [...merged.values()].sort(compareAlertTime);
-        });
+        setEarlyAlerts(current=>mergeUniqueAlerts(current,newest,compareAlertTime,loadedOlderAlerts.current?Number.POSITIVE_INFINITY:100));
         if(!loadedOlderAlerts.current){
           setHasMoreAlerts(body.has_more===true);
           setAlertCursor(body.next_cursor&&typeof body.next_cursor==="object"?{
@@ -434,26 +449,10 @@ export default function IVSkewFlipPage() {
         }
         setEarlyAlertLive(body.live&&typeof body.live==="object"?body.live as Row:null);
         setAlertFetchError("");
-        if(alertAudioEnabled&&fresh.length){
-          try{
-            const AudioCtor=window.AudioContext||(window as Window & {webkitAudioContext?:typeof AudioContext}).webkitAudioContext;
-            if(AudioCtor){
-              const ctx=new AudioCtor();
-              const oscillator=ctx.createOscillator();
-              const gain=ctx.createGain();
-              oscillator.type="sine";oscillator.frequency.value=880;
-              gain.gain.setValueAtTime(0.0001,ctx.currentTime);
-              gain.gain.exponentialRampToValueAtTime(0.12,ctx.currentTime+0.02);
-              gain.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.24);
-              oscillator.connect(gain);gain.connect(ctx.destination);
-              oscillator.onended=()=>{void ctx.close();};
-              oscillator.start();oscillator.stop(ctx.currentTime+0.25);
-            }
-          }catch{/* audio is optional and browser-controlled */}
-        }
-      }catch(e){if(active)setAlertFetchError(e instanceof Error?e.message:"Alert history unavailable");}
+        if(alertAudioEnabled&&fresh.length)playEarlyAlertTone();
+      }catch(e){if(active&&requestSequence===alertFetchSequenceRef.current)setAlertFetchError(e instanceof Error?e.message:"Alert history unavailable");}
     };
-    void poll();
+    if(pagePushStatus!=="LIVE")void poll();
     // The live alert stream is pushed with IV runtime snapshots. Keep REST as
     // a slow recovery path only while the page WebSocket is unavailable.
     if(pagePushStatus==="LIVE")return()=>{active=false;};
@@ -470,9 +469,12 @@ export default function IVSkewFlipPage() {
       }catch{/* keep last known basket registry state */}
     };
     void poll();
+    // Initial durable registry fetch is retained. REST polling is recovery-only
+    // while the page channel is not synchronized; avoid duplicate refresh traffic.
+    if(pagePushStatus==="LIVE")return()=>{active=false;};
     const timer=window.setInterval(()=>{if(active)void poll();},10000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[base]);
+  },[base,pagePushStatus]);
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
@@ -483,9 +485,12 @@ export default function IVSkewFlipPage() {
       }catch{/* keep the last successful durable history response */}
     };
     void poll();
+    // Durable history loads once per expiry selection. REST polling is recovery-only
+    // when the page WebSocket is unavailable.
+    if(pagePushStatus==="LIVE")return()=>{active=false;};
     const timer=window.setInterval(()=>{if(active)void poll();},10000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[base,requestedExpiry]);
+  },[base,requestedExpiry,pagePushStatus]);
   const activeWeeklyExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
@@ -547,7 +552,21 @@ export default function IVSkewFlipPage() {
   },[base]);
   useEffect(()=>{
     if(!pagePushData)return;
+    if(String(pagePushData.__event??"").toUpperCase()==="REMOVE"){
+      const removedKeys=Array.isArray(pagePushData.remove_keys)
+        ? pagePushData.remove_keys.filter((key):key is string=>typeof key==="string")
+        : Array.isArray(pagePushData.keys)
+          ? pagePushData.keys.filter((key):key is string=>typeof key==="string")
+          : [];
+      if(removedKeys.includes("runtime")){
+        alertFetchSequenceRef.current+=1;
+        setRuntime(null);
+        setChartHistory(null);
+        setEarlyAlertLive(null);
+      }
+    }
     if(pagePushData.runtime&&typeof pagePushData.runtime==="object"){
+      alertFetchSequenceRef.current+=1;
       const pushedRuntime=pagePushData.runtime as Runtime;
       setRuntime(pushedRuntime);
       // Runtime snapshots carry the sampler's latest real broker observations.
@@ -588,7 +607,9 @@ export default function IVSkewFlipPage() {
         }
       }
       const alertState=pushedRuntime.early_entry_alerts as Row|undefined;
+      if(alertState)setEarlyAlertLive(alertState);
       const pushedAlerts=Array.isArray(alertState?.alerts)?alertState.alerts as EarlyAlert[]:[];
+      const fresh=freshEarlyEntryAlerts(pushedAlerts,seenAlertIds.current);
       if(pushedAlerts.length){
         setEarlyAlerts(current=>{
           const merged=new Map<number,EarlyAlert>();
@@ -597,13 +618,15 @@ export default function IVSkewFlipPage() {
         });
         const newest=pushedAlerts.filter(alert=>Number.isFinite(alert.id));
         newest.forEach(alert=>seenAlertIds.current.add(alert.id));
+        if(seenAlertIds.current.size>500){const keep=new Set(newest.map(alert=>alert.id));seenAlertIds.current=keep;}
+        if(String(pagePushData.__event??"").toUpperCase()!=="SNAPSHOT"&&alertAudioEnabled&&fresh.length)playEarlyAlertTone();
       }
     }
     if(typeof pagePushData.saved_enabled==="boolean"){
       setSavedEnabled(pagePushData.saved_enabled);
       if(!settingDirty)setSelectedEnabled(pagePushData.saved_enabled);
     }
-  },[pagePushData,settingDirty]);
+  },[pagePushData,settingDirty,alertAudioEnabled]);
   async function saveRunnerSetting(){
     setBusy(true);setError("");
     try{

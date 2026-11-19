@@ -79,8 +79,10 @@ export default function BoxSpreadPaperTrading() {
   const [privateWsStatus, setPrivateWsStatus] = useState<"DISCONNECTED" | "CONNECTING" | "LIVE" | "STALE">("DISCONNECTED");
   const [privateSnapshotComplete, setPrivateSnapshotComplete] = useState(false);
   const [privateLedgerRefreshVersion, setPrivateLedgerRefreshVersion] = useState(0);
+  const [privateRuleRefreshVersion, setPrivateRuleRefreshVersion] = useState(0);
   const privateWsRef = useRef<WebSocket | null>(null);
   const privateSequenceRef = useRef(0);
+  const privateResyncPendingRef = useRef(false);
   const privateEventIdsRef = useRef(new Set<string>());
   const [password, setPassword] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
@@ -149,7 +151,15 @@ export default function BoxSpreadPaperTrading() {
     finally { setLoginBusy(false); }
   }
 
+  const privateLedgerRequestSequenceRef = useRef(0);
+  const recoveryRequestSequenceRef = useRef(0);
+  // Synchronous ref invalidation prevents an older page/filter REST response from committing between renders.
+  useEffect(() => {
+    privateLedgerRequestSequenceRef.current += 1;
+  }, [account, openPage, closedPage, positionSearch, positionDirection]);
+
   const refresh = useCallback(async () => {
+    const requestSequence = ++privateLedgerRequestSequenceRef.current;
     try {
       const query = "&search=" + encodeURIComponent(positionSearch.trim()) + "&direction=" + encodeURIComponent(positionDirection);
       const pageSize = 10;
@@ -160,6 +170,8 @@ export default function BoxSpreadPaperTrading() {
         request("/portfolio-summary?account_key=" + encodeURIComponent(account)),
         request("/execution-control"),
       ]);
+      // Private push updates supersede any ledger REST request already in flight.
+      if (requestSequence !== privateLedgerRequestSequenceRef.current) return;
       setBalance(String(accountBody.virtual_balance));
       setExecutionEnabled(controlBody.enabled === true);
       setTrades([...(Array.isArray(openBody.data) ? openBody.data : []), ...(Array.isArray(closedBody.data) ? closedBody.data : [])]);
@@ -168,15 +180,19 @@ export default function BoxSpreadPaperTrading() {
       setClosedPageInfo({ total_count: Number(closedBody.total_count ?? 0), has_more: closedBody.has_more === true, limit: pageSize, offset: closedPage * pageSize });
       setError(null);
       // Recovery is a separate read-only request so its failure never blocks the normal ledger.
+      const recoveryRequestSequence = ++recoveryRequestSequenceRef.current;
       void request("/recovery?account_key=" + encodeURIComponent(account))
-        .then(body => setRecoveryTrades(Array.isArray(body.data) ? body.data : []))
+        .then(body => { if (recoveryRequestSequence === recoveryRequestSequenceRef.current) setRecoveryTrades(Array.isArray(body.data) ? body.data : []); })
         .catch(() => { /* Preserve the last durable recovery snapshot on transient API errors. */ });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to load paper ledger");
+      if (requestSequence === privateLedgerRequestSequenceRef.current) {
+        setError(e instanceof Error ? e.message : "Unable to load paper ledger");
+      }
     }
   }, [account, request, openPage, closedPage, positionSearch, positionDirection]);
 
   const applyPrivateSnapshot = useCallback((payload: any) => {
+    recoveryRequestSequenceRef.current += 1; // Invalidate recovery REST if a newer private snapshot arrived.
     const accountBody = payload?.account;
     const summaryBody = payload?.portfolio_summary;
     const positionsBody = payload?.positions;
@@ -198,6 +214,7 @@ export default function BoxSpreadPaperTrading() {
   }, [openPage, closedPage]);
 
   const applyPrivateMarketUpdate = useCallback((payload: any) => {
+    recoveryRequestSequenceRef.current += 1; // Market-data pushes supersede stale recovery reads too.
     const summaryBody = payload?.portfolio_summary;
     const positionsBody = payload?.positions;
     if (!summaryBody || !Array.isArray(positionsBody?.data)) {
@@ -216,7 +233,10 @@ export default function BoxSpreadPaperTrading() {
     setClosedPage(0);
   }, [account, positionSearch, positionDirection]);
 
+  const opportunityRequestSequenceRef = useRef(0);
+
   const loadOpportunities = useCallback(async () => {
+    const requestSequence = ++opportunityRequestSequenceRef.current;
     setOpportunityStatus("CHECKING");
     const base = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread";
     const [liveResult, diagnosticsResult] = await Promise.allSettled([
@@ -234,6 +254,8 @@ export default function BoxSpreadPaperTrading() {
       }),
     ]);
 
+    // A pushed snapshot/update always wins over an older REST fallback request.
+    if (requestSequence !== opportunityRequestSequenceRef.current) return;
     setLastOpportunityCheck(Date.now());
     if (diagnosticsResult.status === "fulfilled") {
       setScannerDiagnostics(diagnosticsResult.value as ScannerDiagnostics);
@@ -242,17 +264,14 @@ export default function BoxSpreadPaperTrading() {
     }
 
     if (liveResult.status === "rejected") {
-      setOpportunities([]);
-      setOpportunityStatus("ERROR");
       setOpportunityError(liveResult.reason instanceof Error
         ? liveResult.reason.message : "Unable to reach the live Box Spread scanner");
+      // Keep last good rows/status during transient REST fallback failures.
       return;
     }
 
     const body = liveResult.value;
     if (!Array.isArray(body?.data)) {
-      setOpportunities([]);
-      setOpportunityStatus("ERROR");
       setOpportunityError("Live scanner returned an invalid response; expected a data array");
       return;
     }
@@ -277,8 +296,29 @@ export default function BoxSpreadPaperTrading() {
   useEffect(() => {
     const data = pagePush.data;
     if (!data) return;
-    const isSnapshot = data.__event === "SNAPSHOT";
-    const incoming = isSnapshot ? data.opportunities : data.opportunity_updates;
+    // Invalidate any in-flight REST fallback before applying pushed market data.
+    opportunityRequestSequenceRef.current += 1;
+    const event = String(data.__event ?? "").toUpperCase();
+    const removedKeys = Array.isArray(data.remove_keys)
+      ? data.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(data.keys)
+        ? data.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (event === "REMOVE" && removedKeys.includes("opportunities")) {
+      setOpportunities([]);
+      setOpportunityStatus("EMPTY");
+      setOpportunityError(null);
+      setLastOpportunityCheck(Date.now());
+      return;
+    }
+    const isSnapshot = event === "SNAPSHOT";
+    // The Box page publisher emits PATCH frames containing a complete page
+    // snapshot (including the full opportunities array), not per-row deltas.
+    // Accept that authoritative list on every push; retain delta merging only
+    // for any future producer that explicitly sends opportunity_updates.
+    const hasFullOpportunityList = Array.isArray(data.opportunities);
+    const replaceList = isSnapshot || hasFullOpportunityList;
+    const incoming = replaceList ? data.opportunities : data.opportunity_updates;
     if (!Array.isArray(incoming)) return;
     const validRows = incoming.filter((row): row is LiveOpportunity => {
       if (!row || typeof row !== "object") return false;
@@ -287,7 +327,7 @@ export default function BoxSpreadPaperTrading() {
         .every(value => Number.isFinite(Number(value)) && Number(value) > 0);
     });
     setOpportunities(previous => {
-      if (isSnapshot) return validRows;
+      if (replaceList) return validRows;
       const merged = new Map<string, LiveOpportunity>();
       for (const row of previous) {
         merged.set([row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].join("|"), row);
@@ -300,7 +340,7 @@ export default function BoxSpreadPaperTrading() {
     if (validRows.length || isSnapshot) {
       setOpportunityError(null);
       if (validRows.length > 0) setOpportunityStatus("LIVE");
-      else if (isSnapshot) setOpportunityStatus("EMPTY");
+      else if (replaceList) setOpportunityStatus("EMPTY");
       setLastOpportunityCheck(Date.now());
     }
   }, [pagePush.data]);
@@ -328,6 +368,17 @@ export default function BoxSpreadPaperTrading() {
       setPrivateWsStatus("DISCONNECTED");
       setPrivateSnapshotComplete(false);
       privateSequenceRef.current = 0;
+      privateResyncPendingRef.current = false;
+      privateEventIdsRef.current.clear();
+      privateLedgerRequestSequenceRef.current += 1;
+      setBalance(null);
+      setExecutionEnabled(false);
+      setTrades([]);
+      setPortfolioSummary(null);
+      setOpenPageInfo({ total_count: 0, has_more: false, limit: 10, offset: 0 });
+      setClosedPageInfo({ total_count: 0, has_more: false, limit: 10, offset: 0 });
+      setRecoveryTrades([]);
+      setLedger(null);
       return;
     }
     let stopped = false;
@@ -336,6 +387,23 @@ export default function BoxSpreadPaperTrading() {
     let watchdogTimer: number | undefined;
     let lastServerFrameAt = 0;
     let retryDelay = 1000;
+
+    // Account/token changes establish a fresh private-channel baseline. Reset
+    // sequence and dedupe state so the new account's snapshot is not rejected
+    // as older than the previous account's stream.
+    privateSequenceRef.current = 0;
+    privateResyncPendingRef.current = false;
+    privateEventIdsRef.current.clear();
+    privateLedgerRequestSequenceRef.current += 1;
+    setPrivateSnapshotComplete(false);
+    setBalance(null);
+    setExecutionEnabled(false);
+    setTrades([]);
+    setPortfolioSummary(null);
+    setOpenPageInfo({ total_count: 0, has_more: false, limit: 10, offset: 0 });
+    setClosedPageInfo({ total_count: 0, has_more: false, limit: 10, offset: 0 });
+    setRecoveryTrades([]);
+    setLedger(null);
 
     const scheduleReconnect = () => {
       if (stopped || retryTimer !== undefined) return;
@@ -357,11 +425,13 @@ export default function BoxSpreadPaperTrading() {
         socket = new WebSocket(wsUrl);
         privateWsRef.current = socket;
         socket.onopen = () => {
+          if (stopped) { socket?.close(); return; }
           lastServerFrameAt = Date.now();
           retryDelay = 1000;
           socket?.send(JSON.stringify({ ticket: ticketBody.ticket, account_key: account }));
         };
         socket.onmessage = event => {
+          if (stopped) return;
           lastServerFrameAt = Date.now();
           let frame: any;
           try { frame = JSON.parse(String(event.data)); } catch { return; }
@@ -369,13 +439,18 @@ export default function BoxSpreadPaperTrading() {
           if (frame?.type !== "paper_update" || frame?.channel !== "box-spread-paper-private") return;
           const sequence = Number(frame.sequence);
           const eventId = String(frame.event_id ?? "");
-          if (!Number.isSafeInteger(sequence) || sequence < 1) return;
-          if (eventId && privateEventIdsRef.current.has(eventId)) return;
           const isSnapshot = frame.event_type === "SNAPSHOT";
+          if (!Number.isSafeInteger(sequence) || sequence < (isSnapshot ? 0 : 1)) return;
+          if (eventId && privateEventIdsRef.current.has(eventId)) return;
           if (!isSnapshot && sequence <= privateSequenceRef.current) return;
-          if (!isSnapshot && privateSequenceRef.current > 0 && sequence !== privateSequenceRef.current + 1) {
+          // Every non-snapshot event must immediately follow the accepted
+          // bootstrap/resync snapshot, including when its sequence is zero.
+          if (!isSnapshot && sequence !== privateSequenceRef.current + 1) {
             setPrivateWsStatus("STALE");
-            socket?.send(JSON.stringify({ action: "resync" }));
+            if (!privateResyncPendingRef.current && socket?.readyState === WebSocket.OPEN) {
+              privateResyncPendingRef.current = true;
+              socket.send(JSON.stringify({ action: "resync" }));
+            }
             return;
           }
           try {
@@ -385,19 +460,26 @@ export default function BoxSpreadPaperTrading() {
               applyPrivateSnapshot(frame.payload);
             }
             privateSequenceRef.current = sequence;
+            privateLedgerRequestSequenceRef.current += 1;
+            if (isSnapshot) privateResyncPendingRef.current = false;
             if (eventId) {
               privateEventIdsRef.current.add(eventId);
               if (privateEventIdsRef.current.size > 512) {
                 privateEventIdsRef.current = new Set(Array.from(privateEventIdsRef.current).slice(-256));
               }
             }
-            if (frame.event_type !== "MARKET_DATA_CHANGED") {
+            if (frame.event_type === "RULES_CHANGED" || frame.event_type === "RULE_EVALUATIONS_CHANGED") {
+              setPrivateRuleRefreshVersion(version => version + 1);
+            } else if (frame.event_type !== "MARKET_DATA_CHANGED") {
               setPrivateLedgerRefreshVersion(version => version + 1);
             }
             setPrivateWsStatus("LIVE");
           } catch {
             setPrivateWsStatus("STALE");
-            socket?.send(JSON.stringify({ action: "resync" }));
+            if (!privateResyncPendingRef.current && socket?.readyState === WebSocket.OPEN) {
+              privateResyncPendingRef.current = true;
+              socket.send(JSON.stringify({ action: "resync" }));
+            }
           }
         };
         watchdogTimer = window.setInterval(() => {
@@ -406,8 +488,10 @@ export default function BoxSpreadPaperTrading() {
             socket?.close();
           }
         }, 10000);
-        socket.onerror = () => socket?.close();
+        socket.onerror = () => { if (!stopped) socket?.close(); };
         socket.onclose = () => {
+          if (stopped) return;
+          privateResyncPendingRef.current = false;
           if (watchdogTimer !== undefined) window.clearInterval(watchdogTimer);
           watchdogTimer = undefined;
           if (privateWsRef.current === socket) privateWsRef.current = null;
@@ -769,7 +853,7 @@ export default function BoxSpreadPaperTrading() {
           <label className="text-sm theme-muted">Same quantity per leg<select value={lots} onChange={e=>setLots(Number(e.target.value))} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text">{[1,2,3,4,5,10,15,20].map(value=><option key={value} value={value}>{value} {value===1?"lot":"lots"} · all four legs</option>)}</select></label>
         </div>
         <div className="text-xs theme-muted"><div className="mb-2 font-semibold theme-text">Index selection</div><div className="flex flex-wrap gap-3">{allowedEntrySymbols.map(symbol=><label key={symbol} className="flex items-center gap-1.5"><input type="checkbox" checked={entrySymbols.includes(symbol)} onChange={e=>setEntrySymbols(current=>e.target.checked?[...current,symbol]:current.filter(x=>x!==symbol))}/>{symbol}</label>)}<label className="flex items-center gap-1.5 font-semibold"><input type="checkbox" checked={allowedEntrySymbols.every(x=>entrySymbols.includes(x))} onChange={e=>setEntrySymbols(e.target.checked?[...allowedEntrySymbols]:[])}/>ALL</label></div></div>
-        {entryMode==="ALGO" ? <BoxSpreadPaperRuleControls api={api} token={token} account={account} selection={{expiryType:entryExpiryType,symbols:entrySymbols,lots}} /> : <p className="rounded-lg theme-surface-2 p-3 text-xs theme-muted">Manual mode: choose one of the filtered live opportunities below, review the four-leg bid/ask prices and quantity, then submit the basket. A missing or stale leg blocks the entry.</p>}
+        {entryMode==="ALGO" ? <BoxSpreadPaperRuleControls api={api} token={token} account={account} refreshVersion={privateRuleRefreshVersion} selection={{expiryType:entryExpiryType,symbols:entrySymbols,lots}} /> : <p className="rounded-lg theme-surface-2 p-3 text-xs theme-muted">Manual mode: choose one of the filtered live opportunities below, review the four-leg bid/ask prices and quantity, then submit the basket. A missing or stale leg blocks the entry.</p>}
       </section>
 
       {manualEntryOpportunity && <form onSubmit={confirmManualEntry} className="space-y-3 rounded-xl border-2 border-cyan-500/60 p-3">

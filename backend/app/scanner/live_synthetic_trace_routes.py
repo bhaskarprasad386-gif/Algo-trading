@@ -343,9 +343,39 @@ def _trace_snapshot_record(trace_id: str, trace_key: str, traced_at: str, snapsh
         db.close()
 
 
+def _publish_synthetic_trace_update(data: dict | None = None, *, operation: str | None = None, key: str | None = None, item: dict | None = None):
+    # Use keyed deltas for trace list mutations. A full-list snapshot captured
+    # concurrently with another add/delete could arrive stale and rewind the UI.
+    # Reconnects restore the durable list through the snapshot provider.
+    try:
+        from app.scanner.page_push_websocket import publish_collection_change, publish_page_update
+        if operation is not None:
+            publish_collection_change(
+                "synthetic-arbitrage", "trace_opportunities", operation, "trace_id",
+                key=key, item=item,
+            )
+        elif isinstance(data, dict):
+            publish_page_update("synthetic-arbitrage", "PATCH", data)
+    except Exception:
+        pass
+
+
 @router.post("/opportunities")
 def save_trace_opportunity(request: TraceOpportunityRequest):
-    return _trace_snapshot_record(request.trace_id, request.trace_key, request.traced_at, request.snapshot)
+    result = _trace_snapshot_record(request.trace_id, request.trace_key, request.traced_at, request.snapshot)
+    try:
+        result["trace_opportunities"] = list_trace_opportunities(500).get("data", [])
+        mutation_item = {
+            **request.snapshot,
+            "trace_id": request.trace_id,
+            "trace_key": request.trace_key,
+            "traced_at": request.traced_at,
+            "persisted": True,
+        }
+        _publish_synthetic_trace_update(operation="ADD", key=request.trace_id, item=mutation_item)
+    except Exception:
+        pass
+    return result
 
 
 @router.get("/opportunities")
@@ -381,9 +411,15 @@ def delete_trace_opportunity(trace_id: str):
         if row is not None:
             db.delete(row)
             db.commit()
-        return {"trace_id": trace_id, "deleted": True}
     finally:
         db.close()
+    result = {"trace_id": trace_id, "deleted": True}
+    try:
+        result["trace_opportunities"] = list_trace_opportunities(500).get("data", [])
+        _publish_synthetic_trace_update(operation="DELETE", key=trace_id, item=None)
+    except Exception:
+        pass
+    return result
 
 
 @router.post("/live-status")
@@ -441,6 +477,7 @@ def check_trace_live_status(request: TraceStatusRequest):
             payload["history_record_id"] = _save_check(request, payload)
             payload["history_persistence"] = "SAVED"
             payload["history"] = _history_rows(request.trace_id)
+            _publish_synthetic_trace_update({"trace_status_update": payload})
         except Exception:
             # A database outage must not erase a valid live quote response.
             payload["history_record_id"] = None
