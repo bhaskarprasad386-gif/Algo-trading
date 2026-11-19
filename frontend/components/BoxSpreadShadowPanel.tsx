@@ -5,6 +5,7 @@ import { Activity, RefreshCw, ShieldCheck } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
+import { boxShadowSnapshotMissing } from "@/lib/page-push-recovery.mjs";
 
 type ShadowResult = {
   strategy: string;
@@ -71,6 +72,13 @@ export default function BoxSpreadShadowPanel() {
         ? pagePushData.keys.filter((key): key is string => typeof key === "string")
         : [];
     if (event === "REMOVE" && removedKeys.includes("shadow")) {
+      requestSequence.current += 1;
+      setData(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    if (event === "SNAPSHOT" && boxShadowSnapshotMissing(pagePushData)) {
       requestSequence.current += 1;
       setData(null);
       setError(null);
