@@ -1097,13 +1097,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           scannerDiagnosticsRequestSequence.current += 1;
           setScannerDiagnostics(pagePushData.diagnostics as Record<string, unknown>);
         }
-        if (removed("universe")) {
-          universeMutationRequestSequence.current += 1;
-          setUniverseAvailability(null);
-        } else if (pagePushData.universe && typeof pagePushData.universe === "object") {
-          universeMutationRequestSequence.current += 1;
-          setUniverseAvailability(pagePushData.universe as Record<string, any>);
-        }
+        if (removed("universe")) setUniverseAvailability(null);
+        else if (pagePushData.universe && typeof pagePushData.universe === "object") setUniverseAvailability(pagePushData.universe as Record<string, any>);
       }
       if (removed("runtime_health")) {
         runtimeHealthRequestSequence.current += 1;
