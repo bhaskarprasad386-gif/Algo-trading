@@ -75,6 +75,16 @@ export function applyPagePushRemovePayload(previous, payload) {
   return applyCollectionMutations(next, mutations);
 }
 
+/** Normalize authoritative scanner SNAPSHOT: absent collections are empty, not retained stale state. */
+export function scannerSnapshotState(snapshot) {
+  const source = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) ? snapshot : {};
+  const rows = Array.isArray(source.rows) ? source.rows.filter((item) => item && typeof item === "object" && !Array.isArray(item)) : [];
+  const pairs = Array.isArray(source.pairs) ? source.pairs.filter((item) => item && typeof item === "object" && !Array.isArray(item)) : [];
+  const stats = source.stats && typeof source.stats === "object" && !Array.isArray(source.stats) ? source.stats : {};
+  const scanAt = typeof source.scan_at === "string" ? source.scan_at : typeof stats.last_observation_at === "string" ? stats.last_observation_at : null;
+  return { rows, pairs, stats, scanAt };
+}
+
 /** Safely send a page-push control frame; callers must close/recover on false. */
 export function sendPagePushFrame(socket, frame) {
   try {
