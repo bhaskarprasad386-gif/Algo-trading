@@ -609,6 +609,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const syntheticHistoryPushRevision = useRef<string | null>(null);
   const calendarHistoryPushRevision = useRef<string | null>(null);
   const indexSelectionRequestSequence = useRef(0);
+  const runtimeHealthRequestSequence = useRef(0);
+  const scannerDiagnosticsRequestSequence = useRef(0);
   const refreshPushBaselineRef = useRef<Record<string, unknown> | null>(null);
   const refreshPushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1085,18 +1087,25 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         }
       }
       if (slug === "synthetic-arbitrage") {
-        if (removed("diagnostics")) setScannerDiagnostics(null);
-        else if (pagePushData.diagnostics && typeof pagePushData.diagnostics === "object") setScannerDiagnostics(pagePushData.diagnostics as Record<string, unknown>);
+        if (removed("diagnostics")) {
+          scannerDiagnosticsRequestSequence.current += 1;
+          setScannerDiagnostics(null);
+        } else if (pagePushData.diagnostics && typeof pagePushData.diagnostics === "object") {
+          scannerDiagnosticsRequestSequence.current += 1;
+          setScannerDiagnostics(pagePushData.diagnostics as Record<string, unknown>);
+        }
         if (removed("universe")) setUniverseAvailability(null);
         else if (pagePushData.universe && typeof pagePushData.universe === "object") setUniverseAvailability(pagePushData.universe as Record<string, any>);
       }
       if (removed("runtime_health")) {
+        runtimeHealthRequestSequence.current += 1;
         setFeedTicks(null); setFeedAge(null); setFeedExchangeFreshness(null); setFeedInstruments(null);
         setFeedStatus("UNKNOWN"); setFeedErrors(null); setRunner(null);
         if (slug === "calendar-spread") setCalendarRuntime(null);
       } else {
         const health = pagePushData.runtime_health;
         if (health && typeof health === "object") {
+          runtimeHealthRequestSequence.current += 1;
           const runtime = health as Record<string, any>;
           const feed = runtime.common_feed && typeof runtime.common_feed === "object" ? runtime.common_feed : {};
           setFeedTicks(nullableNumber(feed.ticks_received));
@@ -1237,14 +1246,15 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     }
     let cancelled = false;
     const loadScannerDiagnostics = async () => {
+      const requestSequence = ++scannerDiagnosticsRequestSequence.current;
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
         const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/diagnostics", { cache: "no-store" });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error("scanner diagnostics HTTP " + response.status);
-        if (!cancelled) setScannerDiagnostics(body && typeof body === "object" ? body as Record<string, unknown> : null);
+        if (!cancelled && requestSequence === scannerDiagnosticsRequestSequence.current) setScannerDiagnostics(body && typeof body === "object" ? body as Record<string, unknown> : null);
       } catch {
-        if (!cancelled) setScannerDiagnostics({ status: "DIAGNOSTICS_UNAVAILABLE" });
+        if (!cancelled && requestSequence === scannerDiagnosticsRequestSequence.current) setScannerDiagnostics({ status: "DIAGNOSTICS_UNAVAILABLE" });
       }
     };
     void loadScannerDiagnostics();
@@ -1257,12 +1267,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     if (isCustom || slug === "box-spread") return;
     let cancelled = false;
     const loadRuntime = async () => {
+      const requestSequence = ++runtimeHealthRequestSequence.current;
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
         const response = await fetch(base + "/api/v1/market-data/runtime/health", { cache: "no-store" });
         if (!response.ok) throw new Error("runtime health");
         const body = await response.json();
-        if (cancelled) return;
+        if (cancelled || requestSequence !== runtimeHealthRequestSequence.current) return;
         const feed = body?.common_feed ?? {};
         // Number(null) and Number("") are 0; preserve missing backend values as unknown.
         setFeedTicks(nullableNumber(feed.ticks_received));
@@ -1297,7 +1308,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         setRunner(selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null);
         setBoxDepthShadow(slug === "box-spread" && selected?.depth_shadow && typeof selected.depth_shadow === "object" ? selected.depth_shadow : null);
       } catch {
-        if (!cancelled) setFeedStatus("UNAVAILABLE");
+        if (!cancelled && requestSequence === runtimeHealthRequestSequence.current) setFeedStatus("UNAVAILABLE");
       }
     };
     void loadRuntime();
