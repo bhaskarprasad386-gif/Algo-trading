@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
+import { trackTraceSave, waitForTraceSave } from "@/lib/trace-mutation-order.mjs";
 
 type TraceRow = Record<string, unknown> & {
   trace_id: string;
@@ -119,6 +120,8 @@ export function SyntheticTracePanel() {
   const { data: pagePushData, status: pagePushStatus } = usePagePush("synthetic-arbitrage");
   const tracePushSequenceRef = useRef(0);
   const liveFetchSequenceRef = useRef(0);
+  const traceSaveRequestsRef = useRef(new Map<string, Promise<Response>>();
+  const trackServerSave = (traceId: string, request: () => Promise<Response>) => trackTraceSave(traceSaveRequestsRef.current, traceId, request);
 
   useEffect(() => {
     const bootstrapPushSequence = tracePushSequenceRef.current;
@@ -139,15 +142,16 @@ export function SyntheticTracePanel() {
           .sort((a: TraceRow, b: TraceRow) => new Date(b.traced_at).getTime() - new Date(a.traced_at).getTime());
         setTraces(merged);
         writeStored(merged);
-        await Promise.allSettled(localOnly.map((row) => fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities", {
+        await Promise.allSettled(localOnly.map((row) => trackServerSave(row.trace_id, () => fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities", {
           method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
           body: JSON.stringify({ trace_id: row.trace_id, trace_key: row.trace_key, traced_at: row.traced_at, snapshot: row }),
-        })));
+        }))));
         const deleteResults = await Promise.all(deletedIds.map(async (id) => {
           const result = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(id), { method: "DELETE", cache: "no-store" });
           return result.ok;
         }));
-        if (deleteResults.every(Boolean)) writeDeleted([]);
+        const successfullyDeleted = deletedIds.filter((_, index) => deleteResults[index]);
+        if (successfullyDeleted.length) writeDeleted(readDeleted().filter((id) => !successfullyDeleted.includes(id)));
       } catch {
         // The local copy remains available when the API/database is offline.
       }
@@ -218,7 +222,7 @@ export function SyntheticTracePanel() {
     let retryInFlight = false;
     const retryPendingDeletes = async () => {
       if (retryInFlight) return;
-      const pending = readPendingDeletes();
+      const pending = readPendingDeletes().filter((id) => !traceSaveRequestsRef.current.has(id));
       if (!pending.length) return;
       retryInFlight = true;
       const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
@@ -293,10 +297,10 @@ export function SyntheticTracePanel() {
     writeStored(next);
     try {
       const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
-      const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities", {
+      const response = await trackServerSave(snapshot.trace_id, () => fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities", {
         method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ trace_id: snapshot.trace_id, trace_key: snapshot.trace_key, traced_at: snapshot.traced_at, snapshot }),
-      });
+      }));
       if (!response.ok) throw new Error("server rejected snapshot");
       setMessage(`${keyPart(row.underlying) || "Opportunity"} added to Trace and saved.`);
     } catch {
@@ -371,6 +375,9 @@ export function SyntheticTracePanel() {
     setTraces(next);
     writeStored(next);
     try {
+      // Await an earlier save for this ID before sending DELETE. The retry loop also
+      // skips IDs with in-flight saves, preventing a POST from resurrecting a row.
+      await waitForTraceSave(traceSaveRequestsRef.current, traceId);
       const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
       const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(traceId), {
         method: "DELETE", cache: "no-store", signal: AbortSignal.timeout(8000),
