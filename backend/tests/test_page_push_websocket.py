@@ -21,6 +21,22 @@ def test_page_sequence_gap_is_detected_from_zero_baseline():
     assert push._sequence_gap(8, 10)
 
 
+
+def test_keyed_collection_change_publisher_emits_add_update_delete_contract(monkeypatch):
+    published = []
+    monkeypatch.setattr(push, "publish_page_update", lambda page, event, data=None: published.append((page, event, data)))
+    push.publish_collection_change("box-spread", "opportunities", "ADD", "id", item={"id": "x", "edge": 1.0})
+    push.publish_collection_change("box-spread", "opportunities", "UPDATE", "id", key="x", item={"id": "x", "edge": 2.0})
+    push.publish_collection_change("box-spread", "opportunities", "DELETE", "id", key="x")
+    push.publish_collection_change("unknown-page", "opportunities", "ADD", "id", item={"id": "x"})
+    assert len(published) == 3
+    assert all(page == "box-spread" and event == "PATCH" for page, event, _ in published)
+    changes = [payload["collection_changes"][0] for _, _, payload in published]
+    assert [change["operation"] for change in changes] == ["ADD", "UPDATE", "DELETE"]
+    assert changes[0]["item"] == {"id": "x", "edge": 1.0}
+    assert changes[1]["key"] == "x"
+    assert changes[2]["key"] == "x'
+
 def test_page_snapshot_frame_uses_explicit_durable_sequence():
     frame = push._snapshot_frame("box-spread", {"rows": []}, sequence=17)
     assert frame["type"] == "page_update"
