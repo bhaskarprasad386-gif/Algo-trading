@@ -219,6 +219,27 @@ def publish_page_update(page: str, event: str, data: dict[str, Any] | None = Non
         _log.exception("Could not persist scanner page update for %s", page)
 
 
+def publish_collection_change(
+    page: str, collection: str, operation: str, key_field: str,
+    *, key: str | int | None = None, item: dict[str, Any] | None = None,
+) -> None:
+    """Publish a validated keyed ADD/UPDATE/DELETE through the page PATCH channel."""
+    op = str(operation or "").strip().upper()
+    if page not in PAGE_CHANNELS or not collection or not key_field or op not in {"ADD", "UPDATE", "DELETE"}:
+        return
+    if op in {"ADD", "UPDATE"} and not isinstance(item, dict):
+        return
+    stable_key = key if key is not None else (item.get(key_field) if isinstance(item, dict) else None)
+    if stable_key is None:
+        return
+    mutation: dict[str, Any] = {
+        "collection": collection, "operation": op, "key_field": key_field, "key": stable_key,
+    }
+    if isinstance(item, dict):
+        mutation["item"] = item
+    publish_page_update(page, "PATCH", {"collection_changes": [mutation]})
+
+
 async def _journal_dispatch_loop() -> None:
     global _dispatch_ready
     try:
