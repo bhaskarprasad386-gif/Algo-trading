@@ -14,7 +14,6 @@ export function shouldAcceptPageSnapshot({ hasSnapshot, currentSequence, incomin
     (hasSnapshot !== true || incomingSequence >= currentSequence);
 }
 
-
 /** Merge durable alert rows by ID, with incoming rows replacing older versions. */
 export function mergeUniqueAlerts(current, incoming, compare, limit = 100) {
   const merged = new Map();
@@ -42,4 +41,14 @@ export function shouldReloadPairHistory(currentRevision, nextRevision) {
   if (nextRevision === undefined || nextRevision === null) return false;
   const next = String(nextRevision);
   return currentRevision === null || currentRevision !== next;
+}
+
+/** Safely send a page-push control frame; callers must close/recover on false. */
+export function sendPagePushFrame(socket, frame) {
+  try {
+    socket.send(JSON.stringify(frame));
+    return true;
+  } catch {
+    return false;
+  }
 }
