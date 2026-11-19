@@ -179,7 +179,22 @@ export function SyntheticTracePanel() {
   }, []);
 
   useEffect(() => {
-    const pushedTraces = pagePushData?.trace_opportunities;
+    if (!pagePushData) return;
+    const event = String(pagePushData.__event ?? "").toUpperCase();
+    const removedKeys = Array.isArray(pagePushData.remove_keys)
+      ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(pagePushData.keys)
+        ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (event === "REMOVE" && removedKeys.includes("trace_opportunities")) {
+      tracePushSequenceRef.current += 1;
+      const deletedIds = readDeleted();
+      const cleared = readStored().filter((row) => deletedIds.includes(row.trace_id));
+      setTraces(cleared);
+      writeStored(cleared);
+      return;
+    }
+    const pushedTraces = pagePushData.trace_opportunities;
     if (!Array.isArray(pushedTraces)) return;
     // Invalidate the initial REST restore if an authoritative WebSocket snapshot
     // arrives first; otherwise a delayed HTTP response can overwrite newer state.
