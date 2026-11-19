@@ -17,7 +17,7 @@ const PagePushContext = createContext<PagePushValue>({
 
 
 import { applyCollectionMutations } from "@/lib/page-push-collections.mjs";
-import { shouldAcceptPageSnapshot } from "@/lib/page-push-recovery.mjs";
+import { shouldAcceptPageSnapshot, isCurrentPagePushSocket } from "@/lib/page-push-recovery.mjs";
 
 export function PagePushProvider({ page, children }: { page: string | null; children: ReactNode }) {
   const [status, setStatus] = useState<PagePushStatus>("DISCONNECTED");
@@ -87,7 +87,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       }
       socketRef.current = socket;
       socket.onopen = () => {
-        if (disposed) return;
+        if (disposed || !isCurrentPagePushSocket(socketRef.current, socket)) return;
         lastTransportAt = Date.now();
         retryMs = 1000;
         // A connected transport is not synchronized until its authoritative
@@ -96,7 +96,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         socket.send(JSON.stringify({ action: "subscribe", page }));
       };
       socket.onmessage = (event) => {
-        if (disposed) return;
+        if (disposed || !isCurrentPagePushSocket(socketRef.current, socket)) return;
         let message: Record<string, unknown>;
         try { message = JSON.parse(String(event.data)) as Record<string, unknown>; }
         catch { return; }
