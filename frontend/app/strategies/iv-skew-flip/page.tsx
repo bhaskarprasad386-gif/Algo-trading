@@ -418,6 +418,8 @@ export default function IVSkewFlipPage() {
   const durableHistoryRequestSequenceRef=useRef(0);
   // A pushed runtime observation invalidates any older REST chart recovery read.
   const chartHistoryRequestSequenceRef=useRef(0);
+  // Manual status refreshes must not rewind newer runtime/settings pushed over WS.
+  const runtimeStatusRefreshSequenceRef=useRef(0);
   const durableHistoryRefreshTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
   const lastPushedHistoryCountRef=useRef<number|null>(null);
   const lastPushedHistoryExpiryRef=useRef<string|null>(null);
@@ -583,9 +585,11 @@ export default function IVSkewFlipPage() {
     }
   };
   const refresh=useCallback(async()=>{
+    const requestSequence=++runtimeStatusRefreshSequenceRef.current;
     const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});
     const body=await response.json();
     if(!response.ok) throw new Error(apiError(body,`Status HTTP ${response.status}`));
+    if(requestSequence!==runtimeStatusRefreshSequenceRef.current)return;
     setRuntime(body.runtime??null);
     setSelectedEnabled(body.saved_enabled===true);
     setSavedEnabled(body.saved_enabled===true);
@@ -618,6 +622,7 @@ export default function IVSkewFlipPage() {
       setBasketRegistry(pagePushData.basket_registry as BasketRegistry);
     }
     if(pagePushData.runtime&&typeof pagePushData.runtime==="object"){
+      runtimeStatusRefreshSequenceRef.current+=1;
       alertFetchSequenceRef.current+=1;
       chartHistoryRequestSequenceRef.current+=1;
       const pushedRuntime=pagePushData.runtime as Runtime;
@@ -677,11 +682,13 @@ export default function IVSkewFlipPage() {
       }
     }
     if(typeof pagePushData.saved_enabled==="boolean"){
+      runtimeStatusRefreshSequenceRef.current+=1;
       setSavedEnabled(pagePushData.saved_enabled);
       if(!settingDirty)setSelectedEnabled(pagePushData.saved_enabled);
     }
   },[pagePushData,settingDirty,alertAudioEnabled]);
   async function saveRunnerSetting(){
+    runtimeStatusRefreshSequenceRef.current+=1;
     setBusy(true);setError("");
     try{
       const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:selectedEnabled}),cache:"no-store"});
