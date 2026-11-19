@@ -118,6 +118,10 @@ function ScannerContent() {
     } catch {
       // Preserve the last confirmed durable history during a transient REST
       // failure; an empty error response must not erase previously loaded rows.
+      // Let a subsequent push retry this revision instead of treating it as loaded.
+      if (requestSequence === pairHistoryRequestSequenceRef.current) {
+        pairHistoryRevisionRef.current = null;
+      }
     }
   };
 
