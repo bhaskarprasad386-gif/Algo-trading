@@ -102,8 +102,19 @@ def _latest_page_sequence(page: str) -> int:
 
 
 def _sequence_gap(last_sequence: int, incoming_sequence: int) -> bool:
-    """Detect missing journal frames even when the initial snapshot is sequence zero."""
-    return incoming_sequence != last_sequence + 1
+    """Detect forward gaps; duplicate or stale frames are not gaps."""
+    return incoming_sequence > last_sequence + 1
+
+
+
+def _requires_resync(last_sequence: int, incoming_sequence: int, snapshot_required: bool = False) -> bool:
+    """Resync only on an explicit reset marker or a missing forward sequence.
+
+
+
+    Duplicate and stale frames should be ignored by the caller, not reset the stream.
+    """
+    return bool(snapshot_required or _sequence_gap(last_sequence, incoming_sequence))
 
 
 def _events_after(cursor: int, limit: int = 100) -> list[dict[str, Any]]:
