@@ -417,3 +417,22 @@ def test_page_push_queue_overflow_requests_snapshot_for_each_channel(monkeypatch
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
     asyncio.run(scenario())
+
+
+def test_resync_preserved_channel_with_multiple_queued_deltas_requests_snapshot():
+    async def scenario():
+        queue = asyncio.Queue(maxsize=8)
+        queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 4})
+        queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 10, "data": {"a": 1}})
+        queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 11, "data": {"a": 2}})
+        event_task = asyncio.create_task(queue.get())
+        await asyncio.sleep(0)
+        # Simulate resync of box-spread; preserve other channel safely.
+        waiter = await push._restart_event_waiter(queue, event_task, "box-spread")
+        frame = await asyncio.wait_for(waiter, timeout=0.1)
+        assert frame["page"] == "iv-skew-flip"
+        assert frame["event"] == "SNAPSHOT_REQUIRED"
+        assert frame["sequence"] == 11
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
+    asyncio.run(scenario())
