@@ -286,3 +286,18 @@ def test_page_push_dispatcher_marks_queue_overflow_for_snapshot(monkeypatch):
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
     asyncio.run(scenario())
+
+
+def test_unstable_snapshot_is_not_marked_authoritative(monkeypatch):
+    sequence = {"value": 0}
+
+    def unstable_snapshot():
+        sequence["value"] += 1
+        return {"rows": [{"captured": sequence["value"]}]}
+
+    monkeypatch.setattr(push, "_latest_page_sequence", lambda page: sequence["value"])
+    monkeypatch.setattr(push, "_snapshot", lambda page: unstable_snapshot())
+    frame = push._consistent_snapshot_frame("box-spread", retries=3)
+    assert frame["event"] == "SNAPSHOT"
+    assert frame["sequence"] == 3
+    assert frame["data"] == {"snapshot_status": "UNAVAILABLE"}
