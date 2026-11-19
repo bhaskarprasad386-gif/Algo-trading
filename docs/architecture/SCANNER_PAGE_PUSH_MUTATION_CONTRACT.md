@@ -18,6 +18,7 @@ The scanner page WebSocket is the authoritative live-update channel for scanner 
 3. Delete: publish the updated complete list (preferred) or an explicit keyed deletion supported by that component.
 4. Reconnect: snapshot must contain the committed current state; deleted rows must not reappear.
 5. REST recovery results must be request-sequenced and must not overwrite a newer push.
+6. Box index spot tick PATCHes may carry a partial `index_spots` list; the frontend merges those entries by symbol. SNAPSHOT replaces the complete spot list.
 
 ## Page boundaries and safety
 
