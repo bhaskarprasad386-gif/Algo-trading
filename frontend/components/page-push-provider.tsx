@@ -113,7 +113,20 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         if (eventType === "PATCH" && message.data && typeof message.data === "object") {
           setData((previous) => ({ ...(previous || {}), ...(message.data as Record<string, unknown>), __event: "PATCH" }));
         } else if (eventType === "REMOVE" && message.data && typeof message.data === "object") {
-          setData((previous) => ({ ...(previous || {}), ...(message.data as Record<string, unknown>), __event: "REMOVE" }));
+          const payload = message.data as Record<string, unknown>;
+          const removeKeys = Array.isArray(payload.remove_keys)
+            ? payload.remove_keys.filter((key): key is string => typeof key === "string")
+            : Array.isArray(payload.keys)
+              ? payload.keys.filter((key): key is string => typeof key === "string")
+              : [];
+          setData((previous) => {
+            const next = { ...(previous || {}), __event: "REMOVE" };
+            for (const key of removeKeys) delete next[key];
+            for (const [key, value] of Object.entries(payload)) {
+              if (key !== "remove_keys" && key !== "keys") next[key] = value;
+            }
+            return next;
+          });
         }
       };
       socket.onerror = () => socket.close();
