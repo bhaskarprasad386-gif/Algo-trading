@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
 
@@ -99,8 +99,10 @@ export function SyntheticTracePanel() {
   const [statusByTrace, setStatusByTrace] = useState<Record<string, Record<string, unknown>>>({});
   const [checkingTraceIds, setCheckingTraceIds] = useState<string[]>([]);
   const { data: pagePushData, status: pagePushStatus } = usePagePush("synthetic-arbitrage");
+  const tracePushSequenceRef = useRef(0);
 
   useEffect(() => {
+    const bootstrapPushSequence = tracePushSequenceRef.current;
     const localRows = readStored();
     const deletedIds = readDeleted();
     setTraces(localRows.filter((row) => !deletedIds.includes(row.trace_id)));
@@ -110,6 +112,7 @@ export function SyntheticTracePanel() {
         const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities", { cache: "no-store" });
         const body = await response.json().catch(() => ({}));
         if (!response.ok || !Array.isArray(body?.data)) throw new Error("Trace restore unavailable");
+        if (bootstrapPushSequence !== tracePushSequenceRef.current) return;
         const serverRows: TraceRow[] = (body.data as unknown[]).filter((item: unknown): item is TraceRow => !!item && typeof item === "object" && typeof (item as Record<string, unknown>).trace_id === "string");
         const serverIds = new Set(serverRows.map((row: TraceRow) => row.trace_id));
         const localOnly = localRows.filter((row: TraceRow) => !serverIds.has(row.trace_id) && !deletedIds.includes(row.trace_id));
