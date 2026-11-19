@@ -151,7 +151,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         if (eventType === "PATCH" && message.data && typeof message.data === "object") {
           setData((previous) => {
             const payload = message.data as Record<string, unknown>;
-            const merged = { ...(previous || {}), ...payload, __event: "PATCH" };
+            const merged: Record<string, unknown> = { ...(previous || {}), ...payload, __event: "PATCH" };
             delete merged.collection_changes;
             return applyCollectionMutations(merged, payload.collection_changes);
           });
