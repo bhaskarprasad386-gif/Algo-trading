@@ -189,10 +189,22 @@ function ScannerContent() {
 
   useEffect(() => {
     if (!pagePushData) return;
-    // Any page push supersedes outstanding REST fallback payloads, including REMOVE.
     liveRequestSequenceRef.current += 1;
     pairLiveRequestSequenceRef.current += 1;
     const event = String(pagePushData.__event ?? "").toUpperCase();
+    if (event === "SNAPSHOT") {
+      // Authoritative reconnect snapshot replaces retained state; absent fields are empty.
+      pairHistoryRequestSequenceRef.current += 1;
+      const snapshot = scannerSnapshotState(pagePushData);
+      setRows(snapshot.rows as Row[]);
+      setPairRows(snapshot.pairs as Row[]);
+      setPairBackendStats(snapshot.stats as Row);
+      setLastLiveScanAt(snapshot.scanAt);
+      setLoading(false);
+      setError(null);
+      pairHistoryRevisionRef.current = null;
+      return;
+    }
     const removedKeys = Array.isArray(pagePushData.remove_keys)
       ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
       : Array.isArray(pagePushData.keys)
