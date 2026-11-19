@@ -377,7 +377,6 @@ def _origin_allowed(websocket: WebSocket) -> bool:
     host = (parsed.hostname or "").lower()
     return parsed.scheme in {"http", "https"} and (
         host in {"localhost", "127.0.0.1"}
-        or host.endswith(".vercel.app")
         or host == "bhaskarprasad386.workers.dev"
         or host.endswith(".bhaskarprasad386.workers.dev")
     )
