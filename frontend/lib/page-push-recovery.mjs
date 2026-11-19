@@ -94,6 +94,13 @@ export function workspaceSnapshotMissing(snapshot, collection) {
   return false;
 }
 
+/** Missing live opportunity collection in a synthetic trace reconnect snapshot. */
+export function syntheticTraceSnapshotMissing(snapshot, collection) {
+  const source = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) ? snapshot : {};
+  if (collection !== "live") return false;
+  return !(source.live && typeof source.live === "object" && Array.isArray(source.live.data));
+}
+
 /** Missing state fields in an authoritative IV Skew Flip reconnect snapshot. */
 export function ivSkewSnapshotMissing(snapshot, key) {
   const source = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) ? snapshot : {};
