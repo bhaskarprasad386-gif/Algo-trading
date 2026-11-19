@@ -41,6 +41,20 @@ def test_keyed_collection_change_publisher_emits_add_update_delete_contract(monk
     assert all(page == "box-spread" and event == "PATCH" for page, event, _ in published)
     changes = [payload["collection_changes"][0] for _, _, payload in published]
     assert [change["operation"] for change in changes] == ["ADD", "UPDATE", "DELETE"]
+
+def test_keyed_collection_change_publisher_rejects_invalid_identity_and_reserved_names(monkeypatch):
+    published = []
+    monkeypatch.setattr(push, "publish_page_update", lambda page, event, data=None: published.append((page, event, data)))
+    push.publish_collection_change("box-spread", "rows", "ADD", "id", item={"id": "ok"})
+    push.publish_collection_change("box-spread", "rows", "UPDATE", "id", key="other", item={"id": "wrong"})
+    push.publish_collection_change("box-spread", "__proto__", "ADD", "id", item={"id": "x"})
+    push.publish_collection_change("box-spread", "rows", "ADD", "__proto__", item={"__proto__": "x"})
+    push.publish_collection_change("box-spread", "rows", "ADD", "id", item={"id": True})
+    push.publish_collection_change("box-spread", "rows", "ADD", "id", item={"id": ""})
+    assert len(published) == 1
+    change = published[0][2]["collection_changes"][0]
+    assert change["operation"] == "ADD" and change["key"] == "ok"
+
     assert changes[0]["item"] == {"id": "x", "edge": 1.0}
     assert changes[1]["key"] == "x"
     assert changes[2]["key"] == "x"
