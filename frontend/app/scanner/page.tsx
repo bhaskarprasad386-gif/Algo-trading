@@ -209,13 +209,13 @@ function ScannerContent() {
       if (removedKeys.includes("stats")) setPairBackendStats({});
       if (removedKeys.includes("scan_at")) setLastLiveScanAt(null);
     }
-    if (Array.isArray(pagePushData.rows)) {
+    if (!removedKeys.includes("rows") && Array.isArray(pagePushData.rows)) {
       setRows(pagePushData.rows.filter((item: unknown): item is Row => !!item && typeof item === "object"));
       setLoading(false); setError(null);
     }
-    if (Array.isArray(pagePushData.pairs)) setPairRows(pagePushData.pairs.filter((item: unknown): item is Row => !!item && typeof item === "object"));
-    if (pagePushData.stats && typeof pagePushData.stats === "object") setPairBackendStats(pagePushData.stats as Row);
-    if (typeof pagePushData.scan_at === "string") setLastLiveScanAt(pagePushData.scan_at);
+    if (!removedKeys.includes("pairs") && Array.isArray(pagePushData.pairs)) setPairRows(pagePushData.pairs.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+    if (!removedKeys.includes("stats") && pagePushData.stats && typeof pagePushData.stats === "object") setPairBackendStats(pagePushData.stats as Row);
+    if (!removedKeys.includes("scan_at") && typeof pagePushData.scan_at === "string") setLastLiveScanAt(pagePushData.scan_at);
   }, [pagePushData]);
 
 
