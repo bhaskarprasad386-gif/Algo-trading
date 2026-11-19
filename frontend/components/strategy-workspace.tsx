@@ -7,6 +7,7 @@ import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import LiveOpportunityGrid from "@/components/LiveOpportunityGrid";
 import { usePagePush } from "@/components/page-push-provider";
+import { workspaceSnapshotMissing } from "@/lib/page-push-recovery.mjs";
 
 export type WorkspaceConfig = {
   slug: string;
