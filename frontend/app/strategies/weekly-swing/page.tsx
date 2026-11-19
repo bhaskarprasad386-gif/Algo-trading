@@ -145,28 +145,32 @@ export default function WeeklySwingScannerPage() {
       const startResponse = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/start`, { method: "POST", cache: "no-store" });
       const started = await startResponse.json();
       if (!startResponse.ok) throw new Error(started.detail || `NIFTY 200 scan failed (${startResponse.status})`);
-      const poll = async (): Promise<void> => {
+      const refreshStatus = async () => {
         const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/status`, { cache: "no-store" });
         const body: UniverseStatus = await response.json();
         if (!response.ok) throw new Error("Could not read NIFTY 200 scan status");
         setUniverseStatus(body);
         if (body.status === "completed") {
           setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
-          setLoading(false);
-          return;
+          return "completed";
         }
         if (body.status === "failed" || body.status === "paused") throw new Error(`${body.status === "paused" ? "Scan paused" : "NIFTY 200 scan failed"}: ${body.fatal_error || "No further scan details provided"}`);
         if (body.status === "idle") throw new Error("NIFTY 200 scan is idle; start it again to continue.");
-        await new Promise(resolve => window.setTimeout(resolve, 3000));
-        return poll();
+        return "running";
       };
-      await poll();
+      let state = await refreshStatus();
+      // WebSocket delivers progress/completion in real time; keep HTTP polling
+      // only as recovery when the page channel is not synchronized.
+      while (state === "running" && pagePushStatus !== "LIVE") {
+        await new Promise(resolve => window.setTimeout(resolve, 3000));
+        state = await refreshStatus();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "NIFTY 200 scan unavailable");
+    } finally {
       setLoading(false);
     }
   }
-
   return <div className="space-y-5">
     <header className="space-y-2">
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] theme-accent"><Activity size={15}/> NIFTY 200 Weekly Pattern Scanner</div>
