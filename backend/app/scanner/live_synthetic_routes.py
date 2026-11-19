@@ -583,6 +583,8 @@ def pairs(limit: Annotated[int, Query(ge=1, le=500)] = 200):
         "status": str(snapshot.get("status") or "success"),
         "scanner": "synthetic-cash-carry-live-1s",
         "count": len(rows),
+        "history_revision": _pair_history_last_saved_at,
+        "history_saved_count": _pair_history_last_saved_count,
         "data": rows,
     }
     # Forward only the scanner's bounded, pre-sanitized numeric summary. Never
