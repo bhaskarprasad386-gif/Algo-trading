@@ -31,3 +31,5 @@ export function isPagePushCollectionRemoved(event: unknown, removedKeys: readonl
 
 /** Send a WebSocket control frame without throwing on transport races. */
 export function sendPagePushFrame(socket: WebSocket, frame: Record<string, unknown>): boolean;
+
+export function scannerSnapshotState(snapshot: unknown): { rows: Record<string, unknown>[]; pairs: Record<string, unknown>[]; stats: Record<string, unknown>; scanAt: string | null };
