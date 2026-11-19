@@ -416,6 +416,8 @@ export default function IVSkewFlipPage() {
   const basketRegistryRequestSequenceRef=useRef(0);
   const lastBasketRegistryPushRef=useRef<unknown>(null);
   const durableHistoryRequestSequenceRef=useRef(0);
+  // A pushed runtime observation invalidates any older REST chart recovery read.
+  const chartHistoryRequestSequenceRef=useRef(0);
   const durableHistoryRefreshTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
   const lastPushedHistoryCountRef=useRef<number|null>(null);
   const lastPushedHistoryExpiryRef=useRef<string|null>(null);
@@ -533,12 +535,13 @@ export default function IVSkewFlipPage() {
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
+      const requestSequence=++chartHistoryRequestSequenceRef.current;
       try{
         const expiry=activeWeeklyExpiry;
         const query=expiry?`&expiry=${encodeURIComponent(expiry)}`:"";
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/timeseries?underlying=NIFTY&window_seconds=1800&limit=20000${query}`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&response.ok&&body.status==="ok")setChartHistory(body as Row);
+        if(active&&requestSequence===chartHistoryRequestSequenceRef.current&&response.ok&&body.status==="ok")setChartHistory(body as Row);
       }catch{/* keep last successful chart window */}
     };
     void poll();
@@ -598,6 +601,7 @@ export default function IVSkewFlipPage() {
           : [];
       if(removedKeys.includes("runtime")){
         alertFetchSequenceRef.current+=1;
+        chartHistoryRequestSequenceRef.current+=1;
         setRuntime(null);
         setChartHistory(null);
         setEarlyAlertLive(null);
@@ -615,6 +619,7 @@ export default function IVSkewFlipPage() {
     }
     if(pagePushData.runtime&&typeof pagePushData.runtime==="object"){
       alertFetchSequenceRef.current+=1;
+      chartHistoryRequestSequenceRef.current+=1;
       const pushedRuntime=pagePushData.runtime as Runtime;
       setRuntime(pushedRuntime);
       // Runtime snapshots carry the sampler's latest real broker observations.
