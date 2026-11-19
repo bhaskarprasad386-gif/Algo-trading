@@ -1017,14 +1017,33 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   useEffect(() => {
     if (!pagePushData) return;
     if (slug === "calendar-spread" || slug === "synthetic-arbitrage") {
+      const event = String(pagePushData.__event ?? "").toUpperCase();
+      const removedKeys = Array.isArray(pagePushData.remove_keys)
+        ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+        : Array.isArray(pagePushData.keys)
+          ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+          : [];
+      const removed = (key: string) => event === "REMOVE" && removedKeys.includes(key);
       const live = pagePushData.live as Record<string, any> | undefined;
       const pairs = pagePushData.pairs as Record<string, any> | undefined;
-      if (Array.isArray(live?.data)) {
+      if (removed("live")) {
+        loadRequestRef.current += 1;
+        rowsRef.current = [];
+        setRows([]);
+        setRowsStale(false);
+        setLoading(false);
+        setError(null);
+        setLiveApiStatus("WAITING");
+      } else if (Array.isArray(live?.data)) {
         const nextRows = live.data.filter((item: unknown): item is Row => !!item && typeof item === "object");
         rowsRef.current = nextRows; setRows(nextRows); setRowsStale(false);
         setLoading(false); setLiveApiLastOkAt(Date.now()); setLiveApiStatus("RESPONDING"); setError(null);
       }
-      if (Array.isArray(pairs?.data)) {
+      if (removed("pairs")) {
+        pairRequestSequence.current += 1;
+        setPairRows([]);
+        setPairMonitorStatus("WAITING");
+      } else if (Array.isArray(pairs?.data)) {
         // Pushed pair data invalidates any REST response started before this frame.
         pairRequestSequence.current += 1;
         const pushedPairs = pairs.data.filter((item: unknown): item is Row => !!item && typeof item === "object");
@@ -1035,32 +1054,35 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           try { window.localStorage.setItem("algo:synthetic-arbitrage:last-pairs:v1", JSON.stringify({ savedAt: Date.now(), rows: pushedPairs })); } catch { /* Cache is optional. */ }
         }
       }
-      if (slug === "synthetic-arbitrage" && pagePushData.diagnostics && typeof pagePushData.diagnostics === "object") {
-        setScannerDiagnostics(pagePushData.diagnostics as Record<string, unknown>);
+      if (slug === "synthetic-arbitrage") {
+        if (removed("diagnostics")) setScannerDiagnostics(null);
+        else if (pagePushData.diagnostics && typeof pagePushData.diagnostics === "object") setScannerDiagnostics(pagePushData.diagnostics as Record<string, unknown>);
+        if (removed("universe")) setUniverseAvailability(null);
+        else if (pagePushData.universe && typeof pagePushData.universe === "object") setUniverseAvailability(pagePushData.universe as Record<string, any>);
       }
-      if (slug === "synthetic-arbitrage" && pagePushData.universe && typeof pagePushData.universe === "object") {
-        setUniverseAvailability(pagePushData.universe as Record<string, any>);
-      }
-      const health = pagePushData.runtime_health;
-      if (health && typeof health === "object") {
-        const runtime = health as Record<string, any>;
-        const feed = runtime.common_feed && typeof runtime.common_feed === "object" ? runtime.common_feed : {};
-        setFeedTicks(nullableNumber(feed.ticks_received));
-        setFeedAge(nullableNumber(feed.age_seconds));
-        setFeedExchangeFreshness(feed.exchange_freshness && typeof feed.exchange_freshness === "object" ? feed.exchange_freshness : null);
-        setFeedInstruments(nullableNumber(feed.active_instruments));
-        setFeedStatus(String(feed.status ?? "UNKNOWN").toUpperCase());
-        setFeedErrors({ delivery: Number(feed.delivery_errors ?? 0) || 0, normalizer: Number(feed.normalizer_errors ?? 0) || 0 });
-        const runnerKey = slug === "calendar-spread" ? "calendar_spread" : "synthetic";
-        const selected = runtime.runners?.[runnerKey];
-        setRunner(selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null);
-        if (slug === "calendar-spread") {
-          setCalendarRuntime(selected && typeof selected === "object" ? selected : null);
+      if (removed("runtime_health")) {
+        setFeedTicks(null); setFeedAge(null); setFeedExchangeFreshness(null); setFeedInstruments(null);
+        setFeedStatus("UNKNOWN"); setFeedErrors(null); setRunner(null);
+        if (slug === "calendar-spread") setCalendarRuntime(null);
+      } else {
+        const health = pagePushData.runtime_health;
+        if (health && typeof health === "object") {
+          const runtime = health as Record<string, any>;
+          const feed = runtime.common_feed && typeof runtime.common_feed === "object" ? runtime.common_feed : {};
+          setFeedTicks(nullableNumber(feed.ticks_received));
+          setFeedAge(nullableNumber(feed.age_seconds));
+          setFeedExchangeFreshness(feed.exchange_freshness && typeof feed.exchange_freshness === "object" ? feed.exchange_freshness : null);
+          setFeedInstruments(nullableNumber(feed.active_instruments));
+          setFeedStatus(String(feed.status ?? "UNKNOWN").toUpperCase());
+          setFeedErrors({ delivery: Number(feed.delivery_errors ?? 0) || 0, normalizer: Number(feed.normalizer_errors ?? 0) || 0 });
+          const runnerKey = slug === "calendar-spread" ? "calendar_spread" : "synthetic";
+          const selected = runtime.runners?.[runnerKey];
+          setRunner(selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null);
+          if (slug === "calendar-spread") setCalendarRuntime(selected && typeof selected === "object" ? selected : null);
         }
       }
     }
   }, [slug, pagePushData]);
-
   useEffect(() => {
     if (slug !== "box-spread" || !pagePushData) return;
     const removedKeys = Array.isArray(pagePushData.remove_keys)
