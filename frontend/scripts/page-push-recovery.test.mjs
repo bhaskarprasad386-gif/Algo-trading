@@ -122,3 +122,31 @@ test("local trace add or delete invalidates an in-flight initial restore", () =>
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:bootstrapSequence,latestSequence,responseValid:true}),false);
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:latestSequence,latestSequence,responseValid:true}),true);
 });
+
+import { trackTraceSave, waitForTraceSave } from "../lib/trace-mutation-order.mjs";
+
+test("trace DELETE waits for an in-flight POST before proceeding", async () => {
+  const registry = new Map();
+  let resolveSave;
+  const save = new Promise(resolve => { resolveSave = resolve; });
+  const tracked = trackTraceSave(registry, "trace-1", () => save);
+  let deleteStarted = false;
+  const deleting = (async () => {
+    await waitForTraceSave(registry, "trace-1");
+    deleteStarted = true;
+  })();
+  await Promise.resolve();
+  assert.equal(deleteStarted, false);
+  resolveSave({ ok: true });
+  await Promise.all([tracked, deleting]);
+  assert.equal(deleteStarted, true);
+  assert.equal(registry.has("trace-1"), false);
+});
+
+test("trace DELETE is released when the preceding POST fails", async () => {
+  const registry = new Map();
+  const tracked = trackTraceSave(registry, "trace-fail", () => Promise.reject(new Error("offline")));
+  await assert.rejects(tracked, /offline/);
+  await waitForTraceSave(registry, "trace-fail");
+  assert.equal(registry.has("trace-fail"), false);
+});
