@@ -31,6 +31,8 @@ export default function WeeklySwingScannerPage() {
   const statusRequestSequenceRef = useRef(0);
   const statusPushSequenceRef = useRef(0);
   pagePushStatusRef.current = pagePushStatus;
+  const isPagePushLive = () => pagePushStatusRef.current === "LIVE";
+
 
   // Restore a scan already running on the backend after a page reload, then
   // keep its status current without requiring the user to press Resume.
@@ -44,7 +46,7 @@ export default function WeeklySwingScannerPage() {
         const response = await fetch(base + "/api/v1/scanner/weekly-swing/scan-all/status", { cache: "no-store" });
         if (!response.ok) return;
         const body: UniverseStatus = await response.json();
-        if (!isCurrentRecoveryResponse({ active, requestSequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || pagePushStatusRef.current === "LIVE") return;
+        if (!isCurrentRecoveryResponse({ active, requestSequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || isPagePushLive()) return;
         shouldPoll = body.status === "running";
         setUniverseStatus(body);
         if (body.status === "completed") {
@@ -98,7 +100,7 @@ export default function WeeklySwingScannerPage() {
       const response = await fetch(base + "/api/v1/scanner/weekly-swing/scan-all/status", { cache: "no-store" });
       if (!response.ok) throw new Error("Could not read NIFTY 200 scan status");
       const body: UniverseStatus = await response.json();
-      if (!isCurrentRecoveryResponse({ active: true, requestSequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || pagePushStatusRef.current === "LIVE") return;
+      if (!isCurrentRecoveryResponse({ active: true, requestSequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || isPagePushLive()) return;
       setUniverseStatus(body);
       setError("");
       if (body.status === "completed") {
@@ -120,7 +122,7 @@ export default function WeeklySwingScannerPage() {
       const response = await fetch(base + "/api/v1/scanner/weekly-swing/scan-all/status", { cache: "no-store" });
       if (!response.ok) throw new Error("Could not read NIFTY 200 scan status");
       const body: UniverseStatus = await response.json();
-      if (!isCurrentRecoveryResponse({ active: true, requestSequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || pagePushStatusRef.current === "LIVE") return;
+      if (!isCurrentRecoveryResponse({ active: true, requestSequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || isPagePushLive()) return;
       setUniverseStatus(body);
       if (body.status === "completed") {
         setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
@@ -128,17 +130,17 @@ export default function WeeklySwingScannerPage() {
         throw new Error((body.status === "paused" ? "Scan paused: " : "NIFTY 200 scan failed: ") + (body.fatal_error || "No further scan details provided"));
       } else if (body.status === "idle") {
         throw new Error("No active NIFTY 200 scan found. Start a scan to begin.");
-      } else if (pagePushStatusRef.current !== "LIVE") {
+      } else if (!isPagePushLive()) {
         // WS is the primary live path. Poll only as a recovery fallback.
         let recoveryState = body.status;
-        while (recoveryState === "running" && pagePushStatusRef.current !== "LIVE") {
+        while (recoveryState === "running" && !isPagePushLive()) {
           await new Promise(resolve => window.setTimeout(resolve, 3000));
-          if (pagePushStatusRef.current === "LIVE") break;
+          if (isPagePushLive()) break;
           const recoverySequence = ++statusRequestSequenceRef.current;
           const recovery = await fetch(base + "/api/v1/scanner/weekly-swing/scan-all/status", { cache: "no-store" });
           if (!recovery.ok) throw new Error("Could not read NIFTY 200 scan status");
           const next: UniverseStatus = await recovery.json();
-          if (!isCurrentRecoveryResponse({ active: true, requestSequence: recoverySequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || pagePushStatusRef.current === "LIVE") continue;
+          if (!isCurrentRecoveryResponse({ active: true, requestSequence: recoverySequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || isPagePushLive()) continue;
           setUniverseStatus(next);
           if (next.status === "completed") {
             setResult({ status: "success", symbol: "NIFTY 200", count: next.matches?.length ?? 0, matches: next.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
@@ -172,7 +174,7 @@ export default function WeeklySwingScannerPage() {
         const response = await fetch(base + "/api/v1/scanner/weekly-swing/scan-all/status", { cache: "no-store" });
         if (!response.ok) throw new Error("Could not read NIFTY 200 scan status");
         const body: UniverseStatus = await response.json();
-        if (!isCurrentRecoveryResponse({ active: true, requestSequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || pagePushStatusRef.current === "LIVE") return "running";
+        if (!isCurrentRecoveryResponse({ active: true, requestSequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || isPagePushLive()) return "running";
         setUniverseStatus(body);
         if (body.status === "completed") {
           setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
@@ -185,7 +187,7 @@ export default function WeeklySwingScannerPage() {
       let state = await refreshStatus();
       // WebSocket delivers progress/completion in real time; keep HTTP polling
       // only as recovery when the page channel is not synchronized.
-      while (state === "running" && pagePushStatusRef.current !== "LIVE") {
+      while (state === "running" && !isPagePushLive()) {
         await new Promise(resolve => window.setTimeout(resolve, 3000));
         state = await refreshStatus();
       }
