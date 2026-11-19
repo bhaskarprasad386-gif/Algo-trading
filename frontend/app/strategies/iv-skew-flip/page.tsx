@@ -416,6 +416,7 @@ export default function IVSkewFlipPage() {
   const basketRegistryRequestSequenceRef=useRef(0);
   const lastBasketRegistryPushRef=useRef<unknown>(null);
   const durableHistoryRequestSequenceRef=useRef(0);
+  const olderAlertsRequestSequenceRef=useRef(0);
   // A pushed runtime observation invalidates any older REST chart recovery read.
   const chartHistoryRequestSequenceRef=useRef(0);
   // Manual status refreshes must not rewind newer runtime/settings pushed over WS.
@@ -555,6 +556,7 @@ export default function IVSkewFlipPage() {
   },[base,activeWeeklyExpiry,pagePushStatus]);
   const loadMoreAlerts=async()=>{
     if(loadingMoreAlerts||!hasMoreAlerts||!alertCursor)return;
+    const requestSequence=++olderAlertsRequestSequenceRef.current;
     const query=new URLSearchParams({
       limit:"30",
       before_observed_at_ns:alertCursor.before_observed_at_ns,
@@ -566,6 +568,7 @@ export default function IVSkewFlipPage() {
       const body=await response.json();
       if(!response.ok)throw new Error(apiError(body,"Could not load older alert history"));
       const rows=Array.isArray(body.alerts)?body.alerts as EarlyAlert[]:[];
+      if(!isCurrentRecoveryResponse({active:true,requestSequence,latestSequence:olderAlertsRequestSequenceRef.current,responseValid:true}))return;
       loadedOlderAlerts.current=true;
       setEarlyAlerts(current=>{
         const merged=new Map<number,EarlyAlert>();
@@ -579,9 +582,9 @@ export default function IVSkewFlipPage() {
       }:null);
       setAlertFetchError("");
     }catch(e){
-      setAlertFetchError(e instanceof Error?e.message:"Could not load older alert history");
+      if(requestSequence===olderAlertsRequestSequenceRef.current)setAlertFetchError(e instanceof Error?e.message:"Could not load older alert history");
     }finally{
-      setLoadingMoreAlerts(false);
+      if(requestSequence===olderAlertsRequestSequenceRef.current)setLoadingMoreAlerts(false);
     }
   };
   const refresh=useCallback(async()=>{
@@ -622,6 +625,8 @@ export default function IVSkewFlipPage() {
       setBasketRegistry(pagePushData.basket_registry as BasketRegistry);
     }
     if(pagePushData.runtime&&typeof pagePushData.runtime==="object"){
+      olderAlertsRequestSequenceRef.current+=1;
+      setLoadingMoreAlerts(false);
       runtimeStatusRefreshSequenceRef.current+=1;
       alertFetchSequenceRef.current+=1;
       chartHistoryRequestSequenceRef.current+=1;
