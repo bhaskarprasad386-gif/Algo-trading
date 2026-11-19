@@ -470,9 +470,12 @@ export default function IVSkewFlipPage() {
       }catch{/* keep last known basket registry state */}
     };
     void poll();
+    // Initial durable registry fetch is retained. REST polling is recovery-only
+    // while the page channel is not synchronized; avoid duplicate refresh traffic.
+    if(pagePushStatus==="LIVE")return()=>{active=false;};
     const timer=window.setInterval(()=>{if(active)void poll();},10000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[base]);
+  },[base,pagePushStatus]);
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
