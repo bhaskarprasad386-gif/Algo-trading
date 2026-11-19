@@ -325,3 +325,28 @@ def test_iv_skew_flip_snapshot_includes_durable_basket_registry(monkeypatch):
     assert snapshot["runtime"] is None
     assert snapshot["basket_registry"] == registry
     assert snapshot["orders_enabled"] is False
+
+
+def test_cash_future_authoritative_snapshot_contains_live_rows_pairs_and_health(monkeypatch):
+    from app import main
+
+    class Scanner:
+        def health(self):
+            return {"last_observation_at": "2026-11-19T10:00:00+05:30", "status": "LIVE"}
+
+        def snapshot(self, *, max_age_seconds, limit):
+            assert max_age_seconds == 5.0 and limit == 500
+            return [{"symbol": "ABC", "price": 123.4}]
+
+        def pair_snapshot(self, *, max_age_seconds, limit):
+            assert max_age_seconds == 120.0 and limit == 500
+            return [{"symbol": "ABC", "gap": 1.25}]
+
+    monkeypatch.setattr(main, "live_cash_future_scanner", Scanner())
+    monkeypatch.setattr(main, "live_cash_future_runner", None)
+    snapshot = main._cash_future_page_push_snapshot()
+    assert snapshot["rows"] == [{"symbol": "ABC", "price": 123.4}]
+    assert snapshot["pairs"] == [{"symbol": "ABC", "gap": 1.25}]
+    assert snapshot["stats"]["status"] == "LIVE"
+    assert snapshot["scan_at"] == "2026-11-19T10:00:00+05:30"
+    assert snapshot["runner"] is None
