@@ -123,13 +123,9 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
             "type": "page_update", "page": page, "sequence": page_sequences[page],
             "event": event, "data": data or {},
         }
-        journal.append({
-            "id": len(journal) + 1, "page": page,
-            "sequence": page_sequences[page], "event": event, "data": data or {},
-        })
-        # This round-trip test controls the publisher and avoids relying on the
-        # background journal poller's timing. Dispatcher replay/overflow have
-        # separate tests above.
+        # This round-trip test injects exactly one controlled frame into the
+        # subscriber queue. Journal dispatcher delivery is covered separately;
+        # duplicating a journal row here would race the direct queue injection.
         for queue, channels in tuple(push._subscribers):
             if page in channels:
                 queue.put_nowait(frame)
