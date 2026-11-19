@@ -52,7 +52,8 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
         def atm(self, symbol, now_ns, **kwargs): return 100.0 if symbol == "READY" else None
 
     captured_feed_kwargs = []
-    spot_callback = lambda symbol, price, timestamp: None
+    spot_calls = []
+    spot_callback = lambda symbol, price, timestamp: spot_calls.append((symbol, price, timestamp))
 
     class Feed:
         def __init__(self, *args, **kwargs): captured_feed_kwargs.append(kwargs)
@@ -112,7 +113,14 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
     )
     monkeypatch.setattr(mod, "sleep", lambda _seconds: None)
     runner._run_session()
-    assert captured_feed_kwargs and captured_feed_kwargs[0]["on_price"] is spot_callback
+    assert captured_feed_kwargs and callable(captured_feed_kwargs[0]["on_price"])
+    # Staged runner is deactivated after the test session: late feed callbacks are suppressed.
+    captured_feed_kwargs[0]["on_price"]("READY", 100.0, 1)
+    assert spot_calls == []
+    runner.activate_publishing()
+    captured_feed_kwargs[0]["on_price"]("READY", 100.0, 1)
+    assert spot_calls == [("READY", 100.0, 1)]
+    runner.deactivate_publishing()
     assert captured == ["READY"]
     assert runner._readiness["state"] == "recorder_started"
 
