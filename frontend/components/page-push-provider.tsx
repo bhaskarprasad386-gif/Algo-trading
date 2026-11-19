@@ -164,13 +164,16 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         // than silently ignoring the control frame and leaving stale UI data.
         if (eventType === "SNAPSHOT_REQUIRED") {
           setStatus("RECONNECTING");
-          hasSnapshotRef.current = false;
-          resyncPendingRef.current = false;
+          // Keep the last accepted sequence baseline while resync is pending.
+          // Clearing it would allow a delayed, older snapshot to rewind state.
           resync();
           return;
         }
         // Ignore unknown frame types without advancing the sequence cursor.
         if (eventType !== "PATCH" && eventType !== "REMOVE") return;
+        // Once a gap/overflow requires resync, ignore all deltas until the
+        // authoritative snapshot arrives to avoid mutating an incomplete state.
+        if (resyncPendingRef.current) return;
         // Do not accept deltas until a full snapshot has established the
         // baseline, and require every subsequent sequence to be contiguous.
         if (!hasSnapshotRef.current) {
