@@ -101,6 +101,8 @@ def test_live_route_serializes_latest_results(monkeypatch):
     assert response["data"][0]["synthetic_bid"] == 25009.0
     assert response["data"][0]["synthetic_ask"] == 25011.0
     assert response["data"][0]["synthetic_formula"] == "strike + call - put"
+    assert "history_revision" in response
+    assert "history_saved_count" in response
 
 
 def test_live_route_deduplicates_same_contract_and_direction_by_newest_timestamp():
