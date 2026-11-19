@@ -57,8 +57,12 @@ function ScannerContent() {
   const { data: pagePushData, status: pagePushStatus } = usePagePush("cash-future");
   const pairHistoryRevisionRef = useRef<string | null>(null);
   const pairHistoryRequestSequenceRef = useRef(0);
+  // Prevent delayed REST recovery from overwriting authoritative page pushes.
+  const liveRequestSequenceRef = useRef(0);
+  const pairLiveRequestSequenceRef = useRef(0);
 
   const load = async () => {
+    const requestSequence = ++liveRequestSequenceRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -66,14 +70,16 @@ function ScannerContent() {
       const response = await fetch(`${base}/api/v1/scanner/cash-future/live/fast?limit=500`, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail || `Scanner HTTP ${response.status}`);
+      if (requestSequence !== liveRequestSequenceRef.current) return;
       const data = Array.isArray(body?.data) ? body.data : [];
       setRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
       if (typeof body?.scan_at === "string") setLastLiveScanAt(body.scan_at);
     } catch (e) {
+      if (requestSequence !== liveRequestSequenceRef.current) return;
       setRows([]);
       setError(e instanceof Error ? e.message : "Backend unavailable");
     } finally {
-      setLoading(false);
+      if (requestSequence === liveRequestSequenceRef.current) setLoading(false);
     }
   };
 
@@ -82,10 +88,12 @@ function ScannerContent() {
   }, [requestedMarket]);
 
   const loadPairLive = async () => {
+    const requestSequence = ++pairLiveRequestSequenceRef.current;
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(`${base}/api/v1/scanner/cash-future/live/pairs?max_age_seconds=120&limit=500`, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
+      if (requestSequence !== pairLiveRequestSequenceRef.current) return;
       setPairRows(Array.isArray(body?.data) ? body.data : []);
       const stats = body?.stats && typeof body.stats === "object" ? body.stats : {};
       setPairBackendStats(stats);
