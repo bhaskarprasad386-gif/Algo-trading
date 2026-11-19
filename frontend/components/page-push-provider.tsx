@@ -148,7 +148,15 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         if (eventType !== "PATCH" && eventType !== "REMOVE") return;
         // Do not accept deltas until a full snapshot has established the
         // baseline, and require every subsequent sequence to be contiguous.
-        if (!hasSnapshotRef.current || sequence !== sequenceRef.current + 1) {
+        if (!hasSnapshotRef.current) {
+          setStatus("RECONNECTING");
+          resync();
+          return;
+        }
+        // Duplicate/stale journal deliveries are harmless: ignore them without
+        // moving the cursor. Only a forward gap requires authoritative resync.
+        if (sequence <= sequenceRef.current) return;
+        if (sequence !== sequenceRef.current + 1) {
           setStatus("RECONNECTING");
           resync();
           return;
