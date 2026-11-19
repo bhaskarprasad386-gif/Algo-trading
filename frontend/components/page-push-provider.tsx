@@ -15,6 +15,44 @@ const PagePushContext = createContext<PagePushValue>({
   page: null, status: "DISCONNECTED", data: null, lastMessageAt: null, resync: () => undefined,
 });
 
+
+type CollectionMutation = {
+  collection: string;
+  operation: "ADD" | "UPDATE" | "DELETE";
+  key_field: string;
+  key?: string | number;
+  item?: Record<string, unknown>;
+};
+
+
+function applyCollectionMutations(
+  state: Record<string, unknown>,
+  mutations: unknown,
+): Record<string, unknown> {
+  if (!Array.isArray(mutations)) return state;
+  const next = { ...state };
+  for (const raw of mutations) {
+    if (!raw || typeof raw !== "object") continue;
+    const mutation = raw as CollectionMutation;
+    if (!mutation.collection || !mutation.key_field || !["ADD", "UPDATE", "DELETE"].includes(mutation.operation)) continue;
+    const current = next[mutation.collection];
+    if (!Array.isArray(current)) continue;
+    const item = mutation.item && typeof mutation.item === "object" ? mutation.item : undefined;
+    const key = mutation.key ?? item?.[mutation.key_field];
+    if (key === undefined || key === null) continue;
+    const findIndex = current.findIndex((row) => row && typeof row === "object" && String((row as Record<string, unknown>)[mutation.key_field]) === String(key));
+    const rows = [...current];
+    if (mutation.operation === "DELETE") {
+      if (findIndex >= 0) rows.splice(findIndex, 1);
+    } else if (item) {
+      if (findIndex >= 0) rows[findIndex] = mutation.operation === "UPDATE" ? { ...(rows[findIndex] as Record<string, unknown>), ...item } : item;
+      else rows.push(item);
+    }
+    next[mutation.collection] = rows;
+  }
+  return next;
+}
+
 export function PagePushProvider({ page, children }: { page: string | null; children: ReactNode }) {
   const [status, setStatus] = useState<PagePushStatus>("DISCONNECTED");
   const [data, setData] = useState<Record<string, unknown> | null>(null);
@@ -111,7 +149,12 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         lastPageUpdateAt = Date.now();
         setLastMessageAt(lastPageUpdateAt);
         if (eventType === "PATCH" && message.data && typeof message.data === "object") {
-          setData((previous) => ({ ...(previous || {}), ...(message.data as Record<string, unknown>), __event: "PATCH" }));
+          setData((previous) => {
+            const payload = message.data as Record<string, unknown>;
+            const merged = { ...(previous || {}), ...payload, __event: "PATCH" };
+            delete merged.collection_changes;
+            return applyCollectionMutations(merged, payload.collection_changes);
+          });
         } else if (eventType === "REMOVE" && message.data && typeof message.data === "object") {
           const payload = message.data as Record<string, unknown>;
           const removeKeys = Array.isArray(payload.remove_keys)
@@ -125,7 +168,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
             for (const [key, value] of Object.entries(payload)) {
               if (key !== "remove_keys" && key !== "keys") next[key] = value;
             }
-            return next;
+            delete next.collection_changes;
+            return applyCollectionMutations(next, payload.collection_changes);
           });
         }
       };
