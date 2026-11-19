@@ -220,7 +220,6 @@ function ScannerContent() {
     // The first push revision also supersedes any REST request started during
     // initial mount; fetch history from the baseline established by this push.
     pairHistoryRevisionRef.current = nextRevision;
-    pairHistoryRevisionRef.current = nextRevision;
     // The durable history API owns pagination and filtering; the push counter
     // invalidates its cached slice when new observations are appended.
     void loadPairHistory();
