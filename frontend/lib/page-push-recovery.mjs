@@ -1,3 +1,5 @@
+import { applyCollectionMutations } from "./page-push-collections.mjs";
+
 /**
  * Guard REST recovery responses against a newer WebSocket page update.
  * A pushed state increments the latest request sequence so late HTTP replies
@@ -49,6 +51,29 @@ export function isPagePushCollectionRemoved(event, removedKeys, collection) {
     Array.isArray(removedKeys) && removedKeys.includes(collection);
 }
 
+
+/** Apply REMOVE frames without allowing explicitly deleted collections to be reintroduced by the same stale payload. */
+export function applyPagePushRemovePayload(previous, payload) {
+  const source = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  const removeKeys = Array.isArray(source.remove_keys)
+    ? source.remove_keys.filter((key) => typeof key === "string")
+    : Array.isArray(source.keys)
+      ? source.keys.filter((key) => typeof key === "string")
+      : [];
+  const removed = new Set(removeKeys);
+  const next = { ...(previous || {}), __event: "REMOVE" };
+  for (const key of removed) delete next[key];
+  for (const [key, value] of Object.entries(source)) {
+    if (key !== "remove_keys" && key !== "keys" && !removed.has(key)) next[key] = value;
+  }
+  delete next.collection_changes;
+  const mutations = Array.isArray(source.collection_changes)
+    ? source.collection_changes.filter((mutation) =>
+        mutation && typeof mutation === "object" && !Array.isArray(mutation) &&
+        !removed.has(mutation.collection))
+    : [];
+  return applyCollectionMutations(next, mutations);
+}
 
 /** Safely send a page-push control frame; callers must close/recover on false. */
 export function sendPagePushFrame(socket, frame) {
