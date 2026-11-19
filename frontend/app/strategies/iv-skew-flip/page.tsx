@@ -564,7 +564,9 @@ export default function IVSkewFlipPage() {
         setChartHistory(null);
         setEarlyAlertLive(null);
       }
+      if(removedKeys.includes("basket_registry"))setBasketRegistry(null);
     }
+    if(pagePushData.basket_registry&&typeof pagePushData.basket_registry==="object")setBasketRegistry(pagePushData.basket_registry as BasketRegistry);
     if(pagePushData.runtime&&typeof pagePushData.runtime==="object"){
       alertFetchSequenceRef.current+=1;
       const pushedRuntime=pagePushData.runtime as Runtime;
