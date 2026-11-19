@@ -204,7 +204,11 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
             assert initial["data"]["opportunities"][0]["id"] == "initial"
 
             push.publish_page_update(page, "PATCH", {"opportunity_updates": [{"id": "fresh"}]})
+            # Ignore any duplicate/stale frame left by a concurrent journal
+            # dispatcher; only a strictly-forward frame may advance this test.
             patch = websocket.receive_json()
+            while patch.get("sequence", 0) <= initial["sequence"]:
+                patch = websocket.receive_json()
             assert patch["sequence"] == initial["sequence"] + 1
             if patch["event"] == "PATCH":
                 assert patch["data"]["opportunity_updates"][0]["id"] == "fresh"
