@@ -533,7 +533,10 @@ function runnerLabel(slug: string) {
 export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const c = configs[slug];
   const isCustom = slug === "custom-strategy";
-  const { data: pagePushData } = usePagePush("box-spread");
+  const pageChannel = slug === "box-spread" ? "box-spread"
+    : slug === "calendar-spread" ? "calendar-spread"
+    : slug === "synthetic-arbitrage" ? "synthetic-arbitrage" : "none";
+  const { data: pagePushData, status: pagePushStatus } = usePagePush(pageChannel);
   const endpoint =
     slug === "calendar-spread" ? "/api/v1/scanner/calendar-spread/live?limit=50" :
     slug === "synthetic-arbitrage" ? "/api/v1/scanner/synthetic-cash-carry/live?limit=50" :
@@ -541,7 +544,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const [currentLiveTime, setCurrentLiveTime] = useState("");
   const [liveApiLastOkAt, setLiveApiLastOkAt] = useState<number | null>(null);
-  const [liveApiStatus, setLiveApiStatus] = useState<"CHECKING" | "RESPONDING" | "ERROR">("CHECKING");
+  const [liveApiStatus, setLiveApiStatus] = useState<"CHECKING" | "RESPONDING" | "ERROR" | "WAITING">("CHECKING");
   const [search, setSearch] = useState("");
   const [liveExpiryView, setLiveExpiryView] = useState<"MONTHLY" | "WEEKLY">("MONTHLY");
   const [control, setControl] = useState(c.controls[0]);
@@ -601,6 +604,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [indexSelectionMessage, setIndexSelectionMessage] = useState("");
   const [indexSelectionError, setIndexSelectionError] = useState<string | null>(null);
   const indexSelectionDraftInitialized = useRef(false);
+  const historyRequestSequence = useRef(0);
+  const pairRequestSequence = useRef(0);
+  const syntheticHistoryPushRevision = useRef<string | null>(null);
+  const calendarHistoryPushRevision = useRef<string | null>(null);
+  const indexSelectionRequestSequence = useRef(0);
 
   useEffect(() => {
     const updateClock = () => setCurrentLiveTime(new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }));
@@ -626,6 +634,24 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       window.localStorage.setItem("algo:pair-monitor:hidden-columns:v1:" + slug, JSON.stringify(hiddenPairColumns));
     } catch { /* Preferences are optional; the column picker still works for this session. */ }
   }, [hiddenPairColumns, pairColumnPrefsLoaded, slug]);
+
+  useEffect(() => {
+    if (slug !== "calendar-spread") return;
+    const live = pagePushData?.live as Record<string, unknown> | undefined;
+    const revision = live?.history_revision;
+    if (revision == null || revision === "") return;
+    const value = String(revision);
+    // Initial REST history load is already performed on mount. Refresh only
+    // when the backend confirms another persisted calendar observation.
+    if (calendarHistoryPushRevision.current === null) {
+      calendarHistoryPushRevision.current = value;
+      return;
+    }
+    if (calendarHistoryPushRevision.current === value) return;
+    calendarHistoryPushRevision.current = value;
+    void loadHistory();
+  }, [slug, pagePushData?.live]);
+
 
   useEffect(() => {
     if (slug !== "synthetic-arbitrage") return;
@@ -763,6 +789,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   };
 
   const loadPairs = async () => {
+    const requestSequence = ++pairRequestSequence.current;
     if (isCustom || !c.pairEndpoint) {
       setPairRows(rows);
       return;
@@ -771,6 +798,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(base + c.pairEndpoint, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
+      if (requestSequence !== pairRequestSequence.current) return;
       if (!response.ok) throw new Error(c.title + " pair monitor HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data.filter((item: unknown): item is Row => !!item && typeof item === "object") : [];
       const responseStatus = String(body?.status ?? "UNKNOWN").toUpperCase();
@@ -807,6 +835,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         }
       }
     } catch {
+      if (requestSequence !== pairRequestSequence.current) return;
       // On a transient error, preserve the last good snapshot and fall back to cache after reload.
       let cachedRows: Row[] = [];
       if (slug === "synthetic-arbitrage" && pairRows.length === 0) {
@@ -825,6 +854,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const loadHistory = async () => {
     if (isCustom || !c.historyEndpoint) return;
+    const requestSequence = ++historyRequestSequence.current;
     setHistoryLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -842,15 +872,16 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(c.title + " history HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data : [];
+      if (requestSequence !== historyRequestSequence.current) return;
       setHistoryRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
       setHistoryTotalCount(slug === "box-spread" && Number.isFinite(Number(body?.total_count)) ? Math.max(0, Number(body.total_count)) : data.length);
       setHistoryHealth(body?.persistence && typeof body.persistence === "object" ? body.persistence : null);
       setHistoryError(null);
     } catch (e) {
-      setHistoryError(e instanceof Error ? e.message : "History API unavailable");
+      if (requestSequence === historyRequestSequence.current) setHistoryError(e instanceof Error ? e.message : "History API unavailable");
       // Keep last good history snapshot during transient backend failures.
     } finally {
-      setHistoryLoading(false);
+      if (requestSequence === historyRequestSequence.current) setHistoryLoading(false);
     }
   };
 
@@ -860,6 +891,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     let hasLoaded = false;
     let inFlight = false;
     const loadSelection = async () => {
+      const requestSequence = ++indexSelectionRequestSequence.current;
       if (inFlight) return;
       inFlight = true;
       if (!hasLoaded) setIndexSelectionLoading(true);
@@ -873,7 +905,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         const runtime = body?.runtime?.supervisor;
         const active = Array.isArray(runtime?.active_symbols) ? runtime.active_symbols.filter((item: unknown): item is string => typeof item === "string") : [];
         const handoff = typeof runtime?.handoff?.state === "string" ? runtime.handoff.state : "UNKNOWN";
-        if (!cancelled) {
+        if (!cancelled && requestSequence === indexSelectionRequestSequence.current) {
           setSavedIndexSymbols(symbols);
           setSavedWeeklyOnlySymbols(weeklyOnly);
           setActiveIndexSymbols(active);
@@ -887,11 +919,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           setIndexSelectionError(null);
         }
       } catch (e) {
-        if (!cancelled) setIndexSelectionError(e instanceof Error ? e.message : "Index selection unavailable");
+        if (!cancelled && requestSequence === indexSelectionRequestSequence.current) setIndexSelectionError(e instanceof Error ? e.message : "Index selection unavailable");
       } finally {
         inFlight = false;
         hasLoaded = true;
-        if (!cancelled) setIndexSelectionLoading(false);
+        if (!cancelled && requestSequence === indexSelectionRequestSequence.current) setIndexSelectionLoading(false);
       }
     };
     void loadSelection();
@@ -900,6 +932,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const saveIndexSelection = async () => {
     if (slug !== "box-spread" || (indexSelectionDraft.length === 0 && weeklyOnlyDraft.length === 0)) return;
+    const saveRequestSequence = ++indexSelectionRequestSequence.current;
     const weeklyOnly = weeklyOnlyDraft;
     const effectiveSymbols = Array.from(new Set([...indexSelectionDraft, ...weeklyOnly]));
     setIndexSelectionSaving(true);
@@ -914,6 +947,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Index selection save failed");
+      // A newer cross-session push is authoritative; do not let this POST response rewind it.
+      if (saveRequestSequence !== indexSelectionRequestSequence.current) return;
       const saved = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : effectiveSymbols;
       const savedWeeklyOnly = Array.isArray(body?.weekly_only_symbols) ? body.weekly_only_symbols.filter((item: unknown): item is string => typeof item === "string") : weeklyOnly;
       setSavedIndexSymbols(saved);
@@ -927,22 +962,180 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         ? "Selection saved. New feed is warming up; the previous live feed and its rows remain active until readiness is confirmed."
         : (body?.message || "Index selection saved."));
     } catch (e) {
-      setIndexSelectionError(e instanceof Error ? e.message : "Index selection save failed. Previous live selection remains active.");
+      if (saveRequestSequence === indexSelectionRequestSequence.current) setIndexSelectionError(e instanceof Error ? e.message : "Index selection save failed. Previous live selection remains active.");
     } finally {
-      setIndexSelectionSaving(false);
+      if (saveRequestSequence === indexSelectionRequestSequence.current) setIndexSelectionSaving(false);
     }
   };
 
-  useEffect(() => {
-    if (slug !== "box-spread") { setIndexSpotRows([]); return; }
-    const spots = pagePushData?.index_spots;
-    if (Array.isArray(spots)) setIndexSpotRows(spots as unknown as Array<{ symbol: string; spot_price: number | null; spot_timestamp_ns: number | null; spot_age_seconds: number | null; status: string }>);
-  }, [slug, pagePushData]);
 
   useEffect(() => {
     if (slug !== "box-spread" || !pagePushData) return;
+    const event = String(pagePushData.__event ?? "").toUpperCase();
+    const removedKeys = Array.isArray(pagePushData.remove_keys)
+      ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(pagePushData.keys)
+        ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (event === "REMOVE" && removedKeys.includes("index_selection")) {
+      indexSelectionRequestSequence.current += 1;
+      setSavedIndexSymbols([]);
+      setSavedWeeklyOnlySymbols([]);
+      setIndexSelectionDraft([]);
+      setWeeklyOnlyDraft([]);
+      setActiveIndexSymbols([]);
+      setIndexHandoffState("UNKNOWN");
+      setIndexSelectionLoading(false);
+      setIndexSelectionSaving(false);
+      setIndexSelectionMessage("");
+      setIndexSelectionError(null);
+      indexSelectionDraftInitialized.current = false;
+      return;
+    }
+    const selection = pagePushData.index_selection as { symbols?: unknown; weekly_only_symbols?: unknown } | undefined;
+    if (!selection || !Array.isArray(selection.symbols) || !Array.isArray(selection.weekly_only_symbols)) return;
+    const nextSymbols = selection.symbols.filter((item): item is string => typeof item === "string");
+    const nextWeeklyOnly = selection.weekly_only_symbols.filter((item): item is string => typeof item === "string");
+    indexSelectionRequestSequence.current += 1;
+    setIndexSelectionLoading(false);
+    const previousSymbols = savedIndexSymbols.slice().sort();
+    const previousWeeklyOnly = savedWeeklyOnlySymbols.slice().sort();
+    const draftSymbols = Array.from(new Set([...indexSelectionDraft, ...weeklyOnlyDraft])).sort();
+    const draftIsClean = indexSelectionDraftInitialized.current
+      && draftSymbols.length === previousSymbols.length
+      && draftSymbols.every((symbol, index) => symbol === previousSymbols[index])
+      && weeklyOnlyDraft.slice().sort().join("|") === previousWeeklyOnly.join("|");
+    setSavedIndexSymbols(nextSymbols);
+    setSavedWeeklyOnlySymbols(nextWeeklyOnly);
+    if (draftIsClean) {
+      setIndexSelectionDraft(nextSymbols.filter(symbol => !nextWeeklyOnly.includes(symbol)));
+      setWeeklyOnlyDraft(nextWeeklyOnly);
+    }
+  }, [slug, pagePushData, savedIndexSymbols, savedWeeklyOnlySymbols, indexSelectionDraft, weeklyOnlyDraft]);
+  useEffect(() => {
+    if (slug !== "box-spread" || !pagePushData) { if (slug !== "box-spread") setIndexSpotRows([]); return; }
+    const spots = pagePushData?.index_spots;
+    if (!Array.isArray(spots)) return;
+    const incoming = spots as unknown as Array<{ symbol: string; spot_price: number | null; spot_timestamp_ns: number | null; spot_age_seconds: number | null; status: string }>;
+    if (String(pagePushData.__event ?? "") === "SNAPSHOT") {
+      setIndexSpotRows(incoming);
+      return;
+    }
+    // Spot ticks arrive as per-symbol partial patches. Merge by symbol so a
+    // single index tick never clears the other selected index prices.
+    setIndexSpotRows((current) => {
+      const merged = new Map(current.map((item) => [item.symbol, item]));
+      for (const item of incoming) merged.set(item.symbol, item);
+      const order = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
+      return Array.from(merged.values()).sort((a, b) => order.indexOf(a.symbol) - order.indexOf(b.symbol));
+    });
+  }, [slug, pagePushData]);
+
+  useEffect(() => {
+    if (!pagePushData) return;
+    if (slug === "calendar-spread" || slug === "synthetic-arbitrage") {
+      const event = String(pagePushData.__event ?? "").toUpperCase();
+      const removedKeys = Array.isArray(pagePushData.remove_keys)
+        ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+        : Array.isArray(pagePushData.keys)
+          ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+          : [];
+      const removed = (key: string) => event === "REMOVE" && removedKeys.includes(key);
+      const live = pagePushData.live as Record<string, any> | undefined;
+      const pairs = pagePushData.pairs as Record<string, any> | undefined;
+      if (removed("live")) {
+        loadRequestRef.current += 1;
+        rowsRef.current = [];
+        setRows([]);
+        setRowsStale(false);
+        setLoading(false);
+        setError(null);
+        setLiveApiStatus("WAITING");
+        if (slug === "synthetic-arbitrage") {
+          try { window.localStorage.removeItem("algo:synthetic-arbitrage:last-live-opportunities:v1"); } catch { /* Cache is optional. */ }
+        }
+      } else if (Array.isArray(live?.data)) {
+        const nextRows = live.data.filter((item: unknown): item is Row => !!item && typeof item === "object");
+        rowsRef.current = nextRows; setRows(nextRows); setRowsStale(false);
+        setLoading(false); setLiveApiLastOkAt(Date.now()); setLiveApiStatus("RESPONDING"); setError(null);
+      }
+      if (removed("pairs")) {
+        pairRequestSequence.current += 1;
+        setPairRows([]);
+        setPairMonitorStatus("WAITING");
+        if (slug === "synthetic-arbitrage") {
+          try { window.localStorage.removeItem("algo:synthetic-arbitrage:last-pairs:v1"); } catch { /* Cache is optional. */ }
+        }
+      } else if (Array.isArray(pairs?.data)) {
+        // Pushed pair data invalidates any REST response started before this frame.
+        pairRequestSequence.current += 1;
+        const pushedPairs = pairs.data.filter((item: unknown): item is Row => !!item && typeof item === "object");
+        setPairRows(pushedPairs);
+        const pairStatus = String(pairs.status ?? "SUCCESS").toUpperCase();
+        setPairMonitorStatus(pushedPairs.length > 0 ? (pairStatus === "SUCCESS" ? "LIVE" : pairStatus) : "WAITING");
+        if (slug === "synthetic-arbitrage" && pushedPairs.length > 0) {
+          try { window.localStorage.setItem("algo:synthetic-arbitrage:last-pairs:v1", JSON.stringify({ savedAt: Date.now(), rows: pushedPairs })); } catch { /* Cache is optional. */ }
+        }
+      }
+      if (slug === "synthetic-arbitrage") {
+        if (removed("diagnostics")) setScannerDiagnostics(null);
+        else if (pagePushData.diagnostics && typeof pagePushData.diagnostics === "object") setScannerDiagnostics(pagePushData.diagnostics as Record<string, unknown>);
+        if (removed("universe")) setUniverseAvailability(null);
+        else if (pagePushData.universe && typeof pagePushData.universe === "object") setUniverseAvailability(pagePushData.universe as Record<string, any>);
+      }
+      if (removed("runtime_health")) {
+        setFeedTicks(null); setFeedAge(null); setFeedExchangeFreshness(null); setFeedInstruments(null);
+        setFeedStatus("UNKNOWN"); setFeedErrors(null); setRunner(null);
+        if (slug === "calendar-spread") setCalendarRuntime(null);
+      } else {
+        const health = pagePushData.runtime_health;
+        if (health && typeof health === "object") {
+          const runtime = health as Record<string, any>;
+          const feed = runtime.common_feed && typeof runtime.common_feed === "object" ? runtime.common_feed : {};
+          setFeedTicks(nullableNumber(feed.ticks_received));
+          setFeedAge(nullableNumber(feed.age_seconds));
+          setFeedExchangeFreshness(feed.exchange_freshness && typeof feed.exchange_freshness === "object" ? feed.exchange_freshness : null);
+          setFeedInstruments(nullableNumber(feed.active_instruments));
+          setFeedStatus(String(feed.status ?? "UNKNOWN").toUpperCase());
+          setFeedErrors({ delivery: Number(feed.delivery_errors ?? 0) || 0, normalizer: Number(feed.normalizer_errors ?? 0) || 0 });
+          const runnerKey = slug === "calendar-spread" ? "calendar_spread" : "synthetic";
+          const selected = runtime.runners?.[runnerKey];
+          setRunner(selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null);
+          if (slug === "calendar-spread") setCalendarRuntime(selected && typeof selected === "object" ? selected : null);
+        }
+      }
+    }
+  }, [slug, pagePushData]);
+  useEffect(() => {
+    if (slug !== "box-spread" || !pagePushData) return;
+    const removedKeys = Array.isArray(pagePushData.remove_keys)
+      ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(pagePushData.keys)
+        ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (String(pagePushData.__event ?? "").toUpperCase() === "REMOVE" && removedKeys.includes("opportunities")) {
+      // Immediately clear the table and invalidate any REST request that could
+      // otherwise restore the removed list from an older response.
+      loadRequestRef.current += 1;
+      rowsRef.current = [];
+      setRows([]);
+      setRowsStale(false);
+      setLoading(false);
+      setError(null);
+    }
+    if (String(pagePushData.__event ?? "").toUpperCase() === "REMOVE" && removedKeys.includes("index_spots")) {
+      setIndexSpotRows([]);
+    }
+    if (String(pagePushData.__event ?? "").toUpperCase() === "REMOVE" && removedKeys.includes("runtime_health")) {
+      setFeedTicks(null); setFeedAge(null); setFeedExchangeFreshness(null); setFeedInstruments(null);
+      setFeedStatus("UNKNOWN"); setFeedErrors(null); setRunner(null); setBoxDepthShadow(null);
+    }
     const opportunities = pagePushData.opportunities;
     if (Array.isArray(opportunities)) {
+      // A page-push frame is authoritative. Invalidate any REST recovery request
+      // that started before this frame so a late HTTP response cannot roll the
+      // live scanner table back to an older snapshot.
+      loadRequestRef.current += 1;
       const nextRows = opportunities.filter((item: unknown): item is Row => !!item && typeof item === "object");
       rowsRef.current = nextRows;
       setRows(nextRows);
@@ -953,7 +1146,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setError(null);
     }
     const health = pagePushData.runtime_health;
-    if (health && typeof health === "object") {
+    if (health && typeof health === "object" && !removedKeys.includes("runtime_health")) {
       const runtime = health as Record<string, any>;
       const feed = runtime.common_feed && typeof runtime.common_feed === "object" ? runtime.common_feed : {};
       setFeedTicks(nullableNumber(feed.ticks_received));
@@ -967,7 +1160,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setBoxDepthShadow(selected?.depth_shadow && typeof selected.depth_shadow === "object" ? selected.depth_shadow : null);
     }
     const selectionRuntime = pagePushData.index_selection_runtime;
-    if (selectionRuntime && typeof selectionRuntime === "object") {
+    if (String(pagePushData.__event ?? "").toUpperCase() === "REMOVE" && removedKeys.includes("index_selection_runtime")) {
+      setActiveIndexSymbols([]);
+      setIndexHandoffState("UNKNOWN");
+    } else if (selectionRuntime && typeof selectionRuntime === "object") {
       const state = selectionRuntime as Record<string, any>;
       setActiveIndexSymbols(Array.isArray(state.active_symbols) ? state.active_symbols.filter((item: unknown): item is string => typeof item === "string") : []);
       setIndexHandoffState(String(state.handoff?.state ?? "UNKNOWN"));
@@ -982,6 +1178,30 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [isCustom, c.historyEndpoint, slug === "box-spread" ? historyExpiryView : "", slug === "box-spread" ? historySymbol : "", slug === "box-spread" ? historyPage : 1]);
 
   useEffect(() => {
+    if (slug !== "box-spread" || pagePushData?.history_revision == null) return;
+    // A durable-history revision arrives through page push; refresh only the
+    // active filter/page slice and let request sequencing reject older replies.
+    void loadHistory();
+  }, [slug, pagePushData?.history_revision]);
+
+  useEffect(() => {
+    if (slug !== "synthetic-arbitrage") return;
+    const live = pagePushData?.live as Record<string, unknown> | undefined;
+    const revision = live?.history_revision;
+    if (revision == null || revision === "") return;
+    const value = String(revision);
+    // The initial history query already runs on mount. Only a subsequent
+    // persisted observation revision should trigger an automatic history reload.
+    if (syntheticHistoryPushRevision.current === null) {
+      syntheticHistoryPushRevision.current = value;
+      return;
+    }
+    if (syntheticHistoryPushRevision.current === value) return;
+    syntheticHistoryPushRevision.current = value;
+    void loadHistory();
+  }, [slug, pagePushData?.live]);
+
+  useEffect(() => {
     if (isCustom || c.pairEndpoint) return;
     setPairRows(rows);
   }, [isCustom, c.pairEndpoint, rows]);
@@ -989,9 +1209,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   useEffect(() => {
     if (isCustom || !c.pairEndpoint) return;
     void loadPairs();
-    const timer = window.setInterval(() => void loadPairs(), 1500);
+    if (pagePushStatus === "LIVE" && ["calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
+    const timer = window.setInterval(() => void loadPairs(), 15000);
     return () => window.clearInterval(timer);
-  }, [isCustom, c.pairEndpoint, pairRows.length]);
+  }, [isCustom, c.pairEndpoint, pagePushStatus, slug]);
 
   useEffect(() => {
     if (slug !== "synthetic-arbitrage") {
@@ -1011,9 +1232,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       }
     };
     void loadScannerDiagnostics();
-    const timer = window.setInterval(loadScannerDiagnostics, 1500);
+    if (pagePushStatus === "LIVE") return () => { cancelled = true; };
+    const timer = window.setInterval(loadScannerDiagnostics, 15000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [slug]);
+  }, [slug, pagePushStatus]);
 
   useEffect(() => {
     if (isCustom || slug === "box-spread") return;
@@ -1063,9 +1285,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       }
     };
     void loadRuntime();
-    const timer = window.setInterval(loadRuntime, 1500);
+    if (pagePushStatus === "LIVE") return () => { cancelled = true; };
+    const timer = window.setInterval(loadRuntime, 15000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [isCustom, slug]);
+  }, [isCustom, slug, pagePushStatus]);
 
   useEffect(() => {
     if (isCustom) {
@@ -1073,16 +1296,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setLoading(false);
       return;
     }
-    if (slug === "box-spread") {
-      // Box live rows arrive through the shared page WebSocket; REST remains
-      // available for explicit diagnostics, not a short-interval polling loop.
-      setLoading(true);
-      return;
-    }
+    if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
     void load(true);
-    const timer = window.setInterval(() => void load(), 1500);
+    const timer = window.setInterval(() => void load(), 15000);
     return () => window.clearInterval(timer);
-  }, [endpoint, isCustom, slug]);
+  }, [endpoint, isCustom, slug, pagePushStatus]);
 
   const filteredRows = useMemo(() => {
     const indexOrder = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
@@ -1553,7 +1771,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
               <button type="button" onClick={() => setLiveExpiryView("MONTHLY")} aria-pressed={liveExpiryView === "MONTHLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (liveExpiryView === "MONTHLY" ? "border-violet-500 bg-violet-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Monthly)</button>
               <button type="button" onClick={() => setLiveExpiryView("WEEKLY")} aria-pressed={liveExpiryView === "WEEKLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (liveExpiryView === "WEEKLY" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Weekly)</button>
             </div>}{slug === "box-spread" && <div className="mt-2 rounded-lg border theme-border theme-surface-2 px-3 py-2 text-xs"><p className={"font-semibold " + (liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "theme-success" : liveApiStatus === "ERROR" || feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-danger" : "theme-warning")}>{liveApiStatus === "ERROR" ? "LIVE API ERROR" : liveApiStatus === "CHECKING" ? "CHECKING LIVE API…" : feedStatus === "LIVE" && runner?.running ? (filteredRows.length === 0 ? "LIVE CHECK OK · NO QUALIFYING OPPORTUNITY RIGHT NOW" : "LIVE CHECK OK · OPPORTUNITIES FOUND") : "LIVE STATUS NEEDS ATTENTION"}</p><p className="mt-1 theme-muted">API response: {liveApiLastOkAt === null ? "not received yet" : new Date(liveApiLastOkAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST"} · UI clock: {currentLiveTime || "—"}</p><p className="mt-1 theme-muted">{liveApiStatus === "ERROR" ? "API request failed; zero rows must NOT be interpreted as no opportunity." : feedStatus !== "LIVE" || !runner?.running ? "Feed/runner health is not confirmed live; zero rows may mean scanner/feed unavailable." : filteredRows.length === 0 ? "The live endpoint responded and the feed/runner report live, but no qualifying rows were returned for this check. This is not a guarantee that every possible contract was evaluated." : "Live endpoint returned qualifying rows. Quote timestamps and freshness are shown per row."}</p></div>}{rowsStale && slug === "synthetic-arbitrage" && rows.length > 0 && <p className="mt-2 rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs theme-warning">Showing last observed opportunities with their original Time values. Data is STALE — not confirmed live; waiting for a fresh scanner response.</p>}</div>
-            <div className="flex flex-col items-start gap-1 sm:items-end"><span className="text-xs font-semibold theme-text">{slug === "box-spread" ? "Current Live Time (IST): " + (currentLiveTime || "—") : ""}</span><span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • {slug === "box-spread" ? "WebSocket push" : "1.5s refresh"}</span></div>
+            <div className="flex flex-col items-start gap-1 sm:items-end"><span className="text-xs font-semibold theme-text">{slug === "box-spread" ? "Current Live Time (IST): " + (currentLiveTime || "—") : ""}</span><span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • {["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug) ? (pagePushStatus === "LIVE" ? "WebSocket push · LIVE" : "WebSocket reconnecting · REST recovery") : "Scanner live"}</span></div>
           </div>
           <div className="grid gap-2 p-3 md:hidden">
             {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live data…</div> : filteredRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">{slug === "box-spread" ? liveApiStatus === "ERROR" ? "LIVE API ERROR — zero rows are not proof of no opportunity." : liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "LIVE CHECK CONFIRMED · 0 qualifying opportunity rows returned on the latest check." : "WAITING FOR CONFIRMED LIVE STATUS — 0 rows returned; scanner/feed health is not yet confirmed." : "No live opportunity data"}</div> : filteredRows.map((row, index) => <div key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-mobile-live-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3">{slug === "synthetic-arbitrage" && <div className="mb-2 flex items-center justify-between gap-2 border-b theme-border pb-2"><span className="text-xs font-bold theme-accent">{String(row.underlying ?? "INDEX").toUpperCase()}</span><span className="text-[10px] theme-muted">INDEX OPPORTUNITY</span></div>}<div className="mb-2 text-sm font-bold theme-text">{formatCell(slug, c.columns[0], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.columns.slice(1).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className={"mt-0.5 break-words text-xs font-medium theme-muted " + syntheticCellTone(slug, column, row)}>{slug === "box-spread" && ["Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)"].includes(column) ? <BoxSpreadLegQuote row={row} column={column as BoxSpreadLegColumn} /> : formatCell(slug, column, row)}</div></div>)}</div></div>)}
@@ -1738,7 +1956,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => void copyTableRows("pairs")} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Copy rows</button>
             <button type="button" onClick={() => setShowPairColumnPicker((open) => !open)} aria-expanded={showPairColumnPicker} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">{showPairColumnPicker ? "Close columns" : "Hide / Show columns"}</button>
-            <span className="text-xs font-semibold theme-muted">{monitorRows.length.toLocaleString("en-IN")} live pairs • {slug === "synthetic-arbitrage" ? "pair feed " + pairMonitorStatus.replaceAll("_", " ") + " • " : ""}1.5s refresh</span>
+            <span className="text-xs font-semibold theme-muted">{monitorRows.length.toLocaleString("en-IN")} live pairs • {slug === "synthetic-arbitrage" ? "pair feed " + pairMonitorStatus.replaceAll("_", " ") + " • " : ""}{["calendar-spread", "synthetic-arbitrage"].includes(slug) ? (pagePushStatus === "LIVE" ? "WebSocket push" : "15s REST fallback") : "Scanner live"}</span>
           </div>
         </div>
         {showPairColumnPicker && <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3">
@@ -1779,7 +1997,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 text-lg font-black text-slate-950 sm:text-xl"><Activity className="h-5 w-5 text-slate-800" /> {slug === "box-spread" ? "Recent Box Spread Snapshots (Last 24 Hours)" : "Post-Market " + c.title + " Pair History"}</h2><p className="mt-1 text-xs theme-muted">{slug === "box-spread" ? "Persisted scanner snapshots from the rolling last 24 hours · same source as the historical section, with a shorter time window." : "Real backend history/alert records for today's session. No synthetic rows are created in the UI."}</p></div>
           <div className="flex items-center gap-2">
-            {slug === "box-spread" && <button type="button" onClick={() => void loadHistory()} disabled={historyLoading} aria-label="Refresh last 24 hours of Box Spread history" title="Reload the rolling last 24 hours of saved Box Spread snapshots" className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:cursor-wait disabled:opacity-50"><RefreshCw className={"h-3.5 w-3.5 " + (historyLoading ? "animate-spin" : "")} />{historyLoading ? "Refreshing…" : "Refresh 24h"}</button>}
+            {slug === "box-spread" ? <button type="button" onClick={() => void loadHistory()} disabled={historyLoading} aria-label="Refresh last 24 hours of Box Spread history" title="Reload the rolling last 24 hours of saved Box Spread snapshots" className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:cursor-wait disabled:opacity-50"><RefreshCw className={"h-3.5 w-3.5 " + (historyLoading ? "animate-spin" : "")} />{historyLoading ? "Refreshing…" : "Refresh 24h"}</button> : <button type="button" onClick={() => void loadHistory()} disabled={historyLoading} aria-label="Refresh scanner history" title="Reload saved scanner history" className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:cursor-wait disabled:opacity-50"><RefreshCw className={"h-3.5 w-3.5 " + (historyLoading ? "animate-spin" : "")} />{historyLoading ? "Refreshing…" : "Refresh history"}</button>}
             <button type="button" onClick={() => void copyTableRows("history")} disabled={historyRows.length === 0} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">Copy history</button>
             <span className="text-xs font-semibold theme-muted">{historyLoading ? "Loading…" : (slug === "box-spread" ? historyTotalCount : historyRows.length).toLocaleString("en-IN") + " saved"}</span>
           </div>

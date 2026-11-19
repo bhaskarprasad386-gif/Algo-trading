@@ -106,11 +106,28 @@ export default function LiveOpportunityGrid() {
   useEffect(() => {
     if (!pageData) return;
     const eventType = String(pageData.__event || "");
-    const incoming = eventType === "SNAPSHOT"
+    // A page-level REMOVE of the opportunities payload must clear the retained
+    // grid rows too; otherwise the local stale-row timer can keep deleted
+    // opportunities visible for up to a minute after the server removes them.
+    const removedKeys = Array.isArray(pageData.remove_keys)
+      ? pageData.remove_keys.filter((key): key is string => typeof key === "string")
+      : [];
+    if (eventType === "REMOVE" && removedKeys.includes("opportunities")) {
+      rowsRef.current.clear();
+      setRows([]);
+      return;
+    }
+    // The Box page publisher sends complete opportunity lists on PATCH as well
+    // as SNAPSHOT. Treat a list as authoritative regardless of frame type;
+    // only explicitly named opportunity_updates are row deltas.
+    const hasFullList = Array.isArray(pageData.opportunities);
+    const incoming = hasFullList
       ? pageData.opportunities
       : pageData.opportunity_updates;
     if (!Array.isArray(incoming)) return;
-    if (eventType === "SNAPSHOT") rowsRef.current.clear();
+    const authoritativeList = hasFullList || eventType === "SNAPSHOT";
+    const previousRows = authoritativeList ? new Map(rowsRef.current) : rowsRef.current;
+    if (authoritativeList) rowsRef.current.clear();
     const now = Date.now();
     for (const raw of incoming) {
       if (!raw || typeof raw !== "object") continue;
@@ -126,10 +143,15 @@ export default function LiveOpportunityGrid() {
       try { incomingNs = BigInt(incomingTimestamp); } catch { continue; }
       if (incomingNs <= BigInt("0")) continue;
       const key = keyOf(row);
-      const existing = rowsRef.current.get(key);
+      const existing = previousRows.get(key);
       const existingRawTimestamp = existing?.row.last_update_timestamp_ns;
       const existingTimestamp = existingRawTimestamp == null ? "" : String(existingRawTimestamp);
-      if (/^\d+$/.test(existingTimestamp) && incomingNs <= BigInt(existingTimestamp)) continue;
+      if (/^\d+$/.test(existingTimestamp) && incomingNs <= BigInt(existingTimestamp)) {
+        // During authoritative replacement, preserve the existing row/age if
+        // its quote timestamp is unchanged; deltas remain strictly monotonic.
+        if (authoritativeList && existing) rowsRef.current.set(key, existing);
+        continue;
+      }
       rowsRef.current.set(key, { key, row, lastSeen: now, status: "LIVE" });
     }
     setRows(Array.from(rowsRef.current.values()).sort((a, b) => b.lastSeen - a.lastSeen));

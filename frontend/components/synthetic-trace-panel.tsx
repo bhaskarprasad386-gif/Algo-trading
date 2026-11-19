@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { appConfig } from "@/lib/config";
+import { usePagePush } from "@/components/page-push-provider";
 
 type TraceRow = Record<string, unknown> & {
   trace_id: string;
@@ -11,6 +12,7 @@ type TraceRow = Record<string, unknown> & {
 
 const STORAGE_KEY = "algo:synthetic-arbitrage:trace-opportunities:v1";
 const DELETED_KEY = "algo:synthetic-arbitrage:trace-deleted:v1";
+const PENDING_DELETE_KEY = "algo:synthetic-arbitrage:trace-pending-deletes:v1";
 const LIVE_ENDPOINT = "/api/v1/scanner/synthetic-cash-carry/live?limit=50";
 const INDEX_ORDER = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
 
@@ -89,6 +91,23 @@ function writeDeleted(ids: string[]) {
   }
 }
 
+function readPendingDeletes(): string[] {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(PENDING_DELETE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePendingDeletes(ids: string[]) {
+  try {
+    window.localStorage.setItem(PENDING_DELETE_KEY, JSON.stringify([...new Set(ids)]));
+  } catch {
+    // Pending server deletion remains best-effort when browser storage is unavailable.
+  }
+}
+
 
 export function SyntheticTracePanel() {
   const [liveRows, setLiveRows] = useState<Record<string, unknown>[]>([]);
@@ -97,8 +116,12 @@ export function SyntheticTracePanel() {
   const [message, setMessage] = useState("");
   const [statusByTrace, setStatusByTrace] = useState<Record<string, Record<string, unknown>>>({});
   const [checkingTraceIds, setCheckingTraceIds] = useState<string[]>([]);
+  const { data: pagePushData, status: pagePushStatus } = usePagePush("synthetic-arbitrage");
+  const tracePushSequenceRef = useRef(0);
+  const liveFetchSequenceRef = useRef(0);
 
   useEffect(() => {
+    const bootstrapPushSequence = tracePushSequenceRef.current;
     const localRows = readStored();
     const deletedIds = readDeleted();
     setTraces(localRows.filter((row) => !deletedIds.includes(row.trace_id)));
@@ -108,6 +131,7 @@ export function SyntheticTracePanel() {
         const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities", { cache: "no-store" });
         const body = await response.json().catch(() => ({}));
         if (!response.ok || !Array.isArray(body?.data)) throw new Error("Trace restore unavailable");
+        if (bootstrapPushSequence !== tracePushSequenceRef.current) return;
         const serverRows: TraceRow[] = (body.data as unknown[]).filter((item: unknown): item is TraceRow => !!item && typeof item === "object" && typeof (item as Record<string, unknown>).trace_id === "string");
         const serverIds = new Set(serverRows.map((row: TraceRow) => row.trace_id));
         const localOnly = localRows.filter((row: TraceRow) => !serverIds.has(row.trace_id) && !deletedIds.includes(row.trace_id));
@@ -131,11 +155,13 @@ export function SyntheticTracePanel() {
   }, []);
 
   const loadLive = useCallback(async () => {
+    const requestSequence = ++liveFetchSequenceRef.current;
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(base + LIVE_ENDPOINT, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail || "Live scanner unavailable");
+      if (requestSequence !== liveFetchSequenceRef.current) return;
       const rows: Record<string, unknown>[] = Array.isArray(body?.data)
         ? body.data.filter((item: unknown): item is Record<string, unknown> => !!item && typeof item === "object")
         : [];
@@ -148,15 +174,98 @@ export function SyntheticTracePanel() {
       // The main scanner already owns live-feed error rendering. Trace capture
       // simply keeps the last successful opportunity list during a transient error.
     } finally {
-      setLiveLoading(false);
+      if (requestSequence === liveFetchSequenceRef.current) setLiveLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void loadLive();
-    const timer = window.setInterval(() => void loadLive(), 1500);
+    if (!pagePushData) return;
+    const event = String(pagePushData.__event ?? "").toUpperCase();
+    const removedKeys = Array.isArray(pagePushData.remove_keys)
+      ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(pagePushData.keys)
+        ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (event === "REMOVE" && removedKeys.includes("trace_opportunities")) {
+      tracePushSequenceRef.current += 1;
+      // REMOVE means the collection is absent; tombstones only protect individually deleted rows.
+      setTraces([]);
+      writeStored([]);
+      return;
+    }
+    const pushedTraces = pagePushData.trace_opportunities;
+    if (!Array.isArray(pushedTraces)) return;
+    // Invalidate the initial REST restore if an authoritative WebSocket snapshot
+    // arrives first; otherwise a delayed HTTP response can overwrite newer state.
+    tracePushSequenceRef.current += 1;
+    const deleted = new Set(readDeleted());
+    const restored = pushedTraces.filter((item): item is TraceRow =>
+      !!item && typeof item === "object" && typeof (item as Record<string, unknown>).trace_id === "string"
+      && !deleted.has((item as Record<string, unknown>).trace_id as string)
+    );
+    // Preserve browser-only trace captures when their server save failed.
+    // The pushed list is authoritative for server rows, not local-only rows.
+    const serverIds = new Set(restored.map((row) => row.trace_id));
+    const localOnly = readStored().filter((row) =>
+      !serverIds.has(row.trace_id) && !deleted.has(row.trace_id)
+    );
+    const merged = [...restored, ...localOnly];
+    setTraces(merged);
+    writeStored(merged);
+  }, [pagePushData]);
+
+  useEffect(() => {
+    let retryInFlight = false;
+    const retryPendingDeletes = async () => {
+      if (retryInFlight) return;
+      const pending = readPendingDeletes();
+      if (!pending.length) return;
+      retryInFlight = true;
+      const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
+      for (const traceId of pending) {
+        try {
+          const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(traceId), {
+            method: "DELETE", cache: "no-store", signal: AbortSignal.timeout(8000),
+          });
+          if (response.ok) writePendingDeletes(readPendingDeletes().filter((id) => id !== traceId));
+        } catch {
+          // Retain the pending ID and try again on the next bounded retry.
+        }
+      }
+      retryInFlight = false;
+    };
+    void retryPendingDeletes();
+    const timer = window.setInterval(() => void retryPendingDeletes(), 15000);
     return () => window.clearInterval(timer);
-  }, [loadLive]);
+  }, []);
+
+  useEffect(() => {
+    const pushedStatus = pagePushData?.trace_status_update as Record<string, unknown> | undefined;
+    if (!pushedStatus || typeof pushedStatus.trace_id !== "string") return;
+    const traceId = pushedStatus.trace_id;
+    setStatusByTrace((current) => ({ ...current, [traceId]: pushedStatus }));
+  }, [pagePushData]);
+
+  useEffect(() => {
+    const livePayload = pagePushData?.live as { data?: unknown[] } | undefined;
+    if (!Array.isArray(livePayload?.data)) return;
+    // Push wins over any older HTTP opportunity snapshot.
+    liveFetchSequenceRef.current += 1;
+    const rows = livePayload.data.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
+    setLiveRows(rows.filter((row) => keyPart(row.instrument_class) === "INDEX" && INDEX_ORDER.includes(keyPart(row.underlying))));
+    setLiveLoading(false);
+  }, [pagePushData]);
+
+  useEffect(() => {
+    if (pagePushStatus === "LIVE") {
+      liveFetchSequenceRef.current += 1;
+      setLiveLoading(false);
+      return;
+    }
+    void loadLive();
+    const timer = window.setInterval(() => void loadLive(), 15000);
+    return () => window.clearInterval(timer);
+  }, [loadLive, pagePushStatus]);
 
   const tracedKeys = useMemo(() => new Set(traces.map((item) => item.trace_key)), [traces]);
 
@@ -253,16 +362,21 @@ export function SyntheticTracePanel() {
 
   const removeTrace = async (traceId: string) => {
     const next = traces.filter((item) => item.trace_id !== traceId);
+    // Tombstone locally before network I/O so an in-flight WS snapshot cannot resurrect it.
+    writeDeleted([...readDeleted(), traceId]);
+    writePendingDeletes([...readPendingDeletes(), traceId]);
     setTraces(next);
     writeStored(next);
     try {
       const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
-      const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(traceId), { method: "DELETE", cache: "no-store" });
+      const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(traceId), {
+        method: "DELETE", cache: "no-store", signal: AbortSignal.timeout(8000),
+      });
       if (!response.ok) throw new Error("server delete failed");
+      writePendingDeletes(readPendingDeletes().filter((id) => id !== traceId));
       setMessage("Trace removed from saved list.");
     } catch {
-      writeDeleted([...readDeleted(), traceId]);
-      setMessage("Trace removed on this device; server deletion will retry when the API is available.");
+      setMessage("Trace removed locally; server deletion is queued for retry.");
     }
   };
 
@@ -290,7 +404,7 @@ export function SyntheticTracePanel() {
         <div className="flex flex-col gap-2 border-b theme-border p-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-sm font-semibold theme-text">Trace Capture</h2>
-            <p className="mt-1 text-xs theme-muted">Opportunity list refreshes automatically; saved Trace status is checked only when you press CHECK LIVE STATUS.</p>
+            <p className="mt-1 text-xs theme-muted">Live opportunities update through the page WebSocket; REST is recovery-only. Saved Trace status is checked only when you press CHECK LIVE STATUS.</p>
           </div>
           <span className="text-xs font-semibold theme-muted">{liveRows.length} live opportunities</span>
         </div>

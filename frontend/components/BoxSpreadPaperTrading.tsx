@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { appConfig } from "@/lib/config";
 import BoxSpreadPaperRuleControls from "@/components/BoxSpreadPaperRuleControls";
+import { usePagePush } from "@/components/page-push-provider";
 
 type LiveOpportunity = {
   symbol: string; instrument_class: string; expiry: string; expiry_type?: string; low_strike: number;
@@ -14,6 +15,7 @@ type LiveOpportunity = {
   high_call_bid?: number | null; high_call_ask?: number | null; high_put_bid?: number | null; high_put_ask?: number | null;
   low_call_bid_qty?: number | null; low_call_ask_qty?: number | null; low_put_bid_qty?: number | null; low_put_ask_qty?: number | null;
   high_call_bid_qty?: number | null; high_call_ask_qty?: number | null; high_put_bid_qty?: number | null; high_put_ask_qty?: number | null;
+  last_update_timestamp_ns?: number | string | null; timestamp_ns?: number | string | null;
 };
 type ScannerDiagnostics = {
   status?: string;
@@ -70,9 +72,18 @@ const roles = ["LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"] as const;
 type Role = typeof roles[number];
 
 export default function BoxSpreadPaperTrading() {
+  const pagePush = usePagePush("box-spread");
   const api = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread-paper";
   const [account, setAccount] = useState("default");
   const [token, setToken] = useState<string | null>(null);
+  const [privateWsStatus, setPrivateWsStatus] = useState<"DISCONNECTED" | "CONNECTING" | "LIVE" | "STALE">("DISCONNECTED");
+  const [privateSnapshotComplete, setPrivateSnapshotComplete] = useState(false);
+  const [privateLedgerRefreshVersion, setPrivateLedgerRefreshVersion] = useState(0);
+  const [privateRuleRefreshVersion, setPrivateRuleRefreshVersion] = useState(0);
+  const privateWsRef = useRef<WebSocket | null>(null);
+  const privateSequenceRef = useRef(0);
+  const privateResyncPendingRef = useRef(false);
+  const privateEventIdsRef = useRef(new Set<string>());
   const [password, setPassword] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [balance, setBalance] = useState<string | null>(null);
@@ -140,7 +151,15 @@ export default function BoxSpreadPaperTrading() {
     finally { setLoginBusy(false); }
   }
 
+  const privateLedgerRequestSequenceRef = useRef(0);
+  const recoveryRequestSequenceRef = useRef(0);
+  // Synchronous ref invalidation prevents an older page/filter REST response from committing between renders.
+  useEffect(() => {
+    privateLedgerRequestSequenceRef.current += 1;
+  }, [account, openPage, closedPage, positionSearch, positionDirection]);
+
   const refresh = useCallback(async () => {
+    const requestSequence = ++privateLedgerRequestSequenceRef.current;
     try {
       const query = "&search=" + encodeURIComponent(positionSearch.trim()) + "&direction=" + encodeURIComponent(positionDirection);
       const pageSize = 10;
@@ -151,6 +170,8 @@ export default function BoxSpreadPaperTrading() {
         request("/portfolio-summary?account_key=" + encodeURIComponent(account)),
         request("/execution-control"),
       ]);
+      // Private push updates supersede any ledger REST request already in flight.
+      if (requestSequence !== privateLedgerRequestSequenceRef.current) return;
       setBalance(String(accountBody.virtual_balance));
       setExecutionEnabled(controlBody.enabled === true);
       setTrades([...(Array.isArray(openBody.data) ? openBody.data : []), ...(Array.isArray(closedBody.data) ? closedBody.data : [])]);
@@ -159,20 +180,63 @@ export default function BoxSpreadPaperTrading() {
       setClosedPageInfo({ total_count: Number(closedBody.total_count ?? 0), has_more: closedBody.has_more === true, limit: pageSize, offset: closedPage * pageSize });
       setError(null);
       // Recovery is a separate read-only request so its failure never blocks the normal ledger.
+      const recoveryRequestSequence = ++recoveryRequestSequenceRef.current;
       void request("/recovery?account_key=" + encodeURIComponent(account))
-        .then(body => setRecoveryTrades(Array.isArray(body.data) ? body.data : []))
+        .then(body => { if (recoveryRequestSequence === recoveryRequestSequenceRef.current) setRecoveryTrades(Array.isArray(body.data) ? body.data : []); })
         .catch(() => { /* Preserve the last durable recovery snapshot on transient API errors. */ });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to load paper ledger");
+      if (requestSequence === privateLedgerRequestSequenceRef.current) {
+        setError(e instanceof Error ? e.message : "Unable to load paper ledger");
+      }
     }
   }, [account, request, openPage, closedPage, positionSearch, positionDirection]);
+
+  const applyPrivateSnapshot = useCallback((payload: any) => {
+    recoveryRequestSequenceRef.current += 1; // Invalidate recovery REST if a newer private snapshot arrived.
+    const accountBody = payload?.account;
+    const summaryBody = payload?.portfolio_summary;
+    const positionsBody = payload?.positions;
+    const recoveryBody = payload?.recovery;
+    if (!accountBody || !summaryBody || !Array.isArray(positionsBody?.data)) {
+      throw new Error("Private WebSocket snapshot is incomplete");
+    }
+    setBalance(String(accountBody.virtual_balance));
+    setPortfolioSummary(summaryBody as PortfolioSummary);
+    setExecutionEnabled(payload?.execution_control?.enabled === true);
+    setTrades(positionsBody.data as PaperTrade[]);
+    setPrivateSnapshotComplete(true);
+    const openCount = Number(summaryBody.open_position_count ?? 0);
+    const closedCount = Number(summaryBody.closed_position_count ?? 0);
+    setOpenPageInfo({ total_count: openCount, has_more: openCount > 10, limit: 10, offset: openPage * 10 });
+    setClosedPageInfo({ total_count: closedCount, has_more: closedCount > 10, limit: 10, offset: closedPage * 10 });
+    setRecoveryTrades(Array.isArray(recoveryBody?.data) ? recoveryBody.data : []);
+    setError(null);
+  }, [openPage, closedPage]);
+
+  const applyPrivateMarketUpdate = useCallback((payload: any) => {
+    recoveryRequestSequenceRef.current += 1; // Market-data pushes supersede stale recovery reads too.
+    const summaryBody = payload?.portfolio_summary;
+    const positionsBody = payload?.positions;
+    if (!summaryBody || !Array.isArray(positionsBody?.data)) {
+      throw new Error("Private market update is incomplete");
+    }
+    // Market ticks refresh only quote-sensitive marks and portfolio P&L.
+    // Preserve account balance, execution toggle and recovery state.
+    setPortfolioSummary(summaryBody as PortfolioSummary);
+    setTrades(positionsBody.data as PaperTrade[]);
+    setPrivateSnapshotComplete(true);
+    setError(null);
+  }, []);
 
   useEffect(() => {
     setOpenPage(0);
     setClosedPage(0);
   }, [account, positionSearch, positionDirection]);
 
+  const opportunityRequestSequenceRef = useRef(0);
+
   const loadOpportunities = useCallback(async () => {
+    const requestSequence = ++opportunityRequestSequenceRef.current;
     setOpportunityStatus("CHECKING");
     const base = appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/scanner/box-spread";
     const [liveResult, diagnosticsResult] = await Promise.allSettled([
@@ -190,6 +254,8 @@ export default function BoxSpreadPaperTrading() {
       }),
     ]);
 
+    // A pushed snapshot/update always wins over an older REST fallback request.
+    if (requestSequence !== opportunityRequestSequenceRef.current) return;
     setLastOpportunityCheck(Date.now());
     if (diagnosticsResult.status === "fulfilled") {
       setScannerDiagnostics(diagnosticsResult.value as ScannerDiagnostics);
@@ -198,17 +264,14 @@ export default function BoxSpreadPaperTrading() {
     }
 
     if (liveResult.status === "rejected") {
-      setOpportunities([]);
-      setOpportunityStatus("ERROR");
       setOpportunityError(liveResult.reason instanceof Error
         ? liveResult.reason.message : "Unable to reach the live Box Spread scanner");
+      // Keep last good rows/status during transient REST fallback failures.
       return;
     }
 
     const body = liveResult.value;
     if (!Array.isArray(body?.data)) {
-      setOpportunities([]);
-      setOpportunityStatus("ERROR");
       setOpportunityError("Live scanner returned an invalid response; expected a data array");
       return;
     }
@@ -225,19 +288,248 @@ export default function BoxSpreadPaperTrading() {
 
   useEffect(() => { setToken(window.sessionStorage.getItem("box-spread-paper-token")); }, []);
 
+  // Public market opportunities arrive through the same Box Spread page-push
+  // channel as the scanner. Never put private paper ledger/account data on it.
+  // The page gateway sends a full list only on SNAPSHOT/resync. Normal quote
+  // callbacks carry opportunity_updates; merge those rows instead of replacing
+  // the whole list (the callback is scoped to one quote bucket/symbol).
+  useEffect(() => {
+    const data = pagePush.data;
+    if (!data) return;
+    // Invalidate any in-flight REST fallback before applying pushed market data.
+    opportunityRequestSequenceRef.current += 1;
+    const event = String(data.__event ?? "").toUpperCase();
+    const removedKeys = Array.isArray(data.remove_keys)
+      ? data.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(data.keys)
+        ? data.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (event === "REMOVE" && removedKeys.includes("opportunities")) {
+      setOpportunities([]);
+      setOpportunityStatus("EMPTY");
+      setOpportunityError(null);
+      setLastOpportunityCheck(Date.now());
+      return;
+    }
+    const isSnapshot = event === "SNAPSHOT";
+    // The Box page publisher emits PATCH frames containing a complete page
+    // snapshot (including the full opportunities array), not per-row deltas.
+    // Accept that authoritative list on every push; retain delta merging only
+    // for any future producer that explicitly sends opportunity_updates.
+    const hasFullOpportunityList = Array.isArray(data.opportunities);
+    const replaceList = isSnapshot || hasFullOpportunityList;
+    const incoming = replaceList ? data.opportunities : data.opportunity_updates;
+    if (!Array.isArray(incoming)) return;
+    const validRows = incoming.filter((row): row is LiveOpportunity => {
+      if (!row || typeof row !== "object") return false;
+      const item = row as LiveOpportunity;
+      return [item.low_call_price, item.high_call_price, item.high_put_price, item.low_put_price]
+        .every(value => Number.isFinite(Number(value)) && Number(value) > 0);
+    });
+    setOpportunities(previous => {
+      if (replaceList) return validRows;
+      const merged = new Map<string, LiveOpportunity>();
+      for (const row of previous) {
+        merged.set([row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].join("|"), row);
+      }
+      for (const row of validRows) {
+        merged.set([row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].join("|"), row);
+      }
+      return Array.from(merged.values()).sort((a, b) => Number(b.executable_edge) - Number(a.executable_edge));
+    });
+    if (validRows.length || isSnapshot) {
+      setOpportunityError(null);
+      if (validRows.length > 0) setOpportunityStatus("LIVE");
+      else if (replaceList) setOpportunityStatus("EMPTY");
+      setLastOpportunityCheck(Date.now());
+    }
+  }, [pagePush.data]);
+
+  // Quotes are only eligible for the live scanner while all four leg quotes
+  // remain inside the five-second freshness contract. Expire stale rows locally
+  // even if a quiet symbol stops producing callbacks.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const nowNs = Date.now() * 1_000_000;
+      setOpportunities(previous => {
+        const fresh = previous.filter(row => {
+          const stamp = Number(row.last_update_timestamp_ns ?? row.timestamp_ns ?? 0);
+          return Number.isFinite(stamp) && stamp > 0 && nowNs >= stamp && nowNs - stamp <= 5_000_000_000;
+        });
+        if (fresh.length !== previous.length && fresh.length === 0) setOpportunityStatus("EMPTY");
+        return fresh.length === previous.length ? previous : fresh;
+      });
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!token) {
+      setPrivateWsStatus("DISCONNECTED");
+      setPrivateSnapshotComplete(false);
+      privateSequenceRef.current = 0;
+      privateResyncPendingRef.current = false;
+      privateEventIdsRef.current.clear();
+      privateLedgerRequestSequenceRef.current += 1;
+      setBalance(null);
+      setExecutionEnabled(false);
+      setTrades([]);
+      setPortfolioSummary(null);
+      setOpenPageInfo({ total_count: 0, has_more: false, limit: 10, offset: 0 });
+      setClosedPageInfo({ total_count: 0, has_more: false, limit: 10, offset: 0 });
+      setRecoveryTrades([]);
+      setLedger(null);
+      return;
+    }
+    let stopped = false;
+    let socket: WebSocket | null = null;
+    let retryTimer: number | undefined;
+    let watchdogTimer: number | undefined;
+    let lastServerFrameAt = 0;
+    let retryDelay = 1000;
+
+    // Account/token changes establish a fresh private-channel baseline. Reset
+    // sequence and dedupe state so the new account's snapshot is not rejected
+    // as older than the previous account's stream.
+    privateSequenceRef.current = 0;
+    privateResyncPendingRef.current = false;
+    privateEventIdsRef.current.clear();
+    privateLedgerRequestSequenceRef.current += 1;
+    setPrivateSnapshotComplete(false);
+    setBalance(null);
+    setExecutionEnabled(false);
+    setTrades([]);
+    setPortfolioSummary(null);
+    setOpenPageInfo({ total_count: 0, has_more: false, limit: 10, offset: 0 });
+    setClosedPageInfo({ total_count: 0, has_more: false, limit: 10, offset: 0 });
+    setRecoveryTrades([]);
+    setLedger(null);
+
+    const scheduleReconnect = () => {
+      if (stopped || retryTimer !== undefined) return;
+      setPrivateWsStatus("DISCONNECTED");
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        void connect();
+      }, retryDelay);
+      retryDelay = Math.min(15000, retryDelay * 2);
+    };
+
+    const connect = async () => {
+      if (stopped) return;
+      setPrivateWsStatus("CONNECTING");
+      try {
+        const ticketBody = await request("/ws-ticket", { method: "POST" });
+        if (stopped || typeof ticketBody.ticket !== "string") return;
+        const wsUrl = appConfig.apiBaseUrl.replace(/\/$/, "").replace(/^http/i, "ws") + "/ws/box-spread-paper";
+        socket = new WebSocket(wsUrl);
+        privateWsRef.current = socket;
+        socket.onopen = () => {
+          if (stopped) { socket?.close(); return; }
+          lastServerFrameAt = Date.now();
+          retryDelay = 1000;
+          socket?.send(JSON.stringify({ ticket: ticketBody.ticket, account_key: account }));
+        };
+        socket.onmessage = event => {
+          if (stopped) return;
+          lastServerFrameAt = Date.now();
+          let frame: any;
+          try { frame = JSON.parse(String(event.data)); } catch { return; }
+          if (frame?.type === "heartbeat" && frame?.channel === "box-spread-paper-private") return;
+          if (frame?.type !== "paper_update" || frame?.channel !== "box-spread-paper-private") return;
+          const sequence = Number(frame.sequence);
+          const eventId = String(frame.event_id ?? "");
+          const isSnapshot = frame.event_type === "SNAPSHOT";
+          if (!Number.isSafeInteger(sequence) || sequence < (isSnapshot ? 0 : 1)) return;
+          if (eventId && privateEventIdsRef.current.has(eventId)) return;
+          if (!isSnapshot && sequence <= privateSequenceRef.current) return;
+          // Every non-snapshot event must immediately follow the accepted
+          // bootstrap/resync snapshot, including when its sequence is zero.
+          if (!isSnapshot && sequence !== privateSequenceRef.current + 1) {
+            setPrivateWsStatus("STALE");
+            if (!privateResyncPendingRef.current && socket?.readyState === WebSocket.OPEN) {
+              privateResyncPendingRef.current = true;
+              socket.send(JSON.stringify({ action: "resync" }));
+            }
+            return;
+          }
+          try {
+            if (frame.event_type === "MARKET_DATA_CHANGED") {
+              applyPrivateMarketUpdate(frame.payload);
+            } else {
+              applyPrivateSnapshot(frame.payload);
+            }
+            privateSequenceRef.current = sequence;
+            privateLedgerRequestSequenceRef.current += 1;
+            if (isSnapshot) privateResyncPendingRef.current = false;
+            if (eventId) {
+              privateEventIdsRef.current.add(eventId);
+              if (privateEventIdsRef.current.size > 512) {
+                privateEventIdsRef.current = new Set(Array.from(privateEventIdsRef.current).slice(-256));
+              }
+            }
+            if (frame.event_type === "RULES_CHANGED" || frame.event_type === "RULE_EVALUATIONS_CHANGED") {
+              setPrivateRuleRefreshVersion(version => version + 1);
+            } else if (frame.event_type !== "MARKET_DATA_CHANGED") {
+              setPrivateLedgerRefreshVersion(version => version + 1);
+            }
+            setPrivateWsStatus("LIVE");
+          } catch {
+            setPrivateWsStatus("STALE");
+            if (!privateResyncPendingRef.current && socket?.readyState === WebSocket.OPEN) {
+              privateResyncPendingRef.current = true;
+              socket.send(JSON.stringify({ action: "resync" }));
+            }
+          }
+        };
+        watchdogTimer = window.setInterval(() => {
+          if (lastServerFrameAt && Date.now() - lastServerFrameAt > 45000) {
+            setPrivateWsStatus("STALE");
+            socket?.close();
+          }
+        }, 10000);
+        socket.onerror = () => { if (!stopped) socket?.close(); };
+        socket.onclose = () => {
+          if (stopped) return;
+          privateResyncPendingRef.current = false;
+          if (watchdogTimer !== undefined) window.clearInterval(watchdogTimer);
+          watchdogTimer = undefined;
+          if (privateWsRef.current === socket) privateWsRef.current = null;
+          scheduleReconnect();
+        };
+      } catch {
+        scheduleReconnect();
+      }
+    };
+
+    void connect();
+    return () => {
+      stopped = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      if (watchdogTimer !== undefined) window.clearInterval(watchdogTimer);
+      if (privateWsRef.current === socket) privateWsRef.current = null;
+      socket?.close();
+    };
+  }, [token, request, api, account, applyPrivateSnapshot, applyPrivateMarketUpdate]);
+
+  useEffect(() => {
+    if (!token || privateWsStatus === "LIVE") return;
+    // REST is a bounded safety fallback only while the private socket is not synchronized.
+    void refresh();
+    const fallbackTimer = window.setInterval(() => { void refresh(); }, 15000);
+    return () => window.clearInterval(fallbackTimer);
+  }, [token, privateWsStatus, refresh]);
+
   useEffect(() => {
     if (!token) return;
-    void refresh();
-    void loadOpportunities();
-    // Keep the control and ledger in sync with backend state (including restart-default OFF),
-    // independently of the faster live-opportunity refresh.
-    const statusTimer = window.setInterval(() => { void refresh(); }, 7000);
-    const opportunitiesTimer = window.setInterval(() => { void loadOpportunities(); }, 7000);
+    if (pagePush.status !== "LIVE") void loadOpportunities();
+    const opportunitiesTimer = pagePush.status === "LIVE"
+      ? undefined
+      : window.setInterval(() => { void loadOpportunities(); }, 30000);
     return () => {
-      window.clearInterval(statusTimer);
-      window.clearInterval(opportunitiesTimer);
+      if (opportunitiesTimer !== undefined) window.clearInterval(opportunitiesTimer);
     };
-  }, [token, refresh, loadOpportunities]);
+  }, [token, loadOpportunities, pagePush.status]);
 
   async function togglePaperExecution() {
     setControlBusy(true); setError(null); setMessage(null);
@@ -380,10 +672,20 @@ export default function BoxSpreadPaperTrading() {
   }
 
   async function loadLedger(tradeId: number) {
+    setSelectedTrade(tradeId);
     setError(null);
     try { setLedger(await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account))); }
     catch (e) { setError(e instanceof Error ? e.message : "Unable to load ledger"); }
   }
+
+  useEffect(() => {
+    if (!token || selectedTrade == null || privateWsStatus !== "LIVE" || privateLedgerRefreshVersion === 0) return;
+    let active = true;
+    void request("/trades/" + selectedTrade + "/ledger?account_key=" + encodeURIComponent(account))
+      .then(body => { if (active) setLedger(body); })
+      .catch(() => { /* Keep the last confirmed ledger on transient read failure. */ });
+    return () => { active = false; };
+  }, [token, selectedTrade, account, privateWsStatus, privateLedgerRefreshVersion, request]);
 
   const allowedEntrySymbols = entryExpiryType === "WEEKLY"
     ? ["NIFTY", "SENSEX"]
@@ -407,14 +709,16 @@ export default function BoxSpreadPaperTrading() {
     const timeB = Date.parse((closed ? b.closed_at : b.entry_at) || b.created_at) || 0;
     return timeB - timeA;
   });
-  const openTrades = sortPositions(filteredTrades.filter(trade =>
+  const openTradesAll = sortPositions(filteredTrades.filter(trade =>
     !["CLOSED", "CANCELLED"].includes(trade.status) &&
     (!trade.legs?.some(leg => leg.entry_quantity > 0) || trade.legs.some(leg => leg.open_quantity > 0))
   ), false);
-  const closedTrades = sortPositions(filteredTrades.filter(trade =>
+  const openTrades = privateSnapshotComplete ? openTradesAll.slice(openPage * 10, openPage * 10 + 10) : openTradesAll;
+  const closedTradesAll = sortPositions(filteredTrades.filter(trade =>
     trade.status === "CLOSED" ||
     (!!trade.legs?.length && trade.legs.some(leg => leg.entry_quantity > 0) && trade.legs.every(leg => leg.open_quantity === 0))
   ), true);
+  const closedTrades = privateSnapshotComplete ? closedTradesAll.slice(closedPage * 10, closedPage * 10 + 10) : closedTradesAll;
   const selectedTradeData = [...openTrades, ...closedTrades].find(trade => trade.trade_id === selectedTrade) ?? null;
   const selectedOpenLegQuantities = selectedTradeData?.legs?.map(leg => leg.open_quantity) ?? [];
   const selectedLegQuantitiesEqual = selectedOpenLegQuantities.length === 4 && selectedOpenLegQuantities.every(quantity => quantity > 0 && quantity === selectedOpenLegQuantities[0]);
@@ -521,7 +825,7 @@ export default function BoxSpreadPaperTrading() {
           <p className="mt-1 text-sm theme-muted">Virtual balance and persistent fills only. No broker orders, no live scanner changes.</p>
         </div>
         <div className="rounded-xl border theme-border px-3 py-2">
-          <div className="text-xs theme-muted">Virtual balance</div>
+          <div className="flex items-center gap-2 text-xs theme-muted"><span>Virtual balance</span><span className={"rounded-full px-2 py-0.5 text-[10px] font-bold " + (privateWsStatus === "LIVE" ? "bg-emerald-500/15 text-emerald-600" : "bg-amber-500/15 text-amber-600")}>{privateWsStatus === "LIVE" ? "LIVE PUSH" : privateWsStatus}</span></div>
           <div className="text-lg font-semibold theme-text">{balance == null ? "—" : "₹" + Number(balance).toLocaleString("en-IN", { maximumFractionDigits: 2 })}</div>
           <div className="text-xs text-emerald-500">PAPER ONLY · ORDERS OFF</div>
         </div>
@@ -533,7 +837,7 @@ export default function BoxSpreadPaperTrading() {
           <p className="mt-1 text-xs theme-muted">Manual control for new Box Spread paper entries. OFF is the default after API restart. Market-data scanner remains read-only; broker orders stay OFF.</p>
           <p className={"mt-2 text-sm font-bold " + (executionEnabled ? "text-emerald-500" : "text-amber-500")}>{executionEnabled ? "PAPER EXECUTION ON" : "PAPER EXECUTION OFF"}</p>
         </div>
-        <button type="button" onClick={() => void togglePaperExecution()} disabled={controlBusy || busy} className={"rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50 " + (executionEnabled ? "border border-amber-500 text-amber-500" : "bg-emerald-500 text-slate-950")}>
+        <button type="button" onClick={() => void togglePaperExecution()} disabled={controlBusy || busy || privateWsStatus !== "LIVE"} className={"rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50 " + (executionEnabled ? "border border-amber-500 text-amber-500" : "bg-emerald-500 text-slate-950")}>
           {controlBusy ? "Updating…" : executionEnabled ? "Turn OFF" : "Manually Turn ON"}
         </button>
       </div>
@@ -549,7 +853,7 @@ export default function BoxSpreadPaperTrading() {
           <label className="text-sm theme-muted">Same quantity per leg<select value={lots} onChange={e=>setLots(Number(e.target.value))} className="mt-1 w-full rounded-lg border theme-border theme-surface-2 px-3 py-2 theme-text">{[1,2,3,4,5,10,15,20].map(value=><option key={value} value={value}>{value} {value===1?"lot":"lots"} · all four legs</option>)}</select></label>
         </div>
         <div className="text-xs theme-muted"><div className="mb-2 font-semibold theme-text">Index selection</div><div className="flex flex-wrap gap-3">{allowedEntrySymbols.map(symbol=><label key={symbol} className="flex items-center gap-1.5"><input type="checkbox" checked={entrySymbols.includes(symbol)} onChange={e=>setEntrySymbols(current=>e.target.checked?[...current,symbol]:current.filter(x=>x!==symbol))}/>{symbol}</label>)}<label className="flex items-center gap-1.5 font-semibold"><input type="checkbox" checked={allowedEntrySymbols.every(x=>entrySymbols.includes(x))} onChange={e=>setEntrySymbols(e.target.checked?[...allowedEntrySymbols]:[])}/>ALL</label></div></div>
-        {entryMode==="ALGO" ? <BoxSpreadPaperRuleControls api={api} token={token} account={account} selection={{expiryType:entryExpiryType,symbols:entrySymbols,lots}} /> : <p className="rounded-lg theme-surface-2 p-3 text-xs theme-muted">Manual mode: choose one of the filtered live opportunities below, review the four-leg bid/ask prices and quantity, then submit the basket. A missing or stale leg blocks the entry.</p>}
+        {entryMode==="ALGO" ? <BoxSpreadPaperRuleControls api={api} token={token} account={account} refreshVersion={privateRuleRefreshVersion} selection={{expiryType:entryExpiryType,symbols:entrySymbols,lots}} /> : <p className="rounded-lg theme-surface-2 p-3 text-xs theme-muted">Manual mode: choose one of the filtered live opportunities below, review the four-leg bid/ask prices and quantity, then submit the basket. A missing or stale leg blocks the entry.</p>}
       </section>
 
       {manualEntryOpportunity && <form onSubmit={confirmManualEntry} className="space-y-3 rounded-xl border-2 border-cyan-500/60 p-3">
@@ -562,7 +866,7 @@ export default function BoxSpreadPaperTrading() {
             return <label key={role} className="rounded-lg border theme-border p-2 text-xs theme-muted"><span className="font-semibold theme-text">{role.replace("_"," ")} · {action}</span><span className="mt-1 block">Bid ₹{quote[0] ?? "—"} · Ask ₹{quote[1] ?? "—"}</span><span className="mt-2 block">Limit price (Qty {manualEntryOpportunity.lot_size*lots})</span><input required type="number" min="0.01" step="0.05" value={manualEntryLimits[role]} onChange={e=>setManualEntryLimits(current=>({...current,[role]:e.target.value}))} className="mt-1 w-full rounded-md border theme-border theme-surface px-2 py-2 text-sm theme-text"/></label>;
           })}
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs theme-muted">Paper simulation only · no real broker order</span><button type="submit" disabled={busy || !executionEnabled || roles.some(role=>!Number.isFinite(Number(manualEntryLimits[role])) || Number(manualEntryLimits[role])<=0)} className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{busy?"Validating all four legs…":"Confirm 4-leg LIMIT entry"}</button></div>
+        <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs theme-muted">Paper simulation only · no real broker order</span><button type="submit" disabled={busy || privateWsStatus !== "LIVE" || !executionEnabled || roles.some(role=>!Number.isFinite(Number(manualEntryLimits[role])) || Number(manualEntryLimits[role])<=0)} className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:opacity-50">{busy?"Validating all four legs…":"Confirm 4-leg LIMIT entry"}</button></div>
       </form>}
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm theme-muted">Paper account key

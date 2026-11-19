@@ -113,6 +113,40 @@ def test_pipeline_persists_every_opportunity_returned_by_one_scan(tmp_path, monk
 
 
 
+
+def test_pipeline_pushes_history_revision_only_after_snapshot_commit(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
+    from app.scanner import page_push_websocket
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    pushed = []
+
+    def capture_push(page, event, data):
+        with Session() as db:
+            committed_count = db.query(func.count(LiveBoxSpreadSnapshot.id)).scalar()
+        pushed.append((page, event, data, committed_count))
+
+    monkeypatch.setattr(page_push_websocket, "publish_page_update", capture_push)
+    try:
+        pipeline = LiveBoxSpreadPipeline(
+            scanner=RepeatingScanner(make_result(1_793_084_708_000_000_000)),
+            session_factory=Session, alerts=NoopAlerts(),
+        )
+        pipeline.observe({})
+        assert len(pushed) == 1
+        page, event, data, committed_count = pushed[0]
+        assert page == "box-spread"
+        assert event == "PATCH"
+        assert data["history_revision"] > 0
+        assert committed_count == 1
+    finally:
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
 def test_pipeline_persists_weekly_expiry_classification(tmp_path, monkeypatch):
     monkeypatch.setenv("LIVE_BOX_SPREAD_SPOOL_PATH", str(tmp_path / "pending.jsonl"))
     box_spread_routes.set_expiry_types({("NIFTY", "03NOV2026"): "WEEKLY"})

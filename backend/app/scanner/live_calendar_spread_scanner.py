@@ -69,6 +69,7 @@ class LiveCalendarSpreadScanner:
         }
         self._side_effect_queue = Queue(maxsize=256)
         self._side_effect_worker_started = False
+        self._history_revision: str | None = None
         self._lock = RLock()
         self.alerts = alerts or CalendarSpreadAlertService()
 
@@ -292,6 +293,11 @@ class LiveCalendarSpreadScanner:
             finally:
                 self._side_effect_queue.task_done()
 
+    @property
+    def history_revision(self) -> str | None:
+        with self._lock:
+            return self._history_revision
+
     def set_session_factory(self, session_factory):
         self._session_factory = session_factory
         if not self._side_effect_worker_started:
@@ -332,6 +338,8 @@ class LiveCalendarSpreadScanner:
                 capacity_lots=signal.capacity_lots,rank_score=signal.rank_score,
             )
             db.add(row); db.commit()
+            with self._lock:
+                self._history_revision = datetime.now(timezone.utc).isoformat()
         except IntegrityError:
             db.rollback()
         finally:

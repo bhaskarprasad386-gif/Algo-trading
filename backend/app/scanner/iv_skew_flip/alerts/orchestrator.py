@@ -136,10 +136,20 @@ class IVEarlyEntryAlertEngine:
             for candidate in candidates:
                 persisted.append(self.store.record(candidate))
         state = "CONFLICT" if conflicts else ("EARLY_ENTRY" if any(item.get("accepted") for item in persisted) else "WATCH")
+        # Read the durable alert rows only when a new alert was accepted.
+        # The cached list is then carried by runtime snapshots so the browser
+        # receives new alerts over the page WebSocket without polling every 3s.
+        previous_alerts = self._last_results.get("NIFTY_WEEKLY", {}).get("alerts", [])
+        latest_alerts = (
+            self.store.latest(limit=30)
+            if any(item.get("accepted") for item in persisted)
+            else previous_alerts
+        )
         result = {
             "state": state, "underlying": "NIFTY", "expiry": expiry,
             "signals_allowed": state == "EARLY_ENTRY",
             "accepted_alerts": persisted,
+            "alerts": latest_alerts,
             "conflict_records": conflict_records,
             "conflicts": [
                 {"strategy": item.strategy, "strike": item.strike, "direction": item.direction,

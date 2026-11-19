@@ -1,36 +1,85 @@
-"""Shared browser-facing page update WebSocket.
+"""Durable, multi-worker browser-facing scanner page WebSocket.
 
-This transport is deliberately downstream of existing scanner runtimes. It owns
-no broker connections, subscriptions, polling loops, or strategy calculations.
-Clients subscribe to page channels and receive sequenced snapshots/patches.
+Only public scanner read models belong on this channel. Private account data
+uses the authenticated Box Paper channel. One DB journal tailer per worker
+fans out to local sockets; browser commands are limited to subscription and
+resynchronization in this transport.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
+import threading
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from sqlalchemy import Column, Float, Integer, JSON, MetaData, String, Table, delete, func, insert, select, update
+from sqlalchemy.exc import IntegrityError
+
+from app.core.database import engine
 
 router = APIRouter(tags=["page-push"])
 PAGE_CHANNELS = frozenset({
+    "cash-future",
     "box-spread",
+    "calendar-spread",
+    "synthetic-arbitrage",
     "iv-skew-flip",
     "credit-butterfly-condor-weekly",
     "credit-butterfly-condor-monthly",
+    "weekly-swing",
 })
-QUEUE_SIZE = 8
+QUEUE_SIZE = 32
 HEARTBEAT_SECONDS = 20.0
+DISPATCH_POLL_SECONDS = 0.25
+_log = logging.getLogger(__name__)
+metadata = MetaData()
+events = Table(
+    "algo_scanner_page_ws_events", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("page", String(64), nullable=False, index=True),
+    Column("page_sequence", Integer, nullable=False),
+    Column("event", String(24), nullable=False),
+    Column("data", JSON, nullable=False),
+    Column("created_at", Float, nullable=False, index=True),
+)
+sequences = Table(
+    "algo_scanner_page_ws_sequences", metadata,
+    Column("page", String(64), primary_key=True),
+    Column("sequence", Integer, nullable=False, default=0),
+)
+metadata.create_all(bind=engine)
+
 _snapshot_providers: dict[str, Callable[[], dict[str, Any]]] = {}
 _subscribers: set[tuple[asyncio.Queue, frozenset[str]]] = set()
-_loop: asyncio.AbstractEventLoop | None = None
-_sequences: dict[str, int] = {}
+_dispatch_task: asyncio.Task | None = None
+_dispatch_loop: asyncio.AbstractEventLoop | None = None
+_dispatch_ready: asyncio.Event | None = None
+_subscriber_lock = threading.RLock()
+
+
+def _seed_sequences() -> None:
+    for page in PAGE_CHANNELS:
+        try:
+            with engine.begin() as connection:
+                current = connection.execute(
+                    select(sequences.c.page).where(sequences.c.page == page)
+                ).first()
+                if current is None:
+                    connection.execute(insert(sequences).values(page=page, sequence=0))
+        except IntegrityError:
+            # Another worker may have seeded the same page concurrently.
+            pass
+
+
+_seed_sequences()
 
 
 def configure_snapshot_provider(page: str, provider: Callable[[], dict[str, Any]] | None) -> None:
-    """Register a read-only snapshot getter; providers must not start work."""
     if page not in PAGE_CHANNELS:
         raise ValueError("unknown page channel")
     if provider is None:
@@ -39,74 +88,280 @@ def configure_snapshot_provider(page: str, provider: Callable[[], dict[str, Any]
         _snapshot_providers[page] = provider
 
 
-def _frame(page: str, event: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
-    _sequences[page] = _sequences.get(page, 0) + 1
+def _latest_event_id() -> int:
+    with engine.connect() as connection:
+        value = connection.execute(select(func.max(events.c.id))).scalar_one_or_none()
+    return int(value or 0)
+
+
+def _latest_page_sequence(page: str) -> int:
+    with engine.connect() as connection:
+        value = connection.execute(
+            select(sequences.c.sequence).where(sequences.c.page == page)
+        ).scalar_one_or_none()
+    return int(value or 0)
+
+
+def _sequence_gap(last_sequence: int, incoming_sequence: int) -> bool:
+    """Detect forward gaps; duplicate or stale frames are not gaps."""
+    return incoming_sequence > last_sequence + 1
+
+
+
+def _requires_resync(last_sequence: int, incoming_sequence: int, snapshot_required: bool = False) -> bool:
+    """Resync only on an explicit reset marker or a missing forward sequence.
+
+
+
+    Duplicate and stale frames should be ignored by the caller, not reset the stream.
+    """
+    return bool(snapshot_required or _sequence_gap(last_sequence, incoming_sequence))
+
+
+def _events_after(cursor: int, limit: int = 100) -> list[dict[str, Any]]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            select(events.c.id, events.c.page, events.c.page_sequence, events.c.event, events.c.data)
+            .where(events.c.id > cursor)
+            .order_by(events.c.id.asc()).limit(limit + 1)
+        ).all()
+    return [
+        {"id": int(row[0]), "page": str(row[1]), "sequence": int(row[2]),
+         "event": str(row[3]), "data": row[4] if isinstance(row[4], dict) else {}}
+        for row in rows
+    ]
+
+
+def _frame(page: str, event: str, data: dict[str, Any] | None = None, sequence: int | None = None) -> dict[str, Any]:
     return {
-        "type": "page_update",
-        "page": page,
-        "event": event,
-        "sequence": _sequences[page],
+        "type": "page_update", "page": page, "event": event,
+        "sequence": int(sequence if sequence is not None else _latest_page_sequence(page)),
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "data": data or {},
+        "data": data if isinstance(data, dict) else {},
     }
 
 
-def _snapshot_frame(page: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
-    """A resync snapshot aligns to the current sequence without advancing it."""
-    if page not in _sequences:
-        _sequences[page] = 1
-    return {
-        "type": "page_update",
-        "page": page,
-        "event": "SNAPSHOT",
-        "sequence": _sequences[page],
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "data": data or {},
-    }
+def _snapshot_frame(page: str, data: dict[str, Any] | None = None, sequence: int | None = None) -> dict[str, Any]:
+    return _frame(page, "SNAPSHOT", data, sequence)
+
+
+def _snapshot(page: str) -> dict[str, Any]:
+    provider = _snapshot_providers.get(page)
+    try:
+        result = provider() if callable(provider) else {}
+        return result if isinstance(result, dict) else {}
+    except Exception:
+        _log.exception("Scanner page snapshot failed for %s", page)
+        return {"snapshot_status": "UNAVAILABLE"}
+
+
+def _consistent_snapshot_frame(page: str, retries: int = 3) -> dict[str, Any]:
+    """Capture page data with a sequence baseline that cannot silently skip concurrent pushes.
+
+    Prefer a stable before/after sequence window. If the page is busy for every
+    retry, baseline at the sequence read before the final snapshot so queued
+    updates remain detectable/replayable rather than claiming a newer cursor.
+    """
+    attempts = max(1, int(retries))
+    for _ in range(attempts):
+        before = _latest_page_sequence(page)
+        data = _snapshot(page)
+        after = _latest_page_sequence(page)
+        if before == after:
+            return _snapshot_frame(page, data, after)
+    # An unstable capture is not authoritative: data may include events newer
+    # than the sequence baseline and replaying them can corrupt page state.
+    return _snapshot_frame(page, {"snapshot_status": "UNAVAILABLE"}, _latest_page_sequence(page))
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        import math
+        return value if math.isfinite(value) else None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    return str(value)
 
 
 def publish_page_update(page: str, event: str, data: dict[str, Any] | None = None) -> None:
-    """Publish from any thread; slow clients are bounded and forced to resync."""
+    """Durably publish a public scanner update for every backend worker."""
     if page not in PAGE_CHANNELS or event not in {"PATCH", "REMOVE", "SNAPSHOT"}:
         return
-    loop = _loop
-    if loop is None or not loop.is_running():
+    safe_data = _json_safe(data if isinstance(data, dict) else {})
+    try:
+        with engine.begin() as connection:
+            row = connection.execute(
+                update(sequences)
+                .where(sequences.c.page == page)
+                .values(sequence=sequences.c.sequence + 1)
+                .returning(sequences.c.sequence)
+            ).first()
+            if row is None:
+                connection.execute(insert(sequences).values(page=page, sequence=0))
+                row = connection.execute(
+                    update(sequences)
+                    .where(sequences.c.page == page)
+                    .values(sequence=sequences.c.sequence + 1)
+                    .returning(sequences.c.sequence)
+                ).first()
+            next_sequence = int(row[0])
+            connection.execute(insert(events).values(
+                page=page, page_sequence=next_sequence, event=event,
+                data=safe_data, created_at=datetime.now(timezone.utc).timestamp(),
+            ))
+            cutoff = connection.execute(
+                select(events.c.id).where(events.c.page == page)
+                .order_by(events.c.id.desc()).offset(10000).limit(1)
+            ).scalar_one_or_none()
+            if cutoff is not None:
+                connection.execute(delete(events).where(events.c.page == page, events.c.id < int(cutoff)))
+    except Exception:
+        _log.exception("Could not persist scanner page update for %s", page)
+
+
+def publish_collection_change(
+    page: str, collection: str, operation: str, key_field: str,
+    *, key: str | int | None = None, item: dict[str, Any] | None = None,
+) -> None:
+    """Publish a validated keyed ADD/UPDATE/DELETE through the page PATCH channel."""
+    op = str(operation or "").strip().upper()
+    reserved = {"__proto__", "prototype", "constructor"}
+    if (
+        page not in PAGE_CHANNELS
+        or not isinstance(collection, str) or not collection.strip()
+        or not isinstance(key_field, str) or not key_field.strip()
+        or collection in reserved or key_field in reserved
+        or op not in {"ADD", "UPDATE", "DELETE"}
+    ):
         return
-    safe_data = data if isinstance(data, dict) else {}
+    if op in {"ADD", "UPDATE"} and not isinstance(item, dict):
+        return
+    stable_key = key if key is not None else (item.get(key_field) if isinstance(item, dict) else None)
+    if isinstance(stable_key, bool) or not isinstance(stable_key, (str, int)) or not str(stable_key).strip():
+        return
+    if op == "ADD" and (not isinstance(item, dict) or key_field not in item):
+        return
+    if isinstance(item, dict) and key_field in item and str(item[key_field]) != str(stable_key):
+        return
+    mutation: dict[str, Any] = {
+        "collection": collection, "operation": op, "key_field": key_field, "key": stable_key,
+    }
+    if isinstance(item, dict):
+        mutation["item"] = item
+    publish_page_update(page, "PATCH", {"collection_changes": [mutation]})
 
-    def deliver() -> None:
-        frame = _frame(page, event, safe_data)
-        for queue, channels in tuple(_subscribers):
-            if page not in channels:
+
+async def _journal_dispatch_loop() -> None:
+    global _dispatch_ready
+    try:
+        cursor = await asyncio.to_thread(_latest_event_id)
+    except Exception:
+        cursor = 0
+        _log.exception("Scanner page WebSocket journal baseline failed")
+    if _dispatch_ready is not None:
+        _dispatch_ready.set()
+    while _subscribers:
+        try:
+            rows = await asyncio.to_thread(_events_after, cursor)
+            if not rows:
+                await asyncio.sleep(DISPATCH_POLL_SECONDS)
                 continue
-            if queue.full():
-                while not queue.empty():
-                    try:
-                        queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                provider = _snapshot_providers.get(page)
-                try:
-                    snapshot = provider() if callable(provider) else {}
-                except Exception:
-                    snapshot = {}
-                frame_to_send = {**frame, "event": "SNAPSHOT", "data": snapshot if isinstance(snapshot, dict) else {}}
-            else:
-                frame_to_send = frame
-            try:
-                queue.put_nowait(frame_to_send)
-            except asyncio.QueueFull:
-                pass
+            for row in rows:
+                cursor = row["id"]
+                frame = {
+                    "type": "page_update", "page": row["page"],
+                    "event": row["event"], "sequence": row["sequence"],
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "data": row["data"],
+                }
+                for queue, channels in tuple(_subscribers):
+                    if row["page"] not in channels:
+                        continue
+                    if queue.full():
+                        while not queue.empty():
+                            try:
+                                queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                break
+                        for subscribed_page in channels:
+                            latest_sequence = (
+                                row["sequence"] if subscribed_page == row["page"]
+                                else await asyncio.to_thread(_latest_page_sequence, subscribed_page)
+                            )
+                            queue.put_nowait({
+                                "type": "page_update", "page": subscribed_page,
+                                "event": "SNAPSHOT_REQUIRED", "sequence": latest_sequence,
+                                "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
+                            })
+                    else:
+                        queue.put_nowait(frame)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _log.exception("Scanner page WebSocket journal poll failed")
+            await asyncio.sleep(DISPATCH_POLL_SECONDS)
 
-    loop.call_soon_threadsafe(deliver)
+
+async def _subscribe_local() -> asyncio.Queue:
+    global _dispatch_task, _dispatch_loop, _dispatch_ready
+    loop = asyncio.get_running_loop()
+    if _dispatch_task is not None and _dispatch_loop is not loop:
+        _dispatch_task.cancel()
+        _dispatch_task = None
+        _subscribers.clear()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_SIZE)
+    _subscribers.add((queue, frozenset()))
+    _dispatch_loop = loop
+    if _dispatch_task is None or _dispatch_task.done():
+        _dispatch_ready = asyncio.Event()
+        _dispatch_task = loop.create_task(_journal_dispatch_loop())
+    ready = _dispatch_ready
+    if ready is not None:
+        await ready.wait()
+    return queue
 
 
-async def _restart_event_waiter(
-    queue: asyncio.Queue,
-    event_task: asyncio.Task,
-    page_to_reset: str,
-) -> asyncio.Task:
-    """Discard pending events for one page while preserving other subscriptions."""
+def _set_channels(queue: asyncio.Queue, channels: frozenset[str]) -> None:
+    for entry in tuple(_subscribers):
+        if entry[0] is queue:
+            _subscribers.discard(entry)
+    _subscribers.add((queue, channels))
+
+
+async def _unsubscribe_local(queue: asyncio.Queue) -> None:
+    global _dispatch_task, _dispatch_loop, _dispatch_ready
+    for entry in tuple(_subscribers):
+        if entry[0] is queue:
+            _subscribers.discard(entry)
+    task = _dispatch_task
+    if not _subscribers and task is not None:
+        # Let the journal tailer observe the empty subscriber set and exit
+        # naturally. Cancelling a task while it awaits asyncio.to_thread()
+        # can cancel Starlette's TestClient portal during WebSocket teardown.
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
+        except asyncio.TimeoutError:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        finally:
+            if _dispatch_task is task and not _subscribers:
+                _dispatch_task = None
+                _dispatch_loop = None
+                _dispatch_ready = None
+
+
+async def _restart_event_waiter(queue: asyncio.Queue, event_task: asyncio.Task, page_to_reset: str) -> asyncio.Task:
     preserved: list[dict[str, Any]] = []
     if event_task.done() and not event_task.cancelled():
         try:
@@ -118,7 +373,6 @@ async def _restart_event_waiter(
     else:
         event_task.cancel()
         await asyncio.gather(event_task, return_exceptions=True)
-
     while not queue.empty():
         try:
             queued = queue.get_nowait()
@@ -130,8 +384,6 @@ async def _restart_event_waiter(
         try:
             queue.put_nowait(frame)
         except asyncio.QueueFull:
-            # A bounded queue cannot preserve an unbounded backlog. A later
-            # sequence gap will make the client request a fresh page snapshot.
             break
     return asyncio.create_task(queue.get())
 
@@ -139,17 +391,22 @@ async def _restart_event_waiter(
 def _origin_allowed(websocket: WebSocket) -> bool:
     origin = str(websocket.headers.get("origin") or "").strip()
     if not origin:
-        return True  # native clients may omit Origin; same policy as existing WS
+        return True
     try:
         parsed = urlparse(origin)
     except ValueError:
         return False
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        return False
+    normalized = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+    configured = {
+        value.strip().rstrip("/").lower()
+        for value in os.getenv("SCANNER_PAGE_WS_ALLOWED_ORIGINS", "").split(",")
+        if value.strip()
+    }
     host = (parsed.hostname or "").lower()
-    # Permit only this account's Cloudflare Workers subdomains. Do not
-    # allow the shared workers.dev namespace or arbitrary tenant origins.
-    return parsed.scheme in {"http", "https"} and (
+    return normalized in configured or (
         host in {"localhost", "127.0.0.1"}
-        or host.endswith(".vercel.app")
         or host == "bhaskarprasad386.workers.dev"
         or host.endswith(".bhaskarprasad386.workers.dev")
     )
@@ -157,20 +414,16 @@ def _origin_allowed(websocket: WebSocket) -> bool:
 
 @router.websocket("/ws/page-updates")
 async def page_updates(websocket: WebSocket) -> None:
-    global _loop
     if not _origin_allowed(websocket):
         await websocket.close(code=1008)
         return
     await websocket.accept()
-    _loop = asyncio.get_running_loop()
-    queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_SIZE)
+    queue = await _subscribe_local()
     channels: frozenset[str] = frozenset()
-    entry = (queue, channels)
-    _subscribers.add(entry)
+    client_sequences: dict[str, int] = {}
     try:
         await websocket.send_json({
-            "type": "connected",
-            "server_time": datetime.now(timezone.utc).isoformat(),
+            "type": "connected", "server_time": datetime.now(timezone.utc).isoformat(),
             "available_pages": sorted(PAGE_CHANNELS),
         })
         receive_task = asyncio.create_task(websocket.receive_text())
@@ -178,21 +431,29 @@ async def page_updates(websocket: WebSocket) -> None:
         try:
             while True:
                 done, _ = await asyncio.wait(
-                    {receive_task, event_task},
-                    timeout=HEARTBEAT_SECONDS,
+                    {receive_task, event_task}, timeout=HEARTBEAT_SECONDS,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if not done:
                     await websocket.send_json({
-                        "type": "heartbeat",
-                        "server_time": datetime.now(timezone.utc).isoformat(),
+                        "type": "heartbeat", "server_time": datetime.now(timezone.utc).isoformat(),
                         "subscribed_pages": sorted(channels),
                     })
                     continue
                 if event_task in done:
                     frame = event_task.result()
-                    if isinstance(frame, dict) and frame.get("page") in channels:
-                        await websocket.send_json(frame)
+                    page = str(frame.get("page") or "") if isinstance(frame, dict) else ""
+                    if page in channels:
+                        sequence = int(frame.get("sequence") or 0)
+                        last = client_sequences.get(page, 0)
+                        if _requires_resync(last, sequence, frame.get("event") == "SNAPSHOT_REQUIRED"):
+                            snapshot_frame = await asyncio.to_thread(_consistent_snapshot_frame, page)
+                            sequence = int(snapshot_frame.get("sequence") or 0)
+                            await websocket.send_json(snapshot_frame)
+                            client_sequences[page] = sequence
+                        elif sequence > last:
+                            await websocket.send_json(frame)
+                            client_sequences[page] = sequence
                     event_task = asyncio.create_task(queue.get())
                 if receive_task in done:
                     raw = receive_task.result()
@@ -211,32 +472,26 @@ async def page_updates(websocket: WebSocket) -> None:
                         continue
                     if message["action"] == "subscribe":
                         channels = frozenset((*channels, page))
-                        _subscribers.discard(entry)
-                        entry = (queue, channels)
-                        _subscribers.add(entry)
+                        _set_channels(queue, channels)
                         event_task = await _restart_event_waiter(queue, event_task, page)
+                        initial_frame = await asyncio.to_thread(_consistent_snapshot_frame, page)
+                        await websocket.send_json(initial_frame)
+                        client_sequences[page] = int(initial_frame.get("sequence") or 0)
                     elif message["action"] == "unsubscribe":
                         channels = frozenset(item for item in channels if item != page)
-                        _subscribers.discard(entry)
-                        entry = (queue, channels)
-                        _subscribers.add(entry)
+                        _set_channels(queue, channels)
+                        client_sequences.pop(page, None)
                         await websocket.send_json({"type": "unsubscribed", "page": page})
                         continue
                     elif page not in channels:
                         await websocket.send_json({"type": "error", "code": "NOT_SUBSCRIBED"})
                         continue
                     else:
-                        # Cancel the outstanding queue.get as well as draining the
-                        # queue. It may already have consumed a delta when the
-                        # resync request arrives; allowing that task to complete
-                        # after this snapshot would replay an older patch.
                         event_task = await _restart_event_waiter(queue, event_task, page)
-                    provider = _snapshot_providers.get(page)
-                    try:
-                        snapshot = provider() if callable(provider) else {}
-                    except Exception:
-                        snapshot = {}
-                    await websocket.send_json(_snapshot_frame(page, snapshot if isinstance(snapshot, dict) else {}))
+                    snapshot_frame = await asyncio.to_thread(_consistent_snapshot_frame, page)
+                    sequence = int(snapshot_frame.get("sequence") or 0)
+                    await websocket.send_json(snapshot_frame)
+                    client_sequences[page] = sequence
         finally:
             receive_task.cancel()
             event_task.cancel()
@@ -244,6 +499,4 @@ async def page_updates(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        _subscribers.discard(entry)
-        if not _subscribers:
-            _loop = None
+        await _unsubscribe_local(queue)
