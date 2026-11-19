@@ -589,7 +589,7 @@ export default function IVSkewFlipPage() {
     const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});
     const body=await response.json();
     if(!response.ok) throw new Error(apiError(body,`Status HTTP ${response.status}`));
-    if(requestSequence!==runtimeStatusRefreshSequenceRef.current)return;
+    if(!isCurrentRecoveryResponse({active:true,requestSequence,latestSequence:runtimeStatusRefreshSequenceRef.current,responseValid:true}))return;
     setRuntime(body.runtime??null);
     setSelectedEnabled(body.saved_enabled===true);
     setSavedEnabled(body.saved_enabled===true);
