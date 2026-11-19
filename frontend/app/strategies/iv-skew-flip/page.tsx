@@ -694,6 +694,8 @@ export default function IVSkewFlipPage() {
   },[pagePushData,settingDirty,alertAudioEnabled]);
   async function saveRunnerSetting(){
     runtimeStatusRefreshSequenceRef.current+=1;
+    durableHistoryRequestSequenceRef.current+=1;
+    chartHistoryRequestSequenceRef.current+=1;
     setBusy(true);setError("");
     try{
       const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:selectedEnabled}),cache:"no-store"});
