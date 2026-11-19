@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
 import { trackTraceSave, waitForTraceSave } from "@/lib/trace-mutation-order.mjs";
+import { syntheticTraceSnapshotMissing } from "@/lib/page-push-recovery.mjs";
 
 type TraceRow = Record<string, unknown> & {
   trace_id: string;
@@ -251,6 +252,12 @@ export function SyntheticTracePanel() {
   }, [pagePushData]);
 
   useEffect(() => {
+    if (String(pagePushData?.__event ?? "").toUpperCase() === "SNAPSHOT" && syntheticTraceSnapshotMissing(pagePushData, "live")) {
+      liveFetchSequenceRef.current += 1;
+      setLiveRows([]);
+      setLiveLoading(false);
+      return;
+    }
     const livePayload = pagePushData?.live as { data?: unknown[] } | undefined;
     if (!Array.isArray(livePayload?.data)) return;
     // Push wins over any older HTTP opportunity snapshot.
