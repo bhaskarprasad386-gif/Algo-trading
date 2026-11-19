@@ -354,12 +354,34 @@ def _publish_synthetic_trace_update(data: dict):
         pass
 
 
+def _publish_trace_collection_mutation(operation: str, *, key: str, item: dict | None = None):
+    # A keyed mutation makes the actual durable add/delete observable as a
+    # collection event, in addition to the authoritative full-list snapshot.
+    try:
+        from app.scanner.page_push_websocket import publish_collection_change
+        publish_collection_change(
+            "synthetic-arbitrage", "trace_opportunities", operation, "trace_id",
+            key=key, item=item,
+        )
+    except Exception:
+        pass
+
+
 @router.post("/opportunities")
 def save_trace_opportunity(request: TraceOpportunityRequest):
     result = _trace_snapshot_record(request.trace_id, request.trace_key, request.traced_at, request.snapshot)
     try:
         result["trace_opportunities"] = list_trace_opportunities(500).get("data", [])
         _publish_synthetic_trace_update({"trace_opportunities": result["trace_opportunities"]})
+        _publish_trace_collection_mutation("DELETE", key=trace_id)
+        mutation_item = {
+            **request.snapshot,
+            "trace_id": request.trace_id,
+            "trace_key": request.trace_key,
+            "traced_at": request.traced_at,
+            "persisted": True,
+        }
+        _publish_trace_collection_mutation("ADD", key=request.trace_id, item=mutation_item)
     except Exception:
         pass
     return result
