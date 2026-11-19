@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
-import { isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts } from "@/lib/page-push-recovery.mjs";
+import { ivSkewSnapshotMissing, isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts } from "@/lib/page-push-recovery.mjs";
 
 type Row = Record<string, unknown>;
 type EarlyAlert = { id: number; observed_at_ns_text?: string; strategy: string; expiry: string; strike: number; direction: string; option_type: string; state: string; observed_at_ns: number; spot: number; premium?: number | null; iv_change_points?: number | null; volume_ratio?: number | null; reason?: string; delivery_status?: string; metadata?: Row };
@@ -413,6 +413,17 @@ export default function IVSkewFlipPage() {
   const [alertFetchError,setAlertFetchError]=useState("");
   const seenAlertIds=useRef<Set<number>>(new Set());
   const alertFetchSequenceRef=useRef(0);
+  const basketRegistryRequestSequenceRef=useRef(0);
+  const lastBasketRegistryPushRef=useRef<unknown>(null);
+  const durableHistoryRequestSequenceRef=useRef(0);
+  const olderAlertsRequestSequenceRef=useRef(0);
+  // A pushed runtime observation invalidates any older REST chart recovery read.
+  const chartHistoryRequestSequenceRef=useRef(0);
+  // Manual status refreshes must not rewind newer runtime/settings pushed over WS.
+  const runtimeStatusRefreshSequenceRef=useRef(0);
+  const durableHistoryRefreshTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const lastPushedHistoryCountRef=useRef<number|null>(null);
+  const lastPushedHistoryExpiryRef=useRef<string|null>(null);
   const selectedNifty="NIFTY_WEEKLY" as const;
   const [busy,setBusy]=useState(false);
   const [snapshotBusy,setSnapshotBusy]=useState(false);
@@ -462,10 +473,11 @@ export default function IVSkewFlipPage() {
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
+      const requestSequence=++basketRegistryRequestSequenceRef.current;
       try{
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/baskets`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&response.ok)setBasketRegistry(body as BasketRegistry);
+        if(active&&requestSequence===basketRegistryRequestSequenceRef.current&&response.ok)setBasketRegistry(body as BasketRegistry);
       }catch{/* keep last known basket registry state */}
     };
     void poll();
@@ -478,10 +490,11 @@ export default function IVSkewFlipPage() {
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
+      const requestSequence=++durableHistoryRequestSequenceRef.current;
       try{
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY${requestedExpiry?`&expiry=${encodeURIComponent(requestedExpiry)}`:""}`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
+        if(active&&requestSequence===durableHistoryRequestSequenceRef.current&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
       }catch{/* keep the last successful durable history response */}
     };
     void poll();
@@ -491,16 +504,47 @@ export default function IVSkewFlipPage() {
     const timer=window.setInterval(()=>{if(active)void poll();},10000);
     return()=>{active=false;window.clearInterval(timer);};
   },[base,requestedExpiry,pagePushStatus]);
+  // Persisted-history count changes are push-triggered. Debounce bursts so a
+  // one-second sampler never starts overlapping large history reads.
+  useEffect(()=>{
+    const pushedRuntime=pagePushData?.runtime&&typeof pagePushData.runtime==="object"?pagePushData.runtime as Runtime:null;
+    const sampler=pushedRuntime?.option_chains?.NIFTY_WEEKLY?.sampler as Row|undefined;
+    const count=Number(sampler?.history_persisted_count);
+    if(lastPushedHistoryExpiryRef.current!==requestedExpiry){
+      lastPushedHistoryExpiryRef.current=requestedExpiry;
+      lastPushedHistoryCountRef.current=null;
+      if(durableHistoryRefreshTimerRef.current)clearTimeout(durableHistoryRefreshTimerRef.current);
+      durableHistoryRefreshTimerRef.current=null;
+    }
+    if(!Number.isFinite(count)||count<0||lastPushedHistoryCountRef.current===count)return;
+    lastPushedHistoryCountRef.current=count;
+    const requestSequence=++durableHistoryRequestSequenceRef.current;
+    const expiry=requestedExpiry;
+    if(durableHistoryRefreshTimerRef.current)clearTimeout(durableHistoryRefreshTimerRef.current);
+    durableHistoryRefreshTimerRef.current=setTimeout(()=>{
+      durableHistoryRefreshTimerRef.current=null;
+      const url=base+"/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY"+(expiry?"&expiry="+encodeURIComponent(expiry):"");
+      void fetch(url,{cache:"no-store"}).then(async response=>{
+        const body=await response.json();
+        if(requestSequence===durableHistoryRequestSequenceRef.current&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
+      }).catch(()=>{/* keep the last successful durable history response */});
+    },2500);
+  },[base,pagePushData,requestedExpiry]);
+  useEffect(()=>()=>{
+    if(durableHistoryRefreshTimerRef.current)clearTimeout(durableHistoryRefreshTimerRef.current);
+    durableHistoryRefreshTimerRef.current=null;
+  },[]);
   const activeWeeklyExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
+      const requestSequence=++chartHistoryRequestSequenceRef.current;
       try{
         const expiry=activeWeeklyExpiry;
         const query=expiry?`&expiry=${encodeURIComponent(expiry)}`:"";
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/timeseries?underlying=NIFTY&window_seconds=1800&limit=20000${query}`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&response.ok&&body.status==="ok")setChartHistory(body as Row);
+        if(active&&requestSequence===chartHistoryRequestSequenceRef.current&&response.ok&&body.status==="ok")setChartHistory(body as Row);
       }catch{/* keep last successful chart window */}
     };
     void poll();
@@ -512,6 +556,7 @@ export default function IVSkewFlipPage() {
   },[base,activeWeeklyExpiry,pagePushStatus]);
   const loadMoreAlerts=async()=>{
     if(loadingMoreAlerts||!hasMoreAlerts||!alertCursor)return;
+    const requestSequence=++olderAlertsRequestSequenceRef.current;
     const query=new URLSearchParams({
       limit:"30",
       before_observed_at_ns:alertCursor.before_observed_at_ns,
@@ -523,6 +568,7 @@ export default function IVSkewFlipPage() {
       const body=await response.json();
       if(!response.ok)throw new Error(apiError(body,"Could not load older alert history"));
       const rows=Array.isArray(body.alerts)?body.alerts as EarlyAlert[]:[];
+      if(!isCurrentRecoveryResponse({active:true,requestSequence,latestSequence:olderAlertsRequestSequenceRef.current,responseValid:true}))return;
       loadedOlderAlerts.current=true;
       setEarlyAlerts(current=>{
         const merged=new Map<number,EarlyAlert>();
@@ -536,15 +582,17 @@ export default function IVSkewFlipPage() {
       }:null);
       setAlertFetchError("");
     }catch(e){
-      setAlertFetchError(e instanceof Error?e.message:"Could not load older alert history");
+      if(requestSequence===olderAlertsRequestSequenceRef.current)setAlertFetchError(e instanceof Error?e.message:"Could not load older alert history");
     }finally{
-      setLoadingMoreAlerts(false);
+      if(requestSequence===olderAlertsRequestSequenceRef.current)setLoadingMoreAlerts(false);
     }
   };
   const refresh=useCallback(async()=>{
+    const requestSequence=++runtimeStatusRefreshSequenceRef.current;
     const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});
     const body=await response.json();
     if(!response.ok) throw new Error(apiError(body,`Status HTTP ${response.status}`));
+    if(!isCurrentRecoveryResponse({active:true,requestSequence,latestSequence:runtimeStatusRefreshSequenceRef.current,responseValid:true}))return;
     setRuntime(body.runtime??null);
     setSelectedEnabled(body.saved_enabled===true);
     setSavedEnabled(body.saved_enabled===true);
@@ -552,21 +600,56 @@ export default function IVSkewFlipPage() {
   },[base]);
   useEffect(()=>{
     if(!pagePushData)return;
-    if(String(pagePushData.__event??"").toUpperCase()==="REMOVE"){
-      const removedKeys=Array.isArray(pagePushData.remove_keys)
+    const isRemove=String(pagePushData.__event??"").toUpperCase()==="REMOVE";
+    const removedKeys=isRemove
+      ? Array.isArray(pagePushData.remove_keys)
         ? pagePushData.remove_keys.filter((key):key is string=>typeof key==="string")
         : Array.isArray(pagePushData.keys)
           ? pagePushData.keys.filter((key):key is string=>typeof key==="string")
-          : [];
+          : []
+      : [];
+    const removed=(key:string)=>isRemove&&removedKeys.includes(key);
+    const isSnapshot=String(pagePushData.__event??"").toUpperCase()==="SNAPSHOT";
+    if(isSnapshot&&ivSkewSnapshotMissing(pagePushData,"runtime")){
+      olderAlertsRequestSequenceRef.current+=1;
+      runtimeStatusRefreshSequenceRef.current+=1;
+      alertFetchSequenceRef.current+=1;
+      chartHistoryRequestSequenceRef.current+=1;
+      setLoadingMoreAlerts(false);
+      setRuntime(null);
+      setChartHistory(null);
+      setEarlyAlertLive(null);
+    }
+    if(isSnapshot&&ivSkewSnapshotMissing(pagePushData,"basket_registry")){
+      basketRegistryRequestSequenceRef.current+=1;
+      lastBasketRegistryPushRef.current=null;
+      setBasketRegistry(null);
+    }
+    if(isRemove){
       if(removedKeys.includes("runtime")){
         alertFetchSequenceRef.current+=1;
+        chartHistoryRequestSequenceRef.current+=1;
         setRuntime(null);
         setChartHistory(null);
         setEarlyAlertLive(null);
       }
+      if(removedKeys.includes("basket_registry")){
+        basketRegistryRequestSequenceRef.current+=1;
+        lastBasketRegistryPushRef.current=null;
+        setBasketRegistry(null);
+      }
     }
-    if(pagePushData.runtime&&typeof pagePushData.runtime==="object"){
+    if(!removed("basket_registry")&&pagePushData.basket_registry&&typeof pagePushData.basket_registry==="object"&&lastBasketRegistryPushRef.current!==pagePushData.basket_registry){
+      lastBasketRegistryPushRef.current=pagePushData.basket_registry;
+      basketRegistryRequestSequenceRef.current+=1;
+      setBasketRegistry(pagePushData.basket_registry as BasketRegistry);
+    }
+    if(!removed("runtime")&&pagePushData.runtime&&typeof pagePushData.runtime==="object"){
+      olderAlertsRequestSequenceRef.current+=1;
+      setLoadingMoreAlerts(false);
+      runtimeStatusRefreshSequenceRef.current+=1;
       alertFetchSequenceRef.current+=1;
+      chartHistoryRequestSequenceRef.current+=1;
       const pushedRuntime=pagePushData.runtime as Runtime;
       setRuntime(pushedRuntime);
       // Runtime snapshots carry the sampler's latest real broker observations.
@@ -611,11 +694,12 @@ export default function IVSkewFlipPage() {
       const pushedAlerts=Array.isArray(alertState?.alerts)?alertState.alerts as EarlyAlert[]:[];
       const fresh=freshEarlyEntryAlerts(pushedAlerts,seenAlertIds.current);
       if(pushedAlerts.length){
-        setEarlyAlerts(current=>{
-          const merged=new Map<number,EarlyAlert>();
-          [...current,...pushedAlerts].forEach(alert=>merged.set(alert.id,alert));
-          return [...merged.values()].sort(compareAlertTime).slice(0,100);
-        });
+        setEarlyAlerts(current=>mergeUniqueAlerts(
+          current,
+          pushedAlerts,
+          compareAlertTime,
+          loadedOlderAlerts.current?Number.POSITIVE_INFINITY:100,
+        ));
         const newest=pushedAlerts.filter(alert=>Number.isFinite(alert.id));
         newest.forEach(alert=>seenAlertIds.current.add(alert.id));
         if(seenAlertIds.current.size>500){const keep=new Set(newest.map(alert=>alert.id));seenAlertIds.current=keep;}
@@ -623,11 +707,15 @@ export default function IVSkewFlipPage() {
       }
     }
     if(typeof pagePushData.saved_enabled==="boolean"){
+      runtimeStatusRefreshSequenceRef.current+=1;
       setSavedEnabled(pagePushData.saved_enabled);
       if(!settingDirty)setSelectedEnabled(pagePushData.saved_enabled);
     }
   },[pagePushData,settingDirty,alertAudioEnabled]);
   async function saveRunnerSetting(){
+    runtimeStatusRefreshSequenceRef.current+=1;
+    durableHistoryRequestSequenceRef.current+=1;
+    chartHistoryRequestSequenceRef.current+=1;
     setBusy(true);setError("");
     try{
       const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:selectedEnabled}),cache:"no-store"});
@@ -641,18 +729,23 @@ export default function IVSkewFlipPage() {
     finally{setBusy(false);}
   }
   async function fetchBrokerSnapshot(){
+    const historyRequestSequence=++durableHistoryRequestSequenceRef.current;
     setSnapshotBusy(true);setSnapshotNotice("");setError("");
     try{
       const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/snapshot`,{method:"POST",cache:"no-store"});
       const body=await response.json();
       if(!response.ok)throw new Error(apiError(body,"Angel One broker snapshot failed"));
+      if(historyRequestSequence!==durableHistoryRequestSequenceRef.current)return;
       setSnapshotNotice(`Angel One saved ${fmt(body.saved_contracts,0)}/${fmt(body.expected_contracts,0)} contracts • IV received ${fmt(body.iv_received_contracts,0)} • ${String(body.expiry??"")}`);
       const expiry=String(body.expiry??requestedExpiry);
       const history=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY${expiry?`&expiry=${encodeURIComponent(expiry)}`:""}`,{cache:"no-store"});
       const saved=await history.json();
-      if(history.ok&&saved.status==="ok")setDurableHistory(saved as Row);
-    }catch(e){setError(e instanceof Error?e.message:"Angel One broker snapshot failed");}
-    finally{setSnapshotBusy(false);}
+      if(history.ok&&saved.status==="ok"&&isCurrentRecoveryResponse({active:true,requestSequence:historyRequestSequence,latestSequence:durableHistoryRequestSequenceRef.current,responseValid:true}))setDurableHistory(saved as Row);
+    }catch(e){
+      if(historyRequestSequence===durableHistoryRequestSequenceRef.current)setError(e instanceof Error?e.message:"Angel One broker snapshot failed");
+    }finally{
+      if(historyRequestSequence===durableHistoryRequestSequenceRef.current)setSnapshotBusy(false);
+    }
   }
   const chains=runtime?.option_chains??{};
   const liveNifty=chains[selectedNifty]??{};

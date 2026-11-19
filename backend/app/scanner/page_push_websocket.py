@@ -362,12 +362,17 @@ async def _unsubscribe_local(queue: asyncio.Queue) -> None:
 
 
 async def _restart_event_waiter(queue: asyncio.Queue, event_task: asyncio.Task, page_to_reset: str) -> asyncio.Task:
-    preserved: list[dict[str, Any]] = []
+    preserved_by_page: dict[str, list[dict[str, Any]]] = {}
+    def retain(frame: Any) -> None:
+        if not isinstance(frame, dict) or frame.get("page") == page_to_reset:
+            return
+        page = str(frame.get("page") or "")
+        if page:
+            preserved_by_page.setdefault(page, []).append(frame)
+
     if event_task.done() and not event_task.cancelled():
         try:
-            consumed = event_task.result()
-            if isinstance(consumed, dict) and consumed.get("page") != page_to_reset:
-                preserved.append(consumed)
+            retain(event_task.result())
         except Exception:
             pass
     else:
@@ -375,15 +380,35 @@ async def _restart_event_waiter(queue: asyncio.Queue, event_task: asyncio.Task, 
         await asyncio.gather(event_task, return_exceptions=True)
     while not queue.empty():
         try:
-            queued = queue.get_nowait()
+            retain(queue.get_nowait())
         except asyncio.QueueEmpty:
             break
-        if isinstance(queued, dict) and queued.get("page") != page_to_reset:
-            preserved.append(queued)
+
+    # Keep unaffected channels isolated during resubscribe/resync. If flushing
+    # the resetting channel leaves multiple queued frames for another channel,
+    # intermediate deltas are no longer guaranteed to be contiguous; signal a
+    # snapshot for that channel rather than silently dropping them.
+    preserved: list[dict[str, Any]] = []
+    for page, frames in preserved_by_page.items():
+        if len(frames) == 1:
+            preserved.append(frames[0])
+            continue
+        latest_sequence = max(
+            (int(frame.get("sequence") or 0) for frame in frames),
+            default=0,
+        )
+        preserved.append({
+            "type": "page_update", "page": page,
+            "event": "SNAPSHOT_REQUIRED", "sequence": latest_sequence,
+            "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
+        })
     for frame in preserved:
         try:
             queue.put_nowait(frame)
         except asyncio.QueueFull:
+            # With the supported page-channel count this should not overflow the
+            # queue. If a custom queue is smaller, the caller will still get a
+            # sequence gap on the next preserved frame and resync.
             break
     return asyncio.create_task(queue.get())
 

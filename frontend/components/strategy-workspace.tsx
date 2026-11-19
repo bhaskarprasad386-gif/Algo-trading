@@ -536,7 +536,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const pageChannel = slug === "box-spread" ? "box-spread"
     : slug === "calendar-spread" ? "calendar-spread"
     : slug === "synthetic-arbitrage" ? "synthetic-arbitrage" : "none";
-  const { data: pagePushData, status: pagePushStatus } = usePagePush(pageChannel);
+  const { data: pagePushData, status: pagePushStatus, resync: pagePushResync } = usePagePush(pageChannel);
   const endpoint =
     slug === "calendar-spread" ? "/api/v1/scanner/calendar-spread/live?limit=50" :
     slug === "synthetic-arbitrage" ? "/api/v1/scanner/synthetic-cash-carry/live?limit=50" :
@@ -609,6 +609,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const syntheticHistoryPushRevision = useRef<string | null>(null);
   const calendarHistoryPushRevision = useRef<string | null>(null);
   const indexSelectionRequestSequence = useRef(0);
+  const runtimeHealthRequestSequence = useRef(0);
+  const universeMutationRequestSequence = useRef(0);
+  const scannerDiagnosticsRequestSequence = useRef(0);
+  const refreshPushBaselineRef = useRef<Record<string, unknown> | null>(null);
+  const refreshPushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const updateClock = () => setCurrentLiveTime(new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }));
@@ -678,6 +683,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setControl(selection);
       return;
     }
+    const requestSequence = ++universeMutationRequestSequence.current;
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/universe", {
@@ -687,6 +693,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Universe update failed");
+      if (requestSequence !== universeMutationRequestSequence.current) return;
       setControl(String(body?.selection ?? selection));
       if (Array.isArray(body?.top15_stock_symbols)) {
         setTop15StockSymbols(body.top15_stock_symbols.filter((symbol: unknown): symbol is string => typeof symbol === "string"));
@@ -694,7 +701,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       if (body?.availability && typeof body.availability === "object") setUniverseAvailability(body.availability);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Universe update failed");
+      if (requestSequence === universeMutationRequestSequence.current) setError(e instanceof Error ? e.message : "Universe update failed");
     }
   };
 
@@ -891,9 +898,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     let hasLoaded = false;
     let inFlight = false;
     const loadSelection = async () => {
-      const requestSequence = ++indexSelectionRequestSequence.current;
+      // Avoid advancing the sequence for a poll that will not start: otherwise
+      // it invalidates the in-flight request and leaves no replacement request.
       if (inFlight) return;
       inFlight = true;
+      const requestSequence = ++indexSelectionRequestSequence.current;
       if (!hasLoaded) setIndexSelectionLoading(true);
       try {
         const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
@@ -1014,7 +1023,21 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [slug, pagePushData, savedIndexSymbols, savedWeeklyOnlySymbols, indexSelectionDraft, weeklyOnlyDraft]);
   useEffect(() => {
     if (slug !== "box-spread" || !pagePushData) { if (slug !== "box-spread") setIndexSpotRows([]); return; }
+    const event = String(pagePushData.__event ?? "").toUpperCase();
+    const removedKeys = Array.isArray(pagePushData.remove_keys)
+      ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(pagePushData.keys)
+        ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+        : [];
     const spots = pagePushData?.index_spots;
+    if (event === "REMOVE" && removedKeys.includes("index_spots")) {
+      setIndexSpotRows([]);
+      return;
+    }
+    if (event === "SNAPSHOT" && !Array.isArray(spots)) {
+      setIndexSpotRows([]);
+      return;
+    }
     if (!Array.isArray(spots)) return;
     const incoming = spots as unknown as Array<{ symbol: string; spot_price: number | null; spot_timestamp_ns: number | null; spot_age_seconds: number | null; status: string }>;
     if (String(pagePushData.__event ?? "") === "SNAPSHOT") {
@@ -1041,6 +1064,34 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           ? pagePushData.keys.filter((key): key is string => typeof key === "string")
           : [];
       const removed = (key: string) => event === "REMOVE" && removedKeys.includes(key);
+      // Full reconnect snapshots must clear retained live/pair collections when omitted.
+      if (event === "SNAPSHOT" && workspaceSnapshotMissing(pagePushData, "live")) {
+        loadRequestRef.current += 1;
+        rowsRef.current = [];
+        setRows([]);
+        setRowsStale(false);
+        setLoading(false);
+        setError(null);
+        setLiveApiStatus("WAITING");
+      }
+      if (event === "SNAPSHOT" && workspaceSnapshotMissing(pagePushData, "pairs")) {
+        pairRequestSequence.current += 1;
+        setPairRows([]);
+        setPairMonitorStatus("WAITING");
+      }
+      if (event === "SNAPSHOT" && slug === "synthetic-arbitrage" && workspaceSnapshotMissing(pagePushData, "diagnostics")) {
+        scannerDiagnosticsRequestSequence.current += 1;
+        setScannerDiagnostics(null);
+      }
+      if (event === "SNAPSHOT" && slug === "synthetic-arbitrage" && workspaceSnapshotMissing(pagePushData, "universe")) {
+        setUniverseAvailability(null);
+      }
+      if (event === "SNAPSHOT" && workspaceSnapshotMissing(pagePushData, "runtime_health")) {
+        runtimeHealthRequestSequence.current += 1;
+        setFeedTicks(null); setFeedAge(null); setFeedExchangeFreshness(null); setFeedInstruments(null);
+        setFeedStatus("UNKNOWN"); setFeedErrors(null); setRunner(null);
+        if (slug === "calendar-spread") setCalendarRuntime(null);
+      }
       const live = pagePushData.live as Record<string, any> | undefined;
       const pairs = pagePushData.pairs as Record<string, any> | undefined;
       if (removed("live")) {
@@ -1055,6 +1106,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           try { window.localStorage.removeItem("algo:synthetic-arbitrage:last-live-opportunities:v1"); } catch { /* Cache is optional. */ }
         }
       } else if (Array.isArray(live?.data)) {
+        // Authoritative calendar/synthetic live push supersedes any older REST
+        // recovery response still in flight; prevent stale rows from winning.
+        loadRequestRef.current += 1;
         const nextRows = live.data.filter((item: unknown): item is Row => !!item && typeof item === "object");
         rowsRef.current = nextRows; setRows(nextRows); setRowsStale(false);
         setLoading(false); setLiveApiLastOkAt(Date.now()); setLiveApiStatus("RESPONDING"); setError(null);
@@ -1078,18 +1132,25 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         }
       }
       if (slug === "synthetic-arbitrage") {
-        if (removed("diagnostics")) setScannerDiagnostics(null);
-        else if (pagePushData.diagnostics && typeof pagePushData.diagnostics === "object") setScannerDiagnostics(pagePushData.diagnostics as Record<string, unknown>);
+        if (removed("diagnostics")) {
+          scannerDiagnosticsRequestSequence.current += 1;
+          setScannerDiagnostics(null);
+        } else if (pagePushData.diagnostics && typeof pagePushData.diagnostics === "object") {
+          scannerDiagnosticsRequestSequence.current += 1;
+          setScannerDiagnostics(pagePushData.diagnostics as Record<string, unknown>);
+        }
         if (removed("universe")) setUniverseAvailability(null);
         else if (pagePushData.universe && typeof pagePushData.universe === "object") setUniverseAvailability(pagePushData.universe as Record<string, any>);
       }
       if (removed("runtime_health")) {
+        runtimeHealthRequestSequence.current += 1;
         setFeedTicks(null); setFeedAge(null); setFeedExchangeFreshness(null); setFeedInstruments(null);
         setFeedStatus("UNKNOWN"); setFeedErrors(null); setRunner(null);
         if (slug === "calendar-spread") setCalendarRuntime(null);
       } else {
         const health = pagePushData.runtime_health;
-        if (health && typeof health === "object") {
+        if (health && typeof health === "object" && !removed("runtime_health")) {
+          runtimeHealthRequestSequence.current += 1;
           const runtime = health as Record<string, any>;
           const feed = runtime.common_feed && typeof runtime.common_feed === "object" ? runtime.common_feed : {};
           setFeedTicks(nullableNumber(feed.ticks_received));
@@ -1131,7 +1192,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setFeedStatus("UNKNOWN"); setFeedErrors(null); setRunner(null); setBoxDepthShadow(null);
     }
     const opportunities = pagePushData.opportunities;
-    if (Array.isArray(opportunities)) {
+    if (!(String(pagePushData.__event ?? "").toUpperCase() === "REMOVE" && removedKeys.includes("opportunities")) && Array.isArray(opportunities)) {
       // A page-push frame is authoritative. Invalidate any REST recovery request
       // that started before this frame so a late HTTP response cannot roll the
       // live scanner table back to an older snapshot.
@@ -1208,10 +1269,19 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   useEffect(() => {
     if (isCustom || !c.pairEndpoint) return;
+    if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) {
+      // Invalidate any REST pair response started while the WS was connecting.
+      // The live snapshot/push is now authoritative; don't fetch a redundant
+      // REST copy on transition to LIVE or let an in-flight request overwrite it.
+      pairRequestSequence.current += 1;
+      return;
+    }
     void loadPairs();
-    if (pagePushStatus === "LIVE" && ["calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
     const timer = window.setInterval(() => void loadPairs(), 15000);
-    return () => window.clearInterval(timer);
+    return () => {
+      pairRequestSequence.current += 1;
+      window.clearInterval(timer);
+    };
   }, [isCustom, c.pairEndpoint, pagePushStatus, slug]);
 
   useEffect(() => {
@@ -1221,14 +1291,15 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     }
     let cancelled = false;
     const loadScannerDiagnostics = async () => {
+      const requestSequence = ++scannerDiagnosticsRequestSequence.current;
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
         const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/diagnostics", { cache: "no-store" });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error("scanner diagnostics HTTP " + response.status);
-        if (!cancelled) setScannerDiagnostics(body && typeof body === "object" ? body as Record<string, unknown> : null);
+        if (!cancelled && requestSequence === scannerDiagnosticsRequestSequence.current) setScannerDiagnostics(body && typeof body === "object" ? body as Record<string, unknown> : null);
       } catch {
-        if (!cancelled) setScannerDiagnostics({ status: "DIAGNOSTICS_UNAVAILABLE" });
+        if (!cancelled && requestSequence === scannerDiagnosticsRequestSequence.current) setScannerDiagnostics({ status: "DIAGNOSTICS_UNAVAILABLE" });
       }
     };
     void loadScannerDiagnostics();
@@ -1241,12 +1312,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     if (isCustom || slug === "box-spread") return;
     let cancelled = false;
     const loadRuntime = async () => {
+      const requestSequence = ++runtimeHealthRequestSequence.current;
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
         const response = await fetch(base + "/api/v1/market-data/runtime/health", { cache: "no-store" });
         if (!response.ok) throw new Error("runtime health");
         const body = await response.json();
-        if (cancelled) return;
+        if (cancelled || requestSequence !== runtimeHealthRequestSequence.current) return;
         const feed = body?.common_feed ?? {};
         // Number(null) and Number("") are 0; preserve missing backend values as unknown.
         setFeedTicks(nullableNumber(feed.ticks_received));
@@ -1281,7 +1353,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         setRunner(selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null);
         setBoxDepthShadow(slug === "box-spread" && selected?.depth_shadow && typeof selected.depth_shadow === "object" ? selected.depth_shadow : null);
       } catch {
-        if (!cancelled) setFeedStatus("UNAVAILABLE");
+        if (!cancelled && requestSequence === runtimeHealthRequestSequence.current) setFeedStatus("UNAVAILABLE");
       }
     };
     void loadRuntime();
@@ -1292,14 +1364,25 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   useEffect(() => {
     if (isCustom) {
+      // Invalidate an older REST request when switching to a custom workspace.
+      loadRequestRef.current += 1;
+      rowsRef.current = [];
       setRows([]);
       setLoading(false);
       return;
     }
-    if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
+    if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) {
+      // Reject REST recovery as soon as the channel becomes LIVE, before the
+      // first authoritative snapshot effect commits.
+      loadRequestRef.current += 1;
+      return;
+    }
     void load(true);
     const timer = window.setInterval(() => void load(), 15000);
-    return () => window.clearInterval(timer);
+    return () => {
+      loadRequestRef.current += 1;
+      window.clearInterval(timer);
+    };
   }, [endpoint, isCustom, slug, pagePushStatus]);
 
   const filteredRows = useMemo(() => {
@@ -1350,10 +1433,48 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const diagnosticBlockers = (Array.isArray(scannerDiagnostics?.top_blockers) ? scannerDiagnostics.top_blockers : []) as Row[];
   const diagnosticStatus = String(scannerDiagnostics?.status ?? "LOADING").replaceAll("_", " ");
 
-  const refresh = async () => {
-    setRefreshing(true);
-    await Promise.all([load(), loadHistory(), loadPairs()]);
+  useEffect(() => {
+    if (!refreshing || String(pagePushData?.__event ?? "").toUpperCase() !== "SNAPSHOT" || pagePushData === refreshPushBaselineRef.current) return;
+    refreshPushBaselineRef.current = null;
+    if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+    refreshPushTimeoutRef.current = null;
     setRefreshing(false);
+  }, [pagePushData, refreshing]);
+
+
+  useEffect(() => () => {
+    if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+    refreshPushTimeoutRef.current = null;
+    refreshPushBaselineRef.current = null;
+  }, []);
+
+
+  const refresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+    refreshPushTimeoutRef.current = null;
+    try {
+      if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) {
+        // Finish only after a new authoritative snapshot, or a bounded timeout.
+        refreshPushBaselineRef.current = pagePushData;
+        refreshPushTimeoutRef.current = setTimeout(() => {
+          refreshPushTimeoutRef.current = null;
+          refreshPushBaselineRef.current = null;
+          setRefreshing(false);
+        }, 8000);
+        pagePushResync();
+        await loadHistory();
+      } else {
+        await Promise.all([load(), loadHistory(), loadPairs()]);
+        setRefreshing(false);
+      }
+    } catch {
+      refreshPushBaselineRef.current = null;
+      if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+      refreshPushTimeoutRef.current = null;
+      setRefreshing(false);
+    }
   };
 
   const copyTableRows = async (kind: "history" | "pairs") => {

@@ -23,6 +23,16 @@ from app.market_data.instruments import InstrumentMaster
 from app.scanner.iv_skew_flip.instruments import download_iv_instruments
 from app.scanner.iv_skew_flip.official_weight_pdf import parse_official_weight_pdf_archive
 from app.scanner.iv_skew_flip.weight_store import persist_validated_basket_version
+from app.models.iv_constituent_basket_version import IVConstituentBasketVersion
+from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
+from app.scanner.page_push_websocket import publish_page_update
+
+
+def _publish_basket_registry_push(registry: dict) -> None:
+    """Fan out a committed registry update; page snapshots remain recovery source."""
+    if not isinstance(registry, dict):
+        raise ValueError("basket registry snapshot must be an object")
+    publish_page_update("iv-skew-flip", "PATCH", {"basket_registry": registry})
 
 
 NIFTY_ROSTER_URL = "https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv"
@@ -213,6 +223,28 @@ def main() -> int:
                 f"{underlying}: imported record_id={record.id}, "
                 f"effective_date={basket.effective_date.isoformat()}"
             )
+
+    # Publish only after the two-index transaction has committed. This process
+    # shares the durable page-event journal with the backend, so active clients
+    # receive the fresh registry and reconnecting clients recover it via snapshot.
+    try:
+        with SessionLocal() as db:
+            records = (
+                db.query(IVConstituentBasketVersion)
+                .filter(IVConstituentBasketVersion.underlying.in_(("NIFTY", "BANKNIFTY")))
+                .order_by(
+                    IVConstituentBasketVersion.effective_date.desc(),
+                    IVConstituentBasketVersion.created_at.desc(),
+                    IVConstituentBasketVersion.id.desc(),
+                )
+                .all()
+            )
+        registry = summarize_basket_registry(records, as_of=as_of)
+        _publish_basket_registry_push(registry)
+    except Exception as exc:
+        # Import is already committed. A failed push publish must not report
+        # the validated import as failed; snapshot/resync remains authoritative.
+        print(f"Basket registry push publish failed; resync will recover: {type(exc).__name__}: {exc}")
 
     print("Both official baskets imported atomically.")
     print("IV weighted-pressure activation remains OFF; broker orders remain OFF.")

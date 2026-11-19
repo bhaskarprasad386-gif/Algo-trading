@@ -182,3 +182,13 @@ def test_persistence_rejects_forged_non_official_basket_source(db):
             db, forged, {"AAA": "101", "BBB": "202"}, **provenance()
         )
     assert db.scalars(select(IVConstituentBasketVersion)).all() == []
+
+
+def test_basket_registry_push_is_page_scoped_and_patch_shaped(monkeypatch):
+    from scripts import import_iv_official_baskets as importer
+    published = []
+    monkeypatch.setattr(importer, "publish_page_update", lambda page, event, data: published.append((page, event, data)))
+    registry = {"status": "ok", "baskets": {"NIFTY": {"status": "VERIFIED_FRESH"}}}
+    importer._publish_basket_registry_push(registry)
+    assert published == [("iv-skew-flip", "PATCH", {"basket_registry": registry})]
+

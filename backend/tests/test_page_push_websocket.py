@@ -242,6 +242,13 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
             # when a concurrent cursor/reset signal races this isolated round-trip.
             # We still require the initial snapshot plus explicit resync snapshots.
             assert len(provider_calls) >= expected_snapshot_calls + 1
+
+            # Explicitly release this channel before the TestClient portal exits.
+            # This exercises the supported unsubscribe lifecycle and avoids leaving
+            # server-side queue state for abrupt client teardown to clean up.
+            websocket.send_json({"action": "unsubscribe", "page": page})
+            unsubscribed = websocket.receive_json()
+            assert unsubscribed == {"type": "unsubscribed", "page": page}
     finally:
         push.configure_snapshot_provider(page, None)
 
@@ -301,3 +308,131 @@ def test_unstable_snapshot_is_not_marked_authoritative(monkeypatch):
     assert frame["event"] == "SNAPSHOT"
     assert frame["sequence"] == 3
     assert frame["data"] == {"snapshot_status": "UNAVAILABLE"}
+
+
+
+def test_iv_skew_flip_snapshot_includes_durable_basket_registry(monkeypatch):
+    from app import main
+
+
+    registry = {"status": "ok", "baskets": {"NIFTY": {"status": "VERIFIED_FRESH"}}}
+    monkeypatch.setattr(main, "_get_iv_scanner_enabled", lambda: True)
+    monkeypatch.setattr(main, "iv_skew_flip_runtime", None)
+    monkeypatch.setattr(main, "iv_skew_flip_basket_registry", lambda: registry)
+
+    snapshot = main._iv_page_push_snapshot()
+    assert snapshot["saved_enabled"] is True
+    assert snapshot["runtime"] is None
+    assert snapshot["basket_registry"] == registry
+    assert snapshot["orders_enabled"] is False
+
+
+def test_cash_future_authoritative_snapshot_contains_live_rows_pairs_and_health(monkeypatch):
+    from app import main
+
+    class Scanner:
+        def health(self):
+            return {"last_observation_at": "2026-11-19T10:00:00+05:30", "status": "LIVE"}
+
+        def snapshot(self, *, max_age_seconds, limit):
+            assert max_age_seconds == 5.0 and limit == 500
+            return [{"symbol": "ABC", "price": 123.4}]
+
+        def pair_snapshot(self, *, max_age_seconds, limit):
+            assert max_age_seconds == 120.0 and limit == 500
+            return [{"symbol": "ABC", "gap": 1.25}]
+
+    monkeypatch.setattr(main, "live_cash_future_scanner", Scanner())
+    monkeypatch.setattr(main, "live_cash_future_runner", None)
+    snapshot = main._cash_future_page_push_snapshot()
+    assert snapshot["rows"] == [{"symbol": "ABC", "price": 123.4}]
+    assert snapshot["pairs"] == [{"symbol": "ABC", "gap": 1.25}]
+    assert snapshot["stats"]["status"] == "LIVE"
+    assert snapshot["scan_at"] == "2026-11-19T10:00:00+05:30"
+    assert snapshot["runner"] is None
+
+
+def test_cash_future_authoritative_snapshots_reconcile_deleted_rows_and_pairs(monkeypatch):
+    from app import main
+
+    current_rows = [{"symbol": "OLD", "price": 10.0}, {"symbol": "KEEP", "price": 20.0}]
+    current_pairs = [{"symbol": "OLD", "gap": 1.0}, {"symbol": "KEEP", "gap": 2.0}]
+
+    class Scanner:
+        def health(self):
+            return {"status": "LIVE", "last_observation_at": "2026-11-19T10:01:00+05:30"}
+
+        def snapshot(self, *, max_age_seconds, limit):
+            return list(current_rows)
+        def pair_snapshot(self, *, max_age_seconds, limit):
+            return list(current_pairs)
+
+    monkeypatch.setattr(main, "live_cash_future_scanner", Scanner())
+    monkeypatch.setattr(main, "live_cash_future_runner", None)
+
+
+    first = main._cash_future_page_push_snapshot()
+    assert [row["symbol"] for row in first["rows"]] == ["OLD", "KEEP"]
+    assert [row["symbol"] for row in first["pairs"]] == ["OLD", "KEEP"]
+
+
+    # SNAPSHOTs are complete lists: deleted records must be absent in the next
+    # authoritative frame so frontend replacement cannot resurrect stale entries.
+    current_rows[:] = [{"symbol": "KEEP", "price": 21.0}, {"symbol": "NEW", "price": 30.0}]
+    current_pairs[:] = [{"symbol": "KEEP", "gap": 2.1}, {"symbol": "NEW", "gap": 3.0}]
+    second = main._cash_future_page_push_snapshot()
+    assert [row["symbol"] for row in second["rows"]] == ["KEEP", "NEW"]
+    assert [row["symbol"] for row in second["pairs"]] == ["KEEP", "NEW"]
+
+
+def test_page_push_queue_overflow_requests_snapshot_for_each_channel(monkeypatch):
+    async def scenario():
+        queue = asyncio.Queue(maxsize=push.QUEUE_SIZE)
+        for index in range(push.QUEUE_SIZE):
+            queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": index + 1})
+        monkeypatch.setattr(push, "_latest_event_id", lambda: 0)
+        monkeypatch.setattr(push, "_events_after", lambda cursor: [
+            {"id": 1, "page": "box-spread", "sequence": 2, "event": "PATCH", "data": {"rows": []}}
+        ] if cursor == 0 else [])
+        monkeypatch.setattr(push, "_latest_page_sequence", lambda page: {
+            "box-spread": 2, "iv-skew-flip": 8, "calendar-spread": 5
+        }.get(page, 0))
+        monkeypatch.setattr(push, "_subscribers", {
+            (queue, frozenset({"box-spread", "iv-skew-flip", "calendar-spread"}))
+        })
+        monkeypatch.setattr(push, "_dispatch_ready", asyncio.Event())
+        task = asyncio.create_task(push._journal_dispatch_loop())
+        try:
+            await asyncio.wait_for(push._dispatch_ready.wait(), timeout=0.5)
+            await asyncio.sleep(0.05)
+            assert queue.qsize() == 3
+            frames = [queue.get_nowait() for _ in range(3)]
+            assert {frame["page"] for frame in frames} == {"box-spread", "iv-skew-flip", "calendar-spread"}
+            assert all(frame["event"] == "SNAPSHOT_REQUIRED" for frame in frames)
+            assert {frame["page"]: frame["sequence"] for frame in frames} == {
+                "box-spread": 2, "iv-skew-flip": 8, "calendar-spread": 5
+            }
+        finally:
+            monkeypatch.setattr(push, "_subscribers", set())
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(scenario())
+
+
+def test_resync_preserved_channel_with_multiple_queued_deltas_requests_snapshot():
+    async def scenario():
+        queue = asyncio.Queue(maxsize=8)
+        queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 4})
+        queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 10, "data": {"a": 1}})
+        queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 11, "data": {"a": 2}})
+        event_task = asyncio.create_task(queue.get())
+        await asyncio.sleep(0)
+        # Simulate resync of box-spread; preserve other channel safely.
+        waiter = await push._restart_event_waiter(queue, event_task, "box-spread")
+        frame = await asyncio.wait_for(waiter, timeout=0.1)
+        assert frame["page"] == "iv-skew-flip"
+        assert frame["event"] == "SNAPSHOT_REQUIRED"
+        assert frame["sequence"] == 11
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
+    asyncio.run(scenario())

@@ -7,6 +7,7 @@ import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizont
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
+import { shouldReloadPairHistory, isPagePushCollectionRemoved, scannerSnapshotState } from "@/lib/page-push-recovery.mjs";
 
 const markets = ["ALL F&O STOCKS", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Gap", "Gap %", "Future Vol / OI", "Stability", "Status"];
@@ -54,12 +55,15 @@ function ScannerContent() {
   const [pairBackendStats, setPairBackendStats] = useState<Row>({});
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [lastLiveScanAt, setLastLiveScanAt] = useState<string | null>(null);
-  const { data: pagePushData, status: pagePushStatus } = usePagePush("cash-future");
+  const { data: pagePushData, status: pagePushStatus, lastMessageAt: pagePushLastMessageAt, resync: pagePushResync } = usePagePush("cash-future");
   const pairHistoryRevisionRef = useRef<string | null>(null);
   const pairHistoryRequestSequenceRef = useRef(0);
   // Prevent delayed REST recovery from overwriting authoritative page pushes.
   const liveRequestSequenceRef = useRef(0);
   const pairLiveRequestSequenceRef = useRef(0);
+  const refreshPushBaselineRef = useRef<number | null>(null);
+  const refreshPushDataBaselineRef = useRef<Record<string, unknown> | null>(null);
+  const refreshPushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = async () => {
     const requestSequence = ++liveRequestSequenceRef.current;
@@ -112,7 +116,12 @@ function ScannerContent() {
       if (requestSequence !== pairHistoryRequestSequenceRef.current) return;
       setPairHistory(Array.isArray(body?.data) ? body.data : []);
     } catch {
-      if (requestSequence === pairHistoryRequestSequenceRef.current) setPairHistory([]);
+      // Preserve the last confirmed durable history during a transient REST
+      // failure; an empty error response must not erase previously loaded rows.
+      // Let a subsequent push retry this revision instead of treating it as loaded.
+      if (requestSequence === pairHistoryRequestSequenceRef.current) {
+        pairHistoryRevisionRef.current = null;
+      }
     }
   };
 
@@ -131,7 +140,9 @@ function ScannerContent() {
       }
     };
     void loadMarketSession();
-    if (pagePushStatus === "LIVE") return () => { cancelled = true; };
+    // Market session is small metadata not present in scanner page-push frames;
+    // keep its lightweight REST refresh running even while scanner rows are pushed.
+
     const sessionTimer = window.setInterval(loadMarketSession, 15000);
     return () => { cancelled = true; window.clearInterval(sessionTimer); };
   }, [pagePushStatus]);
@@ -157,29 +168,66 @@ function ScannerContent() {
   }, [marketSession, pagePushStatus]);
 
   useEffect(() => {
+    const baseline = refreshPushBaselineRef.current;
+    const baselineData = refreshPushDataBaselineRef.current;
+    if (refreshing && String(pagePushData?.__event ?? "").toUpperCase() === "SNAPSHOT" && baselineData !== pagePushData && baseline !== null && pagePushLastMessageAt !== null) {
+      refreshPushBaselineRef.current = null;
+      refreshPushDataBaselineRef.current = null;
+      if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+      refreshPushTimeoutRef.current = null;
+      setRefreshing(false);
+    }
+  }, [pagePushData, pagePushLastMessageAt, refreshing]);
+
+  useEffect(() => () => {
+    if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+    refreshPushTimeoutRef.current = null;
+    refreshPushBaselineRef.current = null;
+    refreshPushDataBaselineRef.current = null;
+  }, []);
+
+
+  useEffect(() => {
     if (!pagePushData) return;
-    // Any page push supersedes outstanding REST fallback payloads, including REMOVE.
     liveRequestSequenceRef.current += 1;
     pairLiveRequestSequenceRef.current += 1;
     const event = String(pagePushData.__event ?? "").toUpperCase();
+    if (event === "SNAPSHOT") {
+      // Authoritative reconnect snapshot replaces retained state; absent fields are empty.
+      pairHistoryRequestSequenceRef.current += 1;
+      const snapshot = scannerSnapshotState(pagePushData);
+      setRows(snapshot.rows as Row[]);
+      setPairRows(snapshot.pairs as Row[]);
+      setPairBackendStats(snapshot.stats as Row);
+      setLastLiveScanAt(snapshot.scanAt);
+      setLoading(false);
+      setError(null);
+      pairHistoryRevisionRef.current = null;
+      return;
+    }
     const removedKeys = Array.isArray(pagePushData.remove_keys)
       ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
       : Array.isArray(pagePushData.keys)
         ? pagePushData.keys.filter((key): key is string => typeof key === "string")
         : [];
     if (event === "REMOVE") {
+      if (isPagePushCollectionRemoved(event, removedKeys, "pair_history")) {
+        pairHistoryRequestSequenceRef.current += 1;
+        pairHistoryRevisionRef.current = null;
+        setPairHistory([]);
+      }
       if (removedKeys.includes("rows")) { setRows([]); setLoading(false); setError(null); }
       if (removedKeys.includes("pairs")) setPairRows([]);
       if (removedKeys.includes("stats")) setPairBackendStats({});
       if (removedKeys.includes("scan_at")) setLastLiveScanAt(null);
     }
-    if (Array.isArray(pagePushData.rows)) {
+    if (!removedKeys.includes("rows") && Array.isArray(pagePushData.rows)) {
       setRows(pagePushData.rows.filter((item: unknown): item is Row => !!item && typeof item === "object"));
       setLoading(false); setError(null);
     }
-    if (Array.isArray(pagePushData.pairs)) setPairRows(pagePushData.pairs.filter((item: unknown): item is Row => !!item && typeof item === "object"));
-    if (pagePushData.stats && typeof pagePushData.stats === "object") setPairBackendStats(pagePushData.stats as Row);
-    if (typeof pagePushData.scan_at === "string") setLastLiveScanAt(pagePushData.scan_at);
+    if (!removedKeys.includes("pairs") && Array.isArray(pagePushData.pairs)) setPairRows(pagePushData.pairs.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+    if (!removedKeys.includes("stats") && pagePushData.stats && typeof pagePushData.stats === "object") setPairBackendStats(pagePushData.stats as Row);
+    if (!removedKeys.includes("scan_at") && typeof pagePushData.scan_at === "string") setLastLiveScanAt(pagePushData.scan_at);
   }, [pagePushData]);
 
 
@@ -189,11 +237,9 @@ function ScannerContent() {
     const revision = (stats as Record<string, unknown>).pair_events_persisted;
     if (revision === undefined || revision === null) return;
     const nextRevision = String(revision);
-    if (pairHistoryRevisionRef.current === null) {
-      pairHistoryRevisionRef.current = nextRevision;
-      return;
-    }
-    if (pairHistoryRevisionRef.current === nextRevision) return;
+    if (!shouldReloadPairHistory(pairHistoryRevisionRef.current, nextRevision)) return;
+    // The first push revision also supersedes any REST request started during
+    // initial mount; fetch history from the baseline established by this push.
     pairHistoryRevisionRef.current = nextRevision;
     // The durable history API owns pagination and filtering; the push counter
     // invalidates its cached slice when new observations are appended.
@@ -313,6 +359,33 @@ function ScannerContent() {
     ? new Date(lastLiveScanAt).toLocaleTimeString("en-IN", { hour12: false }) + " IST"
     : "—";
 
+  const pagePushBadgeClass = pagePushStatus === "LIVE"
+    ? "theme-border theme-success-bg theme-success"
+    : pagePushStatus === "RECONNECTING"
+      ? "theme-border theme-warning-bg theme-warning"
+      : "theme-border theme-surface theme-muted";
+  const pagePushBadgeLabel = pagePushStatus === "LIVE"
+    ? "WS PUSH • LIVE"
+    : pagePushStatus === "RECONNECTING"
+      ? marketSession === "OPEN" ? "WS RECOVERING • REST FALLBACK" : "WS RECOVERING"
+      : pagePushStatus === "CONNECTING" ? "WS CONNECTING" : "WS DISCONNECTED";
+  const pagePushLastLabel = pagePushLastMessageAt
+    ? " • " + new Date(pagePushLastMessageAt).toLocaleTimeString("en-IN", { hour12: false })
+    : "";
+  const runnerPushSnapshot = pagePushData?.runner && typeof pagePushData.runner === "object"
+    ? pagePushData.runner as Row
+    : null;
+  const runnerPushBadgeClass = runnerPushSnapshot?.running === true
+    ? "theme-border theme-success-bg theme-success"
+    : runnerPushSnapshot?.running === false
+      ? "theme-border theme-warning-bg theme-warning"
+      : "theme-border theme-surface theme-muted";
+  const runnerPushBadgeLabel = runnerPushSnapshot?.running === true
+    ? "RUNNER RUNNING"
+    : runnerPushSnapshot?.running === false ? "RUNNER STOPPED" : "RUNNER STATUS WAITING";
+  const runnerPushMetrics = runnerPushSnapshot
+    ? ` • callbacks ${cell(runnerPushSnapshot, "payload_callbacks")} • scans ${cell(runnerPushSnapshot, "scanner_updates")} • errors ${cell(runnerPushSnapshot, "payload_callback_errors")}`
+    : "";
   const historyAgeText = (row: Row) => {
     const observed = new Date(String(row.observed_at ?? ""));
     if (Number.isNaN(observed.getTime())) return "—";
@@ -322,12 +395,36 @@ function ScannerContent() {
 
   const refresh = async () => {
     setRefreshing(true);
-    if (marketSession === "OPEN") {
-      await Promise.all([load(), loadPairLive(), loadPairHistory()]);
-    } else {
-      await loadPairHistory();
+    if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+    refreshPushTimeoutRef.current = null;
+    try {
+      if (pagePushStatus === "LIVE") {
+        // Complete refresh only after a newer authoritative page frame arrives.
+        refreshPushBaselineRef.current = pagePushLastMessageAt ?? 0;
+        refreshPushDataBaselineRef.current = pagePushData;
+        refreshPushTimeoutRef.current = setTimeout(() => {
+          refreshPushTimeoutRef.current = null;
+          refreshPushBaselineRef.current = null;
+          refreshPushDataBaselineRef.current = null;
+          setRefreshing(false);
+        }, 8000);
+        pagePushResync();
+        await loadPairHistory();
+      } else if (marketSession === "OPEN") {
+        // REST is recovery-only while page push is unavailable.
+        await Promise.all([load(), loadPairLive(), loadPairHistory()]);
+        setRefreshing(false);
+      } else {
+        await loadPairHistory();
+        setRefreshing(false);
+      }
+    } catch {
+      refreshPushBaselineRef.current = null;
+      refreshPushDataBaselineRef.current = null;
+      if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+      refreshPushTimeoutRef.current = null;
+      setRefreshing(false);
     }
-    setRefreshing(false);
   };
 
   return (
@@ -340,7 +437,9 @@ function ScannerContent() {
             <span className="h-2 w-2 rounded-full bg-current" />
             {loading ? "CONNECTING" : error ? "BACKEND ERROR" : marketSession === "OPEN" ? (rows.length ? "API CONNECTED • LIVE DATA" : "API CONNECTED • WAITING FOR LIVE DATA") : marketSession === "CLOSED" ? "API CONNECTED • NO LIVE DATA" : "API CONNECTED"}
           </span>
-          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> {marketSession === "OPEN" ? "Auto-update • 1.5s" : marketSession === "CLOSED" ? "Auto-update paused • Market closed" : "Auto-update waiting • Market state"}</span>
+          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> {pagePushStatus === "LIVE" ? "WebSocket Push • realtime" : marketSession === "OPEN" ? "REST fallback • 15s" : marketSession === "CLOSED" ? "Auto-update paused • Market closed" : "Auto-update waiting • Market state"}</span>
+          <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${pagePushBadgeClass}`}><Activity className="h-4 w-4" /> {pagePushBadgeLabel}{pagePushLastLabel}</span>
+          <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${runnerPushBadgeClass}`}><ShieldCheck className="h-4 w-4" /> {runnerPushBadgeLabel}{runnerPushMetrics}</span>
           <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Bell className="h-4 w-4" /> Alerts: —</span>
         </div>
         <div className="flex gap-2">
@@ -405,7 +504,7 @@ function ScannerContent() {
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live Pair Monitor & Diagnostics</h2><p className="mt-1 text-xs theme-muted">Every matched cash + futures pair is shown here even when it cannot become a signal. Diagnostics are persisted for post-market review.</p></div>
-          <span className="text-xs font-semibold theme-muted">{pairStats.pairs} current live pairs • {marketSession === "CLOSED" ? "refresh paused" : marketSession === "OPEN" ? "1.5s refresh" : "waiting for market state"}</span>
+          <span className="text-xs font-semibold theme-muted">{pairStats.pairs} current live pairs • {marketSession === "CLOSED" ? "refresh paused" : marketSession === "OPEN" ? (pagePushStatus === "LIVE" ? "WebSocket realtime" : "REST fallback • 15s") : "waiting for market state"}</span>
         </div>
         {marketSession === "CLOSED" && <div className="mt-4 rounded-xl border theme-border theme-warning-bg p-3 text-xs theme-warning">Live scanning is paused because the market is closed. Current live counters are intentionally 0; saved diagnostics below remain available for the completed session.</div>}
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-9">{[

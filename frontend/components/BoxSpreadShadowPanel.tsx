@@ -5,6 +5,7 @@ import { Activity, RefreshCw, ShieldCheck } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
+import { boxShadowSnapshotMissing } from "@/lib/page-push-recovery.mjs";
 
 type ShadowResult = {
   strategy: string;
@@ -29,9 +30,16 @@ export default function BoxSpreadShadowPanel() {
   const [data, setData] = useState<ShadowResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { data: pagePushData, status: pagePushStatus, lastMessageAt } = usePagePush("box-spread");
+  const { data: pagePushData, status: pagePushStatus, lastMessageAt, resync } = usePagePush("box-spread");
   const requestSequence = useRef(0);
   const refresh = useCallback(async () => {
+    if (pagePushStatus === "LIVE") {
+      // Manual refresh on a synchronized channel requests an authoritative push snapshot,
+      // avoiding a second live diagnostics transport over REST.
+      requestSequence.current += 1;
+      resync();
+      return;
+    }
     const requestId = ++requestSequence.current;
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -43,7 +51,7 @@ export default function BoxSpreadShadowPanel() {
       setData(body); setError(null);
     } catch (e) { if (requestId === requestSequence.current) setError(e instanceof Error ? e.message : "Unable to load shadow diagnostics"); }
     finally { if (requestId === requestSequence.current) setLoading(false); }
-  }, []);
+  }, [pagePushStatus, resync]);
   useEffect(() => {
     if (pagePushStatus === "LIVE") {
       // A live channel supersedes any REST diagnostics request already in flight.
@@ -64,6 +72,13 @@ export default function BoxSpreadShadowPanel() {
         ? pagePushData.keys.filter((key): key is string => typeof key === "string")
         : [];
     if (event === "REMOVE" && removedKeys.includes("shadow")) {
+      requestSequence.current += 1;
+      setData(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    if (event === "SNAPSHOT" && boxShadowSnapshotMissing(pagePushData)) {
       requestSequence.current += 1;
       setData(null);
       setError(null);

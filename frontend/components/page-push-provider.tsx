@@ -16,81 +16,9 @@ const PagePushContext = createContext<PagePushValue>({
 });
 
 
-type CollectionMutation = {
-  collection: string;
-  operation: "ADD" | "UPDATE" | "DELETE";
-  key_field: string;
-  key?: string | number;
-  item?: Record<string, unknown>;
-};
-
-
-function applyCollectionMutations(
-  state: Record<string, unknown>,
-  mutations: unknown,
-): Record<string, unknown> {
-  if (!Array.isArray(mutations)) return state;
-  const next = { ...state };
-  for (const raw of mutations) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
-    const mutation = raw as CollectionMutation;
-    const collection = mutation.collection;
-    const keyField = mutation.key_field;
-    if (
-      typeof collection !== "string" || !collection.trim() ||
-      typeof keyField !== "string" || !keyField.trim() ||
-      ["__proto__", "prototype", "constructor"].includes(collection) ||
-      ["__proto__", "prototype", "constructor"].includes(keyField) ||
-      !["ADD", "UPDATE", "DELETE"].includes(mutation.operation)
-    ) continue;
-    const current = next[collection];
-    if (!Array.isArray(current)) continue;
-    const item = mutation.item && typeof mutation.item === "object" && !Array.isArray(mutation.item)
-      ? mutation.item
-      : undefined;
-    const key = mutation.key ?? item?.[keyField];
-    if ((typeof key !== "string" && typeof key !== "number") || !String(key).trim()) continue;
-    if (mutation.operation !== "DELETE" && !item) continue;
-    if (mutation.operation === "ADD" && item?.[keyField] === undefined) continue;
-    if (item && item[keyField] !== undefined && String(item[keyField]) !== String(key)) continue;
-    const matchesKey = (row: unknown) => {
-      if (!row || typeof row !== "object" || Array.isArray(row)) return false;
-      const rowKey = (row as Record<string, unknown>)[keyField];
-      // Missing, blank, or boolean identities must never collide with a valid
-      // string/number key (e.g. the literal string "undefined").
-      if ((typeof rowKey !== "string" && typeof rowKey !== "number") || !String(rowKey).trim()) return false;
-      return String(rowKey) === String(key);
-    };
-    const findIndex = current.findIndex(matchesKey);
-    const rows = [...current];
-    if (mutation.operation === "DELETE") {
-      // Remove all matches so a malformed earlier ADD cannot leave duplicate
-      // identities visible after a later DELETE.
-      next[collection] = rows.filter((row) => !matchesKey(row));
-      continue;
-    } else if (mutation.operation === "ADD") {
-      // ADD is idempotent by key: replace one existing identity and collapse
-      // any duplicate keyed rows rather than accumulating repeated deliveries.
-      if (findIndex >= 0) {
-        rows[findIndex] = item!;
-        next[collection] = rows.filter((row, index) => !matchesKey(row) || index === findIndex);
-      } else {
-        rows.push(item!);
-        next[collection] = rows;
-      }
-      continue;
-    } else if (mutation.operation === "UPDATE" && findIndex >= 0) {
-      // UPDATE must not create a row when its keyed target is missing. A
-      // delayed delta could otherwise resurrect an item that was already deleted.
-      rows[findIndex] = { ...(rows[findIndex] as Record<string, unknown>), ...item };
-      // Merge every duplicate match and collapse duplicates to one identity.
-      next[collection] = rows.filter((row, index) => !matchesKey(row) || index === findIndex);
-      continue;
-    }
-    next[collection] = rows;
-  }
-  return next;
-}
+import { applyCollectionMutations } from "@/lib/page-push-collections.mjs";
+import { applyPagePushRemovePayload } from "@/lib/page-push-recovery.mjs";
+import { shouldAcceptPageSnapshot, isCurrentPagePushSocket, sendPagePushFrame } from "@/lib/page-push-recovery.mjs";
 
 export function PagePushProvider({ page, children }: { page: string | null; children: ReactNode }) {
   const [status, setStatus] = useState<PagePushStatus>("DISCONNECTED");
@@ -106,19 +34,18 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     const socket = socketRef.current;
     if (!page || socket?.readyState !== WebSocket.OPEN || resyncPendingRef.current) return;
     resyncPendingRef.current = true;
-    try {
-      socket.send(JSON.stringify({ action: "resync", page }));
-      if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
-      // If the authoritative recovery snapshot stalls, restart transport so
-      // the page cannot remain indefinitely frozen in RECONNECTING.
-      resyncTimerRef.current = setTimeout(() => {
-        resyncTimerRef.current = undefined;
-        if (resyncPendingRef.current) socket.close();
-      }, 8000);
-    } catch {
+    if (!sendPagePushFrame(socket, { action: "resync", page })) {
       resyncPendingRef.current = false;
       socket.close();
+      return;
     }
+    if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
+    // If the authoritative recovery snapshot stalls, restart transport so
+    // the page cannot remain indefinitely frozen in RECONNECTING.
+    resyncTimerRef.current = setTimeout(() => {
+      resyncTimerRef.current = undefined;
+      if (resyncPendingRef.current) socket.close();
+    }, 8000);
   }, [page]);
 
   useEffect(() => {
@@ -130,7 +57,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     }
     // Page channels have independent sequence cursors. Reset transport state when
     // switching pages so a low-sequence snapshot from the new channel is not
-    // rejected against the previous channel\u2019s sequence baseline.
+    // rejected against the previous channel's sequence baseline.
     sequenceRef.current = 0;
     hasSnapshotRef.current = false;
     resyncPendingRef.current = false;
@@ -160,16 +87,18 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       }
       socketRef.current = socket;
       socket.onopen = () => {
-        if (disposed) return;
+        if (disposed || !isCurrentPagePushSocket(socketRef.current, socket)) return;
         lastTransportAt = Date.now();
         retryMs = 1000;
         // A connected transport is not synchronized until its authoritative
         // page snapshot arrives. Keep REST recovery enabled in the meantime.
         setStatus("CONNECTING");
-        socket.send(JSON.stringify({ action: "subscribe", page }));
+        if (!sendPagePushFrame(socket, { action: "subscribe", page })) {
+          socket.close();
+        }
       };
       socket.onmessage = (event) => {
-        if (disposed) return;
+        if (disposed || !isCurrentPagePushSocket(socketRef.current, socket)) return;
         let message: Record<string, unknown>;
         try { message = JSON.parse(String(event.data)) as Record<string, unknown>; }
         catch { return; }
@@ -187,7 +116,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         if (eventType === "SNAPSHOT") {
           // Never let a delayed recovery snapshot rewind an already-live
           // channel's sequence cursor or replace newer pushed market state.
-          if (hasSnapshotRef.current && sequence < sequenceRef.current) return;
+          if (!shouldAcceptPageSnapshot({ hasSnapshot: hasSnapshotRef.current, currentSequence: sequenceRef.current, incomingSequence: sequence })) return;
           const snapshotData = message.data && typeof message.data === "object"
             ? message.data as Record<string, unknown>
             : {};
@@ -258,20 +187,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           });
         } else if (eventType === "REMOVE" && message.data && typeof message.data === "object") {
           const payload = message.data as Record<string, unknown>;
-          const removeKeys = Array.isArray(payload.remove_keys)
-            ? payload.remove_keys.filter((key): key is string => typeof key === "string")
-            : Array.isArray(payload.keys)
-              ? payload.keys.filter((key): key is string => typeof key === "string")
-              : [];
-          setData((previous) => {
-            const next: Record<string, unknown> = { ...(previous || {}), __event: "REMOVE" };
-            for (const key of removeKeys) delete next[key];
-            for (const [key, value] of Object.entries(payload)) {
-              if (key !== "remove_keys" && key !== "keys") next[key] = value;
-            }
-            delete next.collection_changes;
-            return applyCollectionMutations(next, payload.collection_changes);
-          });
+          setData((previous) => applyPagePushRemovePayload(previous, payload));
         }
       };
       socket.onerror = () => socket.close();
