@@ -335,6 +335,42 @@ def _live_box_spread_spot_snapshot(symbol: str):
 
 configure_live_box_spread_spot(_live_box_spread_spot_snapshot)
 configure_live_box_spread_websocket_spot(_live_box_spread_spot_snapshot)
+
+
+_box_spot_page_push_lock = threading.Lock()
+_last_box_spot_page_push_at: dict[str, float] = {}
+BOX_SPOT_PAGE_PUSH_MIN_INTERVAL_SECONDS = 0.10
+
+
+def _publish_box_spot_page_update(symbol: str, price: float, timestamp_ns: int | None) -> None:
+    """Push each underlying tick independently of the option scanner callback."""
+    normalized = str(symbol or "").strip().upper()
+    if not normalized:
+        return
+    now = time_module.monotonic()
+    with _box_spot_page_push_lock:
+        last = _last_box_spot_page_push_at.get(normalized, 0.0)
+        if now - last < BOX_SPOT_PAGE_PUSH_MIN_INTERVAL_SECONDS:
+            return
+        _last_box_spot_page_push_at[normalized] = now
+    try:
+        snapshot = _live_box_spread_spot_snapshot(normalized) or {}
+        source_timestamp = snapshot.get("spot_timestamp_ns") or timestamp_ns
+        age_seconds = snapshot.get("spot_age_seconds")
+        try:
+            age = float(age_seconds) if age_seconds is not None else None
+        except (TypeError, ValueError, OverflowError):
+            age = None
+        payload = {
+            "symbol": normalized,
+            "spot_price": snapshot.get("spot_price", price),
+            "spot_timestamp_ns": source_timestamp,
+            "spot_age_seconds": age,
+            "status": "LIVE" if age is not None and 0 <= age <= 5.0 else "STALE" if age is not None else "NO_DATA",
+        }
+        publish_page_update("box-spread", "PATCH", {"index_spots": [payload]})
+    except Exception:
+        app_logger.debug("Box Spread spot page push skipped for %s", normalized, exc_info=True)
 configure_live_box_spread_websocket_depth(
     lambda opportunity: (
         live_box_spread_runner.depth_shadow.depth_for_opportunity(opportunity)
@@ -1439,6 +1475,7 @@ async def _live_box_spread_loop() -> None:
                 future_master=master,
                 auth=AngelOneAuth(),
                 on_results=lambda results: _update_live_box_spread_results(results),
+                    on_spot_price=_publish_box_spot_page_update,
             )
             live_box_spread_runner = runner
             worker, worker_errors = _start_box_spread_runner_worker(runner)
@@ -1451,6 +1488,7 @@ async def _live_box_spread_loop() -> None:
                     future_master=runner.master,
                     auth=AngelOneAuth(),
                     on_results=lambda results: _update_live_box_spread_results(results),
+                    on_spot_price=_publish_box_spot_page_update,
                     consumer_namespace=f"box-stage-{uuid.uuid4().hex[:12]}",
                     publish_enabled=False,
                     publication_gate=runner.publication_gate,
