@@ -971,13 +971,32 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   useEffect(() => {
     if (slug !== "box-spread" || !pagePushData) return;
+    const event = String(pagePushData.__event ?? "").toUpperCase();
+    const removedKeys = Array.isArray(pagePushData.remove_keys)
+      ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(pagePushData.keys)
+        ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (event === "REMOVE" && removedKeys.includes("index_selection")) {
+      indexSelectionRequestSequence.current += 1;
+      setSavedIndexSymbols([]);
+      setSavedWeeklyOnlySymbols([]);
+      setIndexSelectionDraft([]);
+      setWeeklyOnlyDraft([]);
+      setActiveIndexSymbols([]);
+      setIndexHandoffState("UNKNOWN");
+      setIndexSelectionLoading(false);
+      setIndexSelectionSaving(false);
+      setIndexSelectionMessage("");
+      setIndexSelectionError(null);
+      indexSelectionDraftInitialized.current = false;
+      return;
+    }
     const selection = pagePushData.index_selection as { symbols?: unknown; weekly_only_symbols?: unknown } | undefined;
     if (!selection || !Array.isArray(selection.symbols) || !Array.isArray(selection.weekly_only_symbols)) return;
     const nextSymbols = selection.symbols.filter((item): item is string => typeof item === "string");
     const nextWeeklyOnly = selection.weekly_only_symbols.filter((item): item is string => typeof item === "string");
-    // Push becomes authoritative immediately; discard an initial/refresh REST result still in flight.
     indexSelectionRequestSequence.current += 1;
-    // A pushed saved selection supersedes any initial REST load and its spinner.
     setIndexSelectionLoading(false);
     const previousSymbols = savedIndexSymbols.slice().sort();
     const previousWeeklyOnly = savedWeeklyOnlySymbols.slice().sort();
@@ -988,13 +1007,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       && weeklyOnlyDraft.slice().sort().join("|") === previousWeeklyOnly.join("|");
     setSavedIndexSymbols(nextSymbols);
     setSavedWeeklyOnlySymbols(nextWeeklyOnly);
-    // Synchronize other sessions without destroying an unsaved local draft.
     if (draftIsClean) {
       setIndexSelectionDraft(nextSymbols.filter(symbol => !nextWeeklyOnly.includes(symbol)));
       setWeeklyOnlyDraft(nextWeeklyOnly);
     }
   }, [slug, pagePushData, savedIndexSymbols, savedWeeklyOnlySymbols, indexSelectionDraft, weeklyOnlyDraft]);
-
   useEffect(() => {
     if (slug !== "box-spread" || !pagePushData) { if (slug !== "box-spread") setIndexSpotRows([]); return; }
     const spots = pagePushData?.index_spots;
