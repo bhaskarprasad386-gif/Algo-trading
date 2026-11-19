@@ -27,5 +27,7 @@ export function isCurrentPagePushSocket(currentSocket: WebSocket | null, eventSo
 
 export function shouldReloadPairHistory(currentRevision: string | null, nextRevision: string | number | null | undefined): boolean;
 
+export function isPagePushCollectionRemoved(event: unknown, removedKeys: readonly string[], collection: string): boolean;
+
 /** Send a WebSocket control frame without throwing on transport races. */
 export function sendPagePushFrame(socket: WebSocket, frame: Record<string, unknown>): boolean;
