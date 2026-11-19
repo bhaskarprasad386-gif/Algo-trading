@@ -90,6 +90,7 @@ export function workspaceSnapshotMissing(snapshot, collection) {
   const source = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) ? snapshot : {};
   if (collection === "live") return !(source.live && typeof source.live === "object" && Array.isArray(source.live.data));
   if (collection === "pairs") return !(source.pairs && typeof source.pairs === "object" && Array.isArray(source.pairs.data));
+  if (collection === "diagnostics" || collection === "universe" || collection === "runtime_health") return !(source[collection] && typeof source[collection] === "object" && !Array.isArray(source[collection]));
   return false;
 }
 
