@@ -428,3 +428,8 @@ test("trace DELETE and subsequent POST are serialized in mutation order", async 
   assert.deepEqual(order, ["delete-start", "delete-end", "post-start"]);
   assert.equal(registry.has("trace-delete-race"), false);
 });
+
+test("page-push recovery helpers used by the workspace are exported", () => {
+  assert.equal(typeof applyPagePushRemovePayload, "function");
+  assert.equal(typeof workspaceSnapshotMissing, "function");
+});
