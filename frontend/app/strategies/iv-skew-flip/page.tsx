@@ -664,11 +664,12 @@ export default function IVSkewFlipPage() {
       const pushedAlerts=Array.isArray(alertState?.alerts)?alertState.alerts as EarlyAlert[]:[];
       const fresh=freshEarlyEntryAlerts(pushedAlerts,seenAlertIds.current);
       if(pushedAlerts.length){
-        setEarlyAlerts(current=>{
-          const merged=new Map<number,EarlyAlert>();
-          [...current,...pushedAlerts].forEach(alert=>merged.set(alert.id,alert));
-          return [...merged.values()].sort(compareAlertTime).slice(0,100);
-        });
+        setEarlyAlerts(current=>mergeUniqueAlerts(
+          current,
+          pushedAlerts,
+          compareAlertTime,
+          loadedOlderAlerts.current?Number.POSITIVE_INFINITY:100,
+        ));
         const newest=pushedAlerts.filter(alert=>Number.isFinite(alert.id));
         newest.forEach(alert=>seenAlertIds.current.add(alert.id));
         if(seenAlertIds.current.size>500){const keep=new Set(newest.map(alert=>alert.id));seenAlertIds.current=keep;}
