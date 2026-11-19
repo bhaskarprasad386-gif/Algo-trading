@@ -893,9 +893,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     let hasLoaded = false;
     let inFlight = false;
     const loadSelection = async () => {
-      const requestSequence = ++indexSelectionRequestSequence.current;
+      // Avoid advancing the sequence for a poll that will not start: otherwise
+      // it invalidates the in-flight request and leaves no replacement request.
       if (inFlight) return;
       inFlight = true;
+      const requestSequence = ++indexSelectionRequestSequence.current;
       if (!hasLoaded) setIndexSelectionLoading(true);
       try {
         const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
