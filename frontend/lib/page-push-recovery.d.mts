@@ -22,3 +22,5 @@ export function freshEarlyEntryAlerts<T extends AlertLike>(
   alerts: readonly T[],
   seenIds: ReadonlySet<number>,
 ): T[];
+
+export function isCurrentPagePushSocket(currentSocket: WebSocket | null, eventSocket: WebSocket): boolean;
