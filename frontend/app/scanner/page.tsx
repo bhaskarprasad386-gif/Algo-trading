@@ -7,7 +7,7 @@ import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizont
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
-import { shouldReloadPairHistory } from "@/lib/page-push-recovery.mjs";
+import { shouldReloadPairHistory, isPagePushCollectionRemoved } from "@/lib/page-push-recovery.mjs";
 
 const markets = ["ALL F&O STOCKS", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Gap", "Gap %", "Future Vol / OI", "Stability", "Status"];
@@ -199,6 +199,11 @@ function ScannerContent() {
         ? pagePushData.keys.filter((key): key is string => typeof key === "string")
         : [];
     if (event === "REMOVE") {
+      if (isPagePushCollectionRemoved(event, removedKeys, "pair_history")) {
+        pairHistoryRequestSequenceRef.current += 1;
+        pairHistoryRevisionRef.current = null;
+        setPairHistory([]);
+      }
       if (removedKeys.includes("rows")) { setRows([]); setLoading(false); setError(null); }
       if (removedKeys.includes("pairs")) setPairRows([]);
       if (removedKeys.includes("stats")) setPairBackendStats({});
