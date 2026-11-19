@@ -131,6 +131,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       } catch {
         hasSnapshotRef.current = false;
         resyncPendingRef.current = false;
+        if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
+        resyncTimerRef.current = undefined;
         setStatus("RECONNECTING");
         retryTimer = setTimeout(connect, retryMs);
         retryMs = Math.min(15000, retryMs * 2);
@@ -170,6 +172,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           hasSnapshotRef.current = true;
           setLastMessageAt(Date.now());
           resyncPendingRef.current = false;
+          if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
+          resyncTimerRef.current = undefined;
           setStatus("LIVE");
           setData({ ...(message.data && typeof message.data === "object" ? message.data as Record<string, unknown> : {}), __event: "SNAPSHOT" });
           return;
@@ -262,6 +266,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       disposed = true;
       if (retryTimer) clearTimeout(retryTimer);
       if (watchdogTimer) clearInterval(watchdogTimer);
+      if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
+      resyncTimerRef.current = undefined;
       socketRef.current?.close();
       socketRef.current = null;
     };
