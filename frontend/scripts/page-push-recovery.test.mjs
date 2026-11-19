@@ -184,3 +184,11 @@ test("trace saves for the same ID execute sequentially", async () => {
   assert.deepEqual(order, ["first-start", "first-end", "second-start"]);
   assert.equal(registry.has("same"), false);
 });
+
+
+test("initial and changed history revisions invalidate stale REST history, unchanged revisions do not", () => {
+  assert.equal(shouldReloadPairHistory(null, 5), true);
+  assert.equal(shouldReloadPairHistory("5", 5), false);
+  assert.equal(shouldReloadPairHistory("5", 6), true);
+  assert.equal(shouldReloadPairHistory("5", null), false);
+});
