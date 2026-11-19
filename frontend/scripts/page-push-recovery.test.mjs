@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts, shouldAcceptPageSnapshot } from "../lib/page-push-recovery.mjs";
+import { isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts, shouldAcceptPageSnapshot, isCurrentPagePushSocket } from "../lib/page-push-recovery.mjs";
 
 test("REST recovery response applies only while its request remains current", () => {
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:8,latestSequence:8,responseValid:true}),true);
@@ -149,4 +149,13 @@ test("trace DELETE is released when the preceding POST fails", async () => {
   await assert.rejects(tracked, /offline/);
   await waitForTraceSave(registry, "trace-fail");
   assert.equal(registry.has("trace-fail"), false);
+});
+
+
+test("stale WebSocket callbacks are ignored after transport replacement", () => {
+  const oldSocket = {};
+  const currentSocket = {};
+  assert.equal(isCurrentPagePushSocket(currentSocket, currentSocket), true);
+  assert.equal(isCurrentPagePushSocket(currentSocket, oldSocket), false);
+  assert.equal(isCurrentPagePushSocket(null, oldSocket), false);
 });
