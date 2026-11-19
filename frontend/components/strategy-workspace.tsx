@@ -1100,8 +1100,12 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setLoading(false);
       setError(null);
     }
-    if (String(pagePushData.__event ?? "") === "REMOVE" && removedKeys.includes("index_spots")) {
+    if (String(pagePushData.__event ?? "").toUpperCase() === "REMOVE" && removedKeys.includes("index_spots")) {
       setIndexSpotRows([]);
+    }
+    if (String(pagePushData.__event ?? "").toUpperCase() === "REMOVE" && removedKeys.includes("runtime_health")) {
+      setFeedTicks(null); setFeedAge(null); setFeedExchangeFreshness(null); setFeedInstruments(null);
+      setFeedStatus("UNKNOWN"); setFeedErrors(null); setRunner(null); setBoxDepthShadow(null);
     }
     const opportunities = pagePushData.opportunities;
     if (Array.isArray(opportunities)) {
@@ -1119,7 +1123,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setError(null);
     }
     const health = pagePushData.runtime_health;
-    if (health && typeof health === "object") {
+    if (health && typeof health === "object" && !removedKeys.includes("runtime_health")) {
       const runtime = health as Record<string, any>;
       const feed = runtime.common_feed && typeof runtime.common_feed === "object" ? runtime.common_feed : {};
       setFeedTicks(nullableNumber(feed.ticks_received));
@@ -1133,7 +1137,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setBoxDepthShadow(selected?.depth_shadow && typeof selected.depth_shadow === "object" ? selected.depth_shadow : null);
     }
     const selectionRuntime = pagePushData.index_selection_runtime;
-    if (selectionRuntime && typeof selectionRuntime === "object") {
+    if (String(pagePushData.__event ?? "").toUpperCase() === "REMOVE" && removedKeys.includes("index_selection_runtime")) {
+      setActiveIndexSymbols([]);
+      setIndexHandoffState("UNKNOWN");
+    } else if (selectionRuntime && typeof selectionRuntime === "object") {
       const state = selectionRuntime as Record<string, any>;
       setActiveIndexSymbols(Array.isArray(state.active_symbols) ? state.active_symbols.filter((item: unknown): item is string => typeof item === "string") : []);
       setIndexHandoffState(String(state.handoff?.state ?? "UNKNOWN"));
