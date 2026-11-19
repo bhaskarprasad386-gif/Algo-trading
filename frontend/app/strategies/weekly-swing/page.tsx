@@ -30,6 +30,8 @@ export default function WeeklySwingScannerPage() {
   const pagePushStatusRef = useRef(pagePushStatus);
   const statusRequestSequenceRef = useRef(0);
   const statusPushSequenceRef = useRef(0);
+  // Single-symbol REST scans must not overwrite a newer universe push state.
+  const singleScanRequestSequenceRef = useRef(0);
   pagePushStatusRef.current = pagePushStatus;
   const isPagePushLive = () => pagePushStatusRef.current === "LIVE";
 
@@ -67,6 +69,7 @@ export default function WeeklySwingScannerPage() {
   useEffect(() => {
     if (!pagePushData) return;
     statusRequestSequenceRef.current += 1;
+    singleScanRequestSequenceRef.current += 1;
     statusPushSequenceRef.current += 1;
     const body = pagePushData as unknown as UniverseStatus;
     setUniverseStatus(body);
@@ -80,16 +83,18 @@ export default function WeeklySwingScannerPage() {
   }, [pagePushData]);
 
   async function scan() {
+    const requestSequence = ++singleScanRequestSequenceRef.current;
     setLoading(true); setError(""); setResult(null); setUniverseStatus(null);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan?symbol=${encodeURIComponent(symbol.trim().toUpperCase())}&exchange=NSE`, { cache: "no-store" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail || `Scanner request failed (${response.status})`);
+      if (requestSequence !== singleScanRequestSequenceRef.current) return;
       setResult(body);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Scanner data unavailable");
-    } finally { setLoading(false); }
+      if (requestSequence === singleScanRequestSequenceRef.current) setError(e instanceof Error ? e.message : "Scanner data unavailable");
+    } finally { if (requestSequence === singleScanRequestSequenceRef.current) setLoading(false); }
   }
 
   async function refreshNifty200Status() {
