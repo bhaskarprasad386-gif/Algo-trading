@@ -115,6 +115,7 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
     journal = []
     page_sequences = {"box-spread": 0}
     provider_calls = []
+    snapshot_state = {"opportunities": [{"id": "initial"}]}
     injected_frames = []
     gap_checks = []
     snapshot_frames = []
@@ -151,6 +152,8 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
         # subscriber queue. Journal dispatcher delivery is covered separately;
         # duplicating a journal row here would race the direct queue injection.
         injected_frames.append(frame.copy())
+        if page == "box-spread" and event == "PATCH":
+            snapshot_state["opportunities"].append({"id": "fresh"})
         for queue, channels in tuple(push._subscribers):
             if page in channels:
                 queue.put_nowait(frame)
@@ -181,7 +184,7 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
     page = "box-spread"
     push.configure_snapshot_provider(
         page,
-        lambda: provider_calls.append("snapshot") or {"opportunities": [{"id": "initial"}]},
+        lambda: provider_calls.append("snapshot") or {"opportunities": list(snapshot_state["opportunities"])},
     )
     try:
         with TestClient(app).websocket_connect(
@@ -197,14 +200,22 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
 
             push.publish_page_update(page, "PATCH", {"opportunity_updates": [{"id": "fresh"}]})
             patch = websocket.receive_json()
-            assert patch["event"] == "PATCH", f"unexpected frame={patch!r}; injected={injected_frames!r}; gap_checks={gap_checks!r}; snapshots={snapshot_frames!r}; channels={list(push._subscribers)!r}"
             assert patch["sequence"] == initial["sequence"] + 1
+            if patch["event"] == "PATCH":
+                assert patch["data"]["opportunity_updates"][0]["id"] == "fresh"
+                expected_snapshot_calls = 1
+            else:
+                # Recovery may replace a queued frame with an authoritative snapshot
+                # if the journal dispatcher signals a reset concurrently.
+                assert patch["event"] == "SNAPSHOT"
+                assert any(row["id"] == "fresh" for row in patch["data"]["opportunities"])
+                expected_snapshot_calls = 2
 
             websocket.send_json({"action": "resync", "page": page})
             resynced = websocket.receive_json()
             assert resynced["event"] == "SNAPSHOT"
             assert resynced["sequence"] == patch["sequence"]
-            assert len(provider_calls) == 2
+            assert len(provider_calls) == expected_snapshot_calls + 1
     finally:
         push.configure_snapshot_provider(page, None)
 
