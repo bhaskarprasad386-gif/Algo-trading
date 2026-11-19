@@ -24,3 +24,5 @@ export function freshEarlyEntryAlerts<T extends AlertLike>(
 ): T[];
 
 export function isCurrentPagePushSocket(currentSocket: WebSocket | null, eventSocket: WebSocket): boolean;
+
+export function shouldReloadPairHistory(currentRevision: string | null, nextRevision: string | number | null | undefined): boolean;
