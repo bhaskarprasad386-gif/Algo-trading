@@ -74,6 +74,19 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
 
   useEffect(() => {
     if (!pageData) return;
+    if (String(pageData.__event ?? "").toUpperCase() === "REMOVE") {
+      const removedKeys = Array.isArray(pageData.remove_keys)
+        ? pageData.remove_keys.filter((key): key is string => typeof key === "string")
+        : Array.isArray(pageData.keys)
+          ? pageData.keys.filter((key): key is string => typeof key === "string")
+          : [];
+      if (removedKeys.includes("payload")) {
+        setPayload(null);
+        setLoading(false);
+        setError("");
+        setLastUpdated("");
+      }
+    }
     const next = pageData.payload;
     if (next && typeof next === "object") {
       setPayload(next as Payload);
