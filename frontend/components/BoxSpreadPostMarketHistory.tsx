@@ -143,11 +143,11 @@ export default function BoxSpreadPostMarketHistory() {
     return (sortDirection === "desc" ? -1 : 1) * (Number(av) - Number(bv));
   }), [rows, sortKey, sortDirection]);
   const selectSort = async (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => {
-    const sortRequestId = ++sortingRequestSequence.current;
     const nextDirection = sortKey === key ? (sortDirection === "desc" ? "asc" : "desc") : "desc";
     setSortKey(key);
     setSortDirection(nextDirection);
     if (!hasMore || sortingAll) return;
+    const sortRequestId = ++sortingRequestSequence.current;
     setSortingAll(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
