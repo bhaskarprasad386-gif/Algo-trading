@@ -295,6 +295,8 @@ export function SyntheticTracePanel() {
 
   const removeTrace = async (traceId: string) => {
     const next = traces.filter((item) => item.trace_id !== traceId);
+    // Tombstone locally before network I/O so an in-flight WS snapshot cannot resurrect it.
+    writeDeleted([...readDeleted(), traceId]);
     setTraces(next);
     writeStored(next);
     try {
