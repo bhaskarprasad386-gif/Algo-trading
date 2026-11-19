@@ -30,6 +30,28 @@ def test_page_snapshot_frame_uses_explicit_durable_sequence():
     assert frame["data"] == {"rows": []}
 
 
+
+
+def test_snapshot_sequence_retries_until_page_is_stable(monkeypatch):
+    sequence = {"value": 0}
+    captured = []
+
+    def snapshot():
+        captured.append(sequence["value"])
+        # Simulate a scanner push landing during the first snapshot capture.
+        if len(captured) == 1:
+            sequence["value"] += 1
+        return {"observed_sequence": sequence["value"]}
+
+
+    monkeypatch.setattr(push, "_latest_page_sequence", lambda page: sequence["value"])
+    monkeypatch.setattr(push, "_snapshot", lambda page: snapshot())
+    frame = push._consistent_snapshot_frame("box-spread", retries=3)
+    assert frame["event"] == "SNAPSHOT"
+    assert frame["sequence"] == 1
+    assert frame["data"]["observed_sequence"] == 1
+    assert len(captured) == 2
+
 def test_snapshot_provider_is_read_only_and_page_scoped():
     observed = []
     push.configure_snapshot_provider(
