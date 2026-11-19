@@ -343,16 +343,19 @@ def _trace_snapshot_record(trace_id: str, trace_key: str, traced_at: str, snapsh
         db.close()
 
 
-def _publish_synthetic_trace_update(*, operation: str, key: str, item: dict | None = None):
-    # Emit only the keyed collection mutation. A full-list snapshot captured
+def _publish_synthetic_trace_update(data: dict | None = None, *, operation: str | None = None, key: str | None = None, item: dict | None = None):
+    # Use keyed deltas for trace list mutations. A full-list snapshot captured
     # concurrently with another add/delete could arrive stale and rewind the UI.
-    # Reconnects still restore the durable list through the snapshot provider.
+    # Reconnects restore the durable list through the snapshot provider.
     try:
-        from app.scanner.page_push_websocket import publish_collection_change
-        publish_collection_change(
-            "synthetic-arbitrage", "trace_opportunities", operation, "trace_id",
-            key=key, item=item,
-        )
+        from app.scanner.page_push_websocket import publish_collection_change, publish_page_update
+        if operation is not None:
+            publish_collection_change(
+                "synthetic-arbitrage", "trace_opportunities", operation, "trace_id",
+                key=key, item=item,
+            )
+        elif isinstance(data, dict):
+            publish_page_update("synthetic-arbitrage", "PATCH", data)
     except Exception:
         pass
 
