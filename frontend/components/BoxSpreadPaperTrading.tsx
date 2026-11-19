@@ -355,6 +355,17 @@ export default function BoxSpreadPaperTrading() {
       setPrivateWsStatus("DISCONNECTED");
       setPrivateSnapshotComplete(false);
       privateSequenceRef.current = 0;
+      privateResyncPendingRef.current = false;
+      privateEventIdsRef.current.clear();
+      privateLedgerRequestSequenceRef.current += 1;
+      setBalance(null);
+      setExecutionEnabled(false);
+      setTrades([]);
+      setPortfolioSummary(null);
+      setOpenPageInfo({ total_count: 0, has_more: false, limit: 10, offset: 0 });
+      setClosedPageInfo({ total_count: 0, has_more: false, limit: 10, offset: 0 });
+      setRecoveryTrades([]);
+      setLedger(null);
       return;
     }
     let stopped = false;
