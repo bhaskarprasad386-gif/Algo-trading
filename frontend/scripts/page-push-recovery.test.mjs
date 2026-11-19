@@ -344,3 +344,13 @@ test("scanner snapshot normalization rejects malformed collections and stats", (
   assert.deepEqual(normalized.stats, {});
   assert.equal(normalized.scanAt, null);
 });
+
+import { workspaceSnapshotMissing } from "../lib/page-push-recovery.mjs";
+
+test("workspace reconnect snapshot identifies absent live and pair collections", () => {
+  assert.equal(workspaceSnapshotMissing({ __event: "SNAPSHOT", live: { data: [] }, pairs: { data: [] } }, "live"), false);
+  assert.equal(workspaceSnapshotMissing({ __event: "SNAPSHOT", live: { data: [] }, pairs: { data: [] } }, "pairs"), false);
+  assert.equal(workspaceSnapshotMissing({ __event: "SNAPSHOT", pairs: { data: [] } }, "live"), true);
+  assert.equal(workspaceSnapshotMissing({ __event: "SNAPSHOT", live: { data: [] } }, "pairs"), true);
+  assert.equal(workspaceSnapshotMissing({ __event: "PATCH" }, "live"), true);
+});
