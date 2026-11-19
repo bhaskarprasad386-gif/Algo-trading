@@ -350,3 +350,36 @@ def test_cash_future_authoritative_snapshot_contains_live_rows_pairs_and_health(
     assert snapshot["stats"]["status"] == "LIVE"
     assert snapshot["scan_at"] == "2026-11-19T10:00:00+05:30"
     assert snapshot["runner"] is None
+
+
+def test_cash_future_authoritative_snapshots_reconcile_deleted_rows_and_pairs(monkeypatch):
+    from app import main
+
+    current_rows = [{"symbol": "OLD", "price": 10.0}, {"symbol": "KEEP", "price": 20.0}]
+    current_pairs = [{"symbol": "OLD", "gap": 1.0}, {"symbol": "KEEP", "gap": 2.0}]
+
+    class Scanner:
+        def health(self):
+            return {"status": "LIVE", "last_observation_at": "2026-11-19T10:01:00+05:30"}
+
+        def snapshot(self, *, max_age_seconds, limit):
+            return list(current_rows)
+        def pair_snapshot(self, *, max_age_seconds, limit):
+            return list(current_pairs)
+
+    monkeypatch.setattr(main, "live_cash_future_scanner", Scanner())
+    monkeypatch.setattr(main, "live_cash_future_runner", None)
+
+
+    first = main._cash_future_page_push_snapshot()
+    assert [row["symbol"] for row in first["rows"]] == ["OLD", "KEEP"]
+    assert [row["symbol"] for row in first["pairs"]] == ["OLD", "KEEP"]
+
+
+    # SNAPSHOTs are complete lists: deleted records must be absent in the next
+    # authoritative frame so frontend replacement cannot resurrect stale entries.
+    current_rows[:] = [{"symbol": "KEEP", "price": 21.0}, {"symbol": "NEW", "price": 30.0}]
+    current_pairs[:] = [{"symbol": "KEEP", "gap": 2.1}, {"symbol": "NEW", "gap": 3.0}]
+    second = main._cash_future_page_push_snapshot()
+    assert [row["symbol"] for row in second["rows"]] == ["KEEP", "NEW"]
+    assert [row["symbol"] for row in second["pairs"]] == ["KEEP", "NEW"]
