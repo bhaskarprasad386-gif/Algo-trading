@@ -145,6 +145,18 @@ function ScannerContent() {
 
   useEffect(() => {
     if (!pagePushData) return;
+    const event = String(pagePushData.__event ?? "").toUpperCase();
+    const removedKeys = Array.isArray(pagePushData.remove_keys)
+      ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(pagePushData.keys)
+        ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (event === "REMOVE") {
+      if (removedKeys.includes("rows")) { setRows([]); setLoading(false); setError(null); }
+      if (removedKeys.includes("pairs")) setPairRows([]);
+      if (removedKeys.includes("stats")) setPairBackendStats({});
+      if (removedKeys.includes("scan_at")) setLastLiveScanAt(null);
+    }
     if (Array.isArray(pagePushData.rows)) {
       setRows(pagePushData.rows.filter((item: unknown): item is Row => !!item && typeof item === "object"));
       setLoading(false); setError(null);
