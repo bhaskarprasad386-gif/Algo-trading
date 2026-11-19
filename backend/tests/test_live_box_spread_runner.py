@@ -384,6 +384,8 @@ def test_box_runner_starts_and_stops_only_separate_depth_consumer_when_enabled(m
 
     monkeypatch.setattr(mod, "LiveSyntheticOptionFutureRecorder", Recorder)
     monkeypatch.setattr(mod, "sleep", lambda _seconds: None)
+    # Runner lifecycle test must not download the public instrument master.
+    monkeypatch.setattr(mod, "download_box_spread_instruments", lambda _master: [])
     runner = mod.LiveBoxSpreadRunner(
         object(), [mod.BoxSpreadLiveTarget("NIFTY", "INDEX")],
         allowed_stock_symbols=set(), future_master=Master(), auth=object(),
