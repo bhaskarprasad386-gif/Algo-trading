@@ -93,12 +93,25 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
   const sequenceRef = useRef(0);
   const resyncPendingRef = useRef(false);
   const hasSnapshotRef = useRef(false);
+  const resyncTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const resync = useCallback(() => {
     const socket = socketRef.current;
     if (!page || socket?.readyState !== WebSocket.OPEN || resyncPendingRef.current) return;
     resyncPendingRef.current = true;
-    socket.send(JSON.stringify({ action: "resync", page }));
+    try {
+      socket.send(JSON.stringify({ action: "resync", page }));
+      if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
+      // If the authoritative recovery snapshot stalls, restart transport so
+      // the page cannot remain indefinitely frozen in RECONNECTING.
+      resyncTimerRef.current = setTimeout(() => {
+        resyncTimerRef.current = undefined;
+        if (resyncPendingRef.current) socket.close();
+      }, 8000);
+    } catch {
+      resyncPendingRef.current = false;
+      socket.close();
+    }
   }, [page]);
 
   useEffect(() => {
