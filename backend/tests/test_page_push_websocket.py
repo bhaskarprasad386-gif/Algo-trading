@@ -152,7 +152,7 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
     try:
         with TestClient(app).websocket_connect(
             "/ws/page-updates",
-            headers={"origin": "https://algo-trading.vercel.app"},
+            headers={"origin": "https://algo-trading.bhaskarprasad386.workers.dev"},
         ) as websocket:
             assert websocket.receive_json()["type"] == "connected"
             websocket.send_json({"action": "subscribe", "page": page})
