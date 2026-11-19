@@ -230,3 +230,19 @@ test("manual IV runtime status refresh cannot overwrite a newer pushed runtime",
     latestSequence, responseValid:true
   }),true);
 });
+
+test("broker snapshot history read is discarded when a newer history push arrives", () => {
+  let latestSequence = 30;
+  const snapshotHistoryRequest = ++latestSequence;
+  // A history revision push invalidates the manual snapshot's delayed REST read.
+  latestSequence += 1;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:snapshotHistoryRequest,
+    latestSequence, responseValid:true
+  }),false);
+  const recoveryRequest = ++latestSequence;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:recoveryRequest,
+    latestSequence, responseValid:true
+  }),true);
+});
