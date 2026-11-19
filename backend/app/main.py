@@ -515,6 +515,7 @@ def _calendar_spread_page_push_snapshot():
         "pairs": calendar_spread_pairs_page(limit=500),
         "pair_diagnostics": calendar_spread_diagnostics_page(limit=500),
         "feed_diagnostics": calendar_spread_feed_page(),
+        "history_revision": None if live_calendar_spread_scanner is None else live_calendar_spread_scanner.history_revision,
         "runtime_health": _scanner_page_push_runtime_health("calendar_spread", runner),
     }
 
