@@ -56,6 +56,7 @@ function ScannerContent() {
   const [lastLiveScanAt, setLastLiveScanAt] = useState<string | null>(null);
   const { data: pagePushData, status: pagePushStatus } = usePagePush("cash-future");
   const pairHistoryRevisionRef = useRef<string | null>(null);
+  const pairHistoryRequestSequenceRef = useRef(0);
 
   const load = async () => {
     setLoading(true);
@@ -95,13 +96,15 @@ function ScannerContent() {
   };
 
   const loadPairHistory = async () => {
+    const requestSequence = ++pairHistoryRequestSequenceRef.current;
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(`${base}/api/v1/scanner/cash-future/live/history?days=1&limit=100`, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
+      if (requestSequence !== pairHistoryRequestSequenceRef.current) return;
       setPairHistory(Array.isArray(body?.data) ? body.data : []);
     } catch {
-      setPairHistory([]);
+      if (requestSequence === pairHistoryRequestSequenceRef.current) setPairHistory([]);
     }
   };
 
