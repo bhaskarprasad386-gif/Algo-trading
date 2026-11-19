@@ -153,6 +153,10 @@ export default function BoxSpreadPaperTrading() {
 
   const privateLedgerRequestSequenceRef = useRef(0);
   const recoveryRequestSequenceRef = useRef(0);
+  // Synchronous ref invalidation prevents an older page/filter REST response from committing between renders.
+  useEffect(() => {
+    privateLedgerRequestSequenceRef.current += 1;
+  }, [account, openPage, closedPage, positionSearch, positionDirection]);
 
   const refresh = useCallback(async () => {
     const requestSequence = ++privateLedgerRequestSequenceRef.current;
