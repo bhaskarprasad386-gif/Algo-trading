@@ -66,7 +66,7 @@ function applyCollectionMutations(
       // any duplicate keyed rows rather than accumulating repeated deliveries.
       if (findIndex >= 0) {
         rows[findIndex] = item!;
-        next[collection] = rows.filter((row, index) => !matchesKey(row) || index === findIndex;
+        next[collection] = rows.filter((row, index) => !matchesKey(row) || index === findIndex);
       } else {
         rows.push(item!);
         next[collection] = rows;
