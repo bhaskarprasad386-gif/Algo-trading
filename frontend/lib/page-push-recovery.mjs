@@ -35,3 +35,4 @@ export function freshEarlyEntryAlerts(alerts, seenIds) {
 /** Ignore callbacks delivered by a superseded WebSocket transport. */
 export function isCurrentPagePushSocket(currentSocket, eventSocket) {
   return currentSocket !== null && currentSocket === eventSocket;
+}
