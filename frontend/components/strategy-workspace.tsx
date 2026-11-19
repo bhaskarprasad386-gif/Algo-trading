@@ -1209,7 +1209,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   useEffect(() => {
     if (isCustom || !c.pairEndpoint) return;
     void loadPairs();
-    if (pagePushStatus === "LIVE" && ["calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
+    if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
     const timer = window.setInterval(() => void loadPairs(), 15000);
     return () => window.clearInterval(timer);
   }, [isCustom, c.pairEndpoint, pagePushStatus, slug]);
