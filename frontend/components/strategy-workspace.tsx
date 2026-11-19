@@ -1319,14 +1319,25 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   useEffect(() => {
     if (isCustom) {
+      // Invalidate an older REST request when switching to a custom workspace.
+      loadRequestRef.current += 1;
+      rowsRef.current = [];
       setRows([]);
       setLoading(false);
       return;
     }
-    if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
+    if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) {
+      // Reject REST recovery as soon as the channel becomes LIVE, before the
+      // first authoritative snapshot effect commits.
+      loadRequestRef.current += 1;
+      return;
+    }
     void load(true);
     const timer = window.setInterval(() => void load(), 15000);
-    return () => window.clearInterval(timer);
+    return () => {
+      loadRequestRef.current += 1;
+      window.clearInterval(timer);
+    };
   }, [endpoint, isCustom, slug, pagePushStatus]);
 
   const filteredRows = useMemo(() => {
