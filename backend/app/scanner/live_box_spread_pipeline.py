@@ -441,6 +441,16 @@ class LiveBoxSpreadPipeline:
                                     continue
                             db.commit()
                         _clear_spool()
+                        # A committed durable snapshot invalidates the page's filtered/paginated history.
+                        # Notify browsers through the page push channel; never publish before commit.
+                        try:
+                            from app.scanner.page_push_websocket import publish_page_update
+                            publish_page_update("box-spread", "PATCH", {
+                                "history_revision": time.time_ns(),
+                                "history_last_saved_at": now.isoformat(),
+                            })
+                        except Exception:
+                            logger.exception("Box Spread history invalidation push failed after durable commit")
                         break
                     except Exception:
                         if attempt == 2:
