@@ -94,6 +94,12 @@ export function workspaceSnapshotMissing(snapshot, collection) {
   return false;
 }
 
+/** Missing state fields in an authoritative IV Skew Flip reconnect snapshot. */
+export function ivSkewSnapshotMissing(snapshot, key) {
+  const source = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) ? snapshot : {};
+  return key === "runtime" || key === "basket_registry" ? !(source[key] && typeof source[key] === "object" && !Array.isArray(source[key])) : false;
+}
+
 /** Safely send a page-push control frame; callers must close/recover on false. */
 export function sendPagePushFrame(socket, frame) {
   try {
