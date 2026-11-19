@@ -1164,7 +1164,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setFeedStatus("UNKNOWN"); setFeedErrors(null); setRunner(null); setBoxDepthShadow(null);
     }
     const opportunities = pagePushData.opportunities;
-    if (!removedKeys.includes("opportunities") && Array.isArray(opportunities)) {
+    if (!(String(pagePushData.__event ?? "").toUpperCase() === "REMOVE" && removedKeys.includes("opportunities")) && Array.isArray(opportunities)) {
       // A page-push frame is authoritative. Invalidate any REST recovery request
       // that started before this frame so a late HTTP response cannot roll the
       // live scanner table back to an older snapshot.
