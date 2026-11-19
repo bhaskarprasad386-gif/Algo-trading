@@ -137,6 +137,11 @@ function ScannerContent() {
   }, [pagePushStatus]);
 
   useEffect(() => {
+    // A LIVE transition invalidates any in-flight REST recovery request.
+    if (pagePushStatus === "LIVE") {
+      liveRequestSequenceRef.current += 1;
+      pairLiveRequestSequenceRef.current += 1;
+    }
     if (marketSession === "OPEN") {
       if (pagePushStatus !== "LIVE") { void load(); void loadPairLive(); }
     } else if (pagePushStatus !== "LIVE") {
@@ -153,6 +158,9 @@ function ScannerContent() {
 
   useEffect(() => {
     if (!pagePushData) return;
+    // Any page push supersedes outstanding REST fallback payloads, including REMOVE.
+    liveRequestSequenceRef.current += 1;
+    pairLiveRequestSequenceRef.current += 1;
     const event = String(pagePushData.__event ?? "").toUpperCase();
     const removedKeys = Array.isArray(pagePushData.remove_keys)
       ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
