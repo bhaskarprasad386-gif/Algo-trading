@@ -326,6 +326,20 @@ function ScannerContent() {
   const pagePushLastLabel = pagePushLastMessageAt
     ? " • " + new Date(pagePushLastMessageAt).toLocaleTimeString("en-IN", { hour12: false })
     : "";
+  const runnerPushSnapshot = pagePushData?.runner && typeof pagePushData.runner === "object"
+    ? pagePushData.runner as Row
+    : null;
+  const runnerPushBadgeClass = runnerPushSnapshot?.running === true
+    ? "theme-border theme-success-bg theme-success"
+    : runnerPushSnapshot?.running === false
+      ? "theme-border theme-warning-bg theme-warning"
+      : "theme-border theme-surface theme-muted";
+  const runnerPushBadgeLabel = runnerPushSnapshot?.running === true
+    ? "RUNNER RUNNING"
+    : runnerPushSnapshot?.running === false ? "RUNNER STOPPED" : "RUNNER STATUS WAITING";
+  const runnerPushMetrics = runnerPushSnapshot
+    ? ` • callbacks ${cell(runnerPushSnapshot, "payload_callbacks")} • scans ${cell(runnerPushSnapshot, "scanner_updates")} • errors ${cell(runnerPushSnapshot, "payload_callback_errors")}`
+    : "";
   const historyAgeText = (row: Row) => {
     const observed = new Date(String(row.observed_at ?? ""));
     if (Number.isNaN(observed.getTime())) return "—";
@@ -364,6 +378,7 @@ function ScannerContent() {
           </span>
           <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> {pagePushStatus === "LIVE" ? "WebSocket Push • realtime" : marketSession === "OPEN" ? "REST fallback • 15s" : marketSession === "CLOSED" ? "Auto-update paused • Market closed" : "Auto-update waiting • Market state"}</span>
           <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${pagePushBadgeClass}`}><Activity className="h-4 w-4" /> {pagePushBadgeLabel}{pagePushLastLabel}</span>
+          <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${runnerPushBadgeClass}`}><ShieldCheck className="h-4 w-4" /> {runnerPushBadgeLabel}{runnerPushMetrics}</span>
           <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Bell className="h-4 w-4" /> Alerts: —</span>
         </div>
         <div className="flex gap-2">
