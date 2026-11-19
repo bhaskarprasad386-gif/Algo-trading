@@ -58,6 +58,9 @@ test("invalid collection, identity, operation and malformed items are ignored", 
     {collection:"rows",operation:"ADD",key_field:"id",key:"",item:{id:""}},
     {collection:"rows",operation:"ADD",key_field:"id",key:"b",item:{id:"different"}},
     {collection:"rows",operation:"ADD",key_field:"id",key:"b",item:[]},
+    {collection:"rows",operation:"ADD",key_field:"id",key:"b",item:{id:true}},
+    {collection:"rows",operation:"UPDATE",key_field:"id",key:"b",item:{id:""}},
+    {collection:"rows",operation:"ADD",key_field:"id",key:"b",item:{id:null}},
   ];
   assert.deepEqual(applyCollectionMutations(state,bad),state);
 });
