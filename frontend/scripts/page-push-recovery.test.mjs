@@ -132,6 +132,16 @@ test("local trace add or delete invalidates an in-flight initial restore", () =>
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:latestSequence,latestSequence,responseValid:true}),true);
 });
 
+import { isPagePushCollectionRemoved } from "../lib/page-push-recovery.mjs";
+
+test("REMOVE frames clear only explicitly removed collections", () => {
+  assert.equal(isPagePushCollectionRemoved("REMOVE", ["pair_history"], "pair_history"), true);
+  assert.equal(isPagePushCollectionRemoved("UPDATE", ["pair_history"], "pair_history"), false);
+  assert.equal(isPagePushCollectionRemoved("REMOVE", ["pairs"], "pair_history"), false);
+  assert.equal(isPagePushCollectionRemoved("REMOVE", [], "pair_history"), false);
+});
+
+
 import { trackTraceSave, waitForTraceSave } from "../lib/trace-mutation-order.mjs";
 
 test("trace DELETE waits for an in-flight POST before proceeding", async () => {
