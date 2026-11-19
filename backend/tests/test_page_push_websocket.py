@@ -387,8 +387,9 @@ def test_cash_future_authoritative_snapshots_reconcile_deleted_rows_and_pairs(mo
 
 def test_page_push_queue_overflow_requests_snapshot_for_each_channel(monkeypatch):
     async def scenario():
-        queue = asyncio.Queue(maxsize=1)
-        queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 1})
+        queue = asyncio.Queue(maxsize=push.QUEUE_SIZE)
+        for index in range(push.QUEUE_SIZE):
+            queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": index + 1})
         monkeypatch.setattr(push, "_latest_event_id", lambda: 0)
         monkeypatch.setattr(push, "_events_after", lambda cursor: [
             {"id": 1, "page": "box-spread", "sequence": 2, "event": "PATCH", "data": {"rows": []}}
