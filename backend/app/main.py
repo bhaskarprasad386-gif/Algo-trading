@@ -492,12 +492,30 @@ def _cash_future_page_push_snapshot():
     }
 
 
+def _scanner_page_push_runtime_health(runner_name, runner):
+    """Read-only feed and runner health included in scanner reconnect/live frames."""
+    try:
+        common_feed = shared_common_manager().snapshot()
+        feed_health = _summarize_primary_exchange_feed(common_feed)
+        common_feed["age_seconds"] = feed_health["age_seconds"]
+        common_feed["status"] = feed_health["status"]
+        common_feed["exchange_freshness"] = feed_health["exchange_freshness"]
+        return {
+            "common_feed": common_feed,
+            "runners": {runner_name: None if runner is None else runner.snapshot()},
+        }
+    except Exception:
+        return {"common_feed": {"status": "UNAVAILABLE"}, "runners": {runner_name: None}}
+
+
 def _calendar_spread_page_push_snapshot():
+    runner = live_calendar_spread_runner
     return {
         "live": calendar_spread_live_page(limit=200),
         "pairs": calendar_spread_pairs_page(limit=500),
         "pair_diagnostics": calendar_spread_diagnostics_page(limit=500),
         "feed_diagnostics": calendar_spread_feed_page(),
+        "runtime_health": _scanner_page_push_runtime_health("calendar_spread", runner),
     }
 
 
@@ -509,6 +527,7 @@ def _synthetic_page_push_snapshot():
         "diagnostics": synthetic_diagnostics_page(),
         "universe": dict(_live_synthetic_universe_status),
         "runner": None if runner is None else runner.snapshot(),
+        "runtime_health": _scanner_page_push_runtime_health("synthetic", runner),
     }
 
 
