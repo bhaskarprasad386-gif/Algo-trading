@@ -363,3 +363,13 @@ test("workspace reconnect snapshot detects absent diagnostics, universe, and hea
   assert.equal(workspaceSnapshotMissing({ diagnostics: {}, universe: {}, runtime_health: {} }, "universe"), false);
   assert.equal(workspaceSnapshotMissing({ diagnostics: {}, universe: {}, runtime_health: {} }, "runtime_health"), false);
 });
+
+import { ivSkewSnapshotMissing } from "../lib/page-push-recovery.mjs";
+
+test("IV Skew Flip reconnect snapshot resets missing runtime and basket registry", () => {
+  assert.equal(ivSkewSnapshotMissing({ __event: "SNAPSHOT" }, "runtime"), true);
+  assert.equal(ivSkewSnapshotMissing({ __event: "SNAPSHOT" }, "basket_registry"), true);
+  assert.equal(ivSkewSnapshotMissing({ runtime: {}, basket_registry: {} }, "runtime"), false);
+  assert.equal(ivSkewSnapshotMissing({ runtime: {}, basket_registry: {} }, "basket_registry"), false);
+  assert.equal(ivSkewSnapshotMissing({ runtime: [] }, "runtime"), true);
+});
