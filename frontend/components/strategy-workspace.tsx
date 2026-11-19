@@ -1007,6 +1007,23 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       if (slug === "synthetic-arbitrage" && pagePushData.universe && typeof pagePushData.universe === "object") {
         setUniverseAvailability(pagePushData.universe as Record<string, any>);
       }
+      const health = pagePushData.runtime_health;
+      if (health && typeof health === "object") {
+        const runtime = health as Record<string, any>;
+        const feed = runtime.common_feed && typeof runtime.common_feed === "object" ? runtime.common_feed : {};
+        setFeedTicks(nullableNumber(feed.ticks_received));
+        setFeedAge(nullableNumber(feed.age_seconds));
+        setFeedExchangeFreshness(feed.exchange_freshness && typeof feed.exchange_freshness === "object" ? feed.exchange_freshness : null);
+        setFeedInstruments(nullableNumber(feed.active_instruments));
+        setFeedStatus(String(feed.status ?? "UNKNOWN").toUpperCase());
+        setFeedErrors({ delivery: Number(feed.delivery_errors ?? 0) || 0, normalizer: Number(feed.normalizer_errors ?? 0) || 0 });
+        const runnerKey = slug === "calendar-spread" ? "calendar_spread" : "synthetic";
+        const selected = runtime.runners?.[runnerKey];
+        setRunner(selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null);
+        if (slug === "calendar-spread") {
+          setCalendarRuntime(selected && typeof selected === "object" ? selected : null);
+        }
+      }
     }
   }, [slug, pagePushData]);
 
