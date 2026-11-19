@@ -364,6 +364,23 @@ export default function BoxSpreadPaperTrading() {
     let lastServerFrameAt = 0;
     let retryDelay = 1000;
 
+    // Account/token changes establish a fresh private-channel baseline. Reset
+    // sequence and dedupe state so the new account's snapshot is not rejected
+    // as older than the previous account's stream.
+    privateSequenceRef.current = 0;
+    privateResyncPendingRef.current = false;
+    privateEventIdsRef.current.clear();
+    privateLedgerRequestSequenceRef.current += 1;
+    setPrivateSnapshotComplete(false);
+    setBalance(null);
+    setExecutionEnabled(false);
+    setTrades([]);
+    setPortfolioSummary(null);
+    setOpenPageInfo({ total_count: 0, has_more: false, limit: 10, offset: 0 });
+    setClosedPageInfo({ total_count: 0, has_more: false, limit: 10, offset: 0 });
+    setRecoveryTrades([]);
+    setLedger(null);
+
     const scheduleReconnect = () => {
       if (stopped || retryTimer !== undefined) return;
       setPrivateWsStatus("DISCONNECTED");
@@ -384,11 +401,13 @@ export default function BoxSpreadPaperTrading() {
         socket = new WebSocket(wsUrl);
         privateWsRef.current = socket;
         socket.onopen = () => {
+          if (stopped) { socket?.close(); return; }
           lastServerFrameAt = Date.now();
           retryDelay = 1000;
           socket?.send(JSON.stringify({ ticket: ticketBody.ticket, account_key: account }));
         };
         socket.onmessage = event => {
+          if (stopped) return;
           lastServerFrameAt = Date.now();
           let frame: any;
           try { frame = JSON.parse(String(event.data)); } catch { return; }
@@ -445,8 +464,9 @@ export default function BoxSpreadPaperTrading() {
             socket?.close();
           }
         }, 10000);
-        socket.onerror = () => socket?.close();
+        socket.onerror = () => { if (!stopped) socket?.close(); };
         socket.onclose = () => {
+          if (stopped) return;
           privateResyncPendingRef.current = false;
           if (watchdogTimer !== undefined) window.clearInterval(watchdogTimer);
           watchdogTimer = undefined;
