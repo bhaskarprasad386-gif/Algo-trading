@@ -484,7 +484,7 @@ function ScannerContent() {
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live Pair Monitor & Diagnostics</h2><p className="mt-1 text-xs theme-muted">Every matched cash + futures pair is shown here even when it cannot become a signal. Diagnostics are persisted for post-market review.</p></div>
-          <span className="text-xs font-semibold theme-muted">{pairStats.pairs} current live pairs • {marketSession === "CLOSED" ? "refresh paused" : marketSession === "OPEN" ? "1.5s refresh" : "waiting for market state"}</span>
+          <span className="text-xs font-semibold theme-muted">{pairStats.pairs} current live pairs • {marketSession === "CLOSED" ? "refresh paused" : marketSession === "OPEN" ? (pagePushStatus === "LIVE" ? "WebSocket realtime" : "REST fallback • 15s") : "waiting for market state"}</span>
         </div>
         {marketSession === "CLOSED" && <div className="mt-4 rounded-xl border theme-border theme-warning-bg p-3 text-xs theme-warning">Live scanning is paused because the market is closed. Current live counters are intentionally 0; saved diagnostics below remain available for the completed session.</div>}
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-9">{[
