@@ -313,6 +313,19 @@ function ScannerContent() {
     ? new Date(lastLiveScanAt).toLocaleTimeString("en-IN", { hour12: false }) + " IST"
     : "—";
 
+  const pagePushBadgeClass = pagePushStatus === "LIVE"
+    ? "theme-border theme-success-bg theme-success"
+    : pagePushStatus === "RECONNECTING"
+      ? "theme-border theme-warning-bg theme-warning"
+      : "theme-border theme-surface theme-muted";
+  const pagePushBadgeLabel = pagePushStatus === "LIVE"
+    ? "WS PUSH • LIVE"
+    : pagePushStatus === "RECONNECTING"
+      ? marketSession === "OPEN" ? "WS RECOVERING • REST FALLBACK" : "WS RECOVERING"
+      : pagePushStatus === "CONNECTING" ? "WS CONNECTING" : "WS DISCONNECTED";
+  const pagePushLastLabel = pagePushLastMessageAt
+    ? ` • ${new Date(pagePushLastMessageAt).toLocaleTimeString("en-IN", { hour12: false })`
+    : "";
   const historyAgeText = (row: Row) => {
     const observed = new Date(String(row.observed_at ?? ""));
     if (Number.isNaN(observed.getTime())) return "—";
@@ -346,7 +359,7 @@ function ScannerContent() {
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${loading ? "theme-border theme-warning-bg theme-warning" : error ? "theme-border theme-danger-bg theme-danger" : "theme-border theme-success-bg theme-success"}`}>
-            <span className="h-2 w-2 rounded-full bg-current" />
+          <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${pagePushBadgeClass}`}><Activity className="h-4 w-4" /> {pagePushBadgeLabel}{pagePushLastLabel}</span>
             {loading ? "CONNECTING" : error ? "BACKEND ERROR" : marketSession === "OPEN" ? (rows.length ? "API CONNECTED • LIVE DATA" : "API CONNECTED • WAITING FOR LIVE DATA") : marketSession === "CLOSED" ? "API CONNECTED • NO LIVE DATA" : "API CONNECTED"}
           </span>
           <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> {pagePushStatus === "LIVE" ? "WebSocket Push • realtime" : marketSession === "OPEN" ? "REST fallback • 15s" : marketSession === "CLOSED" ? "Auto-update paused • Market closed" : "Auto-update waiting • Market state"}</span>
