@@ -262,3 +262,20 @@ test("older-alert pagination response is rejected after a pushed runtime", () =>
     latestSequence, responseValid:true
   }),true);
 });
+
+test("broker snapshot response is fully ignored after runner configuration supersedes it", () => {
+  let latestSequence = 50;
+  const snapshotRequest = ++latestSequence;
+  // Saving runner configuration invalidates both the delayed snapshot result
+  // and its history request; stale POST notices/errors/finalizers must not apply.
+  latestSequence += 1;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:snapshotRequest,
+    latestSequence, responseValid:true
+  }),false);
+  const freshSnapshot = ++latestSequence;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:freshSnapshot,
+    latestSequence, responseValid:true
+  }),true);
+});
