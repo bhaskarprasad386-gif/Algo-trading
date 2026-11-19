@@ -264,17 +264,14 @@ export default function BoxSpreadPaperTrading() {
     }
 
     if (liveResult.status === "rejected") {
-      setOpportunities([]);
-      setOpportunityStatus("ERROR");
       setOpportunityError(liveResult.reason instanceof Error
         ? liveResult.reason.message : "Unable to reach the live Box Spread scanner");
+      // Keep last good rows/status during transient REST fallback failures.
       return;
     }
 
     const body = liveResult.value;
     if (!Array.isArray(body?.data)) {
-      setOpportunities([]);
-      setOpportunityStatus("ERROR");
       setOpportunityError("Live scanner returned an invalid response; expected a data array");
       return;
     }
