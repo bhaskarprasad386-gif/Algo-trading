@@ -605,6 +605,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [indexSelectionError, setIndexSelectionError] = useState<string | null>(null);
   const indexSelectionDraftInitialized = useRef(false);
   const historyRequestSequence = useRef(0);
+  const syntheticHistoryPushRevision = useRef<string | null>(null);
   const indexSelectionRequestSequence = useRef(0);
 
   useEffect(() => {
@@ -1079,6 +1080,23 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     // active filter/page slice and let request sequencing reject older replies.
     void loadHistory();
   }, [slug, pagePushData?.history_revision]);
+
+  useEffect(() => {
+    if (slug !== "synthetic-arbitrage") return;
+    const live = pagePushData?.live as Record<string, unknown> | undefined;
+    const revision = live?.history_revision;
+    if (revision == null || revision === "") return;
+    const value = String(revision);
+    // The initial history query already runs on mount. Only a subsequent
+    // persisted observation revision should trigger an automatic history reload.
+    if (syntheticHistoryPushRevision.current === null) {
+      syntheticHistoryPushRevision.current = value;
+      return;
+    }
+    if (syntheticHistoryPushRevision.current === value) return;
+    syntheticHistoryPushRevision.current = value;
+    void loadHistory();
+  }, [slug, pagePushData?.live]);
 
   useEffect(() => {
     if (isCustom || c.pairEndpoint) return;
