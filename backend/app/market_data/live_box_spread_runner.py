@@ -109,7 +109,7 @@ class LiveBoxSpreadRunner:
         self.consumer_namespace = str(consumer_namespace or "box").strip()
         if not self.consumer_namespace or any(not (char.isalnum() or char in "-_:") for char in self.consumer_namespace):
             raise ValueError("consumer_namespace must contain only letters, numbers, hyphens, underscores or colons")
-        self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results; self.on_spot_price=on_spot_price
+        self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results; self.on_spot_price=on_spot_price; self._spot_publish_callback=self._publish_spot_price
         self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None; self.pipeline=None
         self._publish_enabled = bool(publish_enabled)
         self._publishing_requested = bool(publish_enabled)
@@ -134,6 +134,16 @@ class LiveBoxSpreadRunner:
             "underlying_websocket": {"state": "not_started"},
             "option_websocket": {"state": "not_started"},
         }
+
+    def _publish_spot_price(self, symbol, price, timestamp_ns):
+        """Gate underlying ticks so staged runners cannot publish before handoff."""
+        callback = self.on_spot_price
+        if not self._publish_enabled or not callable(callback):
+            return
+        try:
+            callback(symbol, price, timestamp_ns)
+        except Exception:
+            app_logger.exception("Box Spread spot page publisher failed")
 
     def activate_publishing(self):
         """Allow this warmed session to become the sole live result publisher."""
@@ -532,7 +542,7 @@ class LiveBoxSpreadRunner:
             strikes.setdefault(symbol.strip().upper(), ())
         self.tracker=LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
         index_symbols=frozenset(t.underlying for t in self.targets if t.instrument_class=="INDEX")
-        self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,on_price=self.on_spot_price,index_symbols=index_symbols,consumer=f"{self.consumer_namespace}-underlyings",refresh_instrument_master=False)
+        self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,on_price=self._spot_publish_callback,index_symbols=index_symbols,consumer=f"{self.consumer_namespace}-underlyings",refresh_instrument_master=False)
         self._feed_thread = Thread(target=self.feed.run_forever,daemon=True,name="box-underlying-feed")
         self._feed_thread.start()
         try:
