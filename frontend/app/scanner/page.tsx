@@ -54,7 +54,7 @@ function ScannerContent() {
   const [pairBackendStats, setPairBackendStats] = useState<Row>({});
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [lastLiveScanAt, setLastLiveScanAt] = useState<string | null>(null);
-  const { data: pagePushData, status: pagePushStatus } = usePagePush("cash-future");
+  const { data: pagePushData, status: pagePushStatus, lastMessageAt: pagePushLastMessageAt, resync: pagePushResync } = usePagePush("cash-future");
   const pairHistoryRevisionRef = useRef<string | null>(null);
   const pairHistoryRequestSequenceRef = useRef(0);
   // Prevent delayed REST recovery from overwriting authoritative page pushes.
@@ -322,12 +322,21 @@ function ScannerContent() {
 
   const refresh = async () => {
     setRefreshing(true);
-    if (marketSession === "OPEN") {
-      await Promise.all([load(), loadPairLive(), loadPairHistory()]);
-    } else {
-      await loadPairHistory();
+    try {
+      if (pagePushStatus === "LIVE") {
+        // When the page is synchronized, refresh through the authoritative
+        // WebSocket snapshot instead of bypassing it with live REST calls.
+        pagePushResync();
+        await loadPairHistory();
+      } else if (marketSession === "OPEN") {
+        // REST is recovery-only while page push is unavailable.
+        await Promise.all([load(), loadPairLive(), loadPairHistory()]);
+      } else {
+        await loadPairHistory();
+      }
+    } finally {
+      setRefreshing(false);
     }
-    setRefreshing(false);
   };
 
   return (
@@ -340,7 +349,8 @@ function ScannerContent() {
             <span className="h-2 w-2 rounded-full bg-current" />
             {loading ? "CONNECTING" : error ? "BACKEND ERROR" : marketSession === "OPEN" ? (rows.length ? "API CONNECTED • LIVE DATA" : "API CONNECTED • WAITING FOR LIVE DATA") : marketSession === "CLOSED" ? "API CONNECTED • NO LIVE DATA" : "API CONNECTED"}
           </span>
-          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> {marketSession === "OPEN" ? "Auto-update • 1.5s" : marketSession === "CLOSED" ? "Auto-update paused • Market closed" : "Auto-update waiting • Market state"}</span>
+          <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Zap className="h-4 w-4" /> {pagePushStatus === "LIVE" ? "WebSocket Push • realtime" : marketSession === "OPEN" ? "REST fallback • 15s" : marketSession === "CLOSED" ? "Auto-update paused • Market closed" : "Auto-update waiting • Market state"}</span>
+          <span className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 text-xs font-semibold ${pagePushStatus === "LIVE" ? "theme-border theme-success-bg theme-success" : pagePushStatus === "RECONNECTING" ? "theme-border theme-warning-bg theme-warning" : "theme-border theme-surface theme-muted"}><Activity className="h-4 w-4" /> {pagePushStatus === "LIVE" ? "WS PUSH • LIVE" : pagePushStatus === "RECONNECTING" ? marketSession === "OPEN" ? "WS RECOVERING • REST FALLBACK" : "WS RECOVERING" : pagePushStatus === "CONNECTING" ? "WS CONNECTING" : "WS DISCONNECTED"}{pagePushLastMessageAt ? ` • ${new Date(pagePushLastMessageAt).toLocaleTimeString("en-IN", { hour12: false })}` : ""}</span>
           <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted"><Bell className="h-4 w-4" /> Alerts: —</span>
         </div>
         <div className="flex gap-2">
