@@ -606,6 +606,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const indexSelectionDraftInitialized = useRef(false);
   const historyRequestSequence = useRef(0);
   const syntheticHistoryPushRevision = useRef<string | null>(null);
+  const calendarHistoryPushRevision = useRef<string | null>(null);
   const indexSelectionRequestSequence = useRef(0);
 
   useEffect(() => {
@@ -632,6 +633,24 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       window.localStorage.setItem("algo:pair-monitor:hidden-columns:v1:" + slug, JSON.stringify(hiddenPairColumns));
     } catch { /* Preferences are optional; the column picker still works for this session. */ }
   }, [hiddenPairColumns, pairColumnPrefsLoaded, slug]);
+
+  useEffect(() => {
+    if (slug !== "calendar-spread") return;
+    const live = pagePushData?.live as Record<string, unknown> | undefined;
+    const revision = live?.history_revision;
+    if (revision == null || revision === "") return;
+    const value = String(revision);
+    // Initial REST history load is already performed on mount. Refresh only
+    // when the backend confirms another persisted calendar observation.
+    if (calendarHistoryPushRevision.current === null) {
+      calendarHistoryPushRevision.current = value;
+      return;
+    }
+    if (calendarHistoryPushRevision.current === value) return;
+    calendarHistoryPushRevision.current = value;
+    void loadHistory();
+  }, [slug, pagePushData?.live]);
+
 
   useEffect(() => {
     if (slug !== "synthetic-arbitrage") return;
