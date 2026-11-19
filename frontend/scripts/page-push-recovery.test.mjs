@@ -373,3 +373,15 @@ test("IV Skew Flip reconnect snapshot resets missing runtime and basket registry
   assert.equal(ivSkewSnapshotMissing({ runtime: {}, basket_registry: {} }, "basket_registry"), false);
   assert.equal(ivSkewSnapshotMissing({ runtime: [] }, "runtime"), true);
 });
+
+
+
+import { syntheticTraceSnapshotMissing } from "../lib/page-push-recovery.mjs";
+
+test("synthetic trace reconnect snapshot clears absent live opportunities", () => {
+  assert.equal(syntheticTraceSnapshotMissing({ __event: "SNAPSHOT", live: { data: [] } }, "live"), false);
+  assert.equal(syntheticTraceSnapshotMissing({ __event: "SNAPSHOT" }, "live"), true);
+  assert.equal(syntheticTraceSnapshotMissing({ __event: "SNAPSHOT", live: { data: "bad" } }, "live"), true);
+  assert.equal(syntheticTraceSnapshotMissing({ __event: "PATCH" }, "live"), true);
+  assert.equal(syntheticTraceSnapshotMissing({ __event: "SNAPSHOT" }, "other"), false);
+});
