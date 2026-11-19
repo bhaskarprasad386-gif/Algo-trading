@@ -383,3 +383,36 @@ def test_cash_future_authoritative_snapshots_reconcile_deleted_rows_and_pairs(mo
     second = main._cash_future_page_push_snapshot()
     assert [row["symbol"] for row in second["rows"]] == ["KEEP", "NEW"]
     assert [row["symbol"] for row in second["pairs"]] == ["KEEP", "NEW"]
+
+
+def test_page_push_queue_overflow_requests_snapshot_for_each_channel(monkeypatch):
+    async def scenario():
+        queue = asyncio.Queue(maxsize=1)
+        queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 1})
+        monkeypatch.setattr(push, "_latest_event_id", lambda: 0)
+        monkeypatch.setattr(push, "_events_after", lambda cursor: [
+            {"id": 1, "page": "box-spread", "sequence": 2, "event": "PATCH", "data": {"rows": []}}
+        ] if cursor == 0 else [])
+        monkeypatch.setattr(push, "_latest_page_sequence", lambda page: {
+            "box-spread": 2, "iv-skew-flip": 8, "calendar-spread": 5
+        }.get(page, 0))
+        monkeypatch.setattr(push, "_subscribers", {
+            (queue, frozenset({"box-spread", "iv-skew-flip", "calendar-spread"}))
+        })
+        monkeypatch.setattr(push, "_dispatch_ready", asyncio.Event())
+        task = asyncio.create_task(push._journal_dispatch_loop())
+        try:
+            await asyncio.wait_for(push._dispatch_ready.wait(), timeout=0.5)
+            await asyncio.sleep(0.05)
+            assert queue.qsize() == 3
+            frames = [queue.get_nowait() for _ in range(3)]
+            assert {frame["page"] for frame in frames} == {"box-spread", "iv-skew-flip", "calendar-spread"}
+            assert all(frame["event"] == "SNAPSHOT_REQUIRED" for frame in frames)
+            assert {frame["page"]: frame["sequence"] for frame in frames} == {
+                "box-spread": 2, "iv-skew-flip": 8, "calendar-spread": 5
+            }
+        finally:
+            monkeypatch.setattr(push, "_subscribers", set())
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(scenario())
