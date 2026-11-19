@@ -12,6 +12,7 @@ type TraceRow = Record<string, unknown> & {
 
 const STORAGE_KEY = "algo:synthetic-arbitrage:trace-opportunities:v1";
 const DELETED_KEY = "algo:synthetic-arbitrage:trace-deleted:v1";
+const PENDING_DELETE_KEY = "algo:synthetic-arbitrage:trace-pending-deletes:v1";
 const LIVE_ENDPOINT = "/api/v1/scanner/synthetic-cash-carry/live?limit=50";
 const INDEX_ORDER = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
 
@@ -87,6 +88,23 @@ function writeDeleted(ids: string[]) {
     window.localStorage.setItem(DELETED_KEY, JSON.stringify([...new Set(ids)]));
   } catch {
     // Deletion still works in memory if browser storage is unavailable.
+  }
+}
+
+function readPendingDeletes(): string[] {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(PENDING_DELETE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePendingDeletes(ids: string[]) {
+  try {
+    window.localStorage.setItem(PENDING_DELETE_KEY, JSON.stringify([...new Set(ids)]));
+  } catch {
+    // Pending server deletion remains best-effort when browser storage is unavailable.
   }
 }
 
@@ -181,6 +199,31 @@ export function SyntheticTracePanel() {
     setTraces(merged);
     writeStored(merged);
   }, [pagePushData]);
+
+  useEffect(() => {
+    let retryInFlight = false;
+    const retryPendingDeletes = async () => {
+      if (retryInFlight) return;
+      const pending = readPendingDeletes();
+      if (!pending.length) return;
+      retryInFlight = true;
+      const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
+      for (const traceId of pending) {
+        try {
+          const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(traceId), {
+            method: "DELETE", cache: "no-store", signal: AbortSignal.timeout(8000),
+          });
+          if (response.ok) writePendingDeletes(readPendingDeletes().filter((id) => id !== traceId));
+        } catch {
+          // Retain the pending ID and try again on the next bounded retry.
+        }
+      }
+      retryInFlight = false;
+    };
+    void retryPendingDeletes();
+    const timer = window.setInterval(() => void retryPendingDeletes(), 15000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const pushedStatus = pagePushData?.trace_status_update as Record<string, unknown> | undefined;
@@ -307,16 +350,19 @@ export function SyntheticTracePanel() {
     const next = traces.filter((item) => item.trace_id !== traceId);
     // Tombstone locally before network I/O so an in-flight WS snapshot cannot resurrect it.
     writeDeleted([...readDeleted(), traceId]);
+    writePendingDeletes([...readPendingDeletes(), traceId]);
     setTraces(next);
     writeStored(next);
     try {
       const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
-      const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(traceId), { method: "DELETE", cache: "no-store" });
+      const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(traceId), {
+        method: "DELETE", cache: "no-store", signal: AbortSignal.timeout(8000),
+      });
       if (!response.ok) throw new Error("server delete failed");
+      writePendingDeletes(readPendingDeletes().filter((id) => id !== traceId));
       setMessage("Trace removed from saved list.");
     } catch {
-      writeDeleted([...readDeleted(), traceId]);
-      setMessage("Trace removed on this device; server deletion will retry when the API is available.");
+      setMessage("Trace removed locally; server deletion is queued for retry.");
     }
   };
 
