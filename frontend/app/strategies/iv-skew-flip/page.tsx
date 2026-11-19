@@ -505,11 +505,12 @@ export default function IVSkewFlipPage() {
     if(lastPushedHistoryExpiryRef.current!==requestedExpiry){
       lastPushedHistoryExpiryRef.current=requestedExpiry;
       lastPushedHistoryCountRef.current=null;
+      if(durableHistoryRefreshTimerRef.current)clearTimeout(durableHistoryRefreshTimerRef.current);
+      durableHistoryRefreshTimerRef.current=null;
     }
     if(!Number.isFinite(count)||count<0||lastPushedHistoryCountRef.current===count)return;
     lastPushedHistoryCountRef.current=count;
     const requestSequence=++durableHistoryRequestSequenceRef.current;
-    let active=true;
     const expiry=requestedExpiry;
     if(durableHistoryRefreshTimerRef.current)clearTimeout(durableHistoryRefreshTimerRef.current);
     durableHistoryRefreshTimerRef.current=setTimeout(()=>{
@@ -517,15 +518,14 @@ export default function IVSkewFlipPage() {
       const url=base+"/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY"+(expiry?"&expiry="+encodeURIComponent(expiry):"");
       void fetch(url,{cache:"no-store"}).then(async response=>{
         const body=await response.json();
-        if(active&&requestSequence===durableHistoryRequestSequenceRef.current&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
+        if(requestSequence===durableHistoryRequestSequenceRef.current&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
       }).catch(()=>{/* keep the last successful durable history response */});
     },2500);
-    return()=>{
-      active=false;
-      if(durableHistoryRefreshTimerRef.current)clearTimeout(durableHistoryRefreshTimerRef.current);
-      durableHistoryRefreshTimerRef.current=null;
-    };
   },[base,pagePushData,requestedExpiry]);
+  useEffect(()=>()=>{
+    if(durableHistoryRefreshTimerRef.current)clearTimeout(durableHistoryRefreshTimerRef.current);
+    durableHistoryRefreshTimerRef.current=null;
+  },[]);
   const activeWeeklyExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
