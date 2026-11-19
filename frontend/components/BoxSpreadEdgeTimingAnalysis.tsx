@@ -99,10 +99,10 @@ export default function BoxSpreadEdgeTimingAnalysis() {
 
   useEffect(() => {
     if (pagePushStatus !== "LIVE" || pagePushData?.history_revision == null) return;
-    // History revisions debounce a costly full-history analysis until activity
-    // settles; live scanner pushes already carry the cached timing aggregate.
-    const timer = window.setTimeout(() => void refresh(), 30_000);
-    return () => window.clearTimeout(timer);
+    // A WebSocket history_revision is an event-driven invalidation, not a polling
+    // interval. Fetch the durable aggregate immediately after the event and cancel
+    // any older request via refresh's sequence guard.
+    void refresh();
   }, [pagePushStatus, pagePushData?.history_revision, refresh]);
 
 
