@@ -32,23 +32,39 @@ function applyCollectionMutations(
   if (!Array.isArray(mutations)) return state;
   const next = { ...state };
   for (const raw of mutations) {
-    if (!raw || typeof raw !== "object") continue;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
     const mutation = raw as CollectionMutation;
-    if (!mutation.collection || !mutation.key_field || !["ADD", "UPDATE", "DELETE"].includes(mutation.operation)) continue;
-    const current = next[mutation.collection];
+    const collection = mutation.collection;
+    const keyField = mutation.key_field;
+    if (
+      typeof collection !== "string" || !collection.trim() ||
+      typeof keyField !== "string" || !keyField.trim() ||
+      ["__proto__", "prototype", "constructor"].includes(collection) ||
+      ["__proto__", "prototype", "constructor"].includes(keyField) ||
+      !["ADD", "UPDATE", "DELETE"].includes(mutation.operation)
+    ) continue;
+    const current = next[collection];
     if (!Array.isArray(current)) continue;
-    const item = mutation.item && typeof mutation.item === "object" ? mutation.item : undefined;
-    const key = mutation.key ?? item?.[mutation.key_field];
-    if (key === undefined || key === null) continue;
-    const findIndex = current.findIndex((row) => row && typeof row === "object" && String((row as Record<string, unknown>)[mutation.key_field]) === String(key));
+    const item = mutation.item && typeof mutation.item === "object" && !Array.isArray(mutation.item)
+      ? mutation.item
+      : undefined;
+    const key = mutation.key ?? item?.[keyField];
+    if ((typeof key !== "string" && typeof key !== "number") || !String(key).trim()) continue;
+    if (mutation.operation !== "DELETE" && !item) continue;
+    if (item && item[keyField] !== undefined && String(item[keyField]) !== String(key)) continue;
+    const findIndex = current.findIndex((row) => row && typeof row === "object" && !Array.isArray(row) && String((row as Record<string, unknown>)[keyField]) === String(key));
     const rows = [...current];
     if (mutation.operation === "DELETE") {
       if (findIndex >= 0) rows.splice(findIndex, 1);
-    } else if (item) {
-      if (findIndex >= 0) rows[findIndex] = mutation.operation === "UPDATE" ? { ...(rows[findIndex] as Record<string, unknown>), ...item } : item;
-      else rows.push(item);
+    } else if (mutation.operation === "ADD") {
+      if (findIndex >= 0) rows[findIndex] = item!;
+      else rows.push(item!);
+    } else if (mutation.operation === "UPDATE" && findIndex >= 0) {
+      // UPDATE must not create a row when its keyed target is missing. A
+      // delayed delta could otherwise resurrect an item that was already deleted.
+      rows[findIndex] = { ...(rows[findIndex] as Record<string, unknown>), ...item };
     }
-    next[mutation.collection] = rows;
+    next[collection] = rows;
   }
   return next;
 }
