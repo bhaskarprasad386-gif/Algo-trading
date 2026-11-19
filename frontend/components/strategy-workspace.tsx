@@ -974,7 +974,20 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   useEffect(() => {
     if (slug !== "box-spread") { setIndexSpotRows([]); return; }
     const spots = pagePushData?.index_spots;
-    if (Array.isArray(spots)) setIndexSpotRows(spots as unknown as Array<{ symbol: string; spot_price: number | null; spot_timestamp_ns: number | null; spot_age_seconds: number | null; status: string }>);
+    if (!Array.isArray(spots)) return;
+    const incoming = spots as unknown as Array<{ symbol: string; spot_price: number | null; spot_timestamp_ns: number | null; spot_age_seconds: number | null; status: string }>;
+    if (String(pagePushData.__event ?? "") === "SNAPSHOT") {
+      setIndexSpotRows(incoming);
+      return;
+    }
+    // Spot ticks arrive as per-symbol partial patches. Merge by symbol so a
+    // single index tick never clears the other selected index prices.
+    setIndexSpotRows((current) => {
+      const merged = new Map(current.map((item) => [item.symbol, item]));
+      for (const item of incoming) merged.set(item.symbol, item);
+      const order = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
+      return Array.from(merged.values()).sort((a, b) => order.indexOf(a.symbol) - order.indexOf(b.symbol));
+    });
   }, [slug, pagePushData]);
 
   useEffect(() => {
