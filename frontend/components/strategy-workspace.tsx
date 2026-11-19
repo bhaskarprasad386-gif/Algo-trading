@@ -1063,6 +1063,24 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   useEffect(() => {
     if (slug !== "box-spread" || !pagePushData) return;
+    const removedKeys = Array.isArray(pagePushData.remove_keys)
+      ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(pagePushData.keys)
+        ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (String(pagePushData.__event ?? "") === "REMOVE" && removedKeys.includes("opportunities")) {
+      // Immediately clear the table and invalidate any REST request that could
+      // otherwise restore the removed list from an older response.
+      loadRequestRef.current += 1;
+      rowsRef.current = [];
+      setRows([]);
+      setRowsStale(false);
+      setLoading(false);
+      setError(null);
+    }
+    if (String(pagePushData.__event ?? "") === "REMOVE" && removedKeys.includes("index_spots")) {
+      setIndexSpotRows([]);
+    }
     const opportunities = pagePushData.opportunities;
     if (Array.isArray(opportunities)) {
       // A page-push frame is authoritative. Invalidate any REST recovery request
