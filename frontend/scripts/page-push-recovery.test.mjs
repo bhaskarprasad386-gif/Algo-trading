@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts } from "../lib/page-push-recovery.mjs";
+import { isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts, shouldAcceptPageSnapshot } from "../lib/page-push-recovery.mjs";
 
 test("REST recovery response applies only while its request remains current", () => {
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:8,latestSequence:8,responseValid:true}),true);
@@ -63,4 +63,13 @@ test("invalid collection, identity, operation and malformed items are ignored", 
     {collection:"rows",operation:"ADD",key_field:"id",key:"b",item:{id:null}},
   ];
   assert.deepEqual(applyCollectionMutations(state,bad),state);
+});
+
+
+test("page snapshots cannot rewind an established WebSocket sequence", () => {
+  assert.equal(shouldAcceptPageSnapshot({hasSnapshot:false,currentSequence:90,incomingSequence:2}),true);
+  assert.equal(shouldAcceptPageSnapshot({hasSnapshot:true,currentSequence:90,incomingSequence:90}),true);
+  assert.equal(shouldAcceptPageSnapshot({hasSnapshot:true,currentSequence:90,incomingSequence:91}),true);
+  assert.equal(shouldAcceptPageSnapshot({hasSnapshot:true,currentSequence:90,incomingSequence:89}),false);
+  assert.equal(shouldAcceptPageSnapshot({hasSnapshot:true,currentSequence:90,incomingSequence:Number.NaN}),false);
 });
