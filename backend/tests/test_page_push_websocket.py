@@ -93,11 +93,16 @@ def test_snapshot_provider_is_read_only_and_page_scoped():
         raise AssertionError("unknown page must be rejected")
 
 
-def test_origin_policy_rejects_untrusted_hosts():
+def test_origin_policy_rejects_untrusted_hosts(monkeypatch):
+    monkeypatch.setenv("SCANNER_PAGE_WS_ALLOWED_ORIGINS", "https://algo-trading.pages.dev,https://terminal.example.com")
     assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.vercel.app"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.bhaskarprasad386.workers.dev"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "http://localhost:3000"}))
+    assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.pages.dev"}))
+    assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://terminal.example.com"}))
     assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://evil.example"}))
+    assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://sub.algo-trading.pages.dev"}))
+    assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://terminal.example.com/path"}))
     assert push._origin_allowed(SimpleNamespace(headers={}))
 
 
