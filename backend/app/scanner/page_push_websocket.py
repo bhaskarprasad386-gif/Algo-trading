@@ -397,8 +397,9 @@ async def page_updates(websocket: WebSocket) -> None:
                         sequence = int(frame.get("sequence") or 0)
                         last = client_sequences.get(page, 0)
                         if frame.get("event") == "SNAPSHOT_REQUIRED" or _sequence_gap(last, sequence):
-                            sequence = await asyncio.to_thread(_latest_page_sequence, page)
-                            await websocket.send_json(_consistent_snapshot_frame(page))
+                            snapshot_frame = await asyncio.to_thread(_consistent_snapshot_frame, page)
+                            sequence = int(snapshot_frame.get("sequence") or 0)
+                            await websocket.send_json(snapshot_frame)
                             client_sequences[page] = sequence
                         elif sequence > last:
                             await websocket.send_json(frame)
