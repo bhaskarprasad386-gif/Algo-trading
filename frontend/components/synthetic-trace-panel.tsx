@@ -171,8 +171,15 @@ export function SyntheticTracePanel() {
       !!item && typeof item === "object" && typeof (item as Record<string, unknown>).trace_id === "string"
       && !deleted.has((item as Record<string, unknown>).trace_id as string)
     );
-    setTraces(restored);
-    writeStored(restored);
+    // Preserve browser-only trace captures when their server save failed.
+    // The pushed list is authoritative for server rows, not local-only rows.
+    const serverIds = new Set(restored.map((row) => row.trace_id));
+    const localOnly = readStored().filter((row) =>
+      !serverIds.has(row.trace_id) && !deleted.has(row.trace_id)
+    );
+    const merged = [...restored, ...localOnly];
+    setTraces(merged);
+    writeStored(merged);
   }, [pagePushData]);
 
   useEffect(() => {
