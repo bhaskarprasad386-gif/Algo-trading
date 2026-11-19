@@ -324,7 +324,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
   );
 }
 
-export function usePagePush(expectedPage: string) {
+export function usePagePush(expectedPage: string): { status: PagePushStatus; data: Record<string, unknown> | null; lastMessageAt: number | null; resync: () => void } {
   const value = useContext(PagePushContext);
   if (value.page !== expectedPage) {
     return { status: "DISCONNECTED" as const, data: null, lastMessageAt: null, resync: () => undefined };
