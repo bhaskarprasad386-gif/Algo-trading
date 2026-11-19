@@ -5,6 +5,12 @@ export type RecoveryResponseGuard = {
   responseValid: boolean;
 };
 export function isCurrentRecoveryResponse(input: RecoveryResponseGuard): boolean;
+export type PagePushSnapshotGuard = {
+  hasSnapshot: boolean;
+  currentSequence: number;
+  incomingSequence: number;
+};
+export function shouldAcceptPageSnapshot(input: PagePushSnapshotGuard): boolean;
 export type AlertLike = { id: number; state?: string };
 export function mergeUniqueAlerts<T extends AlertLike>(
   current: readonly T[],
