@@ -1051,6 +1051,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         setLoading(false);
         setError(null);
         setLiveApiStatus("WAITING");
+        if (slug === "synthetic-arbitrage") {
+          try { window.localStorage.removeItem("algo:synthetic-arbitrage:last-live-opportunities:v1"); } catch { /* Cache is optional. */ }
+        }
       } else if (Array.isArray(live?.data)) {
         const nextRows = live.data.filter((item: unknown): item is Row => !!item && typeof item === "object");
         rowsRef.current = nextRows; setRows(nextRows); setRowsStale(false);
@@ -1060,6 +1063,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         pairRequestSequence.current += 1;
         setPairRows([]);
         setPairMonitorStatus("WAITING");
+        if (slug === "synthetic-arbitrage") {
+          try { window.localStorage.removeItem("algo:synthetic-arbitrage:last-pairs:v1"); } catch { /* Cache is optional. */ }
+        }
       } else if (Array.isArray(pairs?.data)) {
         // Pushed pair data invalidates any REST response started before this frame.
         pairRequestSequence.current += 1;
@@ -1107,7 +1113,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       : Array.isArray(pagePushData.keys)
         ? pagePushData.keys.filter((key): key is string => typeof key === "string")
         : [];
-    if (String(pagePushData.__event ?? "") === "REMOVE" && removedKeys.includes("opportunities")) {
+    if (String(pagePushData.__event ?? "").toUpperCase() === "REMOVE" && removedKeys.includes("opportunities")) {
       // Immediately clear the table and invalidate any REST request that could
       // otherwise restore the removed list from an older response.
       loadRequestRef.current += 1;
