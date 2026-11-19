@@ -100,6 +100,7 @@ export function SyntheticTracePanel() {
   const [checkingTraceIds, setCheckingTraceIds] = useState<string[]>([]);
   const { data: pagePushData, status: pagePushStatus } = usePagePush("synthetic-arbitrage");
   const tracePushSequenceRef = useRef(0);
+  const liveFetchSequenceRef = useRef(0);
 
   useEffect(() => {
     const bootstrapPushSequence = tracePushSequenceRef.current;
@@ -136,11 +137,13 @@ export function SyntheticTracePanel() {
   }, []);
 
   const loadLive = useCallback(async () => {
+    const requestSequence = ++liveFetchSequenceRef.current;
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const response = await fetch(base + LIVE_ENDPOINT, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail || "Live scanner unavailable");
+      if (requestSequence !== liveFetchSequenceRef.current) return;
       const rows: Record<string, unknown>[] = Array.isArray(body?.data)
         ? body.data.filter((item: unknown): item is Record<string, unknown> => !!item && typeof item === "object")
         : [];
@@ -153,7 +156,7 @@ export function SyntheticTracePanel() {
       // The main scanner already owns live-feed error rendering. Trace capture
       // simply keeps the last successful opportunity list during a transient error.
     } finally {
-      setLiveLoading(false);
+      if (requestSequence === liveFetchSequenceRef.current) setLiveLoading(false);
     }
   }, []);
 
@@ -179,13 +182,19 @@ export function SyntheticTracePanel() {
   useEffect(() => {
     const livePayload = pagePushData?.live as { data?: unknown[] } | undefined;
     if (!Array.isArray(livePayload?.data)) return;
+    // Push wins over any older HTTP opportunity snapshot.
+    liveFetchSequenceRef.current += 1;
     const rows = livePayload.data.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
     setLiveRows(rows.filter((row) => keyPart(row.instrument_class) === "INDEX" && INDEX_ORDER.includes(keyPart(row.underlying))));
     setLiveLoading(false);
   }, [pagePushData]);
 
   useEffect(() => {
-    if (pagePushStatus === "LIVE") return;
+    if (pagePushStatus === "LIVE") {
+      liveFetchSequenceRef.current += 1;
+      setLiveLoading(false);
+      return;
+    }
     void loadLive();
     const timer = window.setInterval(() => void loadLive(), 15000);
     return () => window.clearInterval(timer);
