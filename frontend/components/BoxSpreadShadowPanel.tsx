@@ -45,7 +45,12 @@ export default function BoxSpreadShadowPanel() {
     finally { if (requestId === requestSequence.current) setLoading(false); }
   }, []);
   useEffect(() => {
-    if (pagePushStatus === "LIVE") return;
+    if (pagePushStatus === "LIVE") {
+      // A live channel supersedes any REST diagnostics request already in flight.
+      requestSequence.current += 1;
+      setLoading(false);
+      return;
+    }
     void refresh();
     const id = window.setInterval(() => void refresh(), 15000);
     return () => { window.clearInterval(id); requestSequence.current += 1; };
