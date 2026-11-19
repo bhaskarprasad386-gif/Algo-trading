@@ -7,7 +7,7 @@ import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizont
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
-import { shouldReloadPairHistory } from "@/lib/page-push-recovery";
+import { shouldReloadPairHistory } from "@/lib/page-push-recovery.mjs";
 
 const markets = ["ALL F&O STOCKS", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Gap", "Gap %", "Future Vol / OI", "Stability", "Status"];
