@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
-import { isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts } from "@/lib/page-push-recovery.mjs";
+import { ivSkewSnapshotMissing, isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts } from "@/lib/page-push-recovery.mjs";
 
 type Row = Record<string, unknown>;
 type EarlyAlert = { id: number; observed_at_ns_text?: string; strategy: string; expiry: string; strike: number; direction: string; option_type: string; state: string; observed_at_ns: number; spot: number; premium?: number | null; iv_change_points?: number | null; volume_ratio?: number | null; reason?: string; delivery_status?: string; metadata?: Row };
@@ -609,6 +609,22 @@ export default function IVSkewFlipPage() {
           : []
       : [];
     const removed=(key:string)=>isRemove&&removedKeys.includes(key);
+    const isSnapshot=String(pagePushData.__event??"").toUpperCase()==="SNAPSHOT";
+    if(isSnapshot&&ivSkewSnapshotMissing(pagePushData,"runtime")){
+      olderAlertsRequestSequenceRef.current+=1;
+      runtimeStatusRefreshSequenceRef.current+=1;
+      alertFetchSequenceRef.current+=1;
+      chartHistoryRequestSequenceRef.current+=1;
+      setLoadingMoreAlerts(false);
+      setRuntime(null);
+      setChartHistory(null);
+      setEarlyAlertLive(null);
+    }
+    if(isSnapshot&&ivSkewSnapshotMissing(pagePushData,"basket_registry")){
+      basketRegistryRequestSequenceRef.current+=1;
+      lastBasketRegistryPushRef.current=null;
+      setBasketRegistry(null);
+    }
     if(isRemove){
       if(removedKeys.includes("runtime")){
         alertFetchSequenceRef.current+=1;
