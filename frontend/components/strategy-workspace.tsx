@@ -972,7 +972,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [slug, pagePushData, savedIndexSymbols, savedWeeklyOnlySymbols, indexSelectionDraft, weeklyOnlyDraft]);
 
   useEffect(() => {
-    if (slug !== "box-spread") { setIndexSpotRows([]); return; }
+    if (slug !== "box-spread" || !pagePushData) { if (slug !== "box-spread") setIndexSpotRows([]); return; }
     const spots = pagePushData?.index_spots;
     if (!Array.isArray(spots)) return;
     const incoming = spots as unknown as Array<{ symbol: string; spot_price: number | null; spot_timestamp_ns: number | null; spot_age_seconds: number | null; status: string }>;
