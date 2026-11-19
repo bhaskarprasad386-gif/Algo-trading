@@ -343,22 +343,16 @@ def _trace_snapshot_record(trace_id: str, trace_key: str, traced_at: str, snapsh
         db.close()
 
 
-def _publish_synthetic_trace_update(data: dict, *, collection_change: dict | None = None):
-    # Publish the authoritative durable list and keyed mutation atomically as one
-    # sequence/journal event. This avoids duplicate pushes and sequence churn.
-    # Trace mutations remain user-initiated REST commands, not socket commands.
-    payload = dict(data)
-    if collection_change is not None:
-        payload["collection_changes"] = [{
-            "collection": "trace_opportunities",
-            "operation": collection_change["operation"],
-            "key_field": "trace_id",
-            "key": collection_change["key"],
-            **({"item": collection_change["item"]} if collection_change.get("item") is not None else {}),
-        }]
+def _publish_synthetic_trace_update(*, operation: str, key: str, item: dict | None = None):
+    # Emit only the keyed collection mutation. A full-list snapshot captured
+    # concurrently with another add/delete could arrive stale and rewind the UI.
+    # Reconnects still restore the durable list through the snapshot provider.
     try:
-        from app.scanner.page_push_websocket import publish_page_update
-        publish_page_update("synthetic-arbitrage", "PATCH", payload)
+        from app.scanner.page_push_websocket import publish_collection_change
+        publish_collection_change(
+            "synthetic-arbitrage", "trace_opportunities", operation, "trace_id",
+            key=key, item=item,
+        )
     except Exception:
         pass
 
@@ -375,10 +369,7 @@ def save_trace_opportunity(request: TraceOpportunityRequest):
             "traced_at": request.traced_at,
             "persisted": True,
         }
-        _publish_synthetic_trace_update(
-            {"trace_opportunities": result["trace_opportunities"]},
-            collection_change={"operation": "ADD", "key": request.trace_id, "item": mutation_item},
-        )
+        _publish_synthetic_trace_update(operation="ADD", key=request.trace_id, item=mutation_item)
     except Exception:
         pass
     return result
@@ -422,10 +413,7 @@ def delete_trace_opportunity(trace_id: str):
     result = {"trace_id": trace_id, "deleted": True}
     try:
         result["trace_opportunities"] = list_trace_opportunities(500).get("data", [])
-        _publish_synthetic_trace_update(
-            {"trace_opportunities": result["trace_opportunities"]},
-            collection_change={"operation": "DELETE", "key": trace_id, "item": None},
-        )
+        _publish_synthetic_trace_update(operation="DELETE", key=trace_id, item=None)
     except Exception:
         pass
     return result
