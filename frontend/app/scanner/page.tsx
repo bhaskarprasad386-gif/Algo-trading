@@ -324,7 +324,7 @@ function ScannerContent() {
       ? marketSession === "OPEN" ? "WS RECOVERING • REST FALLBACK" : "WS RECOVERING"
       : pagePushStatus === "CONNECTING" ? "WS CONNECTING" : "WS DISCONNECTED";
   const pagePushLastLabel = pagePushLastMessageAt
-    ? ` • ${new Date(pagePushLastMessageAt).toLocaleTimeString("en-IN", { hour12: false })`
+    ? " • " + new Date(pagePushLastMessageAt).toLocaleTimeString("en-IN", { hour12: false })
     : "";
   const historyAgeText = (row: Row) => {
     const observed = new Date(String(row.observed_at ?? ""));
