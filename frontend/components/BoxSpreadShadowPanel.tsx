@@ -56,7 +56,21 @@ export default function BoxSpreadShadowPanel() {
     return () => { window.clearInterval(id); requestSequence.current += 1; };
   }, [refresh, pagePushStatus]);
   useEffect(() => {
-    const pushed = pagePushData?.shadow as ShadowResult | undefined;
+    if (!pagePushData) return;
+    const event = String(pagePushData.__event ?? "").toUpperCase();
+    const removedKeys = Array.isArray(pagePushData.remove_keys)
+      ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(pagePushData.keys)
+        ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (event === "REMOVE" && removedKeys.includes("shadow")) {
+      requestSequence.current += 1;
+      setData(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    const pushed = pagePushData.shadow as ShadowResult | undefined;
     if (!pushed || pushed.strategy !== "box-spread-shadow" || pushed.execution_mode !== "SHADOW_ONLY" || pushed.order_routing_enabled !== false) return;
     requestSequence.current += 1;
     setData(pushed);
