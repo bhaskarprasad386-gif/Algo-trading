@@ -135,7 +135,12 @@ export default function LiveOpportunityGrid() {
       const existing = previousRows.get(key);
       const existingRawTimestamp = existing?.row.last_update_timestamp_ns;
       const existingTimestamp = existingRawTimestamp == null ? "" : String(existingRawTimestamp);
-      if (/^\d+$/.test(existingTimestamp) && incomingNs <= BigInt(existingTimestamp)) continue;
+      if (/^\d+$/.test(existingTimestamp) && incomingNs <= BigInt(existingTimestamp)) {
+        // During authoritative replacement, preserve the existing row/age if
+        // its quote timestamp is unchanged; deltas remain strictly monotonic.
+        if (authoritativeList && existing) rowsRef.current.set(key, existing);
+        continue;
+      }
       rowsRef.current.set(key, { key, row, lastSeen: now, status: "LIVE" });
     }
     setRows(Array.from(rowsRef.current.values()).sort((a, b) => b.lastSeen - a.lastSeen));
