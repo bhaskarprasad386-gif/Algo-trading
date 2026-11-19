@@ -246,3 +246,19 @@ test("broker snapshot history read is discarded when a newer history push arrive
     latestSequence, responseValid:true
   }),true);
 });
+
+test("older-alert pagination response is rejected after a pushed runtime", () => {
+  let latestSequence = 9;
+  const olderPageRequest = ++latestSequence;
+  // Runtime push changes the newest alert set and invalidates pagination.
+  latestSequence += 1;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:olderPageRequest,
+    latestSequence, responseValid:true
+  }),false);
+  const newOlderPageRequest = ++latestSequence;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:newOlderPageRequest,
+    latestSequence, responseValid:true
+  }),true);
+});
