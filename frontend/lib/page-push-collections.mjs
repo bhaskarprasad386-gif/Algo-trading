@@ -22,8 +22,11 @@ export function applyCollectionMutations(state, mutations) {
     const key = mutation.key ?? item?.[keyField];
     if ((typeof key !== "string" && typeof key !== "number") || !String(key).trim()) continue;
     if (mutation.operation !== "DELETE" && !item) continue;
-    if (mutation.operation === "ADD" && item?.[keyField] === undefined) continue;
-    if (item && item[keyField] !== undefined && String(item[keyField]) !== String(key)) continue;
+    if (mutation.operation !== "DELETE") {
+      const itemKey = item?.[keyField];
+      if ((typeof itemKey !== "string" && typeof itemKey !== "number") || !String(itemKey).trim()) continue;
+      if (String(itemKey) !== String(key)) continue;
+    }
     const matchesKey = (row) => {
       if (!row || typeof row !== "object" || Array.isArray(row)) return false;
       const rowKey = row[keyField];
