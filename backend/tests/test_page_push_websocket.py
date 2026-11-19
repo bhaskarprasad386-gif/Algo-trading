@@ -107,6 +107,22 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
     journal = []
     page_sequences = {"box-spread": 0}
     provider_calls = []
+    injected_frames = []
+    gap_checks = []
+    snapshot_frames = []
+    original_sequence_gap = push._sequence_gap
+    original_snapshot_frame = push._consistent_snapshot_frame
+
+    def trace_sequence_gap(last, incoming):
+        result = original_sequence_gap(last, incoming)
+        gap_checks.append((last, incoming, result))
+        return result
+
+    def trace_snapshot_frame(snapshot_page, *args, **kwargs):
+        frame = original_snapshot_frame(snapshot_page, *args, **kwargs)
+        snapshot_frames.append(frame)
+        return frame
+
 
     def fake_latest_event_id():
         return journal[-1]["id"] if journal else 0
@@ -126,10 +142,13 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
         # This round-trip test injects exactly one controlled frame into the
         # subscriber queue. Journal dispatcher delivery is covered separately;
         # duplicating a journal row here would race the direct queue injection.
+        injected_frames.append(frame.copy())
         for queue, channels in tuple(push._subscribers):
             if page in channels:
                 queue.put_nowait(frame)
 
+    monkeypatch.setattr(push, "_sequence_gap", trace_sequence_gap)
+    monkeypatch.setattr(push, "_consistent_snapshot_frame", trace_snapshot_frame)
     monkeypatch.setattr(push, "_latest_event_id", fake_latest_event_id)
     monkeypatch.setattr(push, "_events_after", fake_events_after)
     monkeypatch.setattr(push, "_latest_page_sequence", fake_latest_page_sequence)
@@ -170,7 +189,7 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
 
             push.publish_page_update(page, "PATCH", {"opportunity_updates": [{"id": "fresh"}]})
             patch = websocket.receive_json()
-            assert patch["event"] == "PATCH"
+            assert patch["event"] == "PATCH", f"unexpected frame={patch!r}; injected={injected_frames!r}; gap_checks={gap_checks!r}; snapshots={snapshot_frames!r}; channels={list(push._subscribers)!r}"
             assert patch["sequence"] == initial["sequence"] + 1
 
             websocket.send_json({"action": "resync", "page": page})
