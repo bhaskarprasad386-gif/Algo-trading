@@ -17,6 +17,7 @@ const PagePushContext = createContext<PagePushValue>({
 
 
 import { applyCollectionMutations } from "@/lib/page-push-collections.mjs";
+import { applyPagePushRemovePayload } from "@/lib/page-push-recovery.mjs";
 import { shouldAcceptPageSnapshot, isCurrentPagePushSocket, sendPagePushFrame } from "@/lib/page-push-recovery.mjs";
 
 export function PagePushProvider({ page, children }: { page: string | null; children: ReactNode }) {
@@ -186,20 +187,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           });
         } else if (eventType === "REMOVE" && message.data && typeof message.data === "object") {
           const payload = message.data as Record<string, unknown>;
-          const removeKeys = Array.isArray(payload.remove_keys)
-            ? payload.remove_keys.filter((key): key is string => typeof key === "string")
-            : Array.isArray(payload.keys)
-              ? payload.keys.filter((key): key is string => typeof key === "string")
-              : [];
-          setData((previous) => {
-            const next: Record<string, unknown> = { ...(previous || {}), __event: "REMOVE" };
-            for (const key of removeKeys) delete next[key];
-            for (const [key, value] of Object.entries(payload)) {
-              if (key !== "remove_keys" && key !== "keys") next[key] = value;
-            }
-            delete next.collection_changes;
-            return applyCollectionMutations(next, payload.collection_changes);
-          });
+          setData((previous) => applyPagePushRemovePayload(previous, payload));
         }
       };
       socket.onerror = () => socket.close();
