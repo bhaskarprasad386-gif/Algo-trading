@@ -715,13 +715,17 @@ export default function IVSkewFlipPage() {
       const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/snapshot`,{method:"POST",cache:"no-store"});
       const body=await response.json();
       if(!response.ok)throw new Error(apiError(body,"Angel One broker snapshot failed"));
+      if(historyRequestSequence!==durableHistoryRequestSequenceRef.current)return;
       setSnapshotNotice(`Angel One saved ${fmt(body.saved_contracts,0)}/${fmt(body.expected_contracts,0)} contracts • IV received ${fmt(body.iv_received_contracts,0)} • ${String(body.expiry??"")}`);
       const expiry=String(body.expiry??requestedExpiry);
       const history=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY${expiry?`&expiry=${encodeURIComponent(expiry)}`:""}`,{cache:"no-store"});
       const saved=await history.json();
       if(history.ok&&saved.status==="ok"&&isCurrentRecoveryResponse({active:true,requestSequence:historyRequestSequence,latestSequence:durableHistoryRequestSequenceRef.current,responseValid:true}))setDurableHistory(saved as Row);
-    }catch(e){setError(e instanceof Error?e.message:"Angel One broker snapshot failed");}
-    finally{setSnapshotBusy(false);}
+    }catch(e){
+      if(historyRequestSequence===durableHistoryRequestSequenceRef.current)setError(e instanceof Error?e.message:"Angel One broker snapshot failed");
+    }finally{
+      if(historyRequestSequence===durableHistoryRequestSequenceRef.current)setSnapshotBusy(false);
+    }
   }
   const chains=runtime?.option_chains??{};
   const liveNifty=chains[selectedNifty]??{};
