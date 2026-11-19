@@ -149,13 +149,6 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
 
     monkeypatch.setattr(push, "_subscribe_local", controlled_subscribe)
 
-    async def controlled_restart_waiter(queue, event_task, page_to_reset):
-        event_task.cancel()
-        await asyncio.gather(event_task, return_exceptions=True)
-        return asyncio.create_task(queue.get())
-
-    monkeypatch.setattr(push, "_restart_event_waiter", controlled_restart_waiter)
-
     app = FastAPI()
     app.include_router(push.router)
     page = "box-spread"
