@@ -1,6 +1,7 @@
-/** Track in-flight trace saves so a delete cannot overtake an earlier POST. */
+/** Serialize trace POSTs by ID and keep the registry pointing at the newest queued save. */
 export function trackTraceSave(registry, traceId, request) {
-  const promise = Promise.resolve().then(request);
+  const previous = registry.get(traceId);
+  const promise = Promise.resolve(previous).catch(() => undefined).then(request);
   registry.set(traceId, promise);
   const clear = () => {
     if (registry.get(traceId) === promise) registry.delete(traceId);
@@ -9,7 +10,7 @@ export function trackTraceSave(registry, traceId, request) {
   return promise;
 }
 
-/** Wait for the save to settle; deletion still proceeds if saving failed. */
+/** Wait for all earlier saves for this ID; deletion proceeds even if save failed. */
 export async function waitForTraceSave(registry, traceId) {
   const pending = registry.get(traceId);
   if (pending) await pending.catch(() => undefined);
