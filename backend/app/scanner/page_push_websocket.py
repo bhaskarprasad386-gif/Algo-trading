@@ -416,7 +416,7 @@ async def page_updates(websocket: WebSocket) -> None:
                     if page in channels:
                         sequence = int(frame.get("sequence") or 0)
                         last = client_sequences.get(page, 0)
-                        if frame.get("event") == "SNAPSHOT_REQUIRED" or (sequence > last and _sequence_gap(last, sequence)):
+                        if _requires_resync(last, sequence, frame.get("event") == "SNAPSHOT_REQUIRED"):
                             snapshot_frame = await asyncio.to_thread(_consistent_snapshot_frame, page)
                             sequence = int(snapshot_frame.get("sequence") or 0)
                             await websocket.send_json(snapshot_frame)
