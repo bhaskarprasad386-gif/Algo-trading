@@ -43,6 +43,13 @@ export function shouldReloadPairHistory(currentRevision, nextRevision) {
   return currentRevision === null || currentRevision !== next;
 }
 
+/** True when a REMOVE frame explicitly removes the named collection. */
+export function isPagePushCollectionRemoved(event, removedKeys, collection) {
+  return String(event ?? "").toUpperCase() === "REMOVE" &&
+    Array.isArray(removedKeys) && removedKeys.includes(collection);
+}
+
+
 /** Safely send a page-push control frame; callers must close/recover on false. */
 export function sendPagePushFrame(socket, frame) {
   try {
