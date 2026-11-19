@@ -26,3 +26,6 @@ export function freshEarlyEntryAlerts<T extends AlertLike>(
 export function isCurrentPagePushSocket(currentSocket: WebSocket | null, eventSocket: WebSocket): boolean;
 
 export function shouldReloadPairHistory(currentRevision: string | null, nextRevision: string | number | null | undefined): boolean;
+
+/** Send a WebSocket control frame without throwing on transport races. */
+export function sendPagePushFrame(socket: WebSocket, frame: Record<string, unknown>): boolean;
