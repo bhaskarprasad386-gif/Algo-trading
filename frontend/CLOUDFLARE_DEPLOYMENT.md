@@ -1,8 +1,7 @@
 # Cloudflare Workers deployment
 
 This frontend uses OpenNext to build the Next.js application for Cloudflare Workers.
-The standard `build` script remains `next build` so Vercel continues to use its
-normal Next.js build output.
+The standard `build` script remains `next build`; Cloudflare Workers is the intended hosting target.
 
 A `postbuild` lifecycle script now runs `opennextjs-cloudflare build` automatically
 after `npm run build`. This is a compatibility safeguard for existing Cloudflare
@@ -24,14 +23,12 @@ The Cloudflare-specific scripts in `package.json` are intentionally self-contain
 - `cf:preview` runs `opennextjs-cloudflare build` and then `wrangler preview`.
 - `cf:deploy` runs `opennextjs-cloudflare build` and then `opennextjs-cloudflare deploy`.
 
-The postbuild step also runs in Vercel builds, but it does not change Next.js'
-standard `.next` output or the configured Vercel build command. It creates the
-additional OpenNext Worker bundle used by Cloudflare.
+The postbuild step creates the additional OpenNext Worker bundle. If Vercel Git integration is still connected, disable its automatic production and preview deployments; do not use Vercel as a deployment target.
 
 Do not put `npx wrangler preview` in the Production Deploy command.
 Do not promote a Preview build to Production until its Preview URL has been checked
-for frontend loading and backend REST API/WebSocket connectivity. Keep the existing
-Vercel deployment available as a fallback.
+for frontend loading and backend REST API/WebSocket connectivity. Cloudflare is the
+production target; Vercel fallback deployment is intentionally disabled.
 
 ## Existing Workers Builds projects: legacy Preview behavior
 
