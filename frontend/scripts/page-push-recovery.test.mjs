@@ -289,3 +289,35 @@ test("broker snapshot response is fully ignored after runner configuration super
     latestSequence, responseValid:true
   }),true);
 });
+
+
+import { applyPagePushRemovePayload } from "../lib/page-push-recovery.mjs";
+
+test("REMOVE ignores same-frame stale payload and mutations for deleted collections", () => {
+  const previous = { rows: [{ id: "old" }, { id: "keep" }], pairs: [{ id: "oldPair" }], stats: { total: 4 } };
+  const payload = {
+    remove_keys: ["rows", "pairs"],
+    rows: [{ id: "old" }, { id: "resurrect" }],
+    pairs: [{ id: "oldPair" }, { id: "resurrectPair" }],
+    stats: { total: 5 },
+    collection_changes: [
+      { collection: "rows", operation: "ADD", key_field: "id", key: "resurrect", item: { id: "resurrect" } },
+      { collection: "pairs", operation: "ADD", key_field: "id", key: "resurrectPair", item: { id: "resurrectPair" } },
+      { collection: "stats", operation: "UPDATE", key_field: "id", key: "not-a-row", item: { id: "not-a-row" } }
+    ]
+  };
+  const next = applyPagePushRemovePayload(previous, payload);
+  assert.equal("rows" in next, false);
+  assert.equal("pairs" in next, false);
+  assert.deepEqual(next.stats, { total: 5 });
+  assert.deepEqual(previous.rows, [{ id: "old" }, { id: "keep" }]);
+});
+
+test("REMOVE without stale deleted collection payload still preserves unrelated updates", () => {
+  const next = applyPagePushRemovePayload({ opportunities: [{ id: "x" }], status: "LIVE" }, {
+    keys: ["opportunities"],
+    status: "DEGRADED"
+  });
+  assert.equal("opportunities" in next, false);
+  assert.equal(next.status, "DEGRADED");
+});
