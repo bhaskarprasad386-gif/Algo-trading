@@ -17,6 +17,7 @@ const PagePushContext = createContext<PagePushValue>({
 
 
 import { applyCollectionMutations } from "@/lib/page-push-collections.mjs";
+import { shouldAcceptPageSnapshot } from "@/lib/page-push-recovery.mjs";
 
 export function PagePushProvider({ page, children }: { page: string | null; children: ReactNode }) {
   const [status, setStatus] = useState<PagePushStatus>("DISCONNECTED");
@@ -113,7 +114,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         if (eventType === "SNAPSHOT") {
           // Never let a delayed recovery snapshot rewind an already-live
           // channel's sequence cursor or replace newer pushed market state.
-          if (hasSnapshotRef.current && sequence < sequenceRef.current) return;
+          if (!shouldAcceptPageSnapshot({ hasSnapshot: hasSnapshotRef.current, currentSequence: sequenceRef.current, incomingSequence: sequence })) return;
           const snapshotData = message.data && typeof message.data === "object"
             ? message.data as Record<string, unknown>
             : {};
