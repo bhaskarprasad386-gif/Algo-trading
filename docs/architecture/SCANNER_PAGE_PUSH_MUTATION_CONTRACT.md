@@ -6,6 +6,7 @@ The scanner page WebSocket is the authoritative live-update channel for scanner 
 
 - `SNAPSHOT`: authoritative page state. Replace the subscribed page's state and establish its sequence baseline.
 - `PATCH`: merge object fields. For collection fields, send a complete authoritative list when add/update/delete semantics are ambiguous; row deltas must be explicitly named and keyed.
+- For keyed collections, a PATCH may include `collection_changes` entries shaped as `{ collection, operation, key_field, key?, item? }`; `operation` is `ADD`, `UPDATE`, or `DELETE`. ADD/UPDATE carry `item`; DELETE carries a stable `key` (or an item containing the key field). Updates merge the keyed item; adds replace an existing same-key item or append; deletes remove the keyed item. Invalid or unknown collection mutations are ignored.
 - `REMOVE`: remove top-level fields using `remove_keys` (preferred) or `keys`; any other fields in the same payload are merged. Do not use this event to imply deleting a list row unless the consumer has a keyed-row contract. For list deletion, send the updated complete list in a PATCH.
 - Sequence numbers are strictly increasing per page channel. Clients only accept contiguous PATCH/REMOVE frames after SNAPSHOT; otherwise request resynchronization.
 - `SNAPSHOT_REQUIRED` is a transport recovery signal, not a page mutation event.
