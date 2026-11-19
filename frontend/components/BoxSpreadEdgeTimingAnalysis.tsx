@@ -71,7 +71,12 @@ export default function BoxSpreadEdgeTimingAnalysis() {
   }, []);
 
   useEffect(() => {
-    if (pagePushStatus === "LIVE") return;
+    if (pagePushStatus === "LIVE") {
+      // The page push is authoritative; cancel the pending REST response and spinner.
+      requestSequence.current += 1;
+      setLoading(false);
+      return;
+    }
     void refresh();
     const timer = window.setInterval(() => void refresh(), 30_000);
     return () => {
