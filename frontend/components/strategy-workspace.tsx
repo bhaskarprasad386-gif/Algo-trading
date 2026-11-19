@@ -1079,6 +1079,19 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         setPairRows([]);
         setPairMonitorStatus("WAITING");
       }
+      if (event === "SNAPSHOT" && slug === "synthetic-arbitrage" && workspaceSnapshotMissing(pagePushData, "diagnostics")) {
+        scannerDiagnosticsRequestSequence.current += 1;
+        setScannerDiagnostics(null);
+      }
+      if (event === "SNAPSHOT" && slug === "synthetic-arbitrage" && workspaceSnapshotMissing(pagePushData, "universe")) {
+        setUniverseAvailability(null);
+      }
+      if (event === "SNAPSHOT" && workspaceSnapshotMissing(pagePushData, "runtime_health")) {
+        runtimeHealthRequestSequence.current += 1;
+        setFeedTicks(null); setFeedAge(null); setFeedExchangeFreshness(null); setFeedInstruments(null);
+        setFeedStatus("UNKNOWN"); setFeedErrors(null); setRunner(null);
+        if (slug === "calendar-spread") setCalendarRuntime(null);
+      }
       const live = pagePushData.live as Record<string, any> | undefined;
       const pairs = pagePushData.pairs as Record<string, any> | undefined;
       if (removed("live")) {
