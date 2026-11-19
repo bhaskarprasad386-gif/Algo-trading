@@ -142,9 +142,9 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
         # Isolate this handler round-trip from the durable journal tailer.
         # The tailer has separate tests; here only one injected frame is expected.
         queue = asyncio.Queue(maxsize=push.QUEUE_SIZE)
-        # Subscribe directly to the target page for this isolated handler test;
-        # the production subscription handler still updates channels on subscribe.
-        push._subscribers.add((queue, frozenset({page})))
+        # Production registers an empty channel set first; subscribe action
+        # assigns the requested channel. Mirror that lifecycle in this test.
+        push._subscribers.add((queue, frozenset()))
         return queue
 
     monkeypatch.setattr(push, "_subscribe_local", controlled_subscribe)
