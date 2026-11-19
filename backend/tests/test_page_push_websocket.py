@@ -308,3 +308,20 @@ def test_unstable_snapshot_is_not_marked_authoritative(monkeypatch):
     assert frame["event"] == "SNAPSHOT"
     assert frame["sequence"] == 3
     assert frame["data"] == {"snapshot_status": "UNAVAILABLE"}
+
+
+
+def test_iv_skew_flip_snapshot_includes_durable_basket_registry(monkeypatch):
+    from app import main
+
+
+    registry = {"status": "ok", "baskets": {"NIFTY": {"status": "VERIFIED_FRESH"}}}
+    monkeypatch.setattr(main, "_get_iv_scanner_enabled", lambda: True)
+    monkeypatch.setattr(main, "iv_skew_flip_runtime", None)
+    monkeypatch.setattr(main, "iv_skew_flip_basket_registry", lambda: registry)
+
+    snapshot = main._iv_page_push_snapshot()
+    assert snapshot["saved_enabled"] is True
+    assert snapshot["runtime"] is None
+    assert snapshot["basket_registry"] == registry
+    assert snapshot["orders_enabled"] is False
