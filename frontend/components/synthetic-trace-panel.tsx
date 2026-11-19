@@ -188,10 +188,9 @@ export function SyntheticTracePanel() {
         : [];
     if (event === "REMOVE" && removedKeys.includes("trace_opportunities")) {
       tracePushSequenceRef.current += 1;
-      const deletedIds = readDeleted();
-      const cleared = readStored().filter((row) => deletedIds.includes(row.trace_id));
-      setTraces(cleared);
-      writeStored(cleared);
+      // REMOVE means the collection is absent; tombstones only protect individually deleted rows.
+      setTraces([]);
+      writeStored([]);
       return;
     }
     const pushedTraces = pagePushData.trace_opportunities;
