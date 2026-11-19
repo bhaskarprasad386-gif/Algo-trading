@@ -163,6 +163,9 @@ export function SyntheticTracePanel() {
   useEffect(() => {
     const pushedTraces = pagePushData?.trace_opportunities;
     if (!Array.isArray(pushedTraces)) return;
+    // Invalidate the initial REST restore if an authoritative WebSocket snapshot
+    // arrives first; otherwise a delayed HTTP response can overwrite newer state.
+    tracePushSequenceRef.current += 1;
     const deleted = new Set(readDeleted());
     const restored = pushedTraces.filter((item): item is TraceRow =>
       !!item && typeof item === "object" && typeof (item as Record<string, unknown>).trace_id === "string"
