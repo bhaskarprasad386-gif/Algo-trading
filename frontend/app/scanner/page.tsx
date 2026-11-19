@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Zap } from "lucide-react";
@@ -55,6 +55,7 @@ function ScannerContent() {
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [lastLiveScanAt, setLastLiveScanAt] = useState<string | null>(null);
   const { data: pagePushData, status: pagePushStatus } = usePagePush("cash-future");
+  const pairHistoryRevisionRef = useRef<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -149,6 +150,25 @@ function ScannerContent() {
     if (pagePushData.stats && typeof pagePushData.stats === "object") setPairBackendStats(pagePushData.stats as Row);
     if (typeof pagePushData.scan_at === "string") setLastLiveScanAt(pagePushData.scan_at);
   }, [pagePushData]);
+
+
+  useEffect(() => {
+    const stats = pagePushData?.stats;
+    if (!stats || typeof stats !== "object") return;
+    const revision = (stats as Record<string, unknown>).pair_events_persisted;
+    if (revision === undefined || revision === null) return;
+    const nextRevision = String(revision);
+    if (pairHistoryRevisionRef.current === null) {
+      pairHistoryRevisionRef.current = nextRevision;
+      return;
+    }
+    if (pairHistoryRevisionRef.current === nextRevision) return;
+    pairHistoryRevisionRef.current = nextRevision;
+    // The durable history API owns pagination and filtering; the push counter
+    // invalidates its cached slice when new observations are appended.
+    void loadPairHistory();
+  }, [pagePushData]);
+
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toUpperCase();
