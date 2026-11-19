@@ -32,7 +32,7 @@ def _publish_basket_registry_push(registry: dict) -> None:
     """Fan out a committed registry update; page snapshots remain recovery source."""
     if not isinstance(registry, dict):
         raise ValueError("basket registry snapshot must be an object")
-    _publish_basket_registry_push(registry)
+    publish_page_update("iv-skew-flip", "PATCH", {"basket_registry": registry})
 
 
 NIFTY_ROSTER_URL = "https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv"
@@ -240,7 +240,7 @@ def main() -> int:
                 .all()
             )
         registry = summarize_basket_registry(records, as_of=as_of)
-        publish_page_update("iv-skew-flip", "PATCH", {"basket_registry": registry})
+        _publish_basket_registry_push(registry)
     except Exception as exc:
         # Import is already committed. A failed push publish must not report
         # the validated import as failed; snapshot/resync remains authoritative.
