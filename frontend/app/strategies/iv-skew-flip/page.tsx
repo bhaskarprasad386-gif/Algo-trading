@@ -600,12 +600,16 @@ export default function IVSkewFlipPage() {
   },[base]);
   useEffect(()=>{
     if(!pagePushData)return;
-    if(String(pagePushData.__event??"").toUpperCase()==="REMOVE"){
-      const removedKeys=Array.isArray(pagePushData.remove_keys)
+    const isRemove=String(pagePushData.__event??"").toUpperCase()==="REMOVE";
+    const removedKeys=isRemove
+      ? Array.isArray(pagePushData.remove_keys)
         ? pagePushData.remove_keys.filter((key):key is string=>typeof key==="string")
         : Array.isArray(pagePushData.keys)
           ? pagePushData.keys.filter((key):key is string=>typeof key==="string")
-          : [];
+          : []
+      : [];
+    const removed=(key:string)=>isRemove&&removedKeys.includes(key);
+    if(isRemove){
       if(removedKeys.includes("runtime")){
         alertFetchSequenceRef.current+=1;
         chartHistoryRequestSequenceRef.current+=1;
@@ -619,12 +623,12 @@ export default function IVSkewFlipPage() {
         setBasketRegistry(null);
       }
     }
-    if(pagePushData.basket_registry&&typeof pagePushData.basket_registry==="object"&&lastBasketRegistryPushRef.current!==pagePushData.basket_registry){
+    if(!removed("basket_registry")&&pagePushData.basket_registry&&typeof pagePushData.basket_registry==="object"&&lastBasketRegistryPushRef.current!==pagePushData.basket_registry){
       lastBasketRegistryPushRef.current=pagePushData.basket_registry;
       basketRegistryRequestSequenceRef.current+=1;
       setBasketRegistry(pagePushData.basket_registry as BasketRegistry);
     }
-    if(pagePushData.runtime&&typeof pagePushData.runtime==="object"){
+    if(!removed("runtime")&&pagePushData.runtime&&typeof pagePushData.runtime==="object"){
       olderAlertsRequestSequenceRef.current+=1;
       setLoadingMoreAlerts(false);
       runtimeStatusRefreshSequenceRef.current+=1;
