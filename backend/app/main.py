@@ -1754,7 +1754,8 @@ def _update_live_box_spread_results(results: tuple) -> None:
             pass
     _publish_credit_butterfly_condor_pages()
     if selected_results:
-        publish_live_box_spread_opportunities(selected_results)
+        # The page socket must publish the merged fresh rows, not just this callback's bucket.
+        publish_live_box_spread_opportunities(live_box_spread_latest_results)
 
 
 _last_calendar_spread_page_push_at = 0.0
