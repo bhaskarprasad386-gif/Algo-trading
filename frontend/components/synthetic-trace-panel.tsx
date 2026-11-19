@@ -120,7 +120,7 @@ export function SyntheticTracePanel() {
   const { data: pagePushData, status: pagePushStatus } = usePagePush("synthetic-arbitrage");
   const tracePushSequenceRef = useRef(0);
   const liveFetchSequenceRef = useRef(0);
-  const traceSaveRequestsRef = useRef(new Map<string, Promise<Response>>();
+  const traceSaveRequestsRef = useRef(new Map<string, Promise<Response>>());
   const trackServerSave = (traceId: string, request: () => Promise<Response>) => trackTraceSave(traceSaveRequestsRef.current, traceId, request);
 
   useEffect(() => {
