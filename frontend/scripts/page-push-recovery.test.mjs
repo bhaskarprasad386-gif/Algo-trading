@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts, shouldAcceptPageSnapshot, isCurrentPagePushSocket, shouldReloadPairHistory } from "../lib/page-push-recovery.mjs";
+import { isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts, shouldAcceptPageSnapshot, isCurrentPagePushSocket, shouldReloadPairHistory, sendPagePushFrame } from "../lib/page-push-recovery.mjs";
 
 test("REST recovery response applies only while its request remains current", () => {
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:8,latestSequence:8,responseValid:true}),true);
@@ -200,4 +200,17 @@ test("initial and changed history revisions invalidate stale REST history, uncha
   assert.equal(shouldReloadPairHistory("5", 5), false);
   assert.equal(shouldReloadPairHistory("5", 6), true);
   assert.equal(shouldReloadPairHistory("5", null), false);
+});
+
+
+test("subscribe send exception is handled as a failed control-frame delivery", () => {
+  const socket = { send() { throw new Error("socket send race"); } };
+  assert.equal(sendPagePushFrame(socket, { action: "subscribe", page: "box-spread" }), false);
+});
+
+test("control frames are sent successfully when transport send is healthy", () => {
+  let sent = "";
+  const socket = { send(value) { sent = value; } };
+  assert.equal(sendPagePushFrame(socket, { action: "resync", page: "calendar-spread" }), true);
+  assert.equal(sent, JSON.stringify({ action: "resync", page: "calendar-spread" }));
 });
