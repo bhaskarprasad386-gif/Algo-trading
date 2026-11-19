@@ -138,6 +138,15 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
     monkeypatch.setattr(push, "_dispatch_task", None)
     monkeypatch.setattr(push, "_dispatch_loop", None)
 
+    async def controlled_subscribe():
+        # Isolate this handler round-trip from the durable journal tailer.
+        # The tailer has separate tests; here only one injected frame is expected.
+        queue = asyncio.Queue(maxsize=push.QUEUE_SIZE)
+        push._subscribers.add((queue, frozenset()))
+        return queue
+
+    monkeypatch.setattr(push, "_subscribe_local", controlled_subscribe)
+
     app = FastAPI()
     app.include_router(push.router)
     page = "box-spread"
