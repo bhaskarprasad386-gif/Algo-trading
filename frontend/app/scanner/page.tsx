@@ -131,7 +131,7 @@ function ScannerContent() {
       }
     };
     void loadMarketSession();
-    if (pagePushStatus === "LIVE") return () => { cancelled = true; };
+    // Market session is small metadata not present in scanner page-push frames;\n    // keep its lightweight REST refresh running even while scanner rows are pushed.\n
     const sessionTimer = window.setInterval(loadMarketSession, 15000);
     return () => { cancelled = true; window.clearInterval(sessionTimer); };
   }, [pagePushStatus]);
