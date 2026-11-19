@@ -51,8 +51,11 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
         def __init__(self, *args, **kwargs): pass
         def atm(self, symbol, now_ns, **kwargs): return 100.0 if symbol == "READY" else None
 
+    captured_feed_kwargs = []
+    spot_callback = lambda symbol, price, timestamp: None
+
     class Feed:
-        def __init__(self, *args, **kwargs): pass
+        def __init__(self, *args, **kwargs): captured_feed_kwargs.append(kwargs)
         def run_forever(self): pass
         def stop(self): pass
 
@@ -105,9 +108,11 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
         allowed_stock_symbols={"READY", "WAITING"},
         future_master=Master(),
         auth=object(),
+        on_spot_price=spot_callback,
     )
     monkeypatch.setattr(mod, "sleep", lambda _seconds: None)
     runner._run_session()
+    assert captured_feed_kwargs and captured_feed_kwargs[0]["on_price"] is spot_callback
     assert captured == ["READY"]
     assert runner._readiness["state"] == "recorder_started"
 
