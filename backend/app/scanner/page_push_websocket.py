@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -385,8 +386,16 @@ def _origin_allowed(websocket: WebSocket) -> bool:
         parsed = urlparse(origin)
     except ValueError:
         return False
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        return False
+    normalized = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+    configured = {
+        value.strip().rstrip("/").lower()
+        for value in os.getenv("SCANNER_PAGE_WS_ALLOWED_ORIGINS", "").split(",")
+        if value.strip()
+    }
     host = (parsed.hostname or "").lower()
-    return parsed.scheme in {"http", "https"} and (
+    return normalized in configured or (
         host in {"localhost", "127.0.0.1"}
         or host == "bhaskarprasad386.workers.dev"
         or host.endswith(".bhaskarprasad386.workers.dev")
