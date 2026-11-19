@@ -93,6 +93,14 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       setLastMessageAt(null);
       return;
     }
+    // Page channels have independent sequence cursors. Reset transport state when
+    // switching pages so a low-sequence snapshot from the new channel is not
+    // rejected against the previous channel\u2019s sequence baseline.
+    sequenceRef.current = 0;
+    hasSnapshotRef.current = false;
+    resyncPendingRef.current = false;
+    setData(null);
+    setLastMessageAt(null);
     let disposed = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let watchdogTimer: ReturnType<typeof setInterval> | undefined;
