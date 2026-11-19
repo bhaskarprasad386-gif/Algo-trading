@@ -60,6 +60,8 @@ function ScannerContent() {
   // Prevent delayed REST recovery from overwriting authoritative page pushes.
   const liveRequestSequenceRef = useRef(0);
   const pairLiveRequestSequenceRef = useRef(0);
+  const refreshPushBaselineRef = useRef<number | null>(null);
+  const refreshPushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = async () => {
     const requestSequence = ++liveRequestSequenceRef.current;
@@ -157,6 +159,16 @@ function ScannerContent() {
     }, 15000);
     return () => window.clearInterval(liveTimer);
   }, [marketSession, pagePushStatus]);
+
+  useEffect(() => {
+    const baseline = refreshPushBaselineRef.current;
+    if (refreshing && baseline !== null && pagePushLastMessageAt !== null && pagePushLastMessageAt > baseline) {
+      refreshPushBaselineRef.current = null;
+      if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+      refreshPushTimeoutRef.current = null;
+      setRefreshing(false);
+    }
+  }, [pagePushLastMessageAt, refreshing]);
 
   useEffect(() => {
     if (!pagePushData) return;
@@ -351,19 +363,31 @@ function ScannerContent() {
 
   const refresh = async () => {
     setRefreshing(true);
+    if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+    refreshPushTimeoutRef.current = null;
     try {
       if (pagePushStatus === "LIVE") {
-        // When the page is synchronized, refresh through the authoritative
-        // WebSocket snapshot instead of bypassing it with live REST calls.
+        // Complete refresh only after a newer authoritative page frame arrives.
+        refreshPushBaselineRef.current = pagePushLastMessageAt;
         pagePushResync();
         await loadPairHistory();
+        refreshPushTimeoutRef.current = setTimeout(() => {
+          refreshPushTimeoutRef.current = null;
+          refreshPushBaselineRef.current = null;
+          setRefreshing(false);
+        }, 8000);
       } else if (marketSession === "OPEN") {
         // REST is recovery-only while page push is unavailable.
         await Promise.all([load(), loadPairLive(), loadPairHistory()]);
+        setRefreshing(false);
       } else {
         await loadPairHistory();
+        setRefreshing(false);
       }
-    } finally {
+    } catch {
+      refreshPushBaselineRef.current = null;
+      if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+      refreshPushTimeoutRef.current = null;
       setRefreshing(false);
     }
   };
