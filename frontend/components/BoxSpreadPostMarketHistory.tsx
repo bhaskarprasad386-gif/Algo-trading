@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { Archive, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
+import { usePagePush } from "@/components/page-push-provider";
 
 type Snapshot = {
   symbol: string;
@@ -106,6 +107,7 @@ const quoteTime = (value: number | string | null | undefined) => {
 };
 
 export default function BoxSpreadPostMarketHistory() {
+  const { data: pagePushData } = usePagePush("box-spread");
   const [days, setDays] = useState(1);
   const [expiryType, setExpiryType] = useState("ALL");
   const [selectedIndex, setSelectedIndex] = useState("ALL");
@@ -234,6 +236,13 @@ export default function BoxSpreadPostMarketHistory() {
     setHasMore(false);
     void load(false);
   }, [load]); // Filter changes intentionally reset pagination.
+
+
+  useEffect(() => {
+    if (pagePushData?.history_revision == null) return;
+    // Refresh this component’s active filters when a durable save is announced.
+    void load(false);
+  }, [pagePushData?.history_revision, load]);
 
   const refresh = () => {
     setOffset(0);
