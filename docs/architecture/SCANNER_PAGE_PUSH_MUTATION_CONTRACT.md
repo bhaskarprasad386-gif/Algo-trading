@@ -19,6 +19,7 @@ The scanner page WebSocket is the authoritative live-update channel for scanner 
 4. Reconnect: snapshot must contain the committed current state; deleted rows must not reappear.
 5. REST recovery results must be request-sequenced and must not overwrite a newer push.
 6. Box index spot tick PATCHes may carry a partial `index_spots` list; the frontend merges those entries by symbol. SNAPSHOT replaces the complete spot list.
+7. A durable history save may publish `history_revision`; subscribed history panels refresh their current filter/page slice on this signal, without timer polling.
 
 ## Page boundaries and safety
 
