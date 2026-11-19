@@ -251,6 +251,11 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       socket.onerror = () => socket.close();
       socket.onclose = () => {
         if (disposed) return;
+        // Ignore stale socket-close callbacks and release recovery timers for this transport.
+        if (socketRef.current !== socket) return;
+        socketRef.current = null;
+        if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
+        resyncTimerRef.current = undefined;
         hasSnapshotRef.current = false;
         resyncPendingRef.current = false;
         setStatus("RECONNECTING");
