@@ -106,6 +106,17 @@ export default function LiveOpportunityGrid() {
   useEffect(() => {
     if (!pageData) return;
     const eventType = String(pageData.__event || "");
+    // A page-level REMOVE of the opportunities payload must clear the retained
+    // grid rows too; otherwise the local stale-row timer can keep deleted
+    // opportunities visible for up to a minute after the server removes them.
+    const removedKeys = Array.isArray(pageData.remove_keys)
+      ? pageData.remove_keys.filter((key): key is string => typeof key === "string")
+      : [];
+    if (eventType === "REMOVE" && removedKeys.includes("opportunities")) {
+      rowsRef.current.clear();
+      setRows([]);
+      return;
+    }
     // The Box page publisher sends complete opportunity lists on PATCH as well
     // as SNAPSHOT. Treat a list as authoritative regardless of frame type;
     // only explicitly named opportunity_updates are row deltas.
