@@ -232,9 +232,9 @@ export function SyntheticTracePanel() {
       const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
       for (const traceId of pending) {
         try {
-          const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(traceId), {
+          const response = await trackServerSave(traceId, () => fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(traceId), {
             method: "DELETE", cache: "no-store", signal: AbortSignal.timeout(8000),
-          });
+          }));
           if (response.ok) writePendingDeletes(readPendingDeletes().filter((id) => id !== traceId));
         } catch {
           // Retain the pending ID and try again on the next bounded retry.
@@ -389,9 +389,9 @@ export function SyntheticTracePanel() {
       // skips IDs with in-flight saves, preventing a POST from resurrecting a row.
       await waitForTraceSave(traceSaveRequestsRef.current, traceId);
       const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
-      const response = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(traceId), {
+      const response = await trackServerSave(traceId, () => fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(traceId), {
         method: "DELETE", cache: "no-store", signal: AbortSignal.timeout(8000),
-      });
+      }));
       if (!response.ok) throw new Error("server delete failed");
       writePendingDeletes(readPendingDeletes().filter((id) => id !== traceId));
       setMessage("Trace removed from saved list.");
