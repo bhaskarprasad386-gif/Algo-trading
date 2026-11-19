@@ -393,3 +393,13 @@ test("Box Spread shadow reconnect snapshot clears absent diagnostics", () => {
   assert.equal(boxShadowSnapshotMissing({ __event: "SNAPSHOT" }), true);
   assert.equal(boxShadowSnapshotMissing({ __event: "SNAPSHOT", shadow: [] }), true);
 });
+
+
+test("trace bootstrap cleanup cannot apply after a newer push invalidates it", () => {
+  const bootstrapSequence = 10;
+  const latestSequenceAfterPush = 11;
+  assert.equal(isCurrentRecoveryResponse({
+    active:true, requestSequence:bootstrapSequence,
+    latestSequence:latestSequenceAfterPush, responseValid:true
+  }),false);
+});
