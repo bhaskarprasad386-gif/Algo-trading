@@ -286,6 +286,8 @@ export function SyntheticTracePanel() {
       traced_at: now,
       trace_key: key,
     };
+    // Local add supersedes the initial server restore started at mount.
+    tracePushSequenceRef.current += 1;
     const next = [snapshot, ...traces];
     setTraces(next);
     writeStored(next);
@@ -362,7 +364,8 @@ export function SyntheticTracePanel() {
 
   const removeTrace = async (traceId: string) => {
     const next = traces.filter((item) => item.trace_id !== traceId);
-    // Tombstone locally before network I/O so an in-flight WS snapshot cannot resurrect it.
+    // Local delete supersedes initial server restore and tombstones pushed snapshots.
+    tracePushSequenceRef.current += 1;
     writeDeleted([...readDeleted(), traceId]);
     writePendingDeletes([...readPendingDeletes(), traceId]);
     setTraces(next);
