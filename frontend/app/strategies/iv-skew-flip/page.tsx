@@ -547,6 +547,18 @@ export default function IVSkewFlipPage() {
   },[base]);
   useEffect(()=>{
     if(!pagePushData)return;
+    if(String(pagePushData.__event??"").toUpperCase()==="REMOVE"){
+      const removedKeys=Array.isArray(pagePushData.remove_keys)
+        ? pagePushData.remove_keys.filter((key):key is string=>typeof key==="string")
+        : Array.isArray(pagePushData.keys)
+          ? pagePushData.keys.filter((key):key is string=>typeof key==="string")
+          : [];
+      if(removedKeys.includes("runtime")){
+        setRuntime(null);
+        setChartHistory(null);
+        setEarlyAlertLive(null);
+      }
+    }
     if(pagePushData.runtime&&typeof pagePushData.runtime==="object"){
       const pushedRuntime=pagePushData.runtime as Runtime;
       setRuntime(pushedRuntime);
