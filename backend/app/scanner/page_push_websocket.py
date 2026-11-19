@@ -237,12 +237,23 @@ def publish_collection_change(
 ) -> None:
     """Publish a validated keyed ADD/UPDATE/DELETE through the page PATCH channel."""
     op = str(operation or "").strip().upper()
-    if page not in PAGE_CHANNELS or not collection or not key_field or op not in {"ADD", "UPDATE", "DELETE"}:
+    reserved = {"__proto__", "prototype", "constructor"}
+    if (
+        page not in PAGE_CHANNELS
+        or not isinstance(collection, str) or not collection.strip()
+        or not isinstance(key_field, str) or not key_field.strip()
+        or collection in reserved or key_field in reserved
+        or op not in {"ADD", "UPDATE", "DELETE"}
+    ):
         return
     if op in {"ADD", "UPDATE"} and not isinstance(item, dict):
         return
     stable_key = key if key is not None else (item.get(key_field) if isinstance(item, dict) else None)
-    if stable_key is None:
+    if isinstance(stable_key, bool) or not isinstance(stable_key, (str, int)) or not str(stable_key).strip():
+        return
+    if op == "ADD" and (not isinstance(item, dict) or key_field not in item):
+        return
+    if isinstance(item, dict) and key_field in item and str(item[key_field]) != str(stable_key):
         return
     mutation: dict[str, Any] = {
         "collection": collection, "operation": op, "key_field": key_field, "key": stable_key,
