@@ -136,6 +136,16 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           setData({ ...(message.data && typeof message.data === "object" ? message.data as Record<string, unknown> : {}), __event: "SNAPSHOT" });
           return;
         }
+        // A saturated server queue deliberately drops intermediate frames and
+        // emits SNAPSHOT_REQUIRED. Recover the authoritative baseline rather
+        // than silently ignoring the control frame and leaving stale UI data.
+        if (eventType === "SNAPSHOT_REQUIRED") {
+          setStatus("RECONNECTING");
+          hasSnapshotRef.current = false;
+          resyncPendingRef.current = false;
+          resync();
+          return;
+        }
         // Ignore unknown frame types without advancing the sequence cursor.
         if (eventType !== "PATCH" && eventType !== "REMOVE") return;
         // Do not accept deltas until a full snapshot has established the
