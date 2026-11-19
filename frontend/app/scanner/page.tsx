@@ -368,14 +368,14 @@ function ScannerContent() {
     try {
       if (pagePushStatus === "LIVE") {
         // Complete refresh only after a newer authoritative page frame arrives.
-        refreshPushBaselineRef.current = pagePushLastMessageAt;
-        pagePushResync();
-        await loadPairHistory();
+        refreshPushBaselineRef.current = pagePushLastMessageAt ?? 0;
         refreshPushTimeoutRef.current = setTimeout(() => {
           refreshPushTimeoutRef.current = null;
           refreshPushBaselineRef.current = null;
           setRefreshing(false);
         }, 8000);
+        pagePushResync();
+        await loadPairHistory();
       } else if (marketSession === "OPEN") {
         // REST is recovery-only while page push is unavailable.
         await Promise.all([load(), loadPairLive(), loadPairHistory()]);
