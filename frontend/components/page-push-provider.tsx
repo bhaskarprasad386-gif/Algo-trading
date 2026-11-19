@@ -53,17 +53,32 @@ function applyCollectionMutations(
     if (mutation.operation !== "DELETE" && !item) continue;
     if (mutation.operation === "ADD" && item?.[keyField] === undefined) continue;
     if (item && item[keyField] !== undefined && String(item[keyField]) !== String(key)) continue;
-    const findIndex = current.findIndex((row) => row && typeof row === "object" && !Array.isArray(row) && String((row as Record<string, unknown>)[keyField]) === String(key));
+    const matchesKey = (row: unknown) => row && typeof row === "object" && !Array.isArray(row) && String((row as Record<string, unknown>)[keyField]) === String(key);
+    const findIndex = current.findIndex(matchesKey);
     const rows = [...current];
     if (mutation.operation === "DELETE") {
-      if (findIndex >= 0) rows.splice(findIndex, 1);
+      // Remove all matches so a malformed earlier ADD cannot leave duplicate
+      // identities visible after a later DELETE.
+      next[collection] = rows.filter((row) => !matchesKey(row));
+      continue;
     } else if (mutation.operation === "ADD") {
-      if (findIndex >= 0) rows[findIndex] = item!;
-      else rows.push(item!);
+      // ADD is idempotent by key: replace one existing identity and collapse
+      // any duplicate keyed rows rather than accumulating repeated deliveries.
+      if (findIndex >= 0) {
+        rows[findIndex] = item!;
+        next[collection] = rows.filter((row, index) => !matchesKey(row) || index === findIndex;
+      } else {
+        rows.push(item!);
+        next[collection] = rows;
+      }
+      continue;
     } else if (mutation.operation === "UPDATE" && findIndex >= 0) {
       // UPDATE must not create a row when its keyed target is missing. A
       // delayed delta could otherwise resurrect an item that was already deleted.
       rows[findIndex] = { ...(rows[findIndex] as Record<string, unknown>), ...item };
+      // Merge every duplicate match and collapse duplicates to one identity.
+      next[collection] = rows.filter((row, index) => !matchesKey(row) || index === findIndex;
+      continue;
     }
     next[collection] = rows;
   }
