@@ -162,7 +162,7 @@ function ScannerContent() {
 
   useEffect(() => {
     const baseline = refreshPushBaselineRef.current;
-    if (refreshing && baseline !== null && pagePushLastMessageAt !== null && pagePushLastMessageAt > baseline) {
+    if (refreshing && String(pagePushData?.__event ?? "").toUpperCase() === "SNAPSHOT" && baseline !== null && pagePushLastMessageAt !== null && pagePushLastMessageAt > baseline) {
       refreshPushBaselineRef.current = null;
       if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
       refreshPushTimeoutRef.current = null;
