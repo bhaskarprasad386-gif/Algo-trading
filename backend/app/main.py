@@ -2409,9 +2409,14 @@ def _iv_page_push_snapshot():
     with _iv_skew_flip_runtime_lock:
         runtime = iv_skew_flip_runtime
         snapshot = runtime.snapshot() if runtime is not None else None
+    # Basket registry is durable/read-only state, so include it in the
+    # authoritative page snapshot to prevent clients remaining stale after
+    # reconnect/resync. This never activates baskets or signals.
+    basket_registry = iv_skew_flip_basket_registry()
     return {
         "saved_enabled": enabled,
         "runtime": snapshot,
+        "basket_registry": basket_registry,
         "orders_enabled": False,
     }
 
