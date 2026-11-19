@@ -120,7 +120,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
               ? payload.keys.filter((key): key is string => typeof key === "string")
               : [];
           setData((previous) => {
-            const next = { ...(previous || {}), __event: "REMOVE" };
+            const next: Record<string, unknown> = { ...(previous || {}), __event: "REMOVE" };
             for (const key of removeKeys) delete next[key];
             for (const [key, value] of Object.entries(payload)) {
               if (key !== "remove_keys" && key !== "keys") next[key] = value;
