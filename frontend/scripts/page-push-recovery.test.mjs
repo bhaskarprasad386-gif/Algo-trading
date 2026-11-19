@@ -106,16 +106,10 @@ test("workspace cleanup invalidates row REST recovery when scanner page changes"
 });
 
 
-test("universe mutation response cannot overwrite newer universe push", () => {
+test("universe mutation sequencing ignores older response", () => {
   let sequence = 30;
-  const pendingMutation = sequence;
-  // An authoritative universe push supersedes the in-flight save response.
-  sequence += 1;
-  assert.equal(isCurrentRecoveryResponse({
-    active:true, requestSequence:pendingMutation, latestSequence:sequence, responseValid:true
-  }),false);
-  const nextMutation = ++sequence;
-  assert.equal(isCurrentRecoveryResponse({
-    active:true, requestSequence:nextMutation, latestSequence:sequence, responseValid:true
-  }),true);
+  const first = ++sequence;
+  const second = ++sequence;
+  assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:first,latestSequence:sequence,responseValid:true}),false);
+  assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:second,latestSequence:sequence,responseValid:true}),true);
 });
