@@ -7,6 +7,7 @@ import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizont
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
+import { shouldReloadPairHistory } from "@/lib/page-push-recovery";
 
 const markets = ["ALL F&O STOCKS", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Gap", "Gap %", "Future Vol / OI", "Stability", "Status"];
@@ -215,11 +216,10 @@ function ScannerContent() {
     const revision = (stats as Record<string, unknown>).pair_events_persisted;
     if (revision === undefined || revision === null) return;
     const nextRevision = String(revision);
-    if (pairHistoryRevisionRef.current === null) {
-      pairHistoryRevisionRef.current = nextRevision;
-      return;
-    }
-    if (pairHistoryRevisionRef.current === nextRevision) return;
+    if (!shouldReloadPairHistory(pairHistoryRevisionRef.current, nextRevision)) return;
+    // The first push revision also supersedes any REST request started during
+    // initial mount; fetch history from the baseline established by this push.
+    pairHistoryRevisionRef.current = nextRevision;
     pairHistoryRevisionRef.current = nextRevision;
     // The durable history API owns pagination and filtering; the push counter
     // invalidates its cached slice when new observations are appended.
