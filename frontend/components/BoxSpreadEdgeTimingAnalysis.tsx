@@ -96,6 +96,15 @@ export default function BoxSpreadEdgeTimingAnalysis() {
     setUpdatedAt(new Date().toISOString());
   }, [pagePushData]);
 
+
+  useEffect(() => {
+    if (pagePushStatus !== "LIVE" || pagePushData?.history_revision == null) return;
+    // History revisions invalidate the cached timing aggregate even when the
+    // scanner is otherwise quiet; refresh the read-only analysis on that push.
+    void refresh();
+  }, [pagePushStatus, pagePushData?.history_revision, refresh]);
+
+
   const groupTable = (title: string, rows: TimingGroup[], label: string) => (
     <div className="min-w-0">
       <h3 className="mb-2 text-sm font-semibold theme-text">{title}</h3>
