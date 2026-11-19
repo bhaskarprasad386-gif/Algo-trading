@@ -170,6 +170,13 @@ function ScannerContent() {
     }
   }, [pagePushLastMessageAt, refreshing]);
 
+  useEffect(() => () => {
+    if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+    refreshPushTimeoutRef.current = null;
+    refreshPushBaselineRef.current = null;
+  }, []);
+
+
   useEffect(() => {
     if (!pagePushData) return;
     // Any page push supersedes outstanding REST fallback payloads, including REMOVE.
