@@ -609,6 +609,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const syntheticHistoryPushRevision = useRef<string | null>(null);
   const calendarHistoryPushRevision = useRef<string | null>(null);
   const indexSelectionRequestSequence = useRef(0);
+  const refreshPushBaselineRef = useRef<Record<string, unknown> | null>(null);
+  const refreshPushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const updateClock = () => setCurrentLiveTime(new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }));
@@ -1350,18 +1352,46 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const diagnosticBlockers = (Array.isArray(scannerDiagnostics?.top_blockers) ? scannerDiagnostics.top_blockers : []) as Row[];
   const diagnosticStatus = String(scannerDiagnostics?.status ?? "LOADING").replaceAll("_", " ");
 
+  useEffect(() => {
+    if (!refreshing || String(pagePushData?.__event ?? "").toUpperCase() !== "SNAPSHOT" || pagePushData === refreshPushBaselineRef.current) return;
+    refreshPushBaselineRef.current = null;
+    if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+    refreshPushTimeoutRef.current = null;
+    setRefreshing(false);
+  }, [pagePushData, refreshing]);
+
+
+  useEffect(() => () => {
+    if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+    refreshPushTimeoutRef.current = null;
+    refreshPushBaselineRef.current = null;
+  }, []);
+
+
   const refresh = async () => {
+    if (refreshing) return;
     setRefreshing(true);
+    if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+    refreshPushTimeoutRef.current = null;
     try {
       if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) {
-        // Live scanner rows and pair data are WebSocket-authoritative; manual refresh
-        // requests an authoritative snapshot instead of creating duplicate REST traffic.
+        // Finish only after a new authoritative snapshot, or a bounded timeout.
+        refreshPushBaselineRef.current = pagePushData;
+        refreshPushTimeoutRef.current = setTimeout(() => {
+          refreshPushTimeoutRef.current = null;
+          refreshPushBaselineRef.current = null;
+          setRefreshing(false);
+        }, 8000);
         pagePushResync();
         await loadHistory();
       } else {
         await Promise.all([load(), loadHistory(), loadPairs()]);
+        setRefreshing(false);
       }
-    } finally {
+    } catch {
+      refreshPushBaselineRef.current = null;
+      if (refreshPushTimeoutRef.current) clearTimeout(refreshPushTimeoutRef.current);
+      refreshPushTimeoutRef.current = null;
       setRefreshing(false);
     }
   };
