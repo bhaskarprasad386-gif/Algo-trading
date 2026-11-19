@@ -1023,7 +1023,21 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [slug, pagePushData, savedIndexSymbols, savedWeeklyOnlySymbols, indexSelectionDraft, weeklyOnlyDraft]);
   useEffect(() => {
     if (slug !== "box-spread" || !pagePushData) { if (slug !== "box-spread") setIndexSpotRows([]); return; }
+    const event = String(pagePushData.__event ?? "").toUpperCase();
+    const removedKeys = Array.isArray(pagePushData.remove_keys)
+      ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(pagePushData.keys)
+        ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+        : [];
     const spots = pagePushData?.index_spots;
+    if (event === "REMOVE" && removedKeys.includes("index_spots")) {
+      setIndexSpotRows([]);
+      return;
+    }
+    if (event === "SNAPSHOT" && !Array.isArray(spots)) {
+      setIndexSpotRows([]);
+      return;
+    }
     if (!Array.isArray(spots)) return;
     const incoming = spots as unknown as Array<{ symbol: string; spot_price: number | null; spot_timestamp_ns: number | null; spot_age_seconds: number | null; status: string }>;
     if (String(pagePushData.__event ?? "") === "SNAPSHOT") {
