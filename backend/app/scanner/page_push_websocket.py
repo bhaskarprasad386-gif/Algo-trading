@@ -143,6 +143,26 @@ def _snapshot(page: str) -> dict[str, Any]:
         return {"snapshot_status": "UNAVAILABLE"}
 
 
+def _consistent_snapshot_frame(page: str, retries: int = 3) -> dict[str, Any]:
+    """Capture page data with a sequence baseline that cannot silently skip concurrent pushes.
+
+    Prefer a stable before/after sequence window. If the page is busy for every
+    retry, baseline at the sequence read before the final snapshot so queued
+    updates remain detectable/replayable rather than claiming a newer cursor.
+    """
+    attempts = max(1, int(retries))
+    fallback_data: dict[str, Any] = {}
+    fallback_sequence = 0
+    for _ in range(attempts):
+        before = _latest_page_sequence(page)
+        data = _snapshot(page)
+        after = _latest_page_sequence(page)
+        fallback_data, fallback_sequence = data, before
+        if before == after:
+            return _snapshot_frame(page, data, after)
+    return _snapshot_frame(page, fallback_data, fallback_sequence)
+
+
 def _json_safe(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -378,7 +398,7 @@ async def page_updates(websocket: WebSocket) -> None:
                         last = client_sequences.get(page, 0)
                         if frame.get("event") == "SNAPSHOT_REQUIRED" or _sequence_gap(last, sequence):
                             sequence = await asyncio.to_thread(_latest_page_sequence, page)
-                            await websocket.send_json(_snapshot_frame(page, _snapshot(page), sequence))
+                            await websocket.send_json(_consistent_snapshot_frame(page))
                             client_sequences[page] = sequence
                         elif sequence > last:
                             await websocket.send_json(frame)
@@ -414,8 +434,9 @@ async def page_updates(websocket: WebSocket) -> None:
                         continue
                     else:
                         event_task = await _restart_event_waiter(queue, event_task, page)
-                    sequence = await asyncio.to_thread(_latest_page_sequence, page)
-                    await websocket.send_json(_snapshot_frame(page, _snapshot(page), sequence))
+                    snapshot_frame = await asyncio.to_thread(_consistent_snapshot_frame, page)
+                    sequence = int(snapshot_frame.get("sequence") or 0)
+                    await websocket.send_json(snapshot_frame)
                     client_sequences[page] = sequence
         finally:
             receive_task.cancel()
