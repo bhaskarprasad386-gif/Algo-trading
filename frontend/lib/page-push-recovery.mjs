@@ -31,3 +31,7 @@ export function freshEarlyEntryAlerts(alerts, seenIds) {
   return alerts.filter(row => row && Number.isSafeInteger(row.id) &&
     row.state === "EARLY_ENTRY" && !seenIds.has(row.id));
 }
+
+/** Ignore callbacks delivered by a superseded WebSocket transport. */
+export function isCurrentPagePushSocket(currentSocket, eventSocket) {
+  return currentSocket !== null && currentSocket === eventSocket;
