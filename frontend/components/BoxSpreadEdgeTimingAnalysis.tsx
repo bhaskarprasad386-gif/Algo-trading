@@ -99,9 +99,10 @@ export default function BoxSpreadEdgeTimingAnalysis() {
 
   useEffect(() => {
     if (pagePushStatus !== "LIVE" || pagePushData?.history_revision == null) return;
-    // History revisions invalidate the cached timing aggregate even when the
-    // scanner is otherwise quiet; refresh the read-only analysis on that push.
-    void refresh();
+    // History revisions debounce a costly full-history analysis until activity
+    // settles; live scanner pushes already carry the cached timing aggregate.
+    const timer = window.setTimeout(() => void refresh(), 30_000);
+    return () => window.clearTimeout(timer);
   }, [pagePushStatus, pagePushData?.history_revision, refresh]);
 
 
