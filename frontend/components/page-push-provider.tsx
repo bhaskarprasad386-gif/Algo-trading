@@ -17,7 +17,7 @@ const PagePushContext = createContext<PagePushValue>({
 
 
 import { applyCollectionMutations } from "@/lib/page-push-collections.mjs";
-import { shouldAcceptPageSnapshot, isCurrentPagePushSocket } from "@/lib/page-push-recovery.mjs";
+import { shouldAcceptPageSnapshot, isCurrentPagePushSocket, sendPagePushFrame } from "@/lib/page-push-recovery.mjs";
 
 export function PagePushProvider({ page, children }: { page: string | null; children: ReactNode }) {
   const [status, setStatus] = useState<PagePushStatus>("DISCONNECTED");
@@ -33,19 +33,18 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     const socket = socketRef.current;
     if (!page || socket?.readyState !== WebSocket.OPEN || resyncPendingRef.current) return;
     resyncPendingRef.current = true;
-    try {
-      socket.send(JSON.stringify({ action: "resync", page }));
-      if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
-      // If the authoritative recovery snapshot stalls, restart transport so
-      // the page cannot remain indefinitely frozen in RECONNECTING.
-      resyncTimerRef.current = setTimeout(() => {
-        resyncTimerRef.current = undefined;
-        if (resyncPendingRef.current) socket.close();
-      }, 8000);
-    } catch {
+    if (!sendPagePushFrame(socket, { action: "resync", page })) {
       resyncPendingRef.current = false;
       socket.close();
+      return;
     }
+    if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
+    // If the authoritative recovery snapshot stalls, restart transport so
+    // the page cannot remain indefinitely frozen in RECONNECTING.
+    resyncTimerRef.current = setTimeout(() => {
+      resyncTimerRef.current = undefined;
+      if (resyncPendingRef.current) socket.close();
+    }, 8000);
   }, [page]);
 
   useEffect(() => {
@@ -57,7 +56,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     }
     // Page channels have independent sequence cursors. Reset transport state when
     // switching pages so a low-sequence snapshot from the new channel is not
-    // rejected against the previous channel\u2019s sequence baseline.
+    // rejected against the previous channel's sequence baseline.
     sequenceRef.current = 0;
     hasSnapshotRef.current = false;
     resyncPendingRef.current = false;
@@ -93,7 +92,9 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         // A connected transport is not synchronized until its authoritative
         // page snapshot arrives. Keep REST recovery enabled in the meantime.
         setStatus("CONNECTING");
-        socket.send(JSON.stringify({ action: "subscribe", page }));
+        if (!sendPagePushFrame(socket, { action: "subscribe", page })) {
+          socket.close();
+        }
       };
       socket.onmessage = (event) => {
         if (disposed || !isCurrentPagePushSocket(socketRef.current, socket)) return;
@@ -248,7 +249,6 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     <PagePushContext.Provider value={{ page, status, data, lastMessageAt, resync }}>
       {children}
     </PagePushContext.Provider>
-  );
 }
 
 export function usePagePush(expectedPage: string): { status: PagePushStatus; data: Record<string, unknown> | null; lastMessageAt: number | null; resync: () => void } {
