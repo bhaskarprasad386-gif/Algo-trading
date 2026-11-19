@@ -712,7 +712,7 @@ export default function IVSkewFlipPage() {
       const expiry=String(body.expiry??requestedExpiry);
       const history=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY${expiry?`&expiry=${encodeURIComponent(expiry)}`:""}`,{cache:"no-store"});
       const saved=await history.json();
-      if(history.ok&&saved.status==="ok"&&historyRequestSequence===durableHistoryRequestSequenceRef.current)setDurableHistory(saved as Row);
+      if(history.ok&&saved.status==="ok"&&isCurrentRecoveryResponse({active:true,requestSequence:historyRequestSequence,latestSequence:durableHistoryRequestSequenceRef.current,responseValid:true}))setDurableHistory(saved as Row);
     }catch(e){setError(e instanceof Error?e.message:"Angel One broker snapshot failed");}
     finally{setSnapshotBusy(false);}
   }
