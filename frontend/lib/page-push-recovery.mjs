@@ -36,3 +36,10 @@ export function freshEarlyEntryAlerts(alerts, seenIds) {
 export function isCurrentPagePushSocket(currentSocket, eventSocket) {
   return currentSocket !== null && currentSocket === eventSocket;
 }
+
+/** Reload durable history when its push revision is first observed or changes. */
+export function shouldReloadPairHistory(currentRevision, nextRevision) {
+  if (nextRevision === undefined || nextRevision === null) return false;
+  const next = String(nextRevision);
+  return currentRevision === null || currentRevision !== next;
+}
