@@ -835,6 +835,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         }
       }
     } catch {
+      if (requestSequence !== pairRequestSequence.current) return;
       // On a transient error, preserve the last good snapshot and fall back to cache after reload.
       let cachedRows: Row[] = [];
       if (slug === "synthetic-arbitrage" && pairRows.length === 0) {
@@ -1026,7 +1027,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       if (Array.isArray(pairs?.data)) {
         // Pushed pair data invalidates any REST response started before this frame.
         pairRequestSequence.current += 1;
-        setPairRows(pairs.data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
+        const pushedPairs = pairs.data.filter((item: unknown): item is Row => !!item && typeof item === "object");
+        setPairRows(pushedPairs);
+        const pairStatus = String(pairs.status ?? "SUCCESS").toUpperCase();
+        setPairMonitorStatus(pushedPairs.length > 0 ? (pairStatus === "SUCCESS" ? "LIVE" : pairStatus) : "WAITING");
+        if (slug === "synthetic-arbitrage" && pushedPairs.length > 0) {
+          try { window.localStorage.setItem("algo:synthetic-arbitrage:last-pairs:v1", JSON.stringify({ savedAt: Date.now(), rows: pushedPairs })); } catch { /* Cache is optional. */ }
+        }
       }
       if (slug === "synthetic-arbitrage" && pagePushData.diagnostics && typeof pagePushData.diagnostics === "object") {
         setScannerDiagnostics(pagePushData.diagnostics as Record<string, unknown>);
