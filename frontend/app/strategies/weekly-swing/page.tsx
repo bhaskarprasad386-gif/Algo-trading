@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePagePush } from "@/components/page-push-provider";
 import { appConfig } from "@/lib/config";
 import { Activity, AlertCircle, CheckCircle2, LoaderCircle, Search } from "lucide-react";
@@ -26,6 +26,8 @@ export default function WeeklySwingScannerPage() {
   const [result, setResult] = useState<Result | null>(null);
   const [universeStatus, setUniverseStatus] = useState<UniverseStatus | null>(null);
   const { data: pagePushData, status: pagePushStatus } = usePagePush("weekly-swing");
+  const pagePushStatusRef = useRef(pagePushStatus);
+  pagePushStatusRef.current = pagePushStatus;
 
   // Restore a scan already running on the backend after a page reload, then
   // keep its status current without requiring the user to press Resume.
@@ -161,7 +163,7 @@ export default function WeeklySwingScannerPage() {
       let state = await refreshStatus();
       // WebSocket delivers progress/completion in real time; keep HTTP polling
       // only as recovery when the page channel is not synchronized.
-      while (state === "running" && pagePushStatus !== "LIVE") {
+      while (state === "running" && pagePushStatusRef.current !== "LIVE") {
         await new Promise(resolve => window.setTimeout(resolve, 3000));
         state = await refreshStatus();
       }
