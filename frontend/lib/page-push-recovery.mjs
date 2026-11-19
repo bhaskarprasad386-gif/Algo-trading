@@ -85,6 +85,14 @@ export function scannerSnapshotState(snapshot) {
   return { rows, pairs, stats, scanAt };
 }
 
+/** True when an authoritative workspace snapshot omits a requested collection. */
+export function workspaceSnapshotMissing(snapshot, collection) {
+  const source = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) ? snapshot : {};
+  if (collection === "live") return !(source.live && typeof source.live === "object" && Array.isArray(source.live.data));
+  if (collection === "pairs") return !(source.pairs && typeof source.pairs === "object" && Array.isArray(source.pairs.data));
+  return false;
+}
+
 /** Safely send a page-push control frame; callers must close/recover on false. */
 export function sendPagePushFrame(socket, frame) {
   try {
