@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts, shouldAcceptPageSnapshot, isCurrentPagePushSocket } from "../lib/page-push-recovery.mjs";
+import { isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts, shouldAcceptPageSnapshot, isCurrentPagePushSocket, shouldReloadPairHistory } from "../lib/page-push-recovery.mjs";
 
 test("REST recovery response applies only while its request remains current", () => {
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:8,latestSequence:8,responseValid:true}),true);
