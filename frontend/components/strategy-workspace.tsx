@@ -1044,6 +1044,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [isCustom, c.historyEndpoint, slug === "box-spread" ? historyExpiryView : "", slug === "box-spread" ? historySymbol : "", slug === "box-spread" ? historyPage : 1]);
 
   useEffect(() => {
+    if (slug !== "box-spread" || pagePushData?.history_revision == null) return;
+    // A durable-history revision arrives through page push; refresh only the
+    // active filter/page slice and let request sequencing reject older replies.
+    void loadHistory();
+  }, [slug, pagePushData?.history_revision]);
+
+  useEffect(() => {
     if (isCustom || c.pairEndpoint) return;
     setPairRows(rows);
   }, [isCustom, c.pairEndpoint, rows]);
