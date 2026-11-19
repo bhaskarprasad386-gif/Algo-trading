@@ -51,6 +51,7 @@ function applyCollectionMutations(
     const key = mutation.key ?? item?.[keyField];
     if ((typeof key !== "string" && typeof key !== "number") || !String(key).trim()) continue;
     if (mutation.operation !== "DELETE" && !item) continue;
+    if (mutation.operation === "ADD" && item?.[keyField] === undefined) continue;
     if (item && item[keyField] !== undefined && String(item[keyField]) !== String(key)) continue;
     const findIndex = current.findIndex((row) => row && typeof row === "object" && !Array.isArray(row) && String((row as Record<string, unknown>)[keyField]) === String(key));
     const rows = [...current];
