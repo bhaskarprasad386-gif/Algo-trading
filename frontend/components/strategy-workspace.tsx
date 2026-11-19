@@ -544,7 +544,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const [currentLiveTime, setCurrentLiveTime] = useState("");
   const [liveApiLastOkAt, setLiveApiLastOkAt] = useState<number | null>(null);
-  const [liveApiStatus, setLiveApiStatus] = useState<"CHECKING" | "RESPONDING" | "ERROR">("CHECKING");
+  const [liveApiStatus, setLiveApiStatus] = useState<"CHECKING" | "RESPONDING" | "ERROR" | "WAITING">("CHECKING");
   const [search, setSearch] = useState("");
   const [liveExpiryView, setLiveExpiryView] = useState<"MONTHLY" | "WEEKLY">("MONTHLY");
   const [control, setControl] = useState(c.controls[0]);
