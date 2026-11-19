@@ -403,3 +403,28 @@ test("trace bootstrap cleanup cannot apply after a newer push invalidates it", (
     latestSequence:latestSequenceAfterPush, responseValid:true
   }),false);
 });
+
+
+test("trace DELETE and subsequent POST are serialized in mutation order", async () => {
+  const registry = new Map();
+  let releaseDelete;
+  const gate = new Promise(resolve => { releaseDelete = resolve; });
+  const order = [];
+  const deletion = trackTraceSave(registry, "trace-delete-race", async () => {
+    order.push("delete-start");
+    await gate;
+    order.push("delete-end");
+    return { ok: true };
+  });
+  const laterSave = trackTraceSave(registry, "trace-delete-race", async () => {
+    order.push("post-start");
+    return { ok: true };
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(order, ["delete-start"]);
+  releaseDelete();
+  await Promise.all([deletion, laterSave]);
+  assert.deepEqual(order, ["delete-start", "delete-end", "post-start"]);
+  assert.equal(registry.has("trace-delete-race"), false);
+});
