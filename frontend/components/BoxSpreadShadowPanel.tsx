@@ -29,7 +29,7 @@ export default function BoxSpreadShadowPanel() {
   const [data, setData] = useState<ShadowResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { data: pagePushData, status: pagePushStatus } = usePagePush("box-spread");
+  const { data: pagePushData, status: pagePushStatus, lastMessageAt } = usePagePush("box-spread");
   const requestSequence = useRef(0);
   const refresh = useCallback(async () => {
     const requestId = ++requestSequence.current;
@@ -70,7 +70,7 @@ export default function BoxSpreadShadowPanel() {
   return <Card id="box-shadow-monitor" className="space-y-4 border border-slate-300 dark:border-slate-700 p-4" aria-label="Butterfly and Condor shadow diagnostics">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><div className="flex items-center gap-2 text-base font-extrabold"><Activity className="h-5 w-5" /> Butterfly / Condor Shadow Monitor</div><p className="mt-1 text-sm text-slate-500">Existing Box Spread quotes and depth only · no additional broker subscriptions</p></div>
-      <div className="flex items-center gap-2"><span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-xs font-bold text-emerald-600"><ShieldCheck className="mr-1 inline h-3.5 w-3.5" /> SHADOW ONLY · ORDERS OFF</span><button onClick={() => void refresh()} className="rounded-lg border px-3 py-2 text-sm font-bold"><RefreshCw className="mr-1 inline h-4 w-4" /> Refresh</button></div>
+      <div className="flex flex-wrap items-center gap-2"><span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-xs font-bold text-emerald-600"><ShieldCheck className="mr-1 inline h-3.5 w-3.5" /> SHADOW ONLY · ORDERS OFF</span><span role="status" aria-live="polite" className={"rounded-md border px-2 py-1 text-xs font-bold " + (pagePushStatus === "LIVE" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600" : "border-amber-500/40 bg-amber-500/10 text-amber-600")}>{pagePushStatus === "LIVE" ? "PAGE PUSH LIVE" : "PAGE PUSH " + pagePushStatus}</span><span className="text-xs text-slate-500">Push received: {lastMessageAt ? new Date(lastMessageAt).toLocaleTimeString("en-IN") : "—"}</span><button onClick={() => void refresh()} className="rounded-lg border px-3 py-2 text-sm font-bold"><RefreshCw className="mr-1 inline h-4 w-4" /> Refresh</button></div>
     </div>
     {error && <p role="status" className="rounded-lg border border-amber-500/40 p-3 text-sm">{error}</p>}
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
