@@ -94,6 +94,12 @@ export function workspaceSnapshotMissing(snapshot, collection) {
   return false;
 }
 
+/** Missing Box Spread shadow diagnostics in a reconnect snapshot. */
+export function boxShadowSnapshotMissing(snapshot) {
+  const source = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) ? snapshot : {};
+  return !(source.shadow && typeof source.shadow === "object" && !Array.isArray(source.shadow));
+}
+
 /** Missing live opportunity collection in a synthetic trace reconnect snapshot. */
 export function syntheticTraceSnapshotMissing(snapshot, collection) {
   const source = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) ? snapshot : {};
