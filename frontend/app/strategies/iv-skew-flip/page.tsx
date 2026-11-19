@@ -702,6 +702,7 @@ export default function IVSkewFlipPage() {
     finally{setBusy(false);}
   }
   async function fetchBrokerSnapshot(){
+    const historyRequestSequence=++durableHistoryRequestSequenceRef.current;
     setSnapshotBusy(true);setSnapshotNotice("");setError("");
     try{
       const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/snapshot`,{method:"POST",cache:"no-store"});
@@ -711,7 +712,7 @@ export default function IVSkewFlipPage() {
       const expiry=String(body.expiry??requestedExpiry);
       const history=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY${expiry?`&expiry=${encodeURIComponent(expiry)}`:""}`,{cache:"no-store"});
       const saved=await history.json();
-      if(history.ok&&saved.status==="ok")setDurableHistory(saved as Row);
+      if(history.ok&&saved.status==="ok"&&historyRequestSequence===durableHistoryRequestSequenceRef.current)setDurableHistory(saved as Row);
     }catch(e){setError(e instanceof Error?e.message:"Angel One broker snapshot failed");}
     finally{setSnapshotBusy(false);}
   }
