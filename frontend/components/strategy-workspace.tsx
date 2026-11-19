@@ -1835,7 +1835,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => void copyTableRows("pairs")} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Copy rows</button>
             <button type="button" onClick={() => setShowPairColumnPicker((open) => !open)} aria-expanded={showPairColumnPicker} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">{showPairColumnPicker ? "Close columns" : "Hide / Show columns"}</button>
-            <span className="text-xs font-semibold theme-muted">{monitorRows.length.toLocaleString("en-IN")} live pairs • {slug === "synthetic-arbitrage" ? "pair feed " + pairMonitorStatus.replaceAll("_", " ") + " • " : ""}{pagePushStatus === "LIVE" && ["calendar-spread", "synthetic-arbitrage"].includes(slug) ? "WebSocket push" : "15s REST fallback"}</span>
+            <span className="text-xs font-semibold theme-muted">{monitorRows.length.toLocaleString("en-IN")} live pairs • {slug === "synthetic-arbitrage" ? "pair feed " + pairMonitorStatus.replaceAll("_", " ") + " • " : ""}{["calendar-spread", "synthetic-arbitrage"].includes(slug) ? (pagePushStatus === "LIVE" ? "WebSocket push" : "15s REST fallback") : "Scanner live"}</span>
           </div>
         </div>
         {showPairColumnPicker && <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3">
