@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePagePush } from "@/components/page-push-provider";
 import { appConfig } from "@/lib/config";
+import { isCurrentRecoveryResponse } from "@/lib/page-push-recovery.mjs";
 import { Activity, AlertCircle, CheckCircle2, LoaderCircle, Search } from "lucide-react";
 
 type Match = {
@@ -27,6 +28,8 @@ export default function WeeklySwingScannerPage() {
   const [universeStatus, setUniverseStatus] = useState<UniverseStatus | null>(null);
   const { data: pagePushData, status: pagePushStatus } = usePagePush("weekly-swing");
   const pagePushStatusRef = useRef(pagePushStatus);
+  const statusRequestSequenceRef = useRef(0);
+  const statusPushSequenceRef = useRef(0);
   pagePushStatusRef.current = pagePushStatus;
 
   // Restore a scan already running on the backend after a page reload, then
@@ -35,25 +38,25 @@ export default function WeeklySwingScannerPage() {
     let active = true;
     let shouldPoll = true;
     const refresh = async () => {
+      const requestSequence = ++statusRequestSequenceRef.current;
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-        const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/status`, { cache: "no-store" });
+        const response = await fetch(base + "/api/v1/scanner/weekly-swing/scan-all/status", { cache: "no-store" });
         if (!response.ok) return;
         const body: UniverseStatus = await response.json();
-        if (!active) return;
+        if (!isCurrentRecoveryResponse({ active, requestSequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || pagePushStatusRef.current === "LIVE") return;
         shouldPoll = body.status === "running";
         setUniverseStatus(body);
         if (body.status === "completed") {
           setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
         } else if (body.status === "failed" || body.status === "paused") {
-          setError(`${body.status === "paused" ? "Scan paused" : "NIFTY 200 scan failed"}: ${body.fatal_error || "No further scan details provided"}`);
+          setError((body.status === "paused" ? "Scan paused: " : "NIFTY 200 scan failed: ") + (body.fatal_error || "No further scan details provided"));
         }
       } catch {
         // The normal scan/status controls surface actionable errors when used.
       }
     };
-    void refresh();
-    // WebSocket is authoritative while connected; REST is recovery-only.
+    if (pagePushStatus !== "LIVE") void refresh();
     if (pagePushStatus === "LIVE") return () => { active = false; };
     const timer = window.setInterval(() => { if (shouldPoll) void refresh(); }, 15000);
     return () => { active = false; window.clearInterval(timer); };
@@ -61,13 +64,15 @@ export default function WeeklySwingScannerPage() {
 
   useEffect(() => {
     if (!pagePushData) return;
+    statusRequestSequenceRef.current += 1;
+    statusPushSequenceRef.current += 1;
     const body = pagePushData as unknown as UniverseStatus;
     setUniverseStatus(body);
     if (body.status === "completed") {
       setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
       setLoading(false);
     } else if (body.status === "failed" || body.status === "paused") {
-      setError(`${body.status === "paused" ? "Scan paused" : "NIFTY 200 scan failed"}: ${body.fatal_error || "No further scan details provided"}`);
+      setError((body.status === "paused" ? "Scan paused: " : "NIFTY 200 scan failed: ") + (body.fatal_error || "No further scan details provided"));
       setLoading(false);
     }
   }, [pagePushData]);
@@ -86,77 +91,94 @@ export default function WeeklySwingScannerPage() {
   }
 
   async function refreshNifty200Status() {
+    const requestSequence = ++statusRequestSequenceRef.current;
+    const pushSequenceAtStart = statusPushSequenceRef.current;
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/status`, { cache: "no-store" });
-      const body: UniverseStatus = await response.json();
+      const response = await fetch(base + "/api/v1/scanner/weekly-swing/scan-all/status", { cache: "no-store" });
       if (!response.ok) throw new Error("Could not read NIFTY 200 scan status");
+      const body: UniverseStatus = await response.json();
+      if (!isCurrentRecoveryResponse({ active: true, requestSequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || pagePushStatusRef.current === "LIVE") return;
       setUniverseStatus(body);
       setError("");
       if (body.status === "completed") {
         setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
       } else if (body.status === "failed" || body.status === "paused") {
-        setError(`${body.status === "paused" ? "Scan paused" : "NIFTY 200 scan failed"}: ${body.fatal_error || "No further scan details provided"}`);
+        setError((body.status === "paused" ? "Scan paused: " : "NIFTY 200 scan failed: ") + (body.fatal_error || "No further scan details provided"));
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "NIFTY 200 status unavailable");
+      if (pushSequenceAtStart === statusPushSequenceRef.current) setError(e instanceof Error ? e.message : "NIFTY 200 status unavailable");
     }
   }
 
   async function resumeNifty200Updates() {
+    const requestSequence = ++statusRequestSequenceRef.current;
+    const pushSequenceAtStart = statusPushSequenceRef.current;
     setLoading(true); setError("");
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/status`, { cache: "no-store" });
-      const body: UniverseStatus = await response.json();
+      const response = await fetch(base + "/api/v1/scanner/weekly-swing/scan-all/status", { cache: "no-store" });
       if (!response.ok) throw new Error("Could not read NIFTY 200 scan status");
+      const body: UniverseStatus = await response.json();
+      if (!isCurrentRecoveryResponse({ active: true, requestSequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || pagePushStatusRef.current === "LIVE") return;
       setUniverseStatus(body);
       if (body.status === "completed") {
         setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
       } else if (body.status === "failed" || body.status === "paused") {
-        throw new Error(`${body.status === "paused" ? "Scan paused" : "NIFTY 200 scan failed"}: ${body.fatal_error || "No further scan details provided"}`);
+        throw new Error((body.status === "paused" ? "Scan paused: " : "NIFTY 200 scan failed: ") + (body.fatal_error || "No further scan details provided"));
       } else if (body.status === "idle") {
         throw new Error("No active NIFTY 200 scan found. Start a scan to begin.");
-      } else if (pagePushStatus !== "LIVE") {
+      } else if (pagePushStatusRef.current !== "LIVE") {
         // WS is the primary live path. Poll only as a recovery fallback.
-        while (body.status === "running") {
+        let recoveryState = body.status;
+        while (recoveryState === "running" && pagePushStatusRef.current !== "LIVE") {
           await new Promise(resolve => window.setTimeout(resolve, 3000));
-          const recovery = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/status`, { cache: "no-store" });
-          const next: UniverseStatus = await recovery.json();
+          if (pagePushStatusRef.current === "LIVE") break;
+          const recoverySequence = ++statusRequestSequenceRef.current;
+          const recovery = await fetch(base + "/api/v1/scanner/weekly-swing/scan-all/status", { cache: "no-store" });
           if (!recovery.ok) throw new Error("Could not read NIFTY 200 scan status");
+          const next: UniverseStatus = await recovery.json();
+          if (!isCurrentRecoveryResponse({ active: true, requestSequence: recoverySequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || pagePushStatusRef.current === "LIVE") continue;
           setUniverseStatus(next);
           if (next.status === "completed") {
             setResult({ status: "success", symbol: "NIFTY 200", count: next.matches?.length ?? 0, matches: next.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
+            recoveryState = "completed";
             break;
           }
-          if (next.status === "failed" || next.status === "paused") throw new Error(`${next.status === "paused" ? "Scan paused" : "NIFTY 200 scan failed"}: ${next.fatal_error || "No further scan details provided"}`);
+          if (next.status === "failed" || next.status === "paused") throw new Error((next.status === "paused" ? "Scan paused: " : "NIFTY 200 scan failed: ") + (next.fatal_error || "No further scan details provided"));
           if (next.status === "idle") throw new Error("NIFTY 200 scan is idle; start it again to continue.");
-          Object.assign(body, next);
+          recoveryState = next.status;
         }
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "NIFTY 200 status unavailable");
+      if (pushSequenceAtStart === statusPushSequenceRef.current) setError(e instanceof Error ? e.message : "NIFTY 200 status unavailable");
     } finally {
       setLoading(false);
     }
   }
   async function scanNifty200() {
+    ++statusRequestSequenceRef.current;
+    const pushSequenceAtStart = statusPushSequenceRef.current;
+    let startAccepted = false;
     setLoading(true); setError(""); setResult(null); setUniverseStatus(null);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const startResponse = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/start`, { method: "POST", cache: "no-store" });
+      const startResponse = await fetch(base + "/api/v1/scanner/weekly-swing/scan-all/start", { method: "POST", cache: "no-store" });
       const started = await startResponse.json();
-      if (!startResponse.ok) throw new Error(started.detail || `NIFTY 200 scan failed (${startResponse.status})`);
+      if (!startResponse.ok) throw new Error(started.detail || "NIFTY 200 scan failed (" + startResponse.status + ")");
+      startAccepted = true;
       const refreshStatus = async () => {
-        const response = await fetch(`${base}/api/v1/scanner/weekly-swing/scan-all/status`, { cache: "no-store" });
-        const body: UniverseStatus = await response.json();
+        const requestSequence = ++statusRequestSequenceRef.current;
+        const response = await fetch(base + "/api/v1/scanner/weekly-swing/scan-all/status", { cache: "no-store" });
         if (!response.ok) throw new Error("Could not read NIFTY 200 scan status");
+        const body: UniverseStatus = await response.json();
+        if (!isCurrentRecoveryResponse({ active: true, requestSequence, latestSequence: statusRequestSequenceRef.current, responseValid: true }) || pagePushStatusRef.current === "LIVE") return "running";
         setUniverseStatus(body);
         if (body.status === "completed") {
           setResult({ status: "success", symbol: "NIFTY 200", count: body.matches?.length ?? 0, matches: body.matches ?? [], data_source: "Official NIFTY 200 constituents + Angel One historical candles", orders_placed: false });
           return "completed";
         }
-        if (body.status === "failed" || body.status === "paused") throw new Error(`${body.status === "paused" ? "Scan paused" : "NIFTY 200 scan failed"}: ${body.fatal_error || "No further scan details provided"}`);
+        if (body.status === "failed" || body.status === "paused") throw new Error((body.status === "paused" ? "Scan paused: " : "NIFTY 200 scan failed: ") + (body.fatal_error || "No further scan details provided"));
         if (body.status === "idle") throw new Error("NIFTY 200 scan is idle; start it again to continue.");
         return "running";
       };
@@ -168,7 +190,7 @@ export default function WeeklySwingScannerPage() {
         state = await refreshStatus();
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "NIFTY 200 scan unavailable");
+      if (!startAccepted || pushSequenceAtStart === statusPushSequenceRef.current) setError(e instanceof Error ? e.message : "NIFTY 200 scan unavailable");
     } finally {
       setLoading(false);
     }

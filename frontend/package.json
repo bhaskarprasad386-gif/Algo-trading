@@ -12,7 +12,8 @@
     "cf:build": "opennextjs-cloudflare build",
     "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "postbuild": "node scripts/cloudflare-postbuild.mjs"
+    "postbuild": "node scripts/cloudflare-postbuild.mjs",
+    "test:page-push-recovery": "node --test scripts/page-push-recovery.test.mjs"
   },
   "dependencies": {
     "next": "15.5.29",
