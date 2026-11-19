@@ -1210,10 +1210,19 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   useEffect(() => {
     if (isCustom || !c.pairEndpoint) return;
+    if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) {
+      // Invalidate any REST pair response started while the WS was connecting.
+      // The live snapshot/push is now authoritative; don't fetch a redundant
+      // REST copy on transition to LIVE or let an in-flight request overwrite it.
+      pairRequestSequence.current += 1;
+      return;
+    }
     void loadPairs();
-    if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
     const timer = window.setInterval(() => void loadPairs(), 15000);
-    return () => window.clearInterval(timer);
+    return () => {
+      pairRequestSequence.current += 1;
+      window.clearInterval(timer);
+    };
   }, [isCustom, c.pairEndpoint, pagePushStatus, slug]);
 
   useEffect(() => {
