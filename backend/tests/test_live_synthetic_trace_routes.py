@@ -174,3 +174,41 @@ def test_trace_snapshot_rejects_stock_or_invalid_direction():
     with pytest.raises(HTTPException) as exc:
         trace_routes.save_trace_opportunity(request)
     assert exc.value.status_code == 422
+
+
+
+def test_trace_opportunity_add_and_delete_emit_keyed_page_mutations(monkeypatch):
+    updates = []
+    mutations = []
+    monkeypatch.setattr(trace_routes, "_trace_snapshot_record", lambda *_args: {"trace_id": "delta-id", "persisted": True})
+    monkeypatch.setattr(trace_routes, "list_trace_opportunities", lambda _limit: {"data": [{"trace_id": "delta-id"}]})
+    monkeypatch.setattr(trace_routes, "_publish_synthetic_trace_update", lambda data: updates.append(data))
+    monkeypatch.setattr(trace_routes, "_publish_trace_collection_mutation", lambda operation, **kwargs: mutations.append((operation, kwargs)))
+
+    request = trace_routes.TraceOpportunityRequest(
+        trace_id="delta-id", trace_key="NIFTY|expiry|strike|LONG",
+        traced_at="2026-11-19T09:00:00+05:30",
+        snapshot={"underlying": "NIFTY", "expiry": "2026-11-26", "strike": 25000, "direction": "LONG", "executable_edge": 8.5},
+    )
+    result = trace_routes.save_trace_opportunity(request)
+    assert result["persisted"] is True
+    assert updates[-1]["trace_opportunities"] == [{"trace_id": "delta-id"}]
+    operation, kwargs = mutations[-1]
+    assert operation == "ADD"
+    assert kwargs["key"] == "delta-id"
+    assert kwargs["item"]["trace_id"] == "delta-id"
+    assert kwargs["item"]["trace_key"] == request.trace_key
+    assert kwargs["item"]["persisted"] is True
+
+    class FakeSession:
+        def get(self, _model, _key):
+            return None
+        def close(self):
+            return None
+
+    monkeypatch.setattr("app.core.database.SessionLocal", lambda: FakeSession())
+    trace_routes.delete_trace_opportunity("delta-id")
+    operation, kwargs = mutations[-1]
+    assert operation == "DELETE"
+    assert kwargs["key"] == "delta-id"
+    assert kwargs["item"] is None
