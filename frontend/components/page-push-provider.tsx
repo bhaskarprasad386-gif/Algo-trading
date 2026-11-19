@@ -77,7 +77,7 @@ function applyCollectionMutations(
       // delayed delta could otherwise resurrect an item that was already deleted.
       rows[findIndex] = { ...(rows[findIndex] as Record<string, unknown>), ...item };
       // Merge every duplicate match and collapse duplicates to one identity.
-      next[collection] = rows.filter((row, index) => !matchesKey(row) || index === findIndex;
+      next[collection] = rows.filter((row, index) => !matchesKey(row) || index === findIndex);
       continue;
     }
     next[collection] = rows;
