@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Activity, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, Zap, LayoutDashboard } from "lucide-react";
+import { Activity, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig, getDashboardWsUrl } from "@/lib/config";
@@ -10,7 +10,6 @@ const markets = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANK
 const strategies = [
   { name: "Cash Future", detail: "Live Scanner • F&O •", href: "/scanner", icon: Radio },
   { name: "Calendar Spread", detail: "Time spread • NIFTY •", href: "/strategies/calendar-spread", icon: Activity },
-  { name: "Synthetic Arbitrage", detail: "Cash-Synth • Arbitrage •", href: "/strategies/synthetic-arbitrage", icon: Zap },
   { name: "Box Spread", detail: "Options • Box •", href: "/strategies/box-spread", icon: Gauge },
   { name: "Custom Strategy", detail: "Independent • User-defined •", href: "/strategies/custom-strategy", icon: Activity },
   { name: "Strategy Scanner", detail: "Dedicated workspaces •", href: "/scanner", icon: Radio },
