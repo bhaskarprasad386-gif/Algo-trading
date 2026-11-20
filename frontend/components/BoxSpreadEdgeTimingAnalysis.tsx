@@ -93,6 +93,20 @@ export default function BoxSpreadEdgeTimingAnalysis() {
   }, [refresh, pagePushStatus]);
 
   useEffect(() => {
+    const event = String(pagePushData?.__event ?? "").toUpperCase();
+    const removeKeys = Array.isArray(pagePushData?.remove_keys)
+      ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(pagePushData?.keys)
+        ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (event === "REMOVE" && removeKeys.includes("edge_timing_analysis")) {
+      requestSequence.current += 1;
+      setData(null);
+      setError(null);
+      setLoading(false);
+      setUpdatedAt(null);
+      return;
+    }
     const pushed = pagePushData?.edge_timing_analysis as TimingAnalysis | undefined;
     if (!pushed || pushed.strategy !== "box-spread" || !Array.isArray(pushed.by_day) || !Array.isArray(pushed.by_time)) return;
     // A pushed aggregate is authoritative; invalidate an older REST response.
