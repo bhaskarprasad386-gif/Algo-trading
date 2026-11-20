@@ -181,6 +181,14 @@ export default function BoxSpreadPostMarketHistory() {
   const sortingRequestSequence = useRef(0);
   const appendInFlight = useRef(false);
 
+  useEffect(() => () => {
+    // Invalidate any REST pagination or all-history sorting still in flight
+    // when this history panel unmounts.
+    requestSequence.current += 1;
+    sortingRequestSequence.current += 1;
+    appendInFlight.current = false;
+  }, []);
+
   const load = useCallback(async (append = false, pageOffset = 0) => {
     if (append && appendInFlight.current) return;
     const requestId = ++requestSequence.current;
