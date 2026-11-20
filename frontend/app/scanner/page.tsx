@@ -3,14 +3,13 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Zap } from "lucide-react";
+import { Activity, Bell, Filter, RefreshCw, Search, SlidersHorizontal, Zap } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
 
 const markets = ["ALL F&O STOCKS", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Gap", "Gap %", "Future Vol / OI", "Stability", "Status"];
-const pairColumns = ["Time", "Symbol", "Contract", "Pair State", "Cash Ask", "Future Bid", "Gap %", "Stability", "Feed Age", "Eligibility / Diagnostics"];
 
 type Row = Record<string, unknown>;
 
@@ -49,17 +48,11 @@ function ScannerContent() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pairRows, setPairRows] = useState<Row[]>([]);
-  const [pairHistory, setPairHistory] = useState<Row[]>([]);
-  const [pairBackendStats, setPairBackendStats] = useState<Row>({});
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [lastLiveScanAt, setLastLiveScanAt] = useState<string | null>(null);
   const { data: pagePushData, status: pagePushStatus } = usePagePush("cash-future");
-  const pairHistoryRevisionRef = useRef<string | null>(null);
-  const pairHistoryRequestSequenceRef = useRef(0);
   // Prevent delayed REST recovery from overwriting authoritative page pushes.
   const liveRequestSequenceRef = useRef(0);
-  const pairLiveRequestSequenceRef = useRef(0);
 
   const load = async () => {
     const requestSequence = ++liveRequestSequenceRef.current;
@@ -87,35 +80,6 @@ function ScannerContent() {
     setMarket(markets.includes(requestedMarket) ? requestedMarket : "ALL F&O STOCKS");
   }, [requestedMarket]);
 
-  const loadPairLive = async () => {
-    const requestSequence = ++pairLiveRequestSequenceRef.current;
-    try {
-      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(`${base}/api/v1/scanner/cash-future/live/pairs?max_age_seconds=120&limit=500`, { cache: "no-store" });
-      const body = await response.json().catch(() => ({}));
-      if (requestSequence !== pairLiveRequestSequenceRef.current) return;
-      setPairRows(Array.isArray(body?.data) ? body.data : []);
-      const stats = body?.stats && typeof body.stats === "object" ? body.stats : {};
-      setPairBackendStats(stats);
-      if (typeof stats?.last_observation_at === "string") setLastLiveScanAt(stats.last_observation_at);
-    } catch {
-      // Keep the last good diagnostic snapshot visible during a transient poll failure.
-    }
-  };
-
-  const loadPairHistory = async () => {
-    const requestSequence = ++pairHistoryRequestSequenceRef.current;
-    try {
-      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(`${base}/api/v1/scanner/cash-future/live/history?days=1&limit=100`, { cache: "no-store" });
-      const body = await response.json().catch(() => ({}));
-      if (requestSequence !== pairHistoryRequestSequenceRef.current) return;
-      setPairHistory(Array.isArray(body?.data) ? body.data : []);
-    } catch {
-      if (requestSequence === pairHistoryRequestSequenceRef.current) setPairHistory([]);
-    }
-  };
-
   useEffect(() => {
     let cancelled = false;
     const loadMarketSession = async () => {
@@ -137,30 +101,9 @@ function ScannerContent() {
   }, [pagePushStatus]);
 
   useEffect(() => {
-    // A LIVE transition invalidates any in-flight REST recovery request.
-    if (pagePushStatus === "LIVE") {
-      liveRequestSequenceRef.current += 1;
-      pairLiveRequestSequenceRef.current += 1;
-    }
-    if (marketSession === "OPEN") {
-      if (pagePushStatus !== "LIVE") { void load(); void loadPairLive(); }
-    } else if (pagePushStatus !== "LIVE") {
-      setLoading(false); setRows([]); setPairRows([]); setError(null);
-    }
-    void loadPairHistory();
-    if (pagePushStatus === "LIVE") return;
-    const liveTimer = window.setInterval(() => {
-      if (marketSession !== "OPEN") return;
-      void load(); void loadPairLive();
-    }, 15000);
-    return () => window.clearInterval(liveTimer);
-  }, [marketSession, pagePushStatus]);
-
-  useEffect(() => {
     if (!pagePushData) return;
     // Any page push supersedes outstanding REST fallback payloads, including REMOVE.
     liveRequestSequenceRef.current += 1;
-    pairLiveRequestSequenceRef.current += 1;
     const event = String(pagePushData.__event ?? "").toUpperCase();
     const removedKeys = Array.isArray(pagePushData.remove_keys)
       ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
@@ -169,35 +112,13 @@ function ScannerContent() {
         : [];
     if (event === "REMOVE") {
       if (removedKeys.includes("rows")) { setRows([]); setLoading(false); setError(null); }
-      if (removedKeys.includes("pairs")) setPairRows([]);
-      if (removedKeys.includes("stats")) setPairBackendStats({});
       if (removedKeys.includes("scan_at")) setLastLiveScanAt(null);
     }
     if (Array.isArray(pagePushData.rows)) {
       setRows(pagePushData.rows.filter((item: unknown): item is Row => !!item && typeof item === "object"));
       setLoading(false); setError(null);
     }
-    if (Array.isArray(pagePushData.pairs)) setPairRows(pagePushData.pairs.filter((item: unknown): item is Row => !!item && typeof item === "object"));
-    if (pagePushData.stats && typeof pagePushData.stats === "object") setPairBackendStats(pagePushData.stats as Row);
     if (typeof pagePushData.scan_at === "string") setLastLiveScanAt(pagePushData.scan_at);
-  }, [pagePushData]);
-
-
-  useEffect(() => {
-    const stats = pagePushData?.stats;
-    if (!stats || typeof stats !== "object") return;
-    const revision = (stats as Record<string, unknown>).pair_events_persisted;
-    if (revision === undefined || revision === null) return;
-    const nextRevision = String(revision);
-    if (pairHistoryRevisionRef.current === null) {
-      pairHistoryRevisionRef.current = nextRevision;
-      return;
-    }
-    if (pairHistoryRevisionRef.current === nextRevision) return;
-    pairHistoryRevisionRef.current = nextRevision;
-    // The durable history API owns pagination and filtering; the push counter
-    // invalidates its cached slice when new observations are appended.
-    void loadPairHistory();
   }, [pagePushData]);
 
 
@@ -215,95 +136,6 @@ function ScannerContent() {
 
   const signals = filteredRows.filter((row) => row.alert_eligible === true).length;
   const gaps = filteredRows.filter((row) => row.eligible === true).length;
-  const filteredPairs = useMemo(() => {
-    const q = search.trim().toUpperCase();
-    return pairRows.filter((row) => {
-      const symbol = String(row.symbol ?? "").toUpperCase();
-      const normalizedSymbol = symbol.replace(/\s+/g, "");
-      const normalizedMarket = market.replace(/\s+/g, "");
-      const marketMatch = market === "ALL F&O STOCKS" || normalizedSymbol === normalizedMarket || (market === "NIFTY" && normalizedSymbol === "NIFTY50");
-      const searchMatch = !q || Object.values(row).some((value) => String(value ?? "").toUpperCase().includes(q));
-      return marketMatch && searchMatch;
-    });
-  }, [pairRows, market, search]);
-
-  const filteredPairHistory = useMemo(() => {
-    const q = search.trim().toUpperCase();
-    return pairHistory.filter((row) => {
-      const symbol = String(row.symbol ?? "").toUpperCase();
-      const normalizedSymbol = symbol.replace(/\s+/g, "");
-      const normalizedMarket = market.replace(/\s+/g, "");
-      const marketMatch = market === "ALL F&O STOCKS" || normalizedSymbol === normalizedMarket || (market === "NIFTY" && normalizedSymbol === "NIFTY50");
-      const searchMatch = !q || Object.values(row).some((value) => String(value ?? "").toUpperCase().includes(q));
-      return marketMatch && searchMatch;
-    });
-  }, [pairHistory, market, search]);
-
-  const pairStats = useMemo(() => {
-    const missing = filteredPairs.filter((row) => row.status === "MISSING_EXECUTION_QUOTE");
-    const quoted = filteredPairs.filter((row) => row.status !== "MISSING_EXECUTION_QUOTE");
-    const liquidityBlocked = filteredPairs.filter((row) => row.status === "LIQUIDITY_BLOCKED");
-    const invalidBook = filteredPairs.filter((row) => row.status === "INVALID_FUTURE_BOOK");
-    const positiveGap = quoted.filter((row) => (numberValue(row, "gap") ?? 0) > 0);
-    const stable = quoted.filter((row) => {
-      const reasons = Array.isArray(row.reason_codes) ? row.reason_codes : String(row.reason_codes ?? "").split(",");
-      return reasons.includes("STABLE");
-    });
-    const signals = filteredPairs.filter((row) => row.status === "SIGNAL");
-    const noSignal = filteredPairs.filter((row) => row.status === "NO_SIGNAL");
-    return {
-      pairs: filteredPairs.length,
-      missing: missing.length,
-      quoted: quoted.length,
-      liquidityBlocked: liquidityBlocked.length,
-      invalidBook: invalidBook.length,
-      positiveGap: positiveGap.length,
-      stable: stable.length,
-      noSignal: noSignal.length,
-      signals: signals.length,
-    };
-  }, [filteredPairs]);
-
-  const formatTime = (value: unknown) => {
-    if (!value) return "—";
-    const date = new Date(String(value));
-    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleTimeString("en-IN", { hour12: false });
-  };
-
-  const reasonCodes = (row: Row) => Array.isArray(row.reason_codes)
-    ? row.reason_codes.map(String)
-    : String(row.reason_codes ?? "").split(",").filter(Boolean);
-
-  const reasonText = (row: Row) => reasonCodes(row).join(" • ") || "PAIR_CREATED";
-
-  const stabilityText = (row: Row) => {
-    const stable = numberValue(row, "stable_observations") ?? 0;
-    const reasons = reasonCodes(row);
-    if (stable > 0) return String(stable);
-    if (reasons.includes("NOT_STABLE_YET")) return "0";
-    return "—";
-  };
-
-  const eligibilityText = (row: Row) => {
-    const status = String(row.status ?? row.lifecycle ?? "");
-    if (status === "MISSING_EXECUTION_QUOTE") return "QUOTE ✗";
-    if (status === "LIQUIDITY_BLOCKED") return "LIQUIDITY ✗";
-    if (status === "INVALID_FUTURE_BOOK") return "FUTURE BOOK ✗";
-    const reasons = reasonCodes(row);
-    const checks = [
-      numberValue(row, "gap") === null ? "Gap —" : numberValue(row, "gap")! > 0 ? "Gap ✓" : "Gap ✗",
-      numberValue(row, "net_gap") === null ? "Net —" : (numberValue(row, "net_gap")! > 0 || reasons.includes("POSITIVE_NET_GAP")) ? "Net ✓" : "Net ✗",
-      reasons.includes("STABLE") ? "Stable ✓" : "Stable ✗",
-    ];
-    return checks.join(" • ");
-  };
-
-  const feedAgeText = (row: Row) => {
-    const age = Number(row.age_ms);
-    if (!Number.isFinite(age)) return "—";
-    return age < 1000 ? `${Math.round(age)} ms` : `${(age / 1000).toFixed(1)} s`;
-  };
-
   const percentText = (row: Row, key = "gap_pct") => {
     const value = numberValue(row, key);
     return value === null ? "—" : `${value.toFixed(4)}%`;
@@ -313,22 +145,7 @@ function ScannerContent() {
     ? new Date(lastLiveScanAt).toLocaleTimeString("en-IN", { hour12: false }) + " IST"
     : "—";
 
-  const historyAgeText = (row: Row) => {
-    const observed = new Date(String(row.observed_at ?? ""));
-    if (Number.isNaN(observed.getTime())) return "—";
-    const age = Math.max(0, Date.now() - observed.getTime());
-    return age < 60000 ? `${Math.round(age / 1000)}s ago` : `${Math.round(age / 60000)}m ago`;
-  };
 
-  const refresh = async () => {
-    setRefreshing(true);
-    if (marketSession === "OPEN") {
-      await Promise.all([load(), loadPairLive(), loadPairHistory()]);
-    } else {
-      await loadPairHistory();
-    }
-    setRefreshing(false);
-  };
 
   return (
     <div className="min-h-screen space-y-5 theme-bg p-4 theme-text">
@@ -412,3 +229,5 @@ export default function ScannerPage() {
     </Suspense>
   );
 }
+
+
