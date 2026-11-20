@@ -492,7 +492,7 @@ export default function BoxSpreadPaperTrading() {
             socket?.close();
           }
         }, 10000);
-        socket.onerror = () => { if (!stopped && privateWsRef.current === socket) socket.close(); };
+        socket.onerror = () => { if (!stopped && privateWsRef.current === socket) socket?.close(); };
         socket.onclose = () => {
           if (stopped) return;
           privateResyncPendingRef.current = false;
