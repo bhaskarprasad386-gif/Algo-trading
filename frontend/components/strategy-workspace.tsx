@@ -1367,8 +1367,14 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const refresh = async () => {
     setRefreshing(true);
-    await Promise.all([load(), loadHistory(), loadPairs()]);
-    setRefreshing(false);
+    // History is independent and can be slow. Start it in the background so
+    // live scanner/pair refresh feedback is not held hostage by history latency.
+    void loadHistory();
+    try {
+      await Promise.all([load(), loadPairs()]);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const copyTableRows = async (kind: "history" | "pairs") => {
