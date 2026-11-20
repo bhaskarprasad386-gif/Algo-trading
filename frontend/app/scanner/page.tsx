@@ -60,6 +60,7 @@ function ScannerContent() {
   // Prevent delayed REST recovery from overwriting authoritative page pushes.
   const liveRequestSequenceRef = useRef(0);
   const pairLiveRequestSequenceRef = useRef(0);
+  const fallbackGenerationRef = useRef(0);
 
   const load = async () => {
     const requestSequence = ++liveRequestSequenceRef.current;
@@ -154,13 +155,16 @@ function ScannerContent() {
     let cancelled = false;
     let liveTimer: number | undefined;
     const pollFallback = async () => {
-      if (cancelled || marketSession !== "OPEN") return;
+      if (cancelled || marketSession !== "OPEN" || pagePushStatus === "LIVE") return;
+      const generation = fallbackGenerationRef.current;
+      const isCurrentFallback = () => !cancelled && marketSession === "OPEN" &&
+        pagePushStatus !== "LIVE" && generation === fallbackGenerationRef.current;
       await load();
-      if (cancelled || marketSession !== "OPEN") return;
+      if (!isCurrentFallback()) return;
       await loadPairLive();
-      if (!cancelled && marketSession === "OPEN") {
-        // Schedule only after both recovery requests settle; no overlapping
-        // scanner or pair REST fallbacks when the backend is slow.
+      if (isCurrentFallback()) {
+        // Schedule only after both recovery requests settle; a page push
+        // arriving between the requests cancels this fallback cycle.
         liveTimer = window.setTimeout(() => { void pollFallback(); }, 15000);
       }
     };
@@ -181,6 +185,7 @@ function ScannerContent() {
   useEffect(() => {
     if (!pagePushData) return;
     // Any page push supersedes outstanding REST fallback payloads, including REMOVE.
+    fallbackGenerationRef.current += 1;
     liveRequestSequenceRef.current += 1;
     pairLiveRequestSequenceRef.current += 1;
     const event = String(pagePushData.__event ?? "").toUpperCase();
