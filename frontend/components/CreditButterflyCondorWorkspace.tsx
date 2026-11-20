@@ -109,6 +109,9 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
         setLoading(false);
         setError("");
         setLastUpdated("");
+        // REMOVE is a terminal state for this payload frame. Do not
+        // immediately re-apply payload if a malformed mixed frame contains it.
+        return;
       }
     }
     const next = pageData.payload;
