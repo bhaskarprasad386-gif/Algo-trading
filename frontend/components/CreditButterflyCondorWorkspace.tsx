@@ -30,7 +30,7 @@ type Payload = {
   runtime_state: string;
   execution_mode: "SHADOW_ONLY";
   order_routing_enabled: false;
-  shared_snapshot: { quote_contract_count: number; depth_record_count: number; depth_enabled: boolean; depth_running: boolean; captured_at_ns?: number | null };
+  shared_snapshot: { quote_contract_count: number; depth_record_count: number; depth_enabled: boolean; depth_running: boolean };
   result_count: number;
   results: ShadowRow[];
   live_coverage: Array<{ underlying: string; expiry_type: string; expiry: number; option_type: string; valid_quote_count: number; result_count: number }>;
@@ -69,37 +69,6 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState("");
-  const [snapshotStale, setSnapshotStale] = useState(true);
-
-  // PagePush is authoritative. When the runner/feed stops emitting, clearly
-  // mark retained rows stale instead of presenting an old shadow snapshot LIVE.
-  useEffect(() => {
-    const capturedAtNs = Number(payload?.shared_snapshot?.captured_at_ns);
-    const snapshotAvailable = payload?.runtime_state === "SNAPSHOT_AVAILABLE";
-    if (lastMessageAt === null || !snapshotAvailable || !Number.isFinite(capturedAtNs) || capturedAtNs <= 0) {
-      setSnapshotStale(true);
-      return;
-    }
-    // A PagePush frame can be freshly delivered while its underlying market
-    // snapshot is unavailable/old. Freshness must follow market capture time,
-    // not just websocket message arrival.
-    const nowNs = Date.now() * 1_000_000;
-    // Reject materially future-dated capture timestamps instead of treating
-    // them as age-zero quotes (clock skew must fail closed).
-    if (capturedAtNs > nowNs + 5_000_000_000) {
-      setSnapshotStale(true);
-      return;
-    }
-    const ageMs = Math.max(0, Date.now() - capturedAtNs / 1_000_000);
-    if (ageMs >= 5000) {
-      setSnapshotStale(true);
-      return;
-    }
-    setSnapshotStale(false);
-    const timer = window.setTimeout(() => setSnapshotStale(true), 5000 - ageMs);
-    return () => window.clearTimeout(timer);
-  }, [lastMessageAt, payload?.runtime_state, payload?.shared_snapshot?.captured_at_ns]);
-
 
   const refresh = useCallback(() => resync(), [resync]);
 
@@ -116,29 +85,13 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
         setLoading(false);
         setError("");
         setLastUpdated("");
-        // REMOVE is a terminal state for this payload frame. Do not
-        // immediately re-apply payload if a malformed mixed frame contains it.
-        return;
       }
     }
     const next = pageData.payload;
     if (next && typeof next === "object") {
-      const candidate = next as Partial<Payload>;
-      // PagePush data is external JSON: do not render a malformed partial
-      // snapshot through required shared_snapshot/result fields.
-      if (
-        typeof candidate.runtime_state === "string" &&
-        candidate.shared_snapshot && typeof candidate.shared_snapshot === "object" &&
-        Array.isArray(candidate.results) && Array.isArray(candidate.live_coverage) &&
-        candidate.rejected_counts && typeof candidate.rejected_counts === "object"
-      ) {
-        setPayload(candidate as Payload);
-        setLoading(false);
-        setError("");
-      } else {
-        setLoading(false);
-        setError("Received an incomplete shared market snapshot; retaining the last valid data.");
-      }
+      setPayload(next as Payload);
+      setLoading(false);
+      setError("");
     }
     if (lastMessageAt !== null) {
       setLastUpdated(new Date(lastMessageAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }));
@@ -175,13 +128,13 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
 
       <Card className="space-y-2 p-3">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 font-bold"><Activity size={15} /> Shared market feed <span className="rounded border theme-border px-2 py-0.5 text-[10px]">{connectionStatus}</span><span className={`rounded border px-2 py-0.5 text-[10px] ${snapshotStale ? "border-amber-500/40 text-amber-600" : "border-emerald-500/40 text-emerald-600"}`}>{snapshotStale ? "SNAPSHOT STALE" : "SNAPSHOT FRESH"}</span></div>
+          <div className="flex items-center gap-2 font-bold"><Activity size={15} /> Shared market feed <span className="rounded border theme-border px-2 py-0.5 text-[10px]">{connectionStatus}</span></div>
           <div>Runtime: <b>{payload?.runtime_state ?? (loading ? "LOADING" : "UNAVAILABLE")}</b></div>
           <div>Quote contracts: <b>{fmt(payload?.shared_snapshot.quote_contract_count)}</b></div>
           <div>Depth records: <b>{fmt(payload?.shared_snapshot.depth_record_count)}</b></div>
           <div>Last refresh: <b>{lastUpdated || "—"} IST</b></div>
         </div>
-        <p className="text-xs theme-muted">Quote freshness ≤ 5 seconds · cross-leg skew ≤ 2 seconds · alert eligibility requires minimum expiry gross profit strictly greater than 5 points. Charges and net P&amp;L are not calculated.</p>{snapshotStale && <p role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs font-semibold text-amber-600">No fresh PagePush snapshot for 5 seconds. Retained rows are stale and must not be treated as current opportunities.</p>}
+        <p className="text-xs theme-muted">Quote freshness ≤ 5 seconds · cross-leg skew ≤ 2 seconds · alert eligibility requires minimum expiry gross profit strictly greater than 5 points. Charges and net P&amp;L are not calculated.</p>
         {error && <p role="status" className="rounded-lg border border-amber-500/40 p-2 text-xs">{error}</p>}
       </Card>
 
