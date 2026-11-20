@@ -47,8 +47,8 @@ export default function BoxSpreadEdgeTimingAnalysis() {
   const requestSequence = useRef(0);
   const { data: pagePushData, status: pagePushStatus } = usePagePush("box-spread");
 
-  const refresh = useCallback(async () => {
-    if (!shouldAllowBoxSpreadEdgeTimingRestRefresh(pagePushStatus)) {
+  const refresh = useCallback(async (eventDriven = false) => {
+    if (!shouldAllowBoxSpreadEdgeTimingRestRefresh(pagePushStatus, eventDriven)) {
       requestSequence.current += 1;
       setLoading(false);
       return;
@@ -129,7 +129,7 @@ export default function BoxSpreadEdgeTimingAnalysis() {
     // A WebSocket history_revision is an event-driven invalidation, not a polling
     // interval. Fetch the durable aggregate immediately after the event and cancel
     // any older request via refresh's sequence guard.
-    void refresh();
+    void refresh(true);
   }, [pagePushStatus, pagePushData?.history_revision, refresh]);
 
 
