@@ -98,13 +98,19 @@ export default function HomePage() {
     let cancelled = false;
     let socket: WebSocket | null = null;
     let retryTimer: number | null = null;
+    let connectionTimer: number | undefined;
     let retryMs = 1000;
 
     const connect = () => {
       if (cancelled) return;
       setWsStatus("connecting");
       socket = new WebSocket(getDashboardWsUrl() + "/ws/dashboard");
+      // A socket stuck in CONNECTING otherwise never reaches onclose and the
+      // dashboard silently loses its realtime connection.
+      connectionTimer = window.setTimeout(() => socket?.close(), 12000);
       socket.onopen = () => {
+        if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
+        connectionTimer = undefined;
         retryMs = 1000;
         setWsStatus("connected");
       };
@@ -133,6 +139,8 @@ export default function HomePage() {
       };
       socket.onerror = () => setWsStatus("error");
       socket.onclose = () => {
+        if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
+        connectionTimer = undefined;
         if (cancelled) return;
         setWsStatus("error");
         retryTimer = window.setTimeout(connect, retryMs);
@@ -144,6 +152,7 @@ export default function HomePage() {
     return () => {
       cancelled = true;
       if (retryTimer !== null) window.clearTimeout(retryTimer);
+      if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
       socket?.close();
     };
   }, []);
