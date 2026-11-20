@@ -9,6 +9,14 @@ export function isCurrentRecoveryResponse({ active, requestSequence, latestSeque
     requestSequence === latestSequence && responseValid === true;
 }
 
+/** Guard page-owned REST responses against superseding requests or PagePush updates. */
+export function isCurrentPagePushRequest({ active, requestSequence, latestSequence }) {
+  return active === true && Number.isSafeInteger(requestSequence) && requestSequence >= 0 &&
+    Number.isSafeInteger(latestSequence) && latestSequence >= 0 &&
+    requestSequence === latestSequence;
+}
+
+
 /** Merge durable alert rows by ID, with incoming rows replacing older versions. */
 export function mergeUniqueAlerts(current, incoming, compare, limit = 100) {
   const merged = new Map();
