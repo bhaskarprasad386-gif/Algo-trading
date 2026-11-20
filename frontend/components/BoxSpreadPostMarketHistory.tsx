@@ -173,7 +173,11 @@ export default function BoxSpreadPostMarketHistory() {
       setHasMore(false);
       setTotal(allRows.length);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to load complete history for sorting");
+      // A superseded full-history sort must not surface an error over the
+      // newer page/filter/revision request that replaced it.
+      if (sortRequestId === sortingRequestSequence.current) {
+        setError(e instanceof Error ? e.message : "Unable to load complete history for sorting");
+      }
     } finally { if (sortRequestId === sortingRequestSequence.current) setSortingAll(false); }
   };
   const sortMark = (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
