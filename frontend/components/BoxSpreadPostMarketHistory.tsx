@@ -151,14 +151,30 @@ export default function BoxSpreadPostMarketHistory() {
     if (capacities.some(quantity => !Number.isFinite(quantity) || quantity < 0)) return null;
     return Math.floor(Math.min(...capacities) / lotSize);
   };
-  const sortedRows = useMemo(() => [...rows].sort((a, b) => {
-    const metric = (row: Snapshot) => sortKey === "profit" ? row.gross_pnl : sortKey === "edge" ? row.executable_edge : sortKey === "edgePerLot" ? row.edge_per_lot : sortKey === "gap" ? strikeGap(row) : sortKey === "lots" ? executableLots(row) : new Date(row.observed_at).getTime();
-    const av = metric(a), bv = metric(b);
-    if (av == null && bv == null) return 0;
-    if (av == null) return 1;
-    if (bv == null) return -1;
-    return (sortDirection === "desc" ? -1 : 1) * (Number(av) - Number(bv));
-  }), [rows, sortKey, sortDirection]);
+  const sortedRows = useMemo(() => {
+    // Calculate the active sort value once per row. Previously the comparator
+    // repeatedly parsed timestamps and recomputed four-leg depth capacity
+    // (including a min() over legs) on every comparison.
+    const metric = (row: Snapshot): number | null => {
+      const raw = sortKey === "profit" ? row.gross_pnl
+        : sortKey === "edge" ? row.executable_edge
+        : sortKey === "edgePerLot" ? row.edge_per_lot
+        : sortKey === "gap" ? strikeGap(row)
+        : sortKey === "lots" ? executableLots(row)
+        : new Date(row.observed_at).getTime();
+      const value = Number(raw);
+      return raw == null || !Number.isFinite(value) ? null : value;
+    };
+    const decorated = rows.map((row, index) => ({ row, index, value: metric(row) }));
+    decorated.sort((a, b) => {
+      if (a.value == null && b.value == null) return a.index - b.index;
+      if (a.value == null) return 1;
+      if (b.value == null) return -1;
+      const difference = (sortDirection === "desc" ? -1 : 1) * (a.value - b.value);
+      return difference || a.index - b.index;
+    });
+    return decorated.map(item => item.row);
+  }, [rows, sortKey, sortDirection]);
   const selectSort = (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => {
     // Sorting stays local to the currently loaded page. The old implementation
     // downloaded every history page (potentially thousands of rows) on each sort,
