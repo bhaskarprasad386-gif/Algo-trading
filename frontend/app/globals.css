@@ -645,3 +645,37 @@ html[data-theme="white"] .box-spread-page .box-live-opportunities article [class
   .box-spread-page :is(h1,h2,h3) { letter-spacing: -.01em; }
   .box-spread-page .box-workspace-nav a { padding-inline: .55rem !important; }
 }
+
+/* Mobile four-leg quote cards: fixed two-column footprint, avoid forced 150px overflow. */
+@media (max-width: 640px) {
+  .box-spread-page .box-live-opportunities article > .grid > div:first-child .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .5rem;
+  }
+  .box-spread-page .box-live-opportunities article > .grid > div:first-child .grid > div {
+    min-width: 0;
+    padding: .65rem .55rem;
+  }
+  .box-spread-page .box-live-opportunities article > .grid > div:first-child .grid > div > div:first-child {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: .3rem;
+  }
+  .box-spread-page .box-live-opportunities article > .grid > div:first-child .grid > div > div:first-child span:last-child {
+    white-space: normal;
+    text-align: left;
+    line-height: 1.25;
+  }
+  .box-spread-page .box-live-opportunities article > .grid > div:first-child .grid > div > div:nth-child(2) {
+    font-size: 1rem;
+    overflow-wrap: anywhere;
+  }
+  .box-spread-page .box-live-opportunities article > .grid > div:first-child .grid > div > div:last-child {
+    overflow-wrap: anywhere;
+  }
+}
+@media (max-width: 380px) {
+  .box-spread-page .box-live-opportunities article > .grid > div:first-child .grid > div {
+    padding: .55rem .45rem;
+  }
+}
