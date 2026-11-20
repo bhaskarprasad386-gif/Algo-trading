@@ -401,79 +401,8 @@ function ScannerContent() {
           </table>
         </div>
       </Card>
-
-      <Card className="theme-border theme-surface p-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live Pair Monitor & Diagnostics</h2><p className="mt-1 text-xs theme-muted">Every matched cash + futures pair is shown here even when it cannot become a signal. Diagnostics are persisted for post-market review.</p></div>
-          <span className="text-xs font-semibold theme-muted">{pairStats.pairs} current live pairs • {marketSession === "CLOSED" ? "refresh paused" : marketSession === "OPEN" ? "1.5s refresh" : "waiting for market state"}</span>
-        </div>
-        {marketSession === "CLOSED" && <div className="mt-4 rounded-xl border theme-border theme-warning-bg p-3 text-xs theme-warning">Live scanning is paused because the market is closed. Current live counters are intentionally 0; saved diagnostics below remain available for the completed session.</div>}
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-9">{[
-          ["Pair observations", pairStats.pairs],
-          ["Quotes present", pairStats.quoted],
-          ["Missing quote", pairStats.missing],
-          ["Positive gap", pairStats.positiveGap],
-          ["Liquidity blocked", pairStats.liquidityBlocked],
-          ["Invalid future book", pairStats.invalidBook],
-          ["Stable", pairStats.stable],
-          ["No signal", pairStats.noSignal],
-          ["Signals", pairStats.signals],
-        ].map(([label, value]) => <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{label}</p><p className="mt-1 text-lg font-semibold theme-text">{value}</p></div>)}</div>
-        <div className="mt-3 rounded-xl border theme-border theme-surface-2 p-3 text-xs theme-muted"><span className="font-semibold theme-text">Pipeline:</span> Pair Created → Quotes → Liquidity → Positive Gap → Stability → Signal. Counts are read-only diagnostic observations, not unique-pair counts.</div>
-        <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted">
-          <span className="rounded-lg border theme-border px-3 py-2">Session feed observations: {cell(pairBackendStats, "observations")}</span>
-          <span className="rounded-lg border theme-border px-3 py-2">Pair observations: {cell(pairBackendStats, "pairs")}</span>
-          <span className="rounded-lg border theme-border px-3 py-2">Quote failures: {cell(pairBackendStats, "pairs_missing_quotes")}</span>
-          <span className="rounded-lg border theme-border px-3 py-2">Diagnostics persisted: {cell(pairBackendStats, "pair_events_persisted")}</span>
-        </div>
-        <div className="mt-4 grid gap-2 md:hidden">
-          {filteredPairs.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No pair diagnostics in the last 2 minutes.</div> : filteredPairs.map((row, index) => { const status = String(row.status ?? row.lifecycle ?? "PAIR_CREATED"); const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status === "INVALID_FUTURE_BOOK" ? "BLOCKED • FUTURE BOOK" : status === "LIQUIDITY_BLOCKED" ? "BLOCKED • LIQUIDITY" : status; return <div key={String(row.observation_ref ?? "mobile-pair-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="flex items-start justify-between gap-2"><div className="text-sm font-bold theme-text">{cell(row, "symbol")}</div><span className="rounded-full border theme-border px-2 py-1 text-[9px] font-bold theme-muted">{statusLabel}</span></div><div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2"><div><div className="text-[10px] uppercase theme-subtle">Time</div><div className="text-xs theme-muted">{formatTime(row.observed_at)}</div></div><div><div className="text-[10px] uppercase theme-subtle">Contract</div><div className="text-xs theme-muted">{cell(row, "contract_month")}</div></div><div><div className="text-[10px] uppercase theme-subtle">Cash Ask</div><div className="text-xs theme-muted">{cell(row, "cash_ask")}</div></div><div><div className="text-[10px] uppercase theme-subtle">Future Bid</div><div className="text-xs theme-muted">{cell(row, "future_bid")}</div></div><div><div className="text-[10px] uppercase theme-subtle">Gap %</div><div className="text-xs theme-muted">{percentText(row)}</div></div><div><div className="text-[10px] uppercase theme-subtle">Stability</div><div className="text-xs theme-muted">{stabilityText(row)}</div></div><div className="col-span-2"><div className="text-[10px] uppercase theme-subtle">Eligibility / Reason</div><div className="text-xs font-semibold theme-text">{eligibilityText(row)}</div><div className="mt-1 break-words text-xs theme-muted">{reasonText(row)}</div></div></div></div>; })}
-        </div>
-        <div className="mt-4 hidden overflow-x-auto md:block"><table className="min-w-[1100px] w-full text-left text-sm">
-          <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
-          <tbody>{filteredPairs.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No pair diagnostics in the last 2 minutes.</td></tr> : filteredPairs.map((row, index) => {
-            const status = String(row.status ?? row.lifecycle ?? "PAIR_CREATED");
-            const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status === "INVALID_FUTURE_BOOK" ? "BLOCKED • FUTURE BOOK" : status === "LIQUIDITY_BLOCKED" ? "BLOCKED • LIQUIDITY" : status;
-            return <tr key={String(row.observation_ref ?? "pair-" + index)} className="border-b theme-border last:border-0">
-              <td className="px-4 py-3 theme-muted">{formatTime(row.observed_at)}</td><td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol")}</td>
-              <td className="px-4 py-3 theme-muted">{cell(row, "contract_month")}</td><td className="px-4 py-3 font-semibold theme-text">{statusLabel}</td>
-              <td className="px-4 py-3 theme-muted">{cell(row, "cash_ask")}</td><td className="px-4 py-3 theme-muted">{cell(row, "future_bid")}</td>
-              <td className="px-4 py-3 theme-muted">{percentText(row)}</td>
-              <td className="px-4 py-3 theme-muted">{stabilityText(row)}</td>
-              <td className="px-4 py-3 theme-muted">{feedAgeText(row)}</td>
-              <td className="max-w-[430px] px-4 py-3 text-xs leading-5 theme-muted"><div className="font-semibold theme-text">{eligibilityText(row)}</div><div className="mt-1">{reasonText(row)}</div></td>
-            </tr>;
-          })}</tbody>
-        </table></div>
-      </Card>
-      <Card className="theme-border theme-surface p-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold theme-text">Post-Market Pair History</h2><p className="mt-1 text-xs theme-muted">Latest 100 saved pair observations from today's trading session. They remain visible after market close and reset to zero on the next day.</p></div><span className="text-xs theme-muted">{filteredPairHistory.length.toLocaleString("en-IN")} shown • {pairHistory.length.toLocaleString("en-IN")} saved observations</span></div>
-        <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted"><span className="rounded-lg border theme-border px-3 py-2">Saved automatically</span><span className="rounded-lg border theme-border px-3 py-2">Daily reset: next day</span><span className="rounded-lg border theme-border px-3 py-2">Includes quote failures + no-signal reasons</span><span className="rounded-lg border theme-border px-3 py-2">Last live scan: {lastScanText}</span></div>
-        <div className="mt-4 grid gap-2 md:hidden">
-          {filteredPairHistory.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No saved pair diagnostics for this selection.</div> : filteredPairHistory.map((row, index) => { const status = String(row.status ?? row.lifecycle ?? "PAIR_CREATED"); const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status === "INVALID_FUTURE_BOOK" ? "BLOCKED • FUTURE BOOK" : status === "LIQUIDITY_BLOCKED" ? "BLOCKED • LIQUIDITY" : status; return <div key={String(row.observation_ref ?? "mobile-history-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="flex items-start justify-between gap-2"><div className="text-sm font-bold theme-text">{cell(row, "symbol")}</div><span className="rounded-full border theme-border px-2 py-1 text-[9px] font-bold theme-muted">{statusLabel}</span></div><div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2"><div><div className="text-[10px] uppercase theme-subtle">Time</div><div className="text-xs theme-muted">{formatTime(row.observed_at)}</div></div><div><div className="text-[10px] uppercase theme-subtle">Contract</div><div className="text-xs theme-muted">{cell(row, "contract_month")}</div></div><div><div className="text-[10px] uppercase theme-subtle">Cash Ask</div><div className="text-xs theme-muted">{cell(row, "cash_ask")}</div></div><div><div className="text-[10px] uppercase theme-subtle">Future Bid</div><div className="text-xs theme-muted">{cell(row, "future_bid")}</div></div><div><div className="text-[10px] uppercase theme-subtle">Gap %</div><div className="text-xs theme-muted">{percentText(row)}</div></div><div><div className="text-[10px] uppercase theme-subtle">Stability</div><div className="text-xs theme-muted">{stabilityText(row)}</div></div><div className="col-span-2"><div className="text-[10px] uppercase theme-subtle">Eligibility / Reason</div><div className="text-xs font-semibold theme-text">{eligibilityText(row)}</div><div className="mt-1 break-words text-xs theme-muted">{reasonText(row)}</div></div></div></div>; })}
-        </div>
-        <div className="mt-4 hidden overflow-x-auto md:block"><table className="min-w-[1100px] w-full text-left text-sm">
-          <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
-          <tbody>{filteredPairHistory.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No saved pair diagnostics for this selection.</td></tr> : filteredPairHistory.map((row, index) => {
-            const status = String(row.status ?? row.lifecycle ?? "PAIR_CREATED");
-            const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status === "INVALID_FUTURE_BOOK" ? "BLOCKED • FUTURE BOOK" : status === "LIQUIDITY_BLOCKED" ? "BLOCKED • LIQUIDITY" : status;
-            return <tr key={String(row.observation_ref ?? "history-" + index)} className="border-b theme-border last:border-0">
-              <td className="px-4 py-3 theme-muted">{formatTime(row.observed_at)}</td><td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol")}</td>
-              <td className="px-4 py-3 theme-muted">{cell(row, "contract_month")}</td><td className="px-4 py-3 font-semibold theme-text">{statusLabel}</td>
-              <td className="px-4 py-3 theme-muted">{cell(row, "cash_ask")}</td><td className="px-4 py-3 theme-muted">{cell(row, "future_bid")}</td>
-              <td className="px-4 py-3 theme-muted">{percentText(row)}</td>
-              <td className="px-4 py-3 theme-muted">{stabilityText(row)}</td>
-              <td className="px-4 py-3 theme-muted">{historyAgeText(row)}</td>
-              <td className="max-w-[430px] px-4 py-3 text-xs leading-5 theme-muted"><div className="font-semibold theme-text">{eligibilityText(row)}</div><div className="mt-1">{reasonText(row)}</div></td>
-            </tr>;
-          })}</tbody>
-        </table></div>
-      </Card>
-      <Card className="theme-border theme-surface p-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner safety boundary</p><p className="mt-1 text-xs leading-5 theme-muted">Scanner output is paper-safe. Broker orders remain OFF.</p></div><span className="shrink-0 rounded-lg border theme-border theme-danger-bg px-3 py-2 text-xs font-semibold theme-danger">BROKER ORDERS OFF</span></div>
-      </Card>
-    </div>
-  );
+      </div>
+    );
 }
 
 export default function ScannerPage() {

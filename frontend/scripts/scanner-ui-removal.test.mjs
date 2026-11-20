@@ -60,3 +60,17 @@ test("shared pair monitor and alert/diagnostic sections are excluded only on req
   assert.equal(workspace.includes("Exchange Coverage Diagnostics"), false);
   assert.equal(workspace.includes("Session Diagnostics"), false);
 });
+
+
+test("PR #712 Cash Future page removals are actually absent from rendered UI", async () => {
+  const page = await read("app/scanner/page.tsx");
+  for (const section of [
+    "Live Pair Monitor & Diagnostics",
+    "Post-Market Pair History",
+    "Scanner safety boundary",
+    "pairColumns.map((column)",
+    "filteredPairHistory.map((row",
+  ]) assert.equal(page.includes(section), false, section + " must not render on Cash Future scanner");
+  // Keep the main Cash Future opportunity scanner mounted.
+  assert.equal(page.includes("filteredRows.map((row"), true);
+});
