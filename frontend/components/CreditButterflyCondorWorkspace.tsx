@@ -69,6 +69,17 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState("");
+  const [snapshotStale, setSnapshotStale] = useState(true);
+
+  // PagePush is authoritative. When the runner/feed stops emitting, clearly
+  // mark retained rows stale instead of presenting an old shadow snapshot LIVE.
+  useEffect(() => {
+    if (lastMessageAt === null) { setSnapshotStale(true); return; }
+    setSnapshotStale(false);
+    const timer = window.setTimeout(() => setSnapshotStale(true), 5000);
+    return () => window.clearTimeout(timer);
+  }, [lastMessageAt]);
+
 
   const refresh = useCallback(() => resync(), [resync]);
 
@@ -128,13 +139,13 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
 
       <Card className="space-y-2 p-3">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 font-bold"><Activity size={15} /> Shared market feed <span className="rounded border theme-border px-2 py-0.5 text-[10px]">{connectionStatus}</span></div>
+          <div className="flex items-center gap-2 font-bold"><Activity size={15} /> Shared market feed <span className="rounded border theme-border px-2 py-0.5 text-[10px]">{connectionStatus}</span><span className={`rounded border px-2 py-0.5 text-[10px] ${snapshotStale ? "border-amber-500/40 text-amber-600" : "border-emerald-500/40 text-emerald-600"}`}>{snapshotStale ? "SNAPSHOT STALE" : "SNAPSHOT FRESH"}</span></div>
           <div>Runtime: <b>{payload?.runtime_state ?? (loading ? "LOADING" : "UNAVAILABLE")}</b></div>
           <div>Quote contracts: <b>{fmt(payload?.shared_snapshot.quote_contract_count)}</b></div>
           <div>Depth records: <b>{fmt(payload?.shared_snapshot.depth_record_count)}</b></div>
           <div>Last refresh: <b>{lastUpdated || "—"} IST</b></div>
         </div>
-        <p className="text-xs theme-muted">Quote freshness ≤ 5 seconds · cross-leg skew ≤ 2 seconds · alert eligibility requires minimum expiry gross profit strictly greater than 5 points. Charges and net P&amp;L are not calculated.</p>
+        <p className="text-xs theme-muted">Quote freshness ≤ 5 seconds · cross-leg skew ≤ 2 seconds · alert eligibility requires minimum expiry gross profit strictly greater than 5 points. Charges and net P&amp;L are not calculated.</p>{snapshotStale && <p role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs font-semibold text-amber-600">No fresh PagePush snapshot for 5 seconds. Retained rows are stale and must not be treated as current opportunities.</p>}
         {error && <p role="status" className="rounded-lg border border-amber-500/40 p-2 text-xs">{error}</p>}
       </Card>
 
