@@ -424,6 +424,9 @@ export default function BoxSpreadPaperTrading() {
         const wsUrl = appConfig.apiBaseUrl.replace(/\/$/, "").replace(/^http/i, "ws") + "/ws/box-spread-paper";
         socket = new WebSocket(wsUrl);
         privateWsRef.current = socket;
+        // Start the watchdog before onopen so a stuck CONNECTING socket is
+        // bounded too, not just an established socket that stops sending.
+        lastServerFrameAt = Date.now();
         socket.onopen = () => {
           if (stopped) { socket?.close(); return; }
           lastServerFrameAt = Date.now();
