@@ -160,14 +160,21 @@ export default function LiveOpportunityGrid() {
   useEffect(() => {
     const publishRows = () => {
       const now = Date.now();
+      let changed = false;
       for (const [key, tracked] of rowsRef.current) {
         const age = now - tracked.lastSeen;
-        if (age >= 60000) rowsRef.current.delete(key);
-        else if (age >= 1500 && tracked.status !== "STALE") rowsRef.current.set(key, { ...tracked, status: "STALE" });
+        if (age >= 60000) {
+          rowsRef.current.delete(key);
+          changed = true;
+        } else if (age >= 1500 && tracked.status !== "STALE") {
+          rowsRef.current.set(key, { ...tracked, status: "STALE" });
+          changed = true;
+        }
       }
-      setRows(Array.from(rowsRef.current.values()).sort((a, b) => b.lastSeen - a.lastSeen));
+      // Skip React renders while no row crosses a freshness/retention boundary.
+      if (changed) setRows(Array.from(rowsRef.current.values()).sort((a, b) => b.lastSeen - a.lastSeen));
     };
-    const staleTimer = setInterval(publishRows, 200);
+    const staleTimer = setInterval(publishRows, 1000);
     return () => clearInterval(staleTimer);
   }, []);
 
