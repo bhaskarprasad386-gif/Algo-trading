@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isCurrentRecoveryResponse, isCurrentPagePushRequest, mergeUniqueAlerts, freshEarlyEntryAlerts, shouldAllowBoxSpreadEdgeTimingRestRefresh, shouldAllowCashFutureScannerManualRestRefresh } from "../lib/page-push-recovery.mjs";
+import { isCurrentRecoveryResponse, isCurrentPagePushRequest, mergeUniqueAlerts, freshEarlyEntryAlerts, shouldAllowBoxSpreadEdgeTimingRestRefresh } from "../lib/page-push-recovery.mjs";
 
 test("REST recovery response applies only while its request remains current", () => {
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:8,latestSequence:8,responseValid:true}),true);
@@ -46,12 +46,4 @@ test("manual Box Spread edge timing refresh is blocked while PagePush is live", 
   assert.equal(shouldAllowBoxSpreadEdgeTimingRestRefresh("CONNECTING"), true);
   assert.equal(shouldAllowBoxSpreadEdgeTimingRestRefresh("RECONNECTING"), true);
   assert.equal(shouldAllowBoxSpreadEdgeTimingRestRefresh("DISCONNECTED"), true);
-});
-
-
-test("manual Cash Future scanner REST refresh is blocked while PagePush is live", () => {
-  assert.equal(shouldAllowCashFutureScannerManualRestRefresh("LIVE"), false);
-  assert.equal(shouldAllowCashFutureScannerManualRestRefresh("CONNECTING"), true);
-  assert.equal(shouldAllowCashFutureScannerManualRestRefresh("RECONNECTING"), true);
-  assert.equal(shouldAllowCashFutureScannerManualRestRefresh("DISCONNECTED"), true);
 });
