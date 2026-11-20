@@ -1055,6 +1055,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           try { window.localStorage.removeItem("algo:synthetic-arbitrage:last-live-opportunities:v1"); } catch { /* Cache is optional. */ }
         }
       } else if (Array.isArray(live?.data)) {
+        // Synthetic Arbitrage PagePush is authoritative; invalidate a REST
+        // recovery request already in flight so its late response cannot rewind.
+        if (slug === "synthetic-arbitrage") loadRequestRef.current += 1;
         const nextRows = live.data.filter((item: unknown): item is Row => !!item && typeof item === "object");
         rowsRef.current = nextRows; setRows(nextRows); setRowsStale(false);
         setLoading(false); setLiveApiLastOkAt(Date.now()); setLiveApiStatus("RESPONDING"); setError(null);
