@@ -34,6 +34,7 @@ export default function HomePage() {
   const [feedAge, setFeedAge] = useState<number | null>(null);
   const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; connectedGroupNames: string[]; requiredSocketGroups: string[]; requiredSocketGroupCount: number | null; missingSocketGroups: string[]; disconnectedGroups: string[]; maxSocketSessions: number; lastConnectFailure: any; lastSocketFailure: any; retiredTransportCount: number; brokerCooldownRemaining: number; failureRecoveryGroups: string[]; transportCloseTimedOutGroups: string[]; socketHealthByGroup: Record<string, any>; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; payloads: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, connectedGroupNames: [], requiredSocketGroups: [], requiredSocketGroupCount: null, missingSocketGroups: [], disconnectedGroups: [], maxSocketSessions: 3, lastConnectFailure: null, lastSocketFailure: null, retiredTransportCount: 0, brokerCooldownRemaining: 0, failureRecoveryGroups: [], transportCloseTimedOutGroups: [], socketHealthByGroup: {}, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const healthFailureCountRef = useRef(0);
+  const lastDashboardServerSnapshotTimeRef = useRef<number | null>(null);
   const runnerCountersRef = useRef<Record<string, number> | null>(null);
   const runnerCounterSampleAtRef = useRef<number | null>(null);
   const [runnerTps, setRunnerTps] = useState<Record<string, number>>({});
@@ -140,8 +141,10 @@ export default function HomePage() {
           const message = JSON.parse(event.data);
           if (message?.type !== "dashboard_snapshot") return;
           const serverSnapshotTime = message?.timestamp == null ? NaN : new Date(message.timestamp).getTime();
-          // A future-dated server snapshot must not be rendered as age-zero/live.
-          if (!Number.isFinite(serverSnapshotTime) || serverSnapshotTime > Date.now() + 5_000) return;
+          // Future or out-of-order server snapshots must not rewind dashboard state.
+          if (!Number.isFinite(serverSnapshotTime) || serverSnapshotTime > Date.now() + 5_000 ||
+              (lastDashboardServerSnapshotTimeRef.current != null && serverSnapshotTime < lastDashboardServerSnapshotTimeRef.current)) return;
+          lastDashboardServerSnapshotTimeRef.current = serverSnapshotTime;
           lastSnapshotAt = Date.now();
           setLastDashboardMessageAt(lastSnapshotAt);
           const observedAt = message?.scanner?.health?.last_observation_at;
