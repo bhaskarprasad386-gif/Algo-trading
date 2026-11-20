@@ -173,7 +173,14 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         // A connected transport is not synchronized until its authoritative
         // page snapshot arrives. Keep REST recovery enabled in the meantime.
         setStatus("CONNECTING");
-        socket.send(JSON.stringify({ action: "subscribe", page }));
+        try {
+          socket.send(JSON.stringify({ action: "subscribe", page }));
+        } catch {
+          // A send failure is not a synchronized connection; force the
+          // existing bounded reconnect path instead of leaving it half-open.
+          socket.close();
+          return;
+        }
         // Heartbeats can keep the transport healthy even when the initial
         // page snapshot never arrives. Bound the synchronization wait and
         // trigger authoritative resync instead of leaving this channel stuck.
