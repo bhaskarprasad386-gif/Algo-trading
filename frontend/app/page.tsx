@@ -124,6 +124,9 @@ export default function HomePage() {
         if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
         connectionTimer = undefined;
         retryMs = 1000;
+        // Start a new timestamp ordering epoch for this socket. A backend clock
+        // correction/restart must not leave reconnects rejecting every snapshot.
+        lastDashboardServerSnapshotTimeRef.current = null;
         lastSnapshotAt = Date.now();
         if (snapshotWatchdogTimer !== undefined) window.clearInterval(snapshotWatchdogTimer);
         snapshotWatchdogTimer = window.setInterval(() => {
