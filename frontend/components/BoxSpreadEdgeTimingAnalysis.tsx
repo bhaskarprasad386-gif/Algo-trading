@@ -77,10 +77,17 @@ export default function BoxSpreadEdgeTimingAnalysis() {
       setLoading(false);
       return;
     }
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 30_000);
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      if (cancelled) return;
+      await refresh();
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 30_000);
+    };
+    void poll();
     return () => {
-      window.clearInterval(timer);
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
       requestSequence.current += 1;
     };
   }, [refresh, pagePushStatus]);
