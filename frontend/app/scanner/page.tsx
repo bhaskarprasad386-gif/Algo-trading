@@ -401,8 +401,8 @@ function ScannerContent() {
           </table>
         </div>
       </Card>
-
-      
+      </div>
+    );
 }
 
 export default function ScannerPage() {
