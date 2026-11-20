@@ -145,11 +145,11 @@ function ScannerContent() {
     let cancelled = false;
     let liveTimer: number | undefined;
     const pollFallback = async () => {
-      if (cancelled || pagePushStatus === "LIVE" || marketSession !== "OPEN") return;
+      if (cancelled || marketSession !== "OPEN") return;
       await load();
-      if (cancelled || pagePushStatus === "LIVE" || marketSession !== "OPEN") return;
+      if (cancelled || marketSession !== "OPEN") return;
       await loadPairLive();
-      if (!cancelled && pagePushStatus !== "LIVE" && marketSession === "OPEN") {
+      if (!cancelled && marketSession === "OPEN") {
         // Schedule only after both recovery requests settle; no overlapping
         // scanner or pair REST fallbacks when the backend is slow.
         liveTimer = window.setTimeout(() => { void pollFallback(); }, 15000);
