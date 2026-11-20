@@ -233,7 +233,7 @@ export default function BoxSpreadPostMarketHistory() {
       const nextOffset = append ? pageOffset : 0;
       const params = new URLSearchParams({
         days: String(days),
-        limit: "500",
+        limit: "100",
         offset: String(nextOffset),
       });
       if (expiryType !== "ALL") params.set("expiry_type", expiryType);
