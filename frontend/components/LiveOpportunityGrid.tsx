@@ -328,7 +328,7 @@ export default function LiveOpportunityGrid() {
         <div className="space-y-3 p-3 sm:p-4">
           {orderedRows.map((tracked) => (
             <OpportunityCard key={tracked.key} tracked={tracked} expiryView={expiryView} />
-          ))}     ))}
+          ))}
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t theme-border theme-surface-2 px-4 py-3 text-[10px] theme-muted">
