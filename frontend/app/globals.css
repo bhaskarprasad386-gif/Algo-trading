@@ -607,3 +607,12 @@ html[data-theme="white"] .box-spread-page .theme-accent {color:#087ca5!important
 .box-spread-page .box-live-opportunities article > .grid > div:last-child > div:nth-child(3) p:nth-child(2) { font-size:1.15rem; }
 html[data-theme="white"] .box-spread-page .box-live-opportunities article > .grid > div:last-child > div:first-child { background:linear-gradient(145deg,rgba(8,145,178,.10),rgba(8,145,178,.025)); border-color:rgba(8,145,178,.3); }
 @media(max-width:640px) { .box-spread-page .box-live-opportunities article > .grid > div:last-child > div:first-child p:last-child { font-size:1.3rem; } }
+
+/* Light-theme leg quote contrast: keep buy/ask and sell/bid legible on white surfaces. */
+html[data-theme="white"] .box-spread-page .box-live-opportunities article [class*="text-emerald-300"] { color:#087f5b!important; }
+html[data-theme="white"] .box-spread-page .box-live-opportunities article [class*="text-rose-300"] { color:#be314b!important; }
+html[data-theme="white"] .box-spread-page .box-live-opportunities article [class*="text-emerald-200"] { color:#087f5b!important; }
+html[data-theme="white"] .box-spread-page .box-live-opportunities article [class*="text-amber-200"] { color:#a56805!important; }
+html[data-theme="white"] .box-spread-page .box-live-opportunities article [class*="bg-emerald-400"] { background-color:rgba(8,127,91,.10)!important; }
+html[data-theme="white"] .box-spread-page .box-live-opportunities article [class*="bg-rose-400"] { background-color:rgba(190,49,75,.10)!important; }
+html[data-theme="white"] .box-spread-page .box-live-opportunities article [class*="bg-amber-400"] { background-color:rgba(165,104,5,.10)!important; }
