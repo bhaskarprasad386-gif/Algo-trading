@@ -587,6 +587,9 @@ export default function IVSkewFlipPage() {
         setRuntime(null);
         setChartHistory(null);
         setEarlyAlertLive(null);
+        // REMOVE is terminal for this frame. Never re-apply a runtime
+        // included in the same malformed mixed REMOVE message.
+        return;
       }
     }
     if(pagePushData.runtime&&typeof pagePushData.runtime==="object"){
