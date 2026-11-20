@@ -61,8 +61,8 @@ const validSnapshotHistoryResponse = (body: unknown): body is SnapshotResponse =
   const counts = response.expiry_counts;
   return response.strategy === "box-spread" &&
     Array.isArray(response.data) &&
-    Number.isInteger(response.total_count) && response.total_count >= 0 &&
-    Number.isInteger(response.count) && response.count >= 0 &&
+    typeof response.total_count === "number" && Number.isInteger(response.total_count) && response.total_count >= 0 &&
+    typeof response.count === "number" && Number.isInteger(response.count) && response.count >= 0 &&
     typeof response.has_more === "boolean" &&
     !!counts && ["WEEKLY", "MONTHLY", "UNKNOWN"].every(key =>
       Number.isInteger(counts[key as keyof typeof counts]) && counts[key as keyof typeof counts] >= 0
