@@ -515,19 +515,26 @@ export default function BoxSpreadPaperTrading() {
   useEffect(() => {
     if (!token || privateWsStatus === "LIVE") return;
     // REST is a bounded safety fallback only while the private socket is not synchronized.
-    void refresh();
-    const fallbackTimer = window.setInterval(() => { void refresh(); }, 15000);
-    return () => window.clearInterval(fallbackTimer);
+    let fallbackTimer: number | undefined;
+    const refreshFallback = async () => {
+      await refresh();
+      if (privateWsStatus !== "LIVE") fallbackTimer = window.setTimeout(() => { void refreshFallback(); }, 15000);
+    };
+    void refreshFallback();
+    return () => { if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer); privateLedgerRequestSequenceRef.current += 1; };
   }, [token, privateWsStatus, refresh]);
 
   useEffect(() => {
     if (!token) return;
-    if (pagePush.status !== "LIVE") void loadOpportunities();
-    const opportunitiesTimer = pagePush.status === "LIVE"
-      ? undefined
-      : window.setInterval(() => { void loadOpportunities(); }, 30000);
+    let opportunitiesTimer: number | undefined;
+    const refreshOpportunities = async () => {
+      await loadOpportunities();
+      if (pagePush.status !== "LIVE") opportunitiesTimer = window.setTimeout(() => { void refreshOpportunities(); }, 30000);
+    };
+    if (pagePush.status !== "LIVE") void refreshOpportunities();
     return () => {
-      if (opportunitiesTimer !== undefined) window.clearInterval(opportunitiesTimer);
+      if (opportunitiesTimer !== undefined) window.clearTimeout(opportunitiesTimer);
+      opportunityRequestSequenceRef.current += 1;
     };
   }, [token, loadOpportunities, pagePush.status]);
 
