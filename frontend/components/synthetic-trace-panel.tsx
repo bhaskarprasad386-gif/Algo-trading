@@ -120,6 +120,13 @@ export function SyntheticTracePanel() {
   const tracePushSequenceRef = useRef(0);
   const liveFetchSequenceRef = useRef(0);
 
+  useEffect(() => () => {
+    // Prevent the bootstrap REST restore from mutating state or tombstones
+    // after this panel is gone.
+    tracePushSequenceRef.current += 1;
+    liveFetchSequenceRef.current += 1;
+  }, []);
+
   useEffect(() => {
     const bootstrapPushSequence = tracePushSequenceRef.current;
     const localRows = readStored();
@@ -153,7 +160,7 @@ export function SyntheticTracePanel() {
           const result = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(id), { method: "DELETE", cache: "no-store" });
           return result.ok;
         }));
-        if (deleteResults.every(Boolean)) writeDeleted([]);
+        if (deleteResults.every(Boolean) && bootstrapPushSequence === tracePushSequenceRef.current) writeDeleted([]);
       } catch {
         // The local copy remains available when the API/database is offline.
       }
