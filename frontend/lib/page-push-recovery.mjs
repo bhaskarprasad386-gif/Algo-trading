@@ -35,6 +35,6 @@ export function freshEarlyEntryAlerts(alerts, seenIds) {
 }
 
 /** Manual REST refresh must not override authoritative live PagePush state. */
-export function shouldAllowBoxSpreadEdgeTimingRestRefresh(pagePushStatus) {
-  return pagePushStatus !== "LIVE";
+export function shouldAllowBoxSpreadEdgeTimingRestRefresh(pagePushStatus, eventDriven = false) {
+  return pagePushStatus !== "LIVE" || eventDriven === true;
 }
