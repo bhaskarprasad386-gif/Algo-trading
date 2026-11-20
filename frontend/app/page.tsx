@@ -99,6 +99,8 @@ export default function HomePage() {
     let socket: WebSocket | null = null;
     let retryTimer: number | null = null;
     let connectionTimer: number | undefined;
+    let snapshotWatchdogTimer: number | undefined;
+    let lastSnapshotAt = 0;
     let retryMs = 1000;
 
     const connect = () => {
@@ -114,6 +116,15 @@ export default function HomePage() {
         if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
         connectionTimer = undefined;
         retryMs = 1000;
+        lastSnapshotAt = Date.now();
+        if (snapshotWatchdogTimer !== undefined) window.clearInterval(snapshotWatchdogTimer);
+        snapshotWatchdogTimer = window.setInterval(() => {
+          if (socket !== currentSocket || cancelled || currentSocket.readyState !== WebSocket.OPEN) return;
+          if (Date.now() - lastSnapshotAt > 15000) {
+            setWsStatus("error");
+            currentSocket.close();
+          }
+        }, 5000);
         setWsStatus("connected");
       };
       currentSocket.onmessage = (event) => {
@@ -124,7 +135,8 @@ export default function HomePage() {
           const serverSnapshotTime = message?.timestamp == null ? NaN : new Date(message.timestamp).getTime();
           // A future-dated server snapshot must not be rendered as age-zero/live.
           if (!Number.isFinite(serverSnapshotTime) || serverSnapshotTime > Date.now() + 5_000) return;
-          setLastDashboardMessageAt(Date.now());
+          lastSnapshotAt = Date.now();
+          setLastDashboardMessageAt(lastSnapshotAt);
           const observedAt = message?.scanner?.health?.last_observation_at;
           const observedTime = observedAt == null ? NaN : new Date(observedAt).getTime();
           const validObservedAt = Number.isFinite(observedTime) && observedTime <= Date.now() + 5_000 ? observedAt : null;
@@ -145,6 +157,8 @@ export default function HomePage() {
         if (socket !== currentSocket) return;
         if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
         connectionTimer = undefined;
+        if (snapshotWatchdogTimer !== undefined) window.clearInterval(snapshotWatchdogTimer);
+        snapshotWatchdogTimer = undefined;
         if (cancelled) return;
         setWsStatus("error");
         retryTimer = window.setTimeout(connect, retryMs);
@@ -157,6 +171,7 @@ export default function HomePage() {
       cancelled = true;
       if (retryTimer !== null) window.clearTimeout(retryTimer);
       if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
+      if (snapshotWatchdogTimer !== undefined) window.clearInterval(snapshotWatchdogTimer);
       socket?.close();
     };
   }, []);
