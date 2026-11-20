@@ -156,10 +156,16 @@ export default function BoxSpreadPaperTrading() {
   // Synchronous ref invalidation prevents an older page/filter REST response from committing between renders.
   useEffect(() => {
     privateLedgerRequestSequenceRef.current += 1;
+    // Account/filter changes also invalidate an independently-running recovery
+    // read; otherwise its response can commit after the new ledger context.
+    recoveryRequestSequenceRef.current += 1;
   }, [account, openPage, closedPage, positionSearch, positionDirection]);
 
   const refresh = useCallback(async () => {
     const requestSequence = ++privateLedgerRequestSequenceRef.current;
+    // Invalidate an earlier recovery fetch immediately, before the new ledger
+    // requests start, not only after they finish successfully.
+    recoveryRequestSequenceRef.current += 1;
     try {
       const query = "&search=" + encodeURIComponent(positionSearch.trim()) + "&direction=" + encodeURIComponent(positionDirection);
       const pageSize = 10;
