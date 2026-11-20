@@ -5,6 +5,7 @@ import { Activity, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
+import { shouldAllowBoxSpreadEdgeTimingRestRefresh } from "@/lib/page-push-recovery.mjs";
 
 type TimingGroup = {
   key: string;
@@ -47,6 +48,11 @@ export default function BoxSpreadEdgeTimingAnalysis() {
   const { data: pagePushData, status: pagePushStatus } = usePagePush("box-spread");
 
   const refresh = useCallback(async () => {
+    if (!shouldAllowBoxSpreadEdgeTimingRestRefresh(pagePushStatus)) {
+      requestSequence.current += 1;
+      setLoading(false);
+      return;
+    }
     const requestId = ++requestSequence.current;
     setLoading(true);
     try {
@@ -68,7 +74,7 @@ export default function BoxSpreadEdgeTimingAnalysis() {
     } finally {
       if (requestId === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [pagePushStatus]);
 
   useEffect(() => {
     if (pagePushStatus === "LIVE") {
