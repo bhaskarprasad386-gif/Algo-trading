@@ -4,7 +4,8 @@
  * cannot rewind the page.
  */
 export function isCurrentRecoveryResponse({ active, requestSequence, latestSequence, responseValid }) {
-  return active === true && Number.isSafeInteger(requestSequence) &&
+  return active === true && Number.isSafeInteger(requestSequence) && requestSequence >= 0 &&
+    Number.isSafeInteger(latestSequence) && latestSequence >= 0 &&
     requestSequence === latestSequence && responseValid === true;
 }
 
