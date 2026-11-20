@@ -163,15 +163,18 @@ def _consistent_snapshot_frame(page: str, retries: int = 3) -> dict[str, Any]:
     updates remain detectable/replayable rather than claiming a newer cursor.
     """
     attempts = max(1, int(retries))
+    last_before = 0
     for _ in range(attempts):
         before = _latest_page_sequence(page)
+        last_before = before
         data = _snapshot(page)
         after = _latest_page_sequence(page)
         if before == after:
             return _snapshot_frame(page, data, after)
-    # An unstable capture is not authoritative: data may include events newer
-    # than the sequence baseline and replaying them can corrupt page state.
-    return _snapshot_frame(page, {"snapshot_status": "UNAVAILABLE"}, _latest_page_sequence(page))
+    # Unstable capture is not authoritative. Keep the cursor at the sequence
+    # captured before the final attempt so events published during/after that
+    # capture remain eligible for replay instead of being silently skipped.
+    return _snapshot_frame(page, {"snapshot_status": "UNAVAILABLE"}, last_before)
 
 
 def _json_safe(value: Any) -> Any:
