@@ -126,8 +126,11 @@ export default function LiveOpportunityGrid() {
       : pageData.opportunity_updates;
     if (!Array.isArray(incoming)) return;
     const authoritativeList = hasFullList || eventType === "SNAPSHOT";
-    const previousRows = authoritativeList ? new Map(rowsRef.current) : rowsRef.current;
-    if (authoritativeList) rowsRef.current.clear();
+    const previousRows = rowsRef.current;
+    // Build the next frame off-ref so identical or older authoritative frames
+    // can retain row identity and avoid triggering a whole-grid React render.
+    const nextRows = authoritativeList ? new Map<string, TrackedRow>() : new Map(previousRows);
+    let changed = false;
     const now = Date.now();
     for (const raw of incoming) {
       if (!raw || typeof raw !== "object") continue;
@@ -147,14 +150,20 @@ export default function LiveOpportunityGrid() {
       const existingRawTimestamp = existing?.row.last_update_timestamp_ns;
       const existingTimestamp = existingRawTimestamp == null ? "" : String(existingRawTimestamp);
       if (/^\d+$/.test(existingTimestamp) && incomingNs <= BigInt(existingTimestamp)) {
-        // During authoritative replacement, preserve the existing row/age if
-        // its quote timestamp is unchanged; deltas remain strictly monotonic.
-        if (authoritativeList && existing) rowsRef.current.set(key, existing);
+        // Preserve the prior quote and age when the authoritative frame is
+        // unchanged or older; delta frames remain strictly monotonic too.
+        if (authoritativeList && existing) nextRows.set(key, existing);
         continue;
       }
-      rowsRef.current.set(key, { key, row, lastSeen: now, status: "LIVE" });
+      nextRows.set(key, { key, row, lastSeen: now, status: "LIVE" });
+      changed = true;
     }
-    setRows(Array.from(rowsRef.current.values()).sort((a, b) => b.lastSeen - a.lastSeen));
+    if (authoritativeList) {
+      if (nextRows.size !== previousRows.size || Array.from(previousRows.keys()).some((key) => !nextRows.has(key))) changed = true;
+    }
+    rowsRef.current = nextRows;
+    // Delta frames containing only duplicate/older timestamps are no-ops.
+    if (changed) setRows(Array.from(nextRows.values()).sort((a, b) => b.lastSeen - a.lastSeen));
   }, [pageData]);
 
   useEffect(() => {
