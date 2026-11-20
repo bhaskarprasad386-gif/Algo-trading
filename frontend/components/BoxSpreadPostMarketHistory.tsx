@@ -55,6 +55,20 @@ type SnapshotResponse = {
   data: Snapshot[];
 };
 
+const validSnapshotHistoryResponse = (body: unknown): body is SnapshotResponse => {
+  if (!body || typeof body !== "object") return false;
+  const response = body as Partial<SnapshotResponse>;
+  const counts = response.expiry_counts;
+  return response.strategy === "box-spread" &&
+    Array.isArray(response.data) &&
+    Number.isInteger(response.total_count) && response.total_count >= 0 &&
+    Number.isInteger(response.count) && response.count >= 0 &&
+    typeof response.has_more === "boolean" &&
+    !!counts && ["WEEKLY", "MONTHLY", "UNKNOWN"].every(key =>
+      Number.isInteger(counts[key as keyof typeof counts]) && counts[key as keyof typeof counts] >= 0
+    );
+};
+
 const number = (value: number | null | undefined) =>
   value == null || !Number.isFinite(Number(value))
     ? "—"
@@ -161,7 +175,7 @@ export default function BoxSpreadPostMarketHistory() {
         const response = await fetch(base + "/api/v1/scanner/box-spread/snapshots?" + params.toString(), { cache: "no-store", signal: AbortSignal.timeout(20000) });
         if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
         const body = (await response.json()) as SnapshotResponse;
-        if (body?.strategy !== "box-spread" || !Array.isArray(body.data)) throw new Error("Unexpected snapshot history response");
+        if (!validSnapshotHistoryResponse(body)) throw new Error("Unexpected snapshot history response");
         if (sortRequestId !== sortingRequestSequence.current) return;
         allRows.push(...body.data);
         nextOffset += body.data.length;
@@ -228,7 +242,7 @@ export default function BoxSpreadPostMarketHistory() {
       if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
       const body = (await response.json()) as SnapshotResponse;
       if (requestId !== requestSequence.current) return;
-      if (body?.strategy !== "box-spread" || !Array.isArray(body.data) || !body.expiry_counts) {
+      if (!validSnapshotHistoryResponse(body)) {
         throw new Error("Unexpected snapshot history response");
       }
       setRows(current => append ? mergeSnapshots(current, body.data) : mergeSnapshots([], body.data));
