@@ -262,9 +262,19 @@ export function SyntheticTracePanel() {
       setLiveLoading(false);
       return;
     }
-    void loadLive();
-    const timer = window.setInterval(() => void loadLive(), 15000);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer: number | undefined;
+    const refresh = async () => {
+      if (cancelled) return;
+      await loadLive();
+      if (!cancelled) timer = window.setTimeout(() => { void refresh(); }, 15000);
+    };
+    void refresh();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      liveFetchSequenceRef.current += 1;
+    };
   }, [loadLive, pagePushStatus]);
 
   const tracedKeys = useMemo(() => new Set(traces.map((item) => item.trace_key)), [traces]);
