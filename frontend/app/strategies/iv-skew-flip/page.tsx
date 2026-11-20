@@ -456,8 +456,10 @@ export default function IVSkewFlipPage() {
     // The live alert stream is pushed with IV runtime snapshots. Keep REST as
     // a slow recovery path only while the page WebSocket is unavailable.
     if(pagePushStatus==="LIVE")return()=>{active=false;};
-    const timer=window.setInterval(()=>{if(active)void poll();},15000);
-    return()=>{active=false;window.clearInterval(timer);};
+    let timer:number|undefined;
+    const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},15000);};
+    void refresh();
+    return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
   },[base,alertAudioEnabled,pagePushStatus]);
   useEffect(()=>{
     let active=true;
@@ -472,8 +474,10 @@ export default function IVSkewFlipPage() {
     // Initial durable registry fetch is retained. REST polling is recovery-only
     // while the page channel is not synchronized; avoid duplicate refresh traffic.
     if(pagePushStatus==="LIVE")return()=>{active=false;};
-    const timer=window.setInterval(()=>{if(active)void poll();},10000);
-    return()=>{active=false;window.clearInterval(timer);};
+    let timer:number|undefined;
+    const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},10000);};
+    void refresh();
+    return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
   },[base,pagePushStatus]);
   useEffect(()=>{
     let active=true;
@@ -488,8 +492,10 @@ export default function IVSkewFlipPage() {
     // Durable history loads once per expiry selection. REST polling is recovery-only
     // when the page WebSocket is unavailable.
     if(pagePushStatus==="LIVE")return()=>{active=false;};
-    const timer=window.setInterval(()=>{if(active)void poll();},10000);
-    return()=>{active=false;window.clearInterval(timer);};
+    let timer:number|undefined;
+    const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},10000);};
+    void refresh();
+    return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
   },[base,requestedExpiry,pagePushStatus]);
   const activeWeeklyExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
   useEffect(()=>{
@@ -507,8 +513,10 @@ export default function IVSkewFlipPage() {
     // Initial/history load is REST; while the page socket is LIVE, sampler
     // observations are appended from pushed runtime snapshots instead.
     if(pagePushStatus==="LIVE")return()=>{active=false;};
-    const timer=window.setInterval(()=>{if(active)void poll();},15000);
-    return()=>{active=false;window.clearInterval(timer);};
+    let timer:number|undefined;
+    const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},15000);};
+    void refresh();
+    return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
   },[base,activeWeeklyExpiry,pagePushStatus]);
   const loadMoreAlerts=async()=>{
     if(loadingMoreAlerts||!hasMoreAlerts||!alertCursor)return;
