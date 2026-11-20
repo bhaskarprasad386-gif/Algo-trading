@@ -569,3 +569,10 @@ html[data-theme="white"] .box-spread-page .theme-success {color:#087f5b!importan
 html[data-theme="white"] .box-spread-page .theme-warning {color:#a56805!important;}
 html[data-theme="white"] .box-spread-page .theme-danger {color:#be314b!important;}
 html[data-theme="white"] .box-spread-page .theme-accent {color:#087ca5!important;}
+
+
+/* Live terminal cues: animate only confirmed success-status badges, never stale/error states. */
+.box-spread-page span.theme-success-bg { box-shadow:0 0 0 1px rgba(32,201,151,.10),0 0 12px rgba(32,201,151,.08); }
+.box-spread-page span.theme-success-bg::before { content:""; display:inline-block; width:7px; height:7px; margin-right:.45rem; border-radius:50%; background:currentColor; vertical-align:middle; animation:box-live-pulse 1.8s ease-in-out infinite; }
+@keyframes box-live-pulse { 0%,100% { opacity:1; box-shadow:0 0 0 0 rgba(32,201,151,.25); } 50% { opacity:.65; box-shadow:0 0 0 4px rgba(32,201,151,.08); } }
+@media (prefers-reduced-motion:reduce) { .box-spread-page span.theme-success-bg::before { animation:none; } }
