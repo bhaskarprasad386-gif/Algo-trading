@@ -615,10 +615,7 @@ export default function HomePage() {
           ].map(([label,value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-3 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-1 text-[11px] font-bold">{value}</div></div>)}</div>
         </section>
         </div>
-        <aside className="min-w-0 space-y-4" aria-label="Live scanner panel">
-          <section aria-label="Scanner status" className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2"><Radio size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Scanner Status</h2></div><div className="text-[10px] theme-subtle">{snapshotAge == null ? (snapshot.timestamp ? "Heartbeat timestamp unavailable" : "No dashboard heartbeat yet") : snapshotAge < 10 ? `Heartbeat ${Math.round(snapshotAge)}s ago` : `Heartbeat stale • ${Math.round(snapshotAge)}s ago`} • {observationAgeLabel}</div></div><div className="grid grid-cols-2 gap-2">{scannerStatus.map((item) => <Card key={item.label} className="rounded-xl p-2.5"><div className="text-[10px] font-medium theme-subtle">{item.label}</div><div className="mt-1 text-[11px] font-semibold">{item.value}</div></Card>)}</div></section>
-        <Card className="rounded-2xl border theme-border theme-surface-2 p-4"><div className="mb-3 flex items-center gap-2"><Database size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Feed Snapshot</h2></div><div className="grid grid-cols-2 gap-2">{[["Live ticks",runtime.ticks.toLocaleString("en-IN")],["Active instruments",runtime.activeInstruments.toLocaleString("en-IN")],["Socket groups",connectedRequiredGroupCount+"/"+(runtime.requiredSocketGroupCount == null ? "?" : runtime.requiredSocketGroupCount)],["Feed age",feedAgeLabel]].map(([label,value])=><div key={label} className="rounded-xl border theme-border px-3 py-2"><div className="text-[9px] theme-subtle">{label}</div><div className="mt-1 text-[11px] font-bold">{value}</div></div>)}</div></Card>
-        </aside>
+
       </div>
 
       <section aria-label="Error Diagnostics" className="mt-4">
@@ -639,96 +636,6 @@ export default function HomePage() {
               View Errors
             </Link>
           </div>
-        </Card>
-      </section>
-      <div className="mt-3 grid gap-3 xl:grid-cols-[1.6fr_1fr]">
-        <section aria-label="Operations" className="rounded-xl border theme-border theme-surface-2 p-3">
-          <div className="mb-3 flex items-center gap-2"><Zap size={15} className="theme-accent" /><h2 className="text-[13px] font-semibold">Operations</h2></div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <Link href="/scanner"><Card className="rounded-lg p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Radio size={16} className="theme-success" /><div><div className="text-[11px] font-semibold">Cash Future</div><div className="text-[9px] theme-subtle">Open Cash Future scanner</div></div></div></Card></Link>
-            <Link href="/custom-alert"><Card className="rounded-lg p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Bell size={16} className="theme-warning" /><div><div className="text-[11px] font-semibold">Custom Alerts</div><div className="text-[9px] theme-subtle">Manage alerts</div></div></div></Card></Link>
-            <Link href="/history"><Card className="rounded-lg p-3 transition hover:-translate-y-0.5"><div className="flex gap-2"><Clock3 size={16} className="theme-accent" /><div><div className="text-[11px] font-semibold">History</div><div className="text-[9px] theme-subtle">Trade history & logs</div></div></div></Card></Link>
-          </div>
-        </section>
-        <Card className="flex flex-col justify-between gap-3 rounded-xl border theme-border theme-surface-2 p-3 sm:flex-row sm:items-center xl:flex-col xl:items-start">
-          <div className="flex min-w-0 items-start gap-3"><Database size={16} className="mt-0.5 shrink-0 theme-accent" /><div><div className="text-[12px] font-semibold">Market Data Architecture</div><div className="mt-1 text-[10px] leading-4 theme-subtle">Shared live market data feeds the independent scanners. This dashboard displays API-reported feed and scanner health.</div></div></div>
-          <button type="button" onClick={() => setConnectionsOpen(true)} className="shrink-0 rounded-lg theme-accent-bg px-3 py-2 text-[10px] font-bold theme-accent">View Connections →</button>
-        </Card>
-      </div>
-      {connectionsOpen ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="connections-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setConnectionsOpen(false); }}>
-          <Card className="w-full max-w-xl rounded-2xl border theme-border theme-surface-2 p-5 shadow-2xl">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div id="connections-title" className="text-[14px] font-bold">Connections</div>
-                <div className="mt-1 text-[10px] theme-subtle">Current frontend connection state</div>
-              </div>
-              <button type="button" onClick={() => setConnectionsOpen(false)} className="rounded-lg px-2 py-1 text-xs theme-muted" aria-label="Close connections">✕</button>
-            </div>
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              {[
-                ["FastAPI", apiLabel + " • " + apiDetail],
-                ["Dashboard WebSocket", wsLabel],
-                ["Common Market Data Feed", feedLabel],
-                ["Ticks Received (session)", runtime.ticks.toLocaleString("en-IN")],
-                ["Tick Counter", runtime.runtimeStartedAt ? `Session • ${tickRuntimeLabel}` : "—"],
-                ["Cash Future Runner", runtime.runners.cash_future?.detail ?? "UNAVAILABLE"],
-                ["Synthetic Future Runner", runtime.runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE"],
-                ["Box Spread Runner", runtime.runners.box_spread?.detail ?? "UNAVAILABLE"],
-                ["Calendar Spread Runner", runtime.runners.calendar_spread?.detail ?? "UNAVAILABLE"],
-                ["Broker Orders", "OFF"],
-                ["Common Feed Instruments", runtime.activeInstruments.toLocaleString("en-IN")],
-                ["Socket Groups", connectedRequiredGroupCount + "/" + (runtime.requiredSocketGroupCount == null ? "?" : runtime.requiredSocketGroupCount) + " required • " + runtime.socketGroups + " active • cap " + runtime.maxSocketSessions],
-                ["Runtime Telemetry", runtimeTelemetryStale ? "STALE / UNAVAILABLE" : "FRESH"],
-                ["Diagnostics Endpoint", diagnosticsFetchFailed ? "REQUEST FAILED" : diagnosticsLastSuccessAt == null ? "NOT CHECKED" : Date.now() - diagnosticsLastSuccessAt > 8000 ? "STALE" : "RESPONDING"],
-                ["Disconnected Groups", [...runtime.disconnectedGroups, ...runtime.missingSocketGroups].filter((value, index, values) => values.indexOf(value) === index).join(", ") || "None reported"],
-                ["Last Connect Failure", runtime.lastConnectFailure ? String(runtime.lastConnectFailure.error ?? runtime.lastConnectFailure.error_type ?? JSON.stringify(runtime.lastConnectFailure)) : "None reported"],
-                ["Last Socket Failure", runtime.lastSocketFailure ? String(runtime.lastSocketFailure.reason ?? JSON.stringify(runtime.lastSocketFailure)) : "None reported"],
-                ["Retired Transports", String(runtime.retiredTransportCount)],
-                ["Broker Cooldown", `${Math.ceil(runtime.brokerCooldownRemaining)}s remaining`],
-                ["Recovery Pending Groups", runtime.failureRecoveryGroups.join(", ") || "None"],
-                ["Transport Close Timeout Groups", runtime.transportCloseTimedOutGroups.join(", ") || "None"],
-                ["Socket Health by Group", Object.entries(runtime.socketHealthByGroup).map(([group, health]) => `${group}: ${health.connected ? "connected" : health.connecting ? "connecting" : "disconnected"}${health.last_error ? " • " + health.last_error : ""}`).join(" | ") || "No socket details returned"],
-                ["Dashboard Snapshot Age", dashboardMessageAge == null ? "No snapshot received" : Math.round(dashboardMessageAge) + "s"],
-                ["Last Feed Tick Age", feedAgeLabel],
-                ["Delivery / Normalizer Errors", runtime.deliveryErrors + " / " + runtime.normalizerErrors],
-                ["NSE Session", effectiveMarketSession],
-                ["MCX Session", effectiveMcxSession],
-              ].map(([name, value]) => (
-                <div key={name} className="flex items-center justify-between rounded-xl border theme-border theme-surface-2 px-3 py-2.5">
-                  <span className="text-[11px] theme-muted">{name}</span>
-                  <span className="text-[10px] font-bold theme-accent">{value}</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 rounded-xl border theme-border theme-surface-2 p-3">
-              <div className="text-[10px] font-bold uppercase tracking-wide">Runtime Errors Recorded Since API Process Start</div>
-              {diagnosticsLastSuccessAt == null ? <div className="mt-2 text-[10px] theme-warning">Diagnostics have not returned a successful sample yet.</div> : diagnosticsFetchFailed && Date.now() - diagnosticsLastSuccessAt > 8000 ? <div className="mt-2 text-[10px] theme-danger">Diagnostics endpoint unavailable. Previous error records are retained and may be stale.</div> : diagnosticErrors.length === 0 ? <div className="mt-2 text-[10px] theme-muted">No error records in the latest successful sample. This does not prove zero active faults.</div> : (
-                <div className="mt-2 max-h-48 space-y-2 overflow-auto">
-                  {diagnosticErrors.map((error) => (
-                    <div key={error.id} className="rounded-lg border theme-border px-2.5 py-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-bold">{error.component} • {error.severity}</span>
-                        <span className="text-[9px] theme-subtle">{new Date(error.time).toLocaleString("en-IN")}</span>
-                      </div>
-                      <div className="mt-1 text-[10px]">{error.message}</div>
-                      <div className="mt-1 text-[9px] theme-subtle">{[error.error_type && "Type: " + error.error_type, error.endpoint && "Endpoint: " + error.endpoint, error.status_code && "HTTP: " + error.status_code].filter(Boolean).join(" • ")}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="mt-4 rounded-xl border theme-border theme-accent-bg p-3"><div className="text-[10px] font-bold uppercase tracking-wide theme-accent">Common Feed Diagnostics • Session Counters</div><div className="mt-2 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4"><span>Consumers: <b>{runtime.consumers.length}</b></span><span>Delivery errors: <b>{runtime.deliveryErrors}</b></span><span>Normalizer errors: <b>{runtime.normalizerErrors}</b></span><span>Market: <b>{effectiveMarketSession}</b></span></div></div><div className="mt-4 flex justify-end">
-              <Link href="/scanner" onClick={() => setConnectionsOpen(false)} className="rounded-xl theme-accent-bg px-3 py-2 text-[11px] font-bold theme-accent">Open Scanner</Link>
-            </div>
-          </Card>
-        </div>
-      ) : null}
-      <section aria-label="Order pipeline" className="mt-5">
-        <Card className="rounded-2xl border theme-border theme-surface-2 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Activity size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">Order Pipeline</h2></div><span className="rounded-full px-2 py-1 text-[9px] font-bold theme-warning-bg theme-warning">LIVE ORDERS OFF</span></div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-3"><div className="rounded-xl border theme-border p-3"><div className="text-[9px] uppercase tracking-wide theme-subtle">Broker connection</div><div className="mt-1 text-sm font-bold">{apiStatus === "error" ? "API UNAVAILABLE" : "NOT VERIFIED HERE"}</div></div><div className="rounded-xl border theme-border p-3"><div className="text-[9px] uppercase tracking-wide theme-subtle">Available margin</div><div className="mt-1 text-sm font-bold">NOT EXPOSED</div><div className="mt-1 text-[10px] theme-muted">No verified dashboard margin endpoint</div></div><div className="rounded-xl border theme-border p-3"><div className="text-[9px] uppercase tracking-wide theme-subtle">Last 3 orders</div><div className="mt-1 text-sm font-bold">UNAVAILABLE</div><div className="mt-1 text-[10px] theme-muted">No verified order-history endpoint</div></div></div>
-          <div className="mt-3 text-[10px] theme-muted">Order states and margin are intentionally not fabricated. Connect verified broker order/funds APIs before showing FILLED, REJECTED, PENDING or margin values.</div>
         </Card>
       </section>
       {liveFeedAlerts.length ? <div role="status" aria-live="polite" className="fixed bottom-[calc(env(safe-area-inset-bottom)+6rem)] right-3 z-50 max-h-[calc(100dvh-8rem-env(safe-area-inset-bottom))] w-[min(92vw,360px)] overflow-y-auto overscroll-contain rounded-xl border theme-warning-bg p-3 shadow-xl sm:bottom-[calc(env(safe-area-inset-bottom)+1rem)] sm:right-4 sm:max-h-[calc(100dvh-2rem-env(safe-area-inset-bottom))]"><div className="mb-2 flex items-center justify-between gap-2 text-[10px] font-bold uppercase"><span><TriangleAlert size={13} className="mr-1 inline" />Live feed alerts</span><div className="flex items-center gap-2"><span>{liveFeedAlerts.length} recent • auto-hide 8s</span><button type="button" aria-label="Dismiss live feed alerts" title="Close alerts" onClick={() => setDismissedAlertIds((current) => Array.from(new Set([...current, ...liveFeedAlerts.map((e) => String(e.id))])).slice(-100))} className="inline-flex h-9 w-9 shrink-0 touch-manipulation items-center justify-center rounded-full border theme-border text-xl font-bold leading-none theme-text hover:theme-surface active:scale-95" style={{ WebkitTapHighlightColor: "transparent" }}>×</button></div></div>{liveFeedAlerts.map((e) => <div key={e.id} className="border-t theme-border py-2"><div className="text-[10px] font-bold">{e.component} • {e.severity}</div><div className="mt-1 text-[11px]">{e.message}</div><div className="mt-1 text-[9px] theme-subtle">{e.time ? new Date(e.time).toLocaleTimeString("en-IN") : "Time unavailable"}</div></div>)}</div> : null}
