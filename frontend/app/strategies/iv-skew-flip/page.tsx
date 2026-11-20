@@ -548,9 +548,12 @@ export default function IVSkewFlipPage() {
       setLoadingMoreAlerts(false);
     }
   };
+  const statusFetchSequenceRef=useRef(0);
   const refresh=useCallback(async()=>{
+    const requestSequence=++statusFetchSequenceRef.current;
     const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});
     const body=await response.json();
+    if(requestSequence!==statusFetchSequenceRef.current)return;
     if(!response.ok) throw new Error(apiError(body,`Status HTTP ${response.status}`));
     setRuntime(body.runtime??null);
     setSelectedEnabled(body.saved_enabled===true);
@@ -559,6 +562,9 @@ export default function IVSkewFlipPage() {
   },[base]);
   useEffect(()=>{
     if(!pagePushData)return;
+    // Any authoritative PagePush invalidates a status REST read that started
+    // before this event, even when it only updates runner config fields.
+    statusFetchSequenceRef.current+=1;
     if(String(pagePushData.__event??"").toUpperCase()==="REMOVE"){
       const removedKeys=Array.isArray(pagePushData.remove_keys)
         ? pagePushData.remove_keys.filter((key):key is string=>typeof key==="string")
