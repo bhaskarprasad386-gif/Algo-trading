@@ -616,3 +616,32 @@ html[data-theme="white"] .box-spread-page .box-live-opportunities article [class
 html[data-theme="white"] .box-spread-page .box-live-opportunities article [class*="bg-emerald-400"] { background-color:rgba(8,127,91,.10)!important; }
 html[data-theme="white"] .box-spread-page .box-live-opportunities article [class*="bg-rose-400"] { background-color:rgba(190,49,75,.10)!important; }
 html[data-theme="white"] .box-spread-page .box-live-opportunities article [class*="bg-amber-400"] { background-color:rgba(165,104,5,.10)!important; }
+
+
+/* Mobile readability pass: comfortable sizing and reduced visual fatigue. */
+@media (max-width: 640px) {
+  .box-spread-page { font-size: 15px; line-height: 1.55; }
+  .box-spread-page :is(p,span,label,small,th,td) { line-height: 1.5; }
+  .box-spread-page :is([class~="text-[9px]"],[class~="text-[10px]"],[class~="text-[11px]"],[class~="text-xs"]) {
+    font-size: 14px !important; line-height: 1.45 !important;
+  }
+  .box-spread-page :is([class~="text-sm"]) { font-size: 15px !important; line-height: 1.5 !important; }
+  .box-spread-page :is(h1,h2,h3) { line-height: 1.3; }
+  .box-spread-page :is(h1) { font-size: clamp(1.2rem, 5vw, 1.45rem); }
+  .box-spread-page :is(h2) { font-size: clamp(1.05rem, 4.4vw, 1.25rem); }
+  .box-spread-page :is(h3) { font-size: 1rem; }
+  .box-spread-page :is(button,select,input,textarea) { font-size: 16px !important; min-height: 44px; }
+  .box-spread-page :is(button,select,input,textarea) { padding-block: .55rem; }
+  .box-spread-page article, .box-spread-page section { scroll-margin-top: 7rem; }
+  .box-spread-page .box-workspace-nav { overflow-x: auto; scrollbar-width: thin; }
+  .box-spread-page .box-workspace-nav a { flex: 0 0 auto; }
+  .box-spread-page table th, .box-spread-page table td { padding: .65rem .7rem !important; }
+  .box-spread-page tbody tr:hover td { background: transparent; }
+  .box-spread-page #box-overview .grid > div:hover { transform: none; }
+  .box-spread-page .box-live-opportunities article:hover { box-shadow: none; }
+}
+@media (max-width: 380px) {
+  .box-spread-page { font-size: 14.5px; }
+  .box-spread-page :is(h1,h2,h3) { letter-spacing: -.01em; }
+  .box-spread-page .box-workspace-nav a { padding-inline: .55rem !important; }
+}
