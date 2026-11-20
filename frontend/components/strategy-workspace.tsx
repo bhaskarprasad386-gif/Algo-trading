@@ -1233,10 +1233,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         if (!cancelled) setScannerDiagnostics({ status: "DIAGNOSTICS_UNAVAILABLE" });
       }
     };
-    void loadScannerDiagnostics();
     if (pagePushStatus === "LIVE") return () => { cancelled = true; };
     let timer: number | undefined;
-    const refresh = async () => { await loadScannerDiagnostics(); if (!cancelled && pagePushStatus !== "LIVE") timer = window.setTimeout(() => { void refresh(); }, 15000); };
+    const refresh = async () => {
+      if (cancelled) return;
+      await loadScannerDiagnostics();
+      if (!cancelled) timer = window.setTimeout(() => { void refresh(); }, 15000);
+    };
     void refresh();
     return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, [slug, pagePushStatus]);
@@ -1288,10 +1291,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         if (!cancelled) setFeedStatus("UNAVAILABLE");
       }
     };
-    void loadRuntime();
     if (pagePushStatus === "LIVE") return () => { cancelled = true; };
     let timer: number | undefined;
-    const refresh = async () => { await loadRuntime(); if (!cancelled && pagePushStatus !== "LIVE") timer = window.setTimeout(() => { void refresh(); }, 15000); };
+    const refresh = async () => {
+      if (cancelled) return;
+      await loadRuntime();
+      if (!cancelled) timer = window.setTimeout(() => { void refresh(); }, 15000);
+    };
     void refresh();
     return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, [isCustom, slug, pagePushStatus]);
