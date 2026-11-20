@@ -66,10 +66,7 @@ test("PR #712 Cash Future page removals are actually absent from rendered UI", a
   const page = await read("app/scanner/page.tsx");
   for (const section of [
     "Live Pair Monitor & Diagnostics",
-    
     "Scanner safety boundary",
-    "pairColumns.map((column)",
-    "filteredPairHistory.map((row",
   ]) assert.equal(page.includes(section), false, section + " must not render on Cash Future scanner");
   assert.equal(page.includes("Post-Market Pair History"), true, "saved pair history must remain on Cash Future page");
   assert.equal(page.includes("filteredPairHistory.map"), true, "saved pair history rows must remain rendered");
