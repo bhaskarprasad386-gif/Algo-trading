@@ -1700,7 +1700,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </Card>
       )}
 
-      {!["scanner", "calendar-spread", "synthetic-arbitrage"].includes(slug) && (
+      {!["scanner", "calendar-spread", "synthetic-arbitrage", "box-spread"].includes(slug) && (
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.pairTitle}</h2><p className="mt-1 text-xs theme-muted">Real backend pairs stay visible during brief empty/error snapshots; retained rows are clearly marked STALE.</p></div>
