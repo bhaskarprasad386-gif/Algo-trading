@@ -159,7 +159,13 @@ export default function HomePage() {
           // Ignore malformed dashboard messages without losing the last valid snapshot.
         }
       };
-      currentSocket.onerror = () => { if (socket === currentSocket && !cancelled) setWsStatus("error"); };
+      currentSocket.onerror = () => {
+        if (socket !== currentSocket || cancelled) return;
+        setWsStatus("error");
+        // Force the close/reconnect path instead of relying on the browser
+        // to deliver a close event after an error notification.
+        currentSocket.close();
+      };
       currentSocket.onclose = () => {
         if (socket !== currentSocket) return;
         if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
