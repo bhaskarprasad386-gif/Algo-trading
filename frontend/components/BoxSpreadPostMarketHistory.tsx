@@ -69,16 +69,19 @@ const validSnapshotHistoryResponse = (body: unknown): body is SnapshotResponse =
     );
 };
 
+const historyNumberFormatter = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
+const historyDateTimeFormatter = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "medium" });
+const historyClockFormatter = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour12: false });
 const number = (value: number | null | undefined) =>
   value == null || !Number.isFinite(Number(value))
     ? "—"
-    : Number(value).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+    : historyNumberFormatter.format(Number(value));
 
 const observedTime = (value: string) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
-    : date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "medium" });
+    : historyDateTimeFormatter.format(date);
 };
 
 const quoteField = (row: Snapshot, prefix: string, field: string) => number(row[(prefix + "_" + field) as keyof Snapshot] as number | null | undefined);
@@ -117,7 +120,7 @@ const quoteTime = (value: number | string | null | undefined) => {
   const date = new Date(milliseconds);
   return Number.isNaN(date.getTime())
     ? "—"
-    : date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }) + " IST";
+    : historyClockFormatter.format(date) + " IST";
 };
 
 export default function BoxSpreadPostMarketHistory() {
