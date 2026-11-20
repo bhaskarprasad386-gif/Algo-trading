@@ -139,10 +139,16 @@ export function SyntheticTracePanel() {
           .sort((a: TraceRow, b: TraceRow) => new Date(b.traced_at).getTime() - new Date(a.traced_at).getTime());
         setTraces(merged);
         writeStored(merged);
+        // Re-check authority immediately before bootstrap writes: a pushed snapshot
+        // or REMOVE event may have superseded this REST restore since the merge.
+        if (bootstrapPushSequence !== tracePushSequenceRef.current) return;
         await Promise.allSettled(localOnly.map((row) => fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities", {
           method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
           body: JSON.stringify({ trace_id: row.trace_id, trace_key: row.trace_key, traced_at: row.traced_at, snapshot: row }),
         })));
+        // Push events arriving during the POST phase must prevent the stale
+        // bootstrap from running its captured tombstone cleanup afterward.
+        if (bootstrapPushSequence !== tracePushSequenceRef.current) return;
         const deleteResults = await Promise.all(deletedIds.map(async (id) => {
           const result = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(id), { method: "DELETE", cache: "no-store" });
           return result.ok;
