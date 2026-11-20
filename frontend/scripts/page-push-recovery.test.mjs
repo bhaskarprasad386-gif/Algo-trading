@@ -42,6 +42,7 @@ test("PagePush invalidates in-flight REST recovery across superseding request se
 
 test("manual Box Spread edge timing refresh is blocked while PagePush is live", () => {
   assert.equal(shouldAllowBoxSpreadEdgeTimingRestRefresh("LIVE"), false);
+  assert.equal(shouldAllowBoxSpreadEdgeTimingRestRefresh("LIVE", true), true);
   assert.equal(shouldAllowBoxSpreadEdgeTimingRestRefresh("CONNECTING"), true);
   assert.equal(shouldAllowBoxSpreadEdgeTimingRestRefresh("RECONNECTING"), true);
   assert.equal(shouldAllowBoxSpreadEdgeTimingRestRefresh("DISCONNECTED"), true);
