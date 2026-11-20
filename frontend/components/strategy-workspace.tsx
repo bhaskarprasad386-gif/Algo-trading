@@ -605,6 +605,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [indexSelectionError, setIndexSelectionError] = useState<string | null>(null);
   const indexSelectionDraftInitialized = useRef(false);
   const historyRequestSequence = useRef(0);
+  const historyAbortController = useRef<AbortController | null>(null);
   const pairRequestSequence = useRef(0);
   const syntheticHistoryPushRevision = useRef<string | null>(null);
   const calendarHistoryPushRevision = useRef<string | null>(null);
@@ -854,6 +855,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const loadHistory = async () => {
     if (isCustom || !c.historyEndpoint) return;
+    historyAbortController.current?.abort();
+    const controller = new AbortController();
+    historyAbortController.current = controller;
     const requestSequence = ++historyRequestSequence.current;
     setHistoryLoading(true);
     try {
@@ -868,7 +872,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         else query.delete("symbol");
         historyUrl = c.historyEndpoint.split("?")[0] + "?" + query.toString();
       }
-      const response = await fetch(base + historyUrl, { cache: "no-store" });
+      const response = await fetch(base + historyUrl, { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(c.title + " history HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data : [];
@@ -881,9 +885,20 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       if (requestSequence === historyRequestSequence.current) setHistoryError(e instanceof Error ? e.message : "History API unavailable");
       // Keep last good history snapshot during transient backend failures.
     } finally {
-      if (requestSequence === historyRequestSequence.current) setHistoryLoading(false);
+      if (requestSequence === historyRequestSequence.current) {
+        setHistoryLoading(false);
+        historyAbortController.current = null;
+      }
     }
   };
+
+
+  useEffect(() => () => {
+    historyRequestSequence.current += 1;
+    historyAbortController.current?.abort();
+    historyAbortController.current = null;
+  }, []);
+
 
   useEffect(() => {
     if (slug !== "box-spread") return;
