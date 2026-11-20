@@ -335,3 +335,34 @@ def test_unsubscribe_cancels_dispatcher_after_timeout(monkeypatch):
         assert task.cancelled()
         assert push._dispatch_task is None
     asyncio.run(scenario())
+
+
+def test_unsubscribe_does_not_clear_dispatcher_restarted_by_new_subscriber(monkeypatch):
+    async def scenario():
+        old_task = asyncio.create_task(asyncio.sleep(0))
+        await old_task
+        old_queue = asyncio.Queue()
+        new_queue = None
+        monkeypatch.setattr(push, "_subscribers", {(old_queue, frozenset())})
+        monkeypatch.setattr(push, "_dispatch_task", old_task)
+        monkeypatch.setattr(push, "_dispatch_loop", asyncio.get_running_loop())
+        monkeypatch.setattr(push, "_dispatch_ready", asyncio.Event())
+        original_wait = asyncio.wait
+        subscribed = False
+
+        async def wait_with_subscribe(tasks, timeout=None, **kwargs):
+            nonlocal new_queue, subscribed
+            if not subscribed:
+                subscribed = True
+                new_queue = await push._subscribe_local()
+            return await original_wait(tasks, timeout=timeout, **kwargs)
+
+        monkeypatch.setattr(push.asyncio, "wait", wait_with_subscribe)
+        await push._unsubscribe_local(old_queue)
+        assert new_queue is not None
+        assert push._dispatch_task is not old_task
+        assert push._dispatch_task is not None and not push._dispatch_task.done()
+        assert any(queue is new_queue for queue, _ in push._subscribers)
+        monkeypatch.setattr(push.asyncio, "wait", original_wait)
+        await push._unsubscribe_local(new_queue)
+    asyncio.run(scenario())
