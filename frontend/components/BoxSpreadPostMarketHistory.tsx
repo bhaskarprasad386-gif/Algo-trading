@@ -142,14 +142,24 @@ export default function BoxSpreadPostMarketHistory() {
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
   const [depthSnapshot, setDepthSnapshot] = useState<Snapshot | null>(null);
   const strikeGap = (row: Snapshot) => Number(row.high_strike) - Number(row.low_strike);
+  const executableLotsCache = useRef(new WeakMap<Snapshot, number | null>());
   const executableLots = (row: Snapshot) => {
+    // Snapshot objects are immutable across history sorting. Cache depth-derived
+    // capacity for repeated mobile-card and sort metric reads.
+    const cached = executableLotsCache.current.get(row);
+    if (cached !== undefined || executableLotsCache.current.has(row)) return cached ?? null;
     const savedLots = Number(row.max_executable_lots);
-    if (row.max_executable_lots != null && Number.isFinite(savedLots) && savedLots >= 0) return Math.floor(savedLots);
-    const lotSize = Number(row.lot_size);
-    if (!Number.isFinite(lotSize) || lotSize <= 0 || !Array.isArray(row.depth_legs) || row.depth_legs.length !== 4) return null;
-    const capacities = row.depth_legs.map(leg => Number(leg.available_quantity));
-    if (capacities.some(quantity => !Number.isFinite(quantity) || quantity < 0)) return null;
-    return Math.floor(Math.min(...capacities) / lotSize);
+    let result: number | null = null;
+    if (row.max_executable_lots != null && Number.isFinite(savedLots) && savedLots >= 0) result = Math.floor(savedLots);
+    else {
+      const lotSize = Number(row.lot_size);
+      if (Number.isFinite(lotSize) && lotSize > 0 && Array.isArray(row.depth_legs) && row.depth_legs.length === 4) {
+        const capacities = row.depth_legs.map(leg => Number(leg.available_quantity));
+        if (capacities.every(quantity => Number.isFinite(quantity) && quantity >= 0)) result = Math.floor(Math.min(...capacities) / lotSize);
+      }
+    }
+    executableLotsCache.current.set(row, result);
+    return result;
   };
   const sortedRows = useMemo(() => {
     // Calculate the active sort value once per row. Previously the comparator
