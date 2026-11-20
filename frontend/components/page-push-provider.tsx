@@ -140,11 +140,13 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let watchdogTimer: ReturnType<typeof setInterval> | undefined;
     let lastTransportAt = 0;
+    let connectionStartedAt = 0;
     let retryMs = 1000;
 
     const connect = () => {
       if (disposed) return;
       setStatus("CONNECTING");
+      connectionStartedAt = Date.now();
       let socket: WebSocket;
       try {
         socket = new WebSocket(getDashboardWsUrl() + "/ws/page-updates");
@@ -162,6 +164,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       socket.onopen = () => {
         if (disposed) return;
         lastTransportAt = Date.now();
+        connectionStartedAt = 0;
         retryMs = 1000;
         // A connected transport is not synchronized until its authoritative
         // page snapshot arrives. Keep REST recovery enabled in the meantime.
@@ -280,6 +283,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         // Ignore stale socket-close callbacks and release recovery timers for this transport.
         if (socketRef.current !== socket) return;
         socketRef.current = null;
+        connectionStartedAt = 0;
         if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
         resyncTimerRef.current = undefined;
         hasSnapshotRef.current = false;
@@ -292,6 +296,12 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
 
     watchdogTimer = setInterval(() => {
       const now = Date.now();
+      if (socketRef.current?.readyState === WebSocket.CONNECTING && connectionStartedAt && now - connectionStartedAt > 30000) {
+        // Detect a transport that never reaches onopen; it cannot deliver
+        // either snapshots or close notifications while stuck connecting.
+        socketRef.current.close();
+        return;
+      }
       if (lastTransportAt && now - lastTransportAt > 45000) {
         setStatus("RECONNECTING");
         socketRef.current?.close();
@@ -314,6 +324,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       resyncTimerRef.current = undefined;
       socketRef.current?.close();
       socketRef.current = null;
+      connectionStartedAt = 0;
     };
   }, [page, resync]);
 
