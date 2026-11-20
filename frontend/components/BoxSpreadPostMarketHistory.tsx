@@ -187,8 +187,13 @@ export default function BoxSpreadPostMarketHistory() {
     if (append) {
       appendInFlight.current = true;
       setLoadingMore(true);
+    } else {
+      // A fresh filtered/revision load supersedes pagination. Release the
+      // append gate immediately so the new page can paginate after it completes.
+      appendInFlight.current = false;
+      setLoadingMore(false);
+      setLoading(true);
     }
-    else setLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const nextOffset = append ? pageOffset : 0;
