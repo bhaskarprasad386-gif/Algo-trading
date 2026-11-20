@@ -1210,8 +1210,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     if (isCustom || !c.pairEndpoint) return;
     void loadPairs();
     if (pagePushStatus === "LIVE" && ["calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
-    const timer = window.setInterval(() => void loadPairs(), 15000);
-    return () => window.clearInterval(timer);
+    let timer: number | undefined;
+    const refresh = async () => { await loadPairs(); if (pagePushStatus !== "LIVE") timer = window.setTimeout(() => { void refresh(); }, 15000); };
+    void refresh();
+    return () => { if (timer !== undefined) window.clearTimeout(timer); pairRequestSequence.current += 1; };
   }, [isCustom, c.pairEndpoint, pagePushStatus, slug]);
 
   useEffect(() => {
@@ -1233,8 +1235,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     };
     void loadScannerDiagnostics();
     if (pagePushStatus === "LIVE") return () => { cancelled = true; };
-    const timer = window.setInterval(loadScannerDiagnostics, 15000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    let timer: number | undefined;
+    const refresh = async () => { await loadScannerDiagnostics(); if (!cancelled && pagePushStatus !== "LIVE") timer = window.setTimeout(() => { void refresh(); }, 15000); };
+    void refresh();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, [slug, pagePushStatus]);
 
   useEffect(() => {
@@ -1286,8 +1290,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     };
     void loadRuntime();
     if (pagePushStatus === "LIVE") return () => { cancelled = true; };
-    const timer = window.setInterval(loadRuntime, 15000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    let timer: number | undefined;
+    const refresh = async () => { await loadRuntime(); if (!cancelled && pagePushStatus !== "LIVE") timer = window.setTimeout(() => { void refresh(); }, 15000); };
+    void refresh();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, [isCustom, slug, pagePushStatus]);
 
   useEffect(() => {
@@ -1298,8 +1304,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     }
     if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
     void load(true);
-    const timer = window.setInterval(() => void load(), 15000);
-    return () => window.clearInterval(timer);
+    let timer: number | undefined;
+    const refresh = async () => { await load(true); if (pagePushStatus !== "LIVE") timer = window.setTimeout(() => { void refresh(); }, 15000); };
+    void refresh();
+    return () => { if (timer !== undefined) window.clearTimeout(timer); loadRequestRef.current += 1; };
   }, [endpoint, isCustom, slug, pagePushStatus]);
 
   const filteredRows = useMemo(() => {
