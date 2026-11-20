@@ -592,3 +592,18 @@ html[data-theme="white"] .box-spread-page .theme-accent {color:#087ca5!important
 .box-spread-page #box-overview .grid > div:has(.theme-warning) { border-color:rgba(245,185,66,.24); }
 .box-spread-page #box-overview .grid > div:has(.theme-muted) { border-color:var(--box-line); }
 .box-spread-page #box-overview .grid > div:hover { transform:translateY(-1px); }
+
+
+/* v2 refinement: readable four-leg quotes and edge/profit hierarchy. */
+.box-spread-page .box-live-opportunities article > .grid > div:first-child .grid > div { border-radius:12px; background:linear-gradient(180deg,color-mix(in srgb,var(--box-panel-raised) 82%,transparent),var(--box-panel)); box-shadow:inset 0 1px 0 rgba(255,255,255,.025); }
+.box-spread-page .box-live-opportunities article > .grid > div:first-child .grid > div > div:first-child { padding-bottom:.25rem; }
+.box-spread-page .box-live-opportunities article > .grid > div:first-child .grid > div > div:nth-child(2) { font-size:1.05rem; font-weight:850; letter-spacing:-.015em; }
+.box-spread-page .box-live-opportunities article > .grid > div:first-child .grid > div > div:last-child { font-variant-numeric:tabular-nums; }
+.box-spread-page .box-live-opportunities article > .grid > div:last-child > div:first-child { border-color:rgba(32,201,151,.35); background:linear-gradient(145deg,rgba(32,201,151,.12),rgba(32,201,151,.035)); box-shadow:inset 0 1px 0 rgba(255,255,255,.035); }
+.box-spread-page .box-live-opportunities article > .grid > div:last-child > div:first-child p:last-child { font-size:clamp(1.3rem,2vw,1.65rem); line-height:1.15; }
+.box-spread-page .box-live-opportunities article > .grid > div:last-child > div:nth-child(2) { background:color-mix(in srgb,var(--box-panel-raised) 78%,transparent); }
+.box-spread-page .box-live-opportunities article > .grid > div:last-child > div:nth-child(2) p:last-child { font-size:clamp(.9rem,1.2vw,1.05rem); font-weight:800; }
+.box-spread-page .box-live-opportunities article > .grid > div:last-child > div:nth-child(3) { background:color-mix(in srgb,var(--box-panel-raised) 78%,transparent); }
+.box-spread-page .box-live-opportunities article > .grid > div:last-child > div:nth-child(3) p:nth-child(2) { font-size:1.15rem; }
+html[data-theme="white"] .box-spread-page .box-live-opportunities article > .grid > div:last-child > div:first-child { background:linear-gradient(145deg,rgba(8,145,178,.10),rgba(8,145,178,.025)); border-color:rgba(8,145,178,.3); }
+@media(max-width:640px) { .box-spread-page .box-live-opportunities article > .grid > div:last-child > div:first-child p:last-child { font-size:1.3rem; } }
