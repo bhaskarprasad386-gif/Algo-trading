@@ -38,8 +38,3 @@ export function freshEarlyEntryAlerts(alerts, seenIds) {
 export function shouldAllowBoxSpreadEdgeTimingRestRefresh(pagePushStatus, eventDriven = false) {
   return pagePushStatus !== "LIVE" || eventDriven === true;
 }
-
-/** Manual scanner live-row REST refresh must not supersede authoritative PagePush. */
-export function shouldAllowCashFutureScannerManualRestRefresh(pagePushStatus) {
-  return pagePushStatus !== "LIVE";
-}
