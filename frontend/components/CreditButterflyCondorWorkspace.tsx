@@ -30,7 +30,7 @@ type Payload = {
   runtime_state: string;
   execution_mode: "SHADOW_ONLY";
   order_routing_enabled: false;
-  shared_snapshot: { quote_contract_count: number; depth_record_count: number; depth_enabled: boolean; depth_running: boolean };
+  shared_snapshot: { quote_contract_count: number; depth_record_count: number; depth_enabled: boolean; depth_running: boolean; captured_at_ns?: number | null };
   result_count: number;
   results: ShadowRow[];
   live_coverage: Array<{ underlying: string; expiry_type: string; expiry: number; option_type: string; valid_quote_count: number; result_count: number }>;
