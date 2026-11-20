@@ -23,3 +23,4 @@ export type PagePushRequestGuard = {
   latestSequence: number;
 };
 export function isCurrentPagePushRequest(input: PagePushRequestGuard): boolean;
+export function shouldAllowBoxSpreadEdgeTimingRestRefresh(pagePushStatus: string): boolean;
