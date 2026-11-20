@@ -106,7 +106,14 @@ export default function HomePage() {
     const connect = () => {
       if (cancelled) return;
       setWsStatus("connecting");
-      socket = new WebSocket(getDashboardWsUrl() + "/ws/dashboard");
+      try {
+        socket = new WebSocket(getDashboardWsUrl() + "/ws/dashboard");
+      } catch {
+        setWsStatus("error");
+        retryTimer = window.setTimeout(connect, retryMs);
+        retryMs = Math.min(15000, retryMs * 2);
+        return;
+      }
       const currentSocket = socket;
       // A socket stuck in CONNECTING otherwise never reaches onclose and the
       // dashboard silently loses its realtime connection.
