@@ -301,3 +301,37 @@ def test_unstable_snapshot_is_not_marked_authoritative(monkeypatch):
     assert frame["event"] == "SNAPSHOT"
     assert frame["sequence"] == 3
     assert frame["data"] == {"snapshot_status": "UNAVAILABLE"}
+
+
+def test_unsubscribe_consumes_already_cancelled_dispatcher(monkeypatch):
+    async def scenario():
+        async def dispatcher():
+            await asyncio.sleep(10)
+        task = asyncio.create_task(dispatcher())
+        await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        monkeypatch.setattr(push, "_subscribers", set())
+        monkeypatch.setattr(push, "_dispatch_task", task)
+        monkeypatch.setattr(push, "_dispatch_loop", asyncio.get_running_loop())
+        monkeypatch.setattr(push, "_dispatch_ready", asyncio.Event())
+        await push._unsubscribe_local(asyncio.Queue())
+        assert push._dispatch_task is None
+        assert push._dispatch_loop is None
+        assert push._dispatch_ready is None
+    asyncio.run(scenario())
+
+
+def test_unsubscribe_cancels_dispatcher_after_timeout(monkeypatch):
+    async def scenario():
+        async def dispatcher():
+            await asyncio.sleep(10)
+        task = asyncio.create_task(dispatcher())
+        monkeypatch.setattr(push, "_subscribers", set())
+        monkeypatch.setattr(push, "_dispatch_task", task)
+        monkeypatch.setattr(push, "_dispatch_loop", asyncio.get_running_loop())
+        monkeypatch.setattr(push, "_dispatch_ready", asyncio.Event())
+        await push._unsubscribe_local(asyncio.Queue())
+        assert task.cancelled()
+        assert push._dispatch_task is None
+    asyncio.run(scenario())
