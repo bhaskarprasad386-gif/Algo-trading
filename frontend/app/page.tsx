@@ -150,6 +150,7 @@ export default function HomePage() {
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | undefined;
     const loadMarketOverview = async () => {
       try {
         const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/market-data/overview", { cache: "no-store", signal: AbortSignal.timeout(4500) });
@@ -178,15 +179,18 @@ export default function HomePage() {
       } catch {
         if (!cancelled) setMarketOverviewError(true);
         // Keep last values visible, but mark the source unavailable/stale.
+      } finally {
+        // Schedule after completion so a slow response cannot overlap the next sample.
+        if (!cancelled) timer = window.setTimeout(() => { void loadMarketOverview(); }, 5000);
       }
     };
-    loadMarketOverview();
-    const timer = window.setInterval(loadMarketOverview, 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    void loadMarketOverview();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | undefined;
     const loadFeedHealth = async () => {
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -210,15 +214,17 @@ export default function HomePage() {
         else setFeedStatus("no-data");
       } catch {
         if (!cancelled) setFeedStatus("error");
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => { void loadFeedHealth(); }, 5000);
       }
     };
     void loadFeedHealth();
-    const timer = window.setInterval(loadFeedHealth, 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | undefined;
     const loadRuntimeHealth = async () => {
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -342,15 +348,17 @@ export default function HomePage() {
         });
       } catch {
         // Keep last values for context; UI separately marks telemetry stale/unavailable.
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => { void loadRuntimeHealth(); }, 5000);
       }
     };
     void loadRuntimeHealth();
-    const timer = window.setInterval(loadRuntimeHealth, 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | undefined;
     const loadDiagnosticErrors = async () => {
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -367,11 +375,12 @@ export default function HomePage() {
       } catch {
         if (!cancelled) setDiagnosticsFetchFailed(true);
         // Do not manufacture a fake runtime error when the diagnostic endpoint is unavailable.
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => { void loadDiagnosticErrors(); }, 2000);
       }
     };
     void loadDiagnosticErrors();
-    const timer = window.setInterval(loadDiagnosticErrors, 2000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
 
 
