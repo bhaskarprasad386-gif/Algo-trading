@@ -39,9 +39,19 @@ export default function ErrorsPage() {
   };
 
   useEffect(() => {
-    void loadErrors();
-    const timer = window.setInterval(() => void loadErrors(), 2000);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer: number | undefined;
+    const refresh = async () => {
+      await loadErrors();
+      // Diagnostics refresh is completion-driven so a slow response cannot
+      // overlap the next scheduled request.
+      if (!cancelled) timer = window.setTimeout(() => { void refresh(); }, 2000);
+    };
+    void refresh();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, []);
 
   return (
