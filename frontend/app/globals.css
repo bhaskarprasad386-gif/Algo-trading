@@ -552,3 +552,20 @@ html[data-theme="black"] .box-spread-page,html[data-theme="blue"] .box-spread-pa
 html[data-theme="white"] .box-spread-page { --box-line:#d7e0ea; --box-panel:#fff; --box-panel-raised:#f5f8fb; --box-glow:rgba(8,145,178,.07); }
 html[data-theme="white"] .box-spread-page #box-overview { box-shadow:0 10px 24px rgba(15,23,42,.06)!important; }
 @media(max-width:640px) { .box-spread-page > nav.box-workspace-nav { width:100%; margin-inline:0; } .box-spread-page #box-overview,.box-spread-page .box-history-contrast { border-radius:14px!important; } }
+
+/* Color is semantic on this terminal: live/positive green, delayed amber, errors red, market info cyan. */
+.box-spread-page .theme-success { color:#20c997!important; }
+.box-spread-page .theme-success-bg { background:rgba(32,201,151,.10)!important; border-color:rgba(32,201,151,.42)!important; }
+.box-spread-page .theme-warning { color:#f5b942!important; }
+.box-spread-page .theme-warning-bg { background:rgba(245,185,66,.10)!important; border-color:rgba(245,185,66,.42)!important; }
+.box-spread-page .theme-danger { color:#f06a75!important; }
+.box-spread-page .theme-danger-bg { background:rgba(240,106,117,.10)!important; border-color:rgba(240,106,117,.40)!important; }
+.box-spread-page .theme-accent { color:#38bdf8!important; }
+.box-spread-page [class*="text-cyan-"],.box-spread-page [class*="text-sky-"] { color:#38bdf8; }
+.box-spread-page .theme-success-bg :is(strong,b) { color:#20c997!important; }
+.box-spread-page .theme-warning-bg :is(strong,b) { color:#f5b942!important; }
+.box-spread-page .theme-danger-bg :is(strong,b) { color:#f06a75!important; }
+html[data-theme="white"] .box-spread-page .theme-success {color:#087f5b!important;}
+html[data-theme="white"] .box-spread-page .theme-warning {color:#a56805!important;}
+html[data-theme="white"] .box-spread-page .theme-danger {color:#be314b!important;}
+html[data-theme="white"] .box-spread-page .theme-accent {color:#087ca5!important;}
