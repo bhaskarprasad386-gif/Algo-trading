@@ -350,10 +350,19 @@ async def _unsubscribe_local(queue: asyncio.Queue) -> None:
         # naturally. Cancelling a task while it awaits asyncio.to_thread()
         # can cancel Starlette's TestClient portal during WebSocket teardown.
         try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
-        except asyncio.TimeoutError:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            # asyncio.wait observes task completion without propagating the
+            # dispatcher's CancelledError into this WebSocket teardown handler.
+            # shield()+wait_for() still forwards CancelledError when the
+            # dispatcher itself is cancelled, which previously escaped ASGI.
+            done, _ = await asyncio.wait({task}, timeout=1.0)
+            if not done:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            elif task.cancelled():
+                # Consume cancellation from a task already cancelled elsewhere.
+                await asyncio.gather(task, return_exceptions=True)
+            else:
+                task.exception()  # consume any dispatcher failure
         finally:
             if _dispatch_task is task and not _subscribers:
                 _dispatch_task = None
