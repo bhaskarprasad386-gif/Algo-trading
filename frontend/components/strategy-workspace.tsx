@@ -563,6 +563,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [rowsStale, setRowsStale] = useState(false);
   const rowsRef = useRef<Row[]>([]);
   const loadRequestRef = useRef(0);
+  const liveAbortRef = useRef<AbortController | null>(null);
+  const pairAbortRef = useRef<AbortController | null>(null);
   const [historyRows, setHistoryRows] = useState<Row[]>([]);
   const [historyTotalCount, setHistoryTotalCount] = useState(0);
   const [pairRows, setPairRows] = useState<Row[]>([]);
@@ -700,6 +702,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   };
 
   const load = async (showLoading = false) => {
+    liveAbortRef.current?.abort();
+    const controller = new AbortController();
+    liveAbortRef.current = controller;
     const requestId = ++loadRequestRef.current;
     if (!endpoint) {
       rowsRef.current = [];
@@ -711,7 +716,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     if (showLoading) setLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(base + endpoint, { cache: "no-store" });
+      const response = await fetch(base + endpoint, { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail || c.title + " HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data.filter((item: unknown): item is Row => !!item && typeof item === "object") : [];
@@ -762,7 +767,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       }
       setError(null);
     } catch (e) {
-      if (requestId !== loadRequestRef.current) return;
+      if (requestId !== loadRequestRef.current || controller.signal.aborted) return;
       setLiveApiStatus("ERROR");
       // Preserve the last good rows during a temporary API failure, including
       // after a page reload. Cached rows are never presented as confirmed live.
@@ -785,11 +790,14 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       }
       setError(e instanceof Error ? e.message : "Backend unavailable");
     } finally {
-      if (requestId === loadRequestRef.current) setLoading(false);
+      if (requestId === loadRequestRef.current) { setLoading(false); liveAbortRef.current = null; }
     }
   };
 
   const loadPairs = async () => {
+    pairAbortRef.current?.abort();
+    const controller = new AbortController();
+    pairAbortRef.current = controller;
     const requestSequence = ++pairRequestSequence.current;
     if (isCustom || !c.pairEndpoint) {
       setPairRows(rows);
@@ -797,7 +805,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     }
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(base + c.pairEndpoint, { cache: "no-store" });
+      const response = await fetch(base + c.pairEndpoint, { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) });
       const body = await response.json().catch(() => ({}));
       if (requestSequence !== pairRequestSequence.current) return;
       if (!response.ok) throw new Error(c.title + " pair monitor HTTP " + response.status);
@@ -836,7 +844,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         }
       }
     } catch {
-      if (requestSequence !== pairRequestSequence.current) return;
+      if (requestSequence !== pairRequestSequence.current || controller.signal.aborted) return;
       // On a transient error, preserve the last good snapshot and fall back to cache after reload.
       let cachedRows: Row[] = [];
       if (slug === "synthetic-arbitrage" && pairRows.length === 0) {
