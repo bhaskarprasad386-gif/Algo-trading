@@ -401,6 +401,29 @@ function ScannerContent() {
           </table>
         </div>
       </Card>
+<Card className="theme-border theme-surface p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold theme-text">Post-Market Pair History</h2><p className="mt-1 text-xs theme-muted">Latest 100 saved pair observations from today's trading session. They remain visible after market close and reset to zero on the next day.</p></div><span className="text-xs theme-muted">{filteredPairHistory.length.toLocaleString("en-IN")} shown • {pairHistory.length.toLocaleString("en-IN")} saved observations</span></div>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs theme-muted"><span className="rounded-lg border theme-border px-3 py-2">Saved automatically</span><span className="rounded-lg border theme-border px-3 py-2">Daily reset: next day</span><span className="rounded-lg border theme-border px-3 py-2">Includes quote failures + no-signal reasons</span><span className="rounded-lg border theme-border px-3 py-2">Last live scan: {lastScanText}</span></div>
+        <div className="mt-4 grid gap-2 md:hidden">
+          {filteredPairHistory.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">No saved pair diagnostics for this selection.</div> : filteredPairHistory.map((row, index) => { const status = String(row.status ?? row.lifecycle ?? "PAIR_CREATED"); const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status === "INVALID_FUTURE_BOOK" ? "BLOCKED • FUTURE BOOK" : status === "LIQUIDITY_BLOCKED" ? "BLOCKED • LIQUIDITY" : status; return <div key={String(row.observation_ref ?? "mobile-history-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3"><div className="flex items-start justify-between gap-2"><div className="text-sm font-bold theme-text">{cell(row, "symbol")}</div><span className="rounded-full border theme-border px-2 py-1 text-[9px] font-bold theme-muted">{statusLabel}</span></div><div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2"><div><div className="text-[10px] uppercase theme-subtle">Time</div><div className="text-xs theme-muted">{formatTime(row.observed_at)}</div></div><div><div className="text-[10px] uppercase theme-subtle">Contract</div><div className="text-xs theme-muted">{cell(row, "contract_month")}</div></div><div><div className="text-[10px] uppercase theme-subtle">Cash Ask</div><div className="text-xs theme-muted">{cell(row, "cash_ask")}</div></div><div><div className="text-[10px] uppercase theme-subtle">Future Bid</div><div className="text-xs theme-muted">{cell(row, "future_bid")}</div></div><div><div className="text-[10px] uppercase theme-subtle">Gap %</div><div className="text-xs theme-muted">{percentText(row)}</div></div><div><div className="text-[10px] uppercase theme-subtle">Stability</div><div className="text-xs theme-muted">{stabilityText(row)}</div></div><div className="col-span-2"><div className="text-[10px] uppercase theme-subtle">Eligibility / Reason</div><div className="text-xs font-semibold theme-text">{eligibilityText(row)}</div><div className="mt-1 break-words text-xs theme-muted">{reasonText(row)}</div></div></div></div>; })}
+        </div>
+        <div className="mt-4 hidden overflow-x-auto md:block"><table className="min-w-[1100px] w-full text-left text-sm">
+          <thead className="theme-surface-2 text-xs uppercase tracking-wider theme-muted"><tr>{pairColumns.map((column) => <th key={column} className="px-4 py-3 font-semibold">{column}</th>)}</tr></thead>
+          <tbody>{filteredPairHistory.length === 0 ? <tr><td colSpan={pairColumns.length} className="px-4 py-10 text-center text-sm theme-muted">No saved pair diagnostics for this selection.</td></tr> : filteredPairHistory.map((row, index) => {
+            const status = String(row.status ?? row.lifecycle ?? "PAIR_CREATED");
+            const statusLabel = status === "SIGNAL" ? "SIGNAL" : status === "NO_SIGNAL" ? "NO SIGNAL" : status === "MISSING_EXECUTION_QUOTE" ? "BLOCKED • QUOTE" : status === "INVALID_FUTURE_BOOK" ? "BLOCKED • FUTURE BOOK" : status === "LIQUIDITY_BLOCKED" ? "BLOCKED • LIQUIDITY" : status;
+            return <tr key={String(row.observation_ref ?? "history-" + index)} className="border-b theme-border last:border-0">
+              <td className="px-4 py-3 theme-muted">{formatTime(row.observed_at)}</td><td className="px-4 py-3 font-semibold theme-text">{cell(row, "symbol")}</td>
+              <td className="px-4 py-3 theme-muted">{cell(row, "contract_month")}</td><td className="px-4 py-3 font-semibold theme-text">{statusLabel}</td>
+              <td className="px-4 py-3 theme-muted">{cell(row, "cash_ask")}</td><td className="px-4 py-3 theme-muted">{cell(row, "future_bid")}</td>
+              <td className="px-4 py-3 theme-muted">{percentText(row)}</td>
+              <td className="px-4 py-3 theme-muted">{stabilityText(row)}</td>
+              <td className="px-4 py-3 theme-muted">{historyAgeText(row)}</td>
+              <td className="max-w-[430px] px-4 py-3 text-xs leading-5 theme-muted"><div className="font-semibold theme-text">{eligibilityText(row)}</div><div className="mt-1">{reasonText(row)}</div></td>
+            </tr>;
+          })}</tbody>
+        </table></div>
+      </Card>
       </div>
     );
 }
