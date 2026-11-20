@@ -452,10 +452,9 @@ export default function IVSkewFlipPage() {
         if(alertAudioEnabled&&fresh.length)playEarlyAlertTone();
       }catch(e){if(active&&requestSequence===alertFetchSequenceRef.current)setAlertFetchError(e instanceof Error?e.message:"Alert history unavailable");}
     };
-    if(pagePushStatus!=="LIVE")void poll();
-    // The live alert stream is pushed with IV runtime snapshots. Keep REST as
-    // a slow recovery path only while the page WebSocket is unavailable.
-    if(pagePushStatus==="LIVE")return()=>{active=false;};
+    // Perform one initial REST read in either state, but only one: the
+    // recovery loop below owns the first poll when PagePush is unavailable.
+    if(pagePushStatus==="LIVE"){void poll();return()=>{active=false;};}
     let timer:number|undefined;
     const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},15000);};
     void refresh();
@@ -470,10 +469,9 @@ export default function IVSkewFlipPage() {
         if(active&&response.ok)setBasketRegistry(body as BasketRegistry);
       }catch{/* keep last known basket registry state */}
     };
-    void poll();
-    // Initial durable registry fetch is retained. REST polling is recovery-only
-    // while the page channel is not synchronized; avoid duplicate refresh traffic.
-    if(pagePushStatus==="LIVE")return()=>{active=false;};
+    // Load the durable registry once when synchronized; otherwise the recovery
+    // loop owns the initial request and subsequent serialized refreshes.
+    if(pagePushStatus==="LIVE"){void poll();return()=>{active=false;};}
     let timer:number|undefined;
     const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},10000);};
     void refresh();
@@ -488,10 +486,9 @@ export default function IVSkewFlipPage() {
         if(active&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
       }catch{/* keep the last successful durable history response */}
     };
-    void poll();
-    // Durable history loads once per expiry selection. REST polling is recovery-only
-    // when the page WebSocket is unavailable.
-    if(pagePushStatus==="LIVE")return()=>{active=false;};
+    // Load durable history once when synchronized; otherwise the recovery loop
+    // owns the initial request and subsequent serialized refreshes.
+    if(pagePushStatus==="LIVE"){void poll();return()=>{active=false;};}
     let timer:number|undefined;
     const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},10000);};
     void refresh();
@@ -509,10 +506,9 @@ export default function IVSkewFlipPage() {
         if(active&&response.ok&&body.status==="ok")setChartHistory(body as Row);
       }catch{/* keep last successful chart window */}
     };
-    void poll();
-    // Initial/history load is REST; while the page socket is LIVE, sampler
-    // observations are appended from pushed runtime snapshots instead.
-    if(pagePushStatus==="LIVE")return()=>{active=false;};
+    // Load chart history once when synchronized; otherwise the recovery loop
+    // owns the initial request and subsequent serialized refreshes.
+    if(pagePushStatus==="LIVE"){void poll();return()=>{active=false;};}
     let timer:number|undefined;
     const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},15000);};
     void refresh();
