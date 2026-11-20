@@ -120,13 +120,6 @@ export function SyntheticTracePanel() {
   const tracePushSequenceRef = useRef(0);
   const liveFetchSequenceRef = useRef(0);
 
-  useEffect(() => () => {
-    // Prevent the bootstrap REST restore from mutating state or tombstones
-    // after this panel is gone.
-    tracePushSequenceRef.current += 1;
-    liveFetchSequenceRef.current += 1;
-  }, []);
-
   useEffect(() => {
     const bootstrapPushSequence = tracePushSequenceRef.current;
     const localRows = readStored();
@@ -146,21 +139,15 @@ export function SyntheticTracePanel() {
           .sort((a: TraceRow, b: TraceRow) => new Date(b.traced_at).getTime() - new Date(a.traced_at).getTime());
         setTraces(merged);
         writeStored(merged);
-        // Re-check authority immediately before bootstrap writes: a pushed snapshot
-        // or REMOVE event may have superseded this REST restore since the merge.
-        if (bootstrapPushSequence !== tracePushSequenceRef.current) return;
         await Promise.allSettled(localOnly.map((row) => fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities", {
           method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
           body: JSON.stringify({ trace_id: row.trace_id, trace_key: row.trace_key, traced_at: row.traced_at, snapshot: row }),
         })));
-        // Push events arriving during the POST phase must prevent the stale
-        // bootstrap from running its captured tombstone cleanup afterward.
-        if (bootstrapPushSequence !== tracePushSequenceRef.current) return;
         const deleteResults = await Promise.all(deletedIds.map(async (id) => {
           const result = await fetch(base + "/api/v1/scanner/synthetic-cash-carry/trace/opportunities/" + encodeURIComponent(id), { method: "DELETE", cache: "no-store" });
           return result.ok;
         }));
-        if (deleteResults.every(Boolean) && bootstrapPushSequence === tracePushSequenceRef.current) writeDeleted([]);
+        if (deleteResults.every(Boolean)) writeDeleted([]);
       } catch {
         // The local copy remains available when the API/database is offline.
       }
@@ -275,19 +262,9 @@ export function SyntheticTracePanel() {
       setLiveLoading(false);
       return;
     }
-    let cancelled = false;
-    let timer: number | undefined;
-    const refresh = async () => {
-      if (cancelled) return;
-      await loadLive();
-      if (!cancelled) timer = window.setTimeout(() => { void refresh(); }, 15000);
-    };
-    void refresh();
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-      liveFetchSequenceRef.current += 1;
-    };
+    void loadLive();
+    const timer = window.setInterval(() => void loadLive(), 15000);
+    return () => window.clearInterval(timer);
   }, [loadLive, pagePushStatus]);
 
   const tracedKeys = useMemo(() => new Set(traces.map((item) => item.trace_key)), [traces]);
