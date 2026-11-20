@@ -739,3 +739,50 @@ html[data-theme="white"] .box-spread-page .box-live-opportunities article [class
 @media (max-width: 380px) {
   .box-spread-page > div:first-child > span:last-child { font-size: 11px !important; padding-inline: .6rem; }
 }
+
+/* Box Spread mobile quote-depth legibility pass */
+@media (max-width: 640px) {
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 {
+    border-radius: 12px !important;
+    padding: .65rem !important;
+    gap: .45rem !important;
+  }
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 > div:first-child {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    row-gap: .35rem;
+  }
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 > div:first-child > span:first-child {
+    font-size: 11px !important;
+    line-height: 1.4 !important;
+  }
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 > div:first-child > span:last-child {
+    font-size: 10px !important;
+    white-space: nowrap;
+  }
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 > div:nth-child(2) {
+    font-size: 16px !important;
+    line-height: 1.35 !important;
+  }
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 > div:nth-child(3) {
+    font-size: 11px !important;
+  }
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 > div:last-child {
+    padding-top: .5rem !important;
+    margin-top: .35rem !important;
+  }
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 > div:last-child > div:first-child {
+    font-size: 10px !important;
+    line-height: 1.4 !important;
+  }
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 > div:last-child > div:not(:first-child) {
+    font-size: 10px !important;
+    line-height: 1.5 !important;
+    padding-block: .15rem;
+  }
+}
+@media (max-width: 380px) {
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 {
+    padding: .55rem !important;
+  }
+}
