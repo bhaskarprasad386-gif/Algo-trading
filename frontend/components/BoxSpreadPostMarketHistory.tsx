@@ -185,6 +185,11 @@ export default function BoxSpreadPostMarketHistory() {
     if (append && appendInFlight.current) return;
     const requestId = ++requestSequence.current;
     if (append) {
+      // Pagination and full-history sorting both mutate the same visible row set.
+      // Starting a page append invalidates any in-flight all-history sort so
+      // its late completion cannot replace the newly appended page state.
+      sortingRequestSequence.current += 1;
+      setSortingAll(false);
       appendInFlight.current = true;
       setLoadingMore(true);
     } else {
