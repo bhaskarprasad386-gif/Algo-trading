@@ -105,16 +105,19 @@ export default function HomePage() {
       if (cancelled) return;
       setWsStatus("connecting");
       socket = new WebSocket(getDashboardWsUrl() + "/ws/dashboard");
+      const currentSocket = socket;
       // A socket stuck in CONNECTING otherwise never reaches onclose and the
       // dashboard silently loses its realtime connection.
-      connectionTimer = window.setTimeout(() => socket?.close(), 12000);
-      socket.onopen = () => {
+      connectionTimer = window.setTimeout(() => currentSocket.close(), 12000);
+      currentSocket.onopen = () => {
+        if (socket !== currentSocket || cancelled) return;
         if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
         connectionTimer = undefined;
         retryMs = 1000;
         setWsStatus("connected");
       };
-      socket.onmessage = (event) => {
+      currentSocket.onmessage = (event) => {
+        if (socket !== currentSocket || cancelled) return;
         try {
           const message = JSON.parse(event.data);
           if (message?.type !== "dashboard_snapshot") return;
@@ -137,8 +140,9 @@ export default function HomePage() {
           // Ignore malformed dashboard messages without losing the last valid snapshot.
         }
       };
-      socket.onerror = () => setWsStatus("error");
-      socket.onclose = () => {
+      currentSocket.onerror = () => { if (socket === currentSocket && !cancelled) setWsStatus("error"); };
+      currentSocket.onclose = () => {
+        if (socket !== currentSocket) return;
         if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
         connectionTimer = undefined;
         if (cancelled) return;
