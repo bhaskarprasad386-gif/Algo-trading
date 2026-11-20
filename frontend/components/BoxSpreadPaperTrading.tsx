@@ -453,7 +453,7 @@ export default function BoxSpreadPaperTrading() {
             setPrivateWsStatus("STALE");
             if (!privateResyncPendingRef.current && socket?.readyState === WebSocket.OPEN) {
               privateResyncPendingRef.current = true;
-              socket.send(JSON.stringify({ action: "resync" }));
+              socket?.send(JSON.stringify({ action: "resync" }));
             }
             return;
           }
@@ -482,7 +482,7 @@ export default function BoxSpreadPaperTrading() {
             setPrivateWsStatus("STALE");
             if (!privateResyncPendingRef.current && socket?.readyState === WebSocket.OPEN) {
               privateResyncPendingRef.current = true;
-              socket.send(JSON.stringify({ action: "resync" }));
+              socket?.send(JSON.stringify({ action: "resync" }));
             }
           }
         };
