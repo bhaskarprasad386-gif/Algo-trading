@@ -299,7 +299,9 @@ def test_unstable_snapshot_is_not_marked_authoritative(monkeypatch):
     monkeypatch.setattr(push, "_snapshot", lambda page: unstable_snapshot())
     frame = push._consistent_snapshot_frame("box-spread", retries=3)
     assert frame["event"] == "SNAPSHOT"
-    assert frame["sequence"] == 3
+    # Last capture started at sequence 2; don't advance to sequence 3
+    # because its snapshot is unstable and cannot represent that cursor.
+    assert frame["sequence"] == 2
     assert frame["data"] == {"snapshot_status": "UNAVAILABLE"}
 
 
