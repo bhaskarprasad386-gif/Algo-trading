@@ -1595,7 +1595,6 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </div>
         </section>
       )}
-}
       {slug !== "box-spread" && (
       <Card className="theme-border theme-surface px-3 py-3">
         <div className="flex items-center gap-2 text-xs font-semibold theme-text"><Filter className="h-4 w-4 theme-accent" /> Live Scanner Controls</div>
