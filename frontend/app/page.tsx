@@ -41,6 +41,7 @@ export default function HomePage() {
   const [runtimeServerTimestamp, setRuntimeServerTimestamp] = useState<string | null>(null);
   const [runtimeServerTimestampReceivedAt, setRuntimeServerTimestampReceivedAt] = useState<number | null>(null);
   const [runnerLastActivity, setRunnerLastActivity] = useState<Record<string, number>>({});
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [diagnosticErrors, setDiagnosticErrors] = useState<any[]>([]);
   const [diagnosticCount, setDiagnosticCount] = useState(0);
   const [diagnosticsLastSuccessAt, setDiagnosticsLastSuccessAt] = useState<number | null>(null);
@@ -614,6 +615,9 @@ export default function HomePage() {
           ].map(([label,value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-3 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-1 text-[11px] font-bold">{value}</div></div>)}</div>
         </section>
         </div>
+
+      </div>
+
       <section aria-label="Error Diagnostics" className="mt-4">
         <Card className="rounded-2xl border theme-border theme-surface-2 p-3">
           <div className="grid grid-cols-[1fr_auto] items-center gap-3">
@@ -634,7 +638,7 @@ export default function HomePage() {
           </div>
         </Card>
       </section>
-      {liveFeedAlerts.length ? <div role="status" aria-live="polite" className="fixed bottom-[calc(env(safe-area-inset-bottom)+6rem)] right-3 z-50 max-h-[calc(100dvh-8rem-env(safe-area-inset-bottom))] w-[min(92vw,360px)] overflow-y-auto overscroll-contain rounded-xl border theme-warning-bg p-3 shadow-xl sm:bottom-[calc(env(safe-area-inset-bottom)+1rem)] sm:right-4 sm:max-h-[calc(100dvh-2rem-env(safe-area-inset-bottom))]"><div className="mb-2 flex items-center justify-between gap-2 text-[10px] font-bold uppercase"><span><TriangleAlert size={13} className="mr-1 inline" />Live feed alerts</span><div className="flex items-center gap-2"><span>{liveFeedAlerts.length} recent • auto-hide 8s</span><button type="button" aria-label="Dismiss live feed alerts" title="Close alerts" onClick={() => setDismissedAlertIds((current) => Array.from(new Set([...current, ...liveFeedAlerts.map((e) => String(e.id))])).slice(-100))} className="inline-flex h-9 w-9 shrink-0 touch-manipulation items-center justify-center rounded-full border theme-border text-xl font-bold leading-none theme-text hover:theme-surface active:scale-95" style={{ WebkitTapHighlightColor: "transparent" }}>×</button></div></div>{liveFeedAlerts.map((e) => <div key={e.id} className="border-t theme-border py-2"><div className="text-[10px] font-bold">{e.component} • {e.severity}</div><div className="mt-1 text-[11px]">{e.message}</div><div className="mt-1 text-[9px] theme-subtle">{e.time ? new Date(e.time).toLocaleTimeString("en-IN") : "Time unavailable"}</div></div>)}</div> : null}
+ <div role="status" aria-live="polite" className="fixed bottom-[calc(env(safe-area-inset-bottom)+6rem)] right-3 z-50 max-h-[calc(100dvh-8rem-env(safe-area-inset-bottom))] w-[min(92vw,360px)] overflow-y-auto overscroll-contain rounded-xl border theme-warning-bg p-3 shadow-xl sm:bottom-[calc(env(safe-area-inset-bottom)+1rem)] sm:right-4 sm:max-h-[calc(100dvh-2rem-env(safe-area-inset-bottom))]"><div className="mb-2 flex items-center justify-between gap-2 text-[10px] font-bold uppercase"><span><TriangleAlert size={13} className="mr-1 inline" />Live feed alerts</span><div className="flex items-center gap-2"><span>{liveFeedAlerts.length} recent • auto-hide 8s</span><button type="button" aria-label="Dismiss live feed alerts" title="Close alerts" onClick={() => setDismissedAlertIds((current) => Array.from(new Set([...current, ...liveFeedAlerts.map((e) => String(e.id))])).slice(-100))} className="inline-flex h-9 w-9 shrink-0 touch-manipulation items-center justify-center rounded-full border theme-border text-xl font-bold leading-none theme-text hover:theme-surface active:scale-95" style={{ WebkitTapHighlightColor: "transparent" }}>×</button></div></div>{liveFeedAlerts.map((e) => <div key={e.id} className="border-t theme-border py-2"><div className="text-[10px] font-bold">{e.component} • {e.severity}</div><div className="mt-1 text-[11px]">{e.message}</div><div className="mt-1 text-[9px] theme-subtle">{e.time ? new Date(e.time).toLocaleTimeString("en-IN") : "Time unavailable"}</div></div>)}</div> : null}
     </div>
   );
 }
