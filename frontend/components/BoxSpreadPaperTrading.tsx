@@ -696,20 +696,32 @@ export default function BoxSpreadPaperTrading() {
     finally { setBusy(false); }
   }
 
+  const ledgerDetailRequestSequenceRef = useRef(0);
+  useEffect(() => {
+    // Account or selected trade changes invalidate any ledger detail read in flight.
+    ledgerDetailRequestSequenceRef.current += 1;
+  }, [account, selectedTrade]);
+
   async function loadLedger(tradeId: number) {
     setSelectedTrade(tradeId);
     setError(null);
-    try { setLedger(await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account))); }
-    catch (e) { setError(e instanceof Error ? e.message : "Unable to load ledger"); }
+    const requestSequence = ++ledgerDetailRequestSequenceRef.current;
+    try {
+      const body = await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account));
+      if (requestSequence === ledgerDetailRequestSequenceRef.current) setLedger(body);
+    }
+    catch (e) { if (requestSequence === ledgerDetailRequestSequenceRef.current) setError(e instanceof Error ? e.message : "Unable to load ledger"); }
   }
 
   useEffect(() => {
     if (!token || selectedTrade == null || privateWsStatus !== "LIVE" || privateLedgerRefreshVersion === 0) return;
-    let active = true;
+    const requestSequence = ++ledgerDetailRequestSequenceRef.current;
     void request("/trades/" + selectedTrade + "/ledger?account_key=" + encodeURIComponent(account))
-      .then(body => { if (active) setLedger(body); })
+      .then(body => { if (requestSequence === ledgerDetailRequestSequenceRef.current) setLedger(body); })
       .catch(() => { /* Keep the last confirmed ledger on transient read failure. */ });
-    return () => { active = false; };
+    return () => {
+      if (requestSequence === ledgerDetailRequestSequenceRef.current) ledgerDetailRequestSequenceRef.current += 1;
+    };
   }, [token, selectedTrade, account, privateWsStatus, privateLedgerRefreshVersion, request]);
 
   const allowedEntrySymbols = entryExpiryType === "WEEKLY"
