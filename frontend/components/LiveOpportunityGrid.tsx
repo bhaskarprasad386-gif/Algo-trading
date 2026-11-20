@@ -58,6 +58,8 @@ function quoteTime(value: unknown) {
   }) + " IST";
 }
 const numberFormatters = new Map<number, Intl.NumberFormat>();
+const timeFormatter = new Intl.DateTimeFormat("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
+function timeFmt(value: number) { return timeFormatter.format(value); }
 function fmt(value: unknown, digits = 2) {
   if (value === null || value === undefined || value === "") return "—";
   const number = Number(value);
@@ -241,7 +243,7 @@ export default function LiveOpportunityGrid() {
           ["Expiry view", expiryView],
           ["Live rows", String(liveCount)],
           ["Displayed rows", String(expiryRows.length)],
-          ["Stream update", lastMessageAt ? new Date(lastMessageAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST" : "Waiting"],
+          ["Stream update", lastMessageAt ? timeFmt(lastMessageAt) + " IST" : "Waiting"],
         ].map(([label, value]) => <div key={label} className="theme-surface-2 px-3 py-3 sm:px-4"><p className="text-[9px] font-bold uppercase tracking-wider theme-muted">{label}</p><p className="mt-1 truncate text-sm font-bold tabular-nums theme-text">{value}</p></div>)}
       </div>
 
@@ -270,7 +272,7 @@ export default function LiveOpportunityGrid() {
                   <div className="flex flex-col items-end gap-0.5 text-[9px] tabular-nums theme-muted">
                     <span>Quote {quoteTime(row.last_update_timestamp_ns)}</span>
                     <span>4-leg skew {(() => { const skew = n(row, "timestamp_skew_ms"); return skew === null || skew < 0 ? "—" : fmt(skew, 3) + " ms"; })()}</span>
-                    <span>Received {new Date(lastSeen).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })} IST</span>
+                    <span>Received {timeFmt(lastSeen)} IST</span>
                     <span className={status === "LIVE" ? "text-emerald-400" : "text-amber-300"}>{status === "LIVE" ? "Updated" : "No update"} {Math.max(0, (Date.now() - lastSeen) / 1000).toFixed(1)}s ago</span>
                   </div>
                 </div>
