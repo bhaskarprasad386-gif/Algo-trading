@@ -679,3 +679,34 @@ html[data-theme="white"] .box-spread-page .box-live-opportunities article [class
     padding: .55rem .45rem;
   }
 }
+
+/* Mobile metrics: give the primary edge its own line, secondary values stay side-by-side. */
+@media (max-width: 640px) {
+  .box-spread-page .box-live-opportunities article > .grid > div:last-child {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .6rem;
+    min-width: 0;
+  }
+  .box-spread-page .box-live-opportunities article > .grid > div:last-child > div:first-child {
+    grid-column: 1 / -1;
+    padding: .85rem 1rem;
+  }
+  .box-spread-page .box-live-opportunities article > .grid > div:last-child > div:first-child p:first-child,
+  .box-spread-page .box-live-opportunities article > .grid > div:last-child > div:nth-child(2) p:first-child,
+  .box-spread-page .box-live-opportunities article > .grid > div:last-child > div:nth-child(3) p:first-child {
+    font-size: 12px !important;
+    line-height: 1.35 !important;
+    letter-spacing: .035em;
+  }
+  .box-spread-page .box-live-opportunities article > .grid > div:last-child > div:nth-child(2),
+  .box-spread-page .box-live-opportunities article > .grid > div:last-child > div:nth-child(3) {
+    padding: .75rem;
+    min-width: 0;
+  }
+  .box-spread-page .box-live-opportunities article > .grid > div:last-child > div:nth-child(2) p:last-child,
+  .box-spread-page .box-live-opportunities article > .grid > div:last-child > div:nth-child(3) p:nth-child(2) {
+    font-size: 1rem !important;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+}
