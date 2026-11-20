@@ -156,43 +156,13 @@ export default function BoxSpreadPostMarketHistory() {
     if (bv == null) return -1;
     return (sortDirection === "desc" ? -1 : 1) * (Number(av) - Number(bv));
   }), [rows, sortKey, sortDirection]);
-  const selectSort = async (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => {
+  const selectSort = (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => {
+    // Sorting stays local to the currently loaded page. The old implementation
+    // downloaded every history page (potentially thousands of rows) on each sort,
+    // making the UI appear frozen and competing with refresh/filter requests.
     const nextDirection = sortKey === key ? (sortDirection === "desc" ? "asc" : "desc") : "desc";
     setSortKey(key);
     setSortDirection(nextDirection);
-    if (!hasMore || sortingAll) return;
-    const sortRequestId = ++sortingRequestSequence.current;
-    setSortingAll(true);
-    try {
-      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const allRows = [...rows];
-      let nextOffset = offset;
-      let more = true;
-      while (more) {
-        const params = new URLSearchParams({ days: String(days), limit: "5000", offset: String(nextOffset) });
-        if (expiryType !== "ALL") params.set("expiry_type", expiryType);
-        if (selectedIndex !== "ALL") params.set("symbol", selectedIndex);
-        const response = await fetch(base + "/api/v1/scanner/box-spread/snapshots?" + params.toString(), { cache: "no-store", signal: AbortSignal.timeout(20000) });
-        if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
-        const body = (await response.json()) as SnapshotResponse;
-        if (!validSnapshotHistoryResponse(body)) throw new Error("Unexpected snapshot history response");
-        if (sortRequestId !== sortingRequestSequence.current) return;
-        allRows.push(...body.data);
-        nextOffset += body.data.length;
-        more = body.has_more === true && body.data.length > 0;
-      }
-      if (sortRequestId !== sortingRequestSequence.current) return;
-      setRows(mergeSnapshots([], allRows));
-      setOffset(nextOffset);
-      setHasMore(false);
-      setTotal(allRows.length);
-    } catch (e) {
-      // A superseded full-history sort must not surface an error over the
-      // newer page/filter/revision request that replaced it.
-      if (sortRequestId === sortingRequestSequence.current) {
-        setError(e instanceof Error ? e.message : "Unable to load complete history for sorting");
-      }
-    } finally { if (sortRequestId === sortingRequestSequence.current) setSortingAll(false); }
   };
   const sortMark = (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
   const requestSequence = useRef(0);
@@ -350,10 +320,10 @@ export default function BoxSpreadPostMarketHistory() {
       {!rows.length && !loading && !error && <p className="mt-4 rounded-lg border-2 border-slate-400 dark:border-slate-500 theme-border p-3 text-sm theme-muted">No qualifying snapshots were saved in this window. No synthetic or sample rows are displayed.</p>}
 
       {rows.length > 0 && <div className="mt-4 space-y-2">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5" aria-label="Sort saved history">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5" aria-label="Sort loaded history">
           {(["profit","edge","edgePerLot","gap","lots","time"] as const).map(key => <button key={key} type="button" onClick={() => void selectSort(key)} disabled={sortingAll} aria-pressed={sortKey === key} className={"min-h-14 rounded-xl border px-3 text-base font-extrabold shadow-sm disabled:opacity-50 " + (sortKey === key ? "theme-accent theme-accent-bg theme-border" : "theme-border theme-surface theme-text")}>{key === "profit" ? "Gross Profit" : key === "edge" ? "Edge" : key === "edgePerLot" ? "Edge / Lot" : key === "gap" ? "Strike Gap" : key === "lots" ? "Max Lots" : "Timing"}<span className="block mt-1 text-sm font-medium">{sortKey === key ? (sortDirection === "desc" ? "Highest first ↓" : "Lowest first ↑") : "Tap to sort ↕"}</span></button>)}
         </div>
-        {sortingAll && <p role="status" className="text-sm theme-muted">Loading complete history for sorting…</p>}
+        <p className="text-xs theme-muted">Sort is instant and applies only to loaded rows. Use Load more to fetch additional pages.</p>
       </div>}
       {rows.length > 0 && <div className="mt-4 grid gap-3 md:hidden">
         {sortedRows.map(row => <article key={snapshotKey(row)} className="rounded-xl border-2 border-slate-400 dark:border-slate-500 theme-border theme-surface-2 p-3">
