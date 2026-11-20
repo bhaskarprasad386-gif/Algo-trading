@@ -710,3 +710,15 @@ html[data-theme="white"] .box-spread-page .box-live-opportunities article [class
     overflow-wrap: anywhere;
   }
 }
+
+
+/* Box Spread refresh control: clear feedback, stable touch target, and no mobile wrapping */
+.box-spread-page .box-spread-refresh-btn { min-height: 42px; min-width: 108px; border-radius: 11px; font-weight: 800; letter-spacing: .01em; transition: border-color .16s ease, background-color .16s ease, opacity .16s ease; }
+.box-spread-page .box-spread-refresh-btn:not(:disabled):hover { border-color: var(--box-spread-accent, #0891b2); }
+.box-spread-page .box-spread-refresh-btn:disabled { opacity: .72; }
+@media (max-width: 640px) {
+  .box-spread-page .box-spread-refresh-btn { min-height: 44px; min-width: 116px; padding-inline: 12px; font-size: 12px; white-space: nowrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .box-spread-page .box-spread-refresh-btn { transition: none; }
+}
