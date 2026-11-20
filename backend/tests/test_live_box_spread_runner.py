@@ -949,7 +949,7 @@ def test_runner_shared_market_snapshot_reuses_scanner_and_depth_without_new_feed
 
 
 def test_spot_page_callback_is_blocked_after_publisher_ownership_transfers():
-    from app.market_data.box_spread_publication_gate import BoxSpreadPublicationGate
+    from app.scanner.box_spread_publication_gate import BoxSpreadPublicationGate
     from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
 
     gate = BoxSpreadPublicationGate()
