@@ -156,16 +156,10 @@ export default function BoxSpreadPaperTrading() {
   // Synchronous ref invalidation prevents an older page/filter REST response from committing between renders.
   useEffect(() => {
     privateLedgerRequestSequenceRef.current += 1;
-    // Account/filter changes also invalidate an independently-running recovery
-    // read; otherwise its response can commit after the new ledger context.
-    recoveryRequestSequenceRef.current += 1;
   }, [account, openPage, closedPage, positionSearch, positionDirection]);
 
   const refresh = useCallback(async () => {
     const requestSequence = ++privateLedgerRequestSequenceRef.current;
-    // Invalidate an earlier recovery fetch immediately, before the new ledger
-    // requests start, not only after they finish successfully.
-    recoveryRequestSequenceRef.current += 1;
     try {
       const query = "&search=" + encodeURIComponent(positionSearch.trim()) + "&direction=" + encodeURIComponent(positionDirection);
       const pageSize = 10;
@@ -377,7 +371,6 @@ export default function BoxSpreadPaperTrading() {
       privateResyncPendingRef.current = false;
       privateEventIdsRef.current.clear();
       privateLedgerRequestSequenceRef.current += 1;
-      recoveryRequestSequenceRef.current += 1;
       setBalance(null);
       setExecutionEnabled(false);
       setTrades([]);
@@ -402,7 +395,6 @@ export default function BoxSpreadPaperTrading() {
     privateResyncPendingRef.current = false;
     privateEventIdsRef.current.clear();
     privateLedgerRequestSequenceRef.current += 1;
-    recoveryRequestSequenceRef.current += 1;
     setPrivateSnapshotComplete(false);
     setBalance(null);
     setExecutionEnabled(false);
@@ -432,18 +424,14 @@ export default function BoxSpreadPaperTrading() {
         const wsUrl = appConfig.apiBaseUrl.replace(/\/$/, "").replace(/^http/i, "ws") + "/ws/box-spread-paper";
         socket = new WebSocket(wsUrl);
         privateWsRef.current = socket;
-        // Start the watchdog before onopen so a stuck CONNECTING socket is
-        // bounded too, not just an established socket that stops sending.
-        lastServerFrameAt = Date.now();
         socket.onopen = () => {
-          if (stopped || privateWsRef.current !== socket) { socket?.close(); return; }
+          if (stopped) { socket?.close(); return; }
           lastServerFrameAt = Date.now();
           retryDelay = 1000;
           socket?.send(JSON.stringify({ ticket: ticketBody.ticket, account_key: account }));
         };
         socket.onmessage = event => {
-          // Ignore any late delivery from a retired account/channel transport.
-          if (stopped || privateWsRef.current !== socket) return;
+          if (stopped) return;
           lastServerFrameAt = Date.now();
           let frame: any;
           try { frame = JSON.parse(String(event.data)); } catch { return; }
@@ -461,7 +449,7 @@ export default function BoxSpreadPaperTrading() {
             setPrivateWsStatus("STALE");
             if (!privateResyncPendingRef.current && socket?.readyState === WebSocket.OPEN) {
               privateResyncPendingRef.current = true;
-              socket?.send(JSON.stringify({ action: "resync" }));
+              socket.send(JSON.stringify({ action: "resync" }));
             }
             return;
           }
@@ -490,7 +478,7 @@ export default function BoxSpreadPaperTrading() {
             setPrivateWsStatus("STALE");
             if (!privateResyncPendingRef.current && socket?.readyState === WebSocket.OPEN) {
               privateResyncPendingRef.current = true;
-              socket?.send(JSON.stringify({ action: "resync" }));
+              socket.send(JSON.stringify({ action: "resync" }));
             }
           }
         };
@@ -500,7 +488,7 @@ export default function BoxSpreadPaperTrading() {
             socket?.close();
           }
         }, 10000);
-        socket.onerror = () => { if (!stopped && privateWsRef.current === socket) socket?.close(); };
+        socket.onerror = () => { if (!stopped) socket?.close(); };
         socket.onclose = () => {
           if (stopped) return;
           privateResyncPendingRef.current = false;
@@ -527,31 +515,19 @@ export default function BoxSpreadPaperTrading() {
   useEffect(() => {
     if (!token || privateWsStatus === "LIVE") return;
     // REST is a bounded safety fallback only while the private socket is not synchronized.
-    let cancelled = false;
-    let fallbackTimer: number | undefined;
-    const refreshFallback = async () => {
-      if (cancelled) return;
-      await refresh();
-      if (!cancelled) fallbackTimer = window.setTimeout(() => { void refreshFallback(); }, 15000);
-    };
-    void refreshFallback();
-    return () => { cancelled = true; if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer); privateLedgerRequestSequenceRef.current += 1; };
+    void refresh();
+    const fallbackTimer = window.setInterval(() => { void refresh(); }, 15000);
+    return () => window.clearInterval(fallbackTimer);
   }, [token, privateWsStatus, refresh]);
 
   useEffect(() => {
     if (!token) return;
-    let cancelled = false;
-    let opportunitiesTimer: number | undefined;
-    const refreshOpportunities = async () => {
-      if (cancelled) return;
-      await loadOpportunities();
-      if (!cancelled) opportunitiesTimer = window.setTimeout(() => { void refreshOpportunities(); }, 30000);
-    };
-    if (pagePush.status !== "LIVE") void refreshOpportunities();
+    if (pagePush.status !== "LIVE") void loadOpportunities();
+    const opportunitiesTimer = pagePush.status === "LIVE"
+      ? undefined
+      : window.setInterval(() => { void loadOpportunities(); }, 30000);
     return () => {
-      cancelled = true;
-      if (opportunitiesTimer !== undefined) window.clearTimeout(opportunitiesTimer);
-      opportunityRequestSequenceRef.current += 1;
+      if (opportunitiesTimer !== undefined) window.clearInterval(opportunitiesTimer);
     };
   }, [token, loadOpportunities, pagePush.status]);
 
@@ -695,32 +671,20 @@ export default function BoxSpreadPaperTrading() {
     finally { setBusy(false); }
   }
 
-  const ledgerDetailRequestSequenceRef = useRef(0);
-  useEffect(() => {
-    // Account or selected trade changes invalidate any ledger detail read in flight.
-    ledgerDetailRequestSequenceRef.current += 1;
-  }, [account, selectedTrade]);
-
   async function loadLedger(tradeId: number) {
     setSelectedTrade(tradeId);
     setError(null);
-    const requestSequence = ++ledgerDetailRequestSequenceRef.current;
-    try {
-      const body = await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account));
-      if (requestSequence === ledgerDetailRequestSequenceRef.current) setLedger(body);
-    }
-    catch (e) { if (requestSequence === ledgerDetailRequestSequenceRef.current) setError(e instanceof Error ? e.message : "Unable to load ledger"); }
+    try { setLedger(await request("/trades/" + tradeId + "/ledger?account_key=" + encodeURIComponent(account))); }
+    catch (e) { setError(e instanceof Error ? e.message : "Unable to load ledger"); }
   }
 
   useEffect(() => {
     if (!token || selectedTrade == null || privateWsStatus !== "LIVE" || privateLedgerRefreshVersion === 0) return;
-    const requestSequence = ++ledgerDetailRequestSequenceRef.current;
+    let active = true;
     void request("/trades/" + selectedTrade + "/ledger?account_key=" + encodeURIComponent(account))
-      .then(body => { if (requestSequence === ledgerDetailRequestSequenceRef.current) setLedger(body); })
+      .then(body => { if (active) setLedger(body); })
       .catch(() => { /* Keep the last confirmed ledger on transient read failure. */ });
-    return () => {
-      if (requestSequence === ledgerDetailRequestSequenceRef.current) ledgerDetailRequestSequenceRef.current += 1;
-    };
+    return () => { active = false; };
   }, [token, selectedTrade, account, privateWsStatus, privateLedgerRefreshVersion, request]);
 
   const allowedEntrySymbols = entryExpiryType === "WEEKLY"
