@@ -33,6 +33,7 @@ test("dashboard no longer links to Custom Strategy", async () => {
 test("Box Spread removed sections and mounts while scanner/history remain", async () => {
   const page = await read("app/strategies/box-spread/page.tsx");
   assert.equal(page.includes("BoxSpreadShadowPanel"), false);
+  assert.equal(await exists("components/BoxSpreadShadowPanel.tsx"), false);
   assert.equal(page.includes("Shadow Monitor"), false);
   assert.equal(page.includes("System Health"), false);
   assert.equal(page.includes("box-system-health"), false);
@@ -43,6 +44,7 @@ test("Box Spread removed sections and mounts while scanner/history remain", asyn
 test("Synthetic page no longer mounts trace panels but keeps scanner workspace", async () => {
   const page = await read("app/strategies/synthetic-arbitrage/page.tsx");
   assert.equal(page.includes("SyntheticTracePanel"), false);
+  assert.equal(await exists("components/synthetic-trace-panel.tsx"), false);
   assert.equal(page.includes("StrategyWorkspace slug=\"synthetic-arbitrage\""), true);
 });
 
