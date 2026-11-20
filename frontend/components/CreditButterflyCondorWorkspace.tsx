@@ -74,11 +74,24 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
   // PagePush is authoritative. When the runner/feed stops emitting, clearly
   // mark retained rows stale instead of presenting an old shadow snapshot LIVE.
   useEffect(() => {
-    if (lastMessageAt === null) { setSnapshotStale(true); return; }
+    const capturedAtNs = Number(payload?.shared_snapshot?.captured_at_ns);
+    const snapshotAvailable = payload?.runtime_state === "SNAPSHOT_AVAILABLE";
+    if (lastMessageAt === null || !snapshotAvailable || !Number.isFinite(capturedAtNs) || capturedAtNs <= 0) {
+      setSnapshotStale(true);
+      return;
+    }
+    // A PagePush frame can be freshly delivered while its underlying market
+    // snapshot is unavailable/old. Freshness must follow market capture time,
+    // not just websocket message arrival.
+    const ageMs = Math.max(0, Date.now() - capturedAtNs / 1_000_000);
+    if (ageMs >= 5000) {
+      setSnapshotStale(true);
+      return;
+    }
     setSnapshotStale(false);
-    const timer = window.setTimeout(() => setSnapshotStale(true), 5000);
+    const timer = window.setTimeout(() => setSnapshotStale(true), 5000 - ageMs);
     return () => window.clearTimeout(timer);
-  }, [lastMessageAt]);
+  }, [lastMessageAt, payload?.runtime_state, payload?.shared_snapshot?.captured_at_ns]);
 
 
   const refresh = useCallback(() => resync(), [resync]);
