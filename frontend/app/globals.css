@@ -507,8 +507,8 @@ html[data-theme="dark"] .box-spread-page :is([class*="text-rose-"],[class*="text
 html[data-theme="black"] .box-spread-page :is([class*="text-amber-"],[class*="text-yellow-"]) { color: #fde68a !important; }
 html[data-theme="blue"] .box-spread-page :is([class*="text-amber-"],[class*="text-yellow-"]) { color: #fde68a !important; }
 html[data-theme="dark"] .box-spread-page :is([class*="text-amber-"],[class*="text-yellow-"]) { color: #fde68a !important; }
-html[data-theme="black"] .box-spread-page :is([class*="text-cyan-"],[class*="text-sky-"],[class*="text-blue-"]) { color: #7dd3fc !important; }
-html[data-theme="blue"] .box-spread-page :is([class*="text-cyan-"],[class*="text-sky-"],[class*="text-blue-"]) { color: #7dd3fc !important; }
+html[data-theme="black"] .box-spread-page :is([class*="text-cyan-"],[class*="text-sky-"],[class*="text-blue-"]),
+html[data-theme="blue"] .box-spread-page :is([class*="text-cyan-"],[class*="text-sky-"],[class*="text-blue-"]),
 html[data-theme="dark"] .box-spread-page :is([class*="text-cyan-"],[class*="text-sky-"],[class*="text-blue-"]) { color: #7dd3fc !important; }
 
 /* Box Spread workspace redesign v1 — visual-only layer, preserving scanner behavior. */
