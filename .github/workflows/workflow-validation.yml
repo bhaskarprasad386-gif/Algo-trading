@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/dual-broker-bootstrap-ci.yml"
       - ".github/workflows/workflow-validation.yml"
+      - ".github/workflows/cloudflare-production-deploy.yml"
 
 permissions:
   contents: read
@@ -20,4 +21,4 @@ jobs:
       - name: Run actionlint on the bootstrap workflows
         uses: rhysd/actionlint@v1.7.7
         with:
-          args: .github/workflows/dual-broker-bootstrap-ci.yml .github/workflows/workflow-validation.yml
+          args: .github/workflows/dual-broker-bootstrap-ci.yml .github/workflows/workflow-validation.yml .github/workflows/cloudflare-production-deploy.yml
