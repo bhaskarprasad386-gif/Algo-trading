@@ -516,6 +516,8 @@ export default function IVSkewFlipPage() {
   },[base,activeWeeklyExpiry,pagePushStatus]);
   const loadMoreAlerts=async()=>{
     if(loadingMoreAlerts||!hasMoreAlerts||!alertCursor)return;
+    // A later PagePush or recovery poll supersedes this pagination response.
+    const requestSequence=++alertFetchSequenceRef.current;
     const query=new URLSearchParams({
       limit:"30",
       before_observed_at_ns:alertCursor.before_observed_at_ns,
@@ -525,6 +527,7 @@ export default function IVSkewFlipPage() {
     try{
       const response=await fetch(`${base}/api/latest-alert?${query.toString()}`,{cache:"no-store"});
       const body=await response.json();
+      if(requestSequence!==alertFetchSequenceRef.current)return;
       if(!response.ok)throw new Error(apiError(body,"Could not load older alert history"));
       const rows=Array.isArray(body.alerts)?body.alerts as EarlyAlert[]:[];
       loadedOlderAlerts.current=true;
@@ -540,7 +543,7 @@ export default function IVSkewFlipPage() {
       }:null);
       setAlertFetchError("");
     }catch(e){
-      setAlertFetchError(e instanceof Error?e.message:"Could not load older alert history");
+      if(requestSequence===alertFetchSequenceRef.current)setAlertFetchError(e instanceof Error?e.message:"Could not load older alert history");
     }finally{
       setLoadingMoreAlerts(false);
     }
