@@ -33,3 +33,7 @@ export function freshEarlyEntryAlerts(alerts, seenIds) {
   return alerts.filter(row => row && Number.isSafeInteger(row.id) &&
     row.state === "EARLY_ENTRY" && !seenIds.has(row.id));
 }
+
+/** Manual REST refresh must not override authoritative live PagePush state. */
+export function shouldAllowBoxSpreadEdgeTimingRestRefresh(pagePushStatus) {
+  return pagePushStatus !== "LIVE";
