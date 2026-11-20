@@ -13,7 +13,8 @@ permissions:
 
 concurrency:
   group: cloudflare-production
-  cancel-in-progress: true
+  # Never cancel an active production deployment when a newer commit arrives.
+  cancel-in-progress: false
 
 jobs:
   deploy:
