@@ -1670,8 +1670,6 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       </Card>
       )}
 
-}
-
       {error && <Card className="theme-border theme-danger-bg p-4 text-sm theme-danger">{error}</Card>}
 
       {slug === "box-spread" && <div id="box-live-opportunities" className="scroll-mt-24"><LiveOpportunityGrid /></div>}
@@ -1702,8 +1700,6 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </div>
         </Card>
       )}
-
-}
 
       {!["scanner", "calendar-spread", "synthetic-arbitrage"].includes(slug) && (
       <Card className="theme-border theme-surface p-4">
