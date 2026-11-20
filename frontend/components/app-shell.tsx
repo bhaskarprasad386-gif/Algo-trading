@@ -11,7 +11,6 @@ const nav = [
   { href: "/", label: "Dashboard", icon: Home },
   { href: "/scanner", label: "Cash Future", icon: Activity },
   { href: "/strategies/calendar-spread", label: "Calendar Scanner", icon: Activity },
-  { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
   { href: "/strategies/iv-skew-flip", label: "IV Skew / IV Flip", icon: Activity },
   { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
   { href: "/strategies/credit-butterfly-condor/weekly", label: "Weekly Credit Butterfly / Condor", icon: Activity },
@@ -27,7 +26,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pageChannel = pathname === "/scanner" ? "cash-future"
     : pathname.startsWith("/strategies/box-spread") ? "box-spread"
     : pathname.startsWith("/strategies/calendar-spread") ? "calendar-spread"
-    : pathname.startsWith("/strategies/synthetic-arbitrage") ? "synthetic-arbitrage"
     : pathname.startsWith("/strategies/iv-skew-flip") ? "iv-skew-flip"
     : pathname.startsWith("/strategies/credit-butterfly-condor/weekly") ? "credit-butterfly-condor-weekly"
     : pathname.startsWith("/strategies/credit-butterfly-condor/monthly") ? "credit-butterfly-condor-monthly"
