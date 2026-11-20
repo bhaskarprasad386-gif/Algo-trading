@@ -1765,6 +1765,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       )}
 
+      {slug !== "box-spread" && (
       <Card className={"theme-border theme-surface p-4 " + (slug === "box-spread" ? "box-history-contrast" : "")}>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 text-lg font-black text-slate-950 sm:text-xl"><Activity className="h-5 w-5 text-slate-800" /> {slug === "box-spread" ? "Recent Box Spread Snapshots (Last 24 Hours)" : "Post-Market " + c.title + " Pair History"}</h2><p className="mt-1 text-xs theme-muted">{slug === "box-spread" ? "Persisted scanner snapshots from the rolling last 24 hours · same source as the historical section, with a shorter time window." : "Real backend history/alert records for today's session. No synthetic rows are created in the UI."}</p></div>
@@ -1826,6 +1827,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <button type="button" disabled={safeHistoryPage >= historyPageCount} onClick={() => setHistoryPage((page) => Math.min(historyPageCount, page + 1))} className="min-h-10 rounded-lg border theme-border px-4 text-xs font-semibold theme-text disabled:opacity-40">Next</button>
         </div>}
       </Card>
+      )}
+
+
 
       {copyStatus && <div role="status" aria-live="polite" className="rounded-xl border theme-border theme-surface p-3 text-sm theme-text">{copyStatus}</div>}
       {copyFallbackText && <div className="space-y-2 rounded-xl border theme-border theme-surface p-3">
