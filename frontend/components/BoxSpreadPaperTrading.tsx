@@ -377,6 +377,7 @@ export default function BoxSpreadPaperTrading() {
       privateResyncPendingRef.current = false;
       privateEventIdsRef.current.clear();
       privateLedgerRequestSequenceRef.current += 1;
+      recoveryRequestSequenceRef.current += 1;
       setBalance(null);
       setExecutionEnabled(false);
       setTrades([]);
@@ -401,6 +402,7 @@ export default function BoxSpreadPaperTrading() {
     privateResyncPendingRef.current = false;
     privateEventIdsRef.current.clear();
     privateLedgerRequestSequenceRef.current += 1;
+    recoveryRequestSequenceRef.current += 1;
     setPrivateSnapshotComplete(false);
     setBalance(null);
     setExecutionEnabled(false);
