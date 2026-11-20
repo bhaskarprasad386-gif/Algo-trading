@@ -7,7 +7,6 @@ import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizont
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
-import { shouldAllowCashFutureScannerManualRestRefresh } from "@/lib/page-push-recovery.mjs";
 
 const markets = ["ALL F&O STOCKS", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Gap", "Gap %", "Future Vol / OI", "Stability", "Status"];
@@ -61,7 +60,6 @@ function ScannerContent() {
   // Prevent delayed REST recovery from overwriting authoritative page pushes.
   const liveRequestSequenceRef = useRef(0);
   const pairLiveRequestSequenceRef = useRef(0);
-  const fallbackGenerationRef = useRef(0);
 
   const load = async () => {
     const requestSequence = ++liveRequestSequenceRef.current;
@@ -132,61 +130,35 @@ function ScannerContent() {
         if (!cancelled) setMarketSession("UNKNOWN");
       }
     };
-    let sessionTimer: number | undefined;
-    const pollMarketSession = async () => {
-      await loadMarketSession();
-      if (!cancelled && pagePushStatus !== "LIVE") {
-        // Schedule only after the previous session probe settles.
-        sessionTimer = window.setTimeout(() => { void pollMarketSession(); }, 15000);
-      }
-    };
-    void pollMarketSession();
-    return () => {
-      cancelled = true;
-      if (sessionTimer !== undefined) window.clearTimeout(sessionTimer);
-    };
+    void loadMarketSession();
+    if (pagePushStatus === "LIVE") return () => { cancelled = true; };
+    const sessionTimer = window.setInterval(loadMarketSession, 15000);
+    return () => { cancelled = true; window.clearInterval(sessionTimer); };
   }, [pagePushStatus]);
 
   useEffect(() => {
     // A LIVE transition invalidates any in-flight REST recovery request.
-    if (!shouldAllowCashFutureScannerManualRestRefresh(pagePushStatus)) {
+    if (pagePushStatus === "LIVE") {
       liveRequestSequenceRef.current += 1;
       pairLiveRequestSequenceRef.current += 1;
     }
-    let cancelled = false;
-    let liveTimer: number | undefined;
-    const pollFallback = async () => {
-      if (cancelled || marketSession !== "OPEN" || pagePushStatus === "LIVE") return;
-      const generation = fallbackGenerationRef.current;
-      const isCurrentFallback = () => !cancelled && marketSession === "OPEN" &&
-        generation === fallbackGenerationRef.current;
-      await load();
-      if (!isCurrentFallback()) return;
-      await loadPairLive();
-      if (isCurrentFallback()) {
-        // Schedule only after both recovery requests settle; a page push
-        // arriving between the requests cancels this fallback cycle.
-        liveTimer = window.setTimeout(() => { void pollFallback(); }, 15000);
-      }
-    };
     if (marketSession === "OPEN") {
-      if (pagePushStatus !== "LIVE") void pollFallback();
+      if (pagePushStatus !== "LIVE") { void load(); void loadPairLive(); }
     } else if (pagePushStatus !== "LIVE") {
       setLoading(false); setRows([]); setPairRows([]); setError(null);
     }
     void loadPairHistory();
-    return () => {
-      cancelled = true;
-      if (liveTimer !== undefined) window.clearTimeout(liveTimer);
-      liveRequestSequenceRef.current += 1;
-      pairLiveRequestSequenceRef.current += 1;
-    };
+    if (pagePushStatus === "LIVE") return;
+    const liveTimer = window.setInterval(() => {
+      if (marketSession !== "OPEN") return;
+      void load(); void loadPairLive();
+    }, 15000);
+    return () => window.clearInterval(liveTimer);
   }, [marketSession, pagePushStatus]);
 
   useEffect(() => {
     if (!pagePushData) return;
     // Any page push supersedes outstanding REST fallback payloads, including REMOVE.
-    fallbackGenerationRef.current += 1;
     liveRequestSequenceRef.current += 1;
     pairLiveRequestSequenceRef.current += 1;
     const event = String(pagePushData.__event ?? "").toUpperCase();
@@ -350,10 +322,7 @@ function ScannerContent() {
 
   const refresh = async () => {
     setRefreshing(true);
-    if (pagePushStatus === "LIVE") {
-      // WebSocket is authoritative for live rows; manual refresh only reloads durable history.
-      await loadPairHistory();
-    } else if (marketSession === "OPEN") {
+    if (marketSession === "OPEN") {
       await Promise.all([load(), loadPairLive(), loadPairHistory()]);
     } else {
       await loadPairHistory();
