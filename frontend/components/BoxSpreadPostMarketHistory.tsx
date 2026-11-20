@@ -166,6 +166,7 @@ export default function BoxSpreadPostMarketHistory() {
   };
   const sortMark = (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
   const requestSequence = useRef(0);
+  const historyAbortController = useRef<AbortController | null>(null);
   const sortingRequestSequence = useRef(0);
   const appendInFlight = useRef(false);
 
@@ -179,6 +180,10 @@ export default function BoxSpreadPostMarketHistory() {
 
   const load = useCallback(async (append = false, pageOffset = 0) => {
     if (append && appendInFlight.current) return;
+    if (!append) {
+      historyAbortController.current?.abort();
+      historyAbortController.current = null;
+    }
     const requestId = ++requestSequence.current;
     if (append) {
       // Pagination and full-history sorting both mutate the same visible row set.
@@ -208,9 +213,11 @@ export default function BoxSpreadPostMarketHistory() {
       });
       if (expiryType !== "ALL") params.set("expiry_type", expiryType);
       if (selectedIndex !== "ALL") params.set("symbol", selectedIndex);
+      const controller = append ? null : new AbortController();
+      if (controller) historyAbortController.current = controller;
       const response = await fetch(base + "/api/v1/scanner/box-spread/snapshots?" + params.toString(), {
         cache: "no-store",
-        signal: AbortSignal.timeout(12000),
+        signal: controller ? AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000),
       });
       if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
       const body = (await response.json()) as SnapshotResponse;
@@ -234,9 +241,18 @@ export default function BoxSpreadPostMarketHistory() {
         setLoading(false);
         setLoadingMore(false);
         appendInFlight.current = false;
+        historyAbortController.current = null;
       }
     }
   }, [days, expiryType, selectedIndex]);
+
+  useEffect(() => () => {
+    requestSequence.current += 1;
+    sortingRequestSequence.current += 1;
+    historyAbortController.current?.abort();
+    historyAbortController.current = null;
+    appendInFlight.current = false;
+  }, []);
 
   useEffect(() => {
     sortingRequestSequence.current += 1;
@@ -255,11 +271,13 @@ export default function BoxSpreadPostMarketHistory() {
 
   useEffect(() => {
     if (pagePushData?.history_revision == null) return;
-    // Cancel a long all-history sort so an older completed page set cannot
-    // overwrite the refreshed slice following the durable-save notification.
-    sortingRequestSequence.current += 1;
-    setSortingAll(false);
-    void load(false);
+    // Debounce repeated saves to avoid redundant history API calls.
+    const timer = setTimeout(() => {
+      sortingRequestSequence.current += 1;
+      setSortingAll(false);
+      void load(false);
+    }, 350);
+    return () => clearTimeout(timer);
   }, [pagePushData?.history_revision, load]);
 
   const refresh = () => {
