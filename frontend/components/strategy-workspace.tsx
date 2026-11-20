@@ -1607,8 +1607,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <select value={control} onChange={(e) => void changeControl(e.target.value)} className="min-h-9 w-full rounded-lg border theme-border theme-surface px-3 text-xs theme-text">
             {c.controls.map((x) => <option key={x} value={x}>{slug === "synthetic-arbitrage" && x === "TOP15" ? "NIFTY TOP 15 LIQUID STOCKS (15)" : x}</option>)}
           </select>
-          <button type="button" onClick={refresh} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border theme-border theme-surface px-3 text-xs font-semibold theme-text hover:theme-border">
-            <RefreshCw className={"h-4 w-4 " + (refreshing ? "animate-spin" : "")} /> Refresh
+          <button type="button" onClick={refresh} disabled={refreshing} aria-busy={refreshing} aria-label={refreshing ? "Refreshing Box Spread data" : "Refresh Box Spread data"} title={refreshing ? "Refreshing live scanner, history and pairs" : "Refresh live scanner, history and pairs"} className={"inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border theme-border theme-surface px-3 text-xs font-semibold theme-text hover:theme-border disabled:cursor-wait disabled:opacity-70 " + (slug === "box-spread" ? "box-spread-refresh-btn" : "")}>
+            <RefreshCw className={"h-4 w-4 " + (refreshing ? "animate-spin" : "")} /> {refreshing ? "Refreshing…" : "Refresh"}
           </button>
         </div>
         {slug === "synthetic-arbitrage" && (
