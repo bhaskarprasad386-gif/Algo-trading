@@ -7,6 +7,7 @@ import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizont
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
+import { shouldAllowCashFutureScannerManualRestRefresh } from "@/lib/page-push-recovery.mjs";
 
 const markets = ["ALL F&O STOCKS", "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const columns = ["Symbol", "Expiry", "Cash Bid/Ask", "Future Bid/Ask", "Gap", "Gap %", "Future Vol / OI", "Stability", "Status"];
@@ -148,7 +149,7 @@ function ScannerContent() {
 
   useEffect(() => {
     // A LIVE transition invalidates any in-flight REST recovery request.
-    if (pagePushStatus === "LIVE") {
+    if (!shouldAllowCashFutureScannerManualRestRefresh(pagePushStatus)) {
       liveRequestSequenceRef.current += 1;
       pairLiveRequestSequenceRef.current += 1;
     }
@@ -349,7 +350,10 @@ function ScannerContent() {
 
   const refresh = async () => {
     setRefreshing(true);
-    if (marketSession === "OPEN") {
+    if (pagePushStatus === "LIVE") {
+      // WebSocket is authoritative for live rows; manual refresh only reloads durable history.
+      await loadPairHistory();
+    } else if (marketSession === "OPEN") {
       await Promise.all([load(), loadPairLive(), loadPairHistory()]);
     } else {
       await loadPairHistory();
