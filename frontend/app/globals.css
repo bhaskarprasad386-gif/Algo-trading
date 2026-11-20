@@ -906,3 +906,25 @@ html[data-theme="white"] .box-spread-page .box-live-opportunities article [class
     letter-spacing: .025em;
   }
 }
+
+
+/* Box Spread scanner keyboard focus: visible, scoped, and contrast-safe */
+.box-spread-page :is(button,a,[role="button"],input,select,textarea):focus-visible {
+  outline: 2px solid var(--box-spread-accent, #0891b2) !important;
+  outline-offset: 3px !important;
+  border-radius: 8px;
+}
+.box-spread-page .box-live-opportunities article :is(button,a,[role="button"]):focus-visible {
+  outline-offset: 2px !important;
+}
+@media (max-width: 640px) {
+  .box-spread-page .box-live-opportunities article :is(button,a,[role="button"]) {
+    touch-action: manipulation;
+  }
+  .box-spread-page .box-live-opportunities article :is(button,a,[role="button"]):focus-visible {
+    outline-offset: 2px !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .box-spread-page :is(button,a,[role="button"]):focus-visible { transition: none !important; }
+}
