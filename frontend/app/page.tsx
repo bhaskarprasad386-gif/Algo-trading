@@ -123,7 +123,8 @@ export default function HomePage() {
         if (socket !== currentSocket || cancelled) return;
         if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
         connectionTimer = undefined;
-        retryMs = 1000;
+        // Do not reset reconnect backoff until a valid dashboard snapshot
+        // arrives; transport open alone is not proof of synchronization.
         // Start a new timestamp ordering epoch for this socket. A backend clock
         // correction/restart must not leave reconnects rejecting every snapshot.
         lastDashboardServerSnapshotTimeRef.current = null;
@@ -148,6 +149,7 @@ export default function HomePage() {
           if (!Number.isFinite(serverSnapshotTime) || serverSnapshotTime > Date.now() + 5_000 ||
               (lastDashboardServerSnapshotTimeRef.current != null && serverSnapshotTime < lastDashboardServerSnapshotTimeRef.current)) return;
           lastDashboardServerSnapshotTimeRef.current = serverSnapshotTime;
+          retryMs = 1000;
           lastSnapshotAt = Date.now();
           setLastDashboardMessageAt(lastSnapshotAt);
           const observedAt = message?.scanner?.health?.last_observation_at;
