@@ -579,12 +579,16 @@ html[data-theme="white"] .box-spread-page .theme-accent {color:#087ca5!important
 
 /* Opportunity cards: improve live-terminal hierarchy without changing data or thresholds. */
 .box-spread-page .box-live-opportunities article { border-color:color-mix(in srgb,var(--box-line) 75%,transparent); transition:border-color .18s ease,box-shadow .18s ease,opacity .18s ease; }
-.box-spread-page .box-live-opportunities article:has(span.bg-emerald-400\\/10) { border-color:rgba(32,201,151,.24); }
 .box-spread-page .box-live-opportunities article:hover { box-shadow:0 8px 26px rgba(0,0,0,.12); }
 .box-spread-page .box-live-opportunities article > div:first-child { background:linear-gradient(90deg,rgba(34,211,238,.035),transparent 70%); }
-.box-spread-page .box-live-opportunities article span.bg-emerald-400\\/10 { box-shadow:inset 0 0 0 1px rgba(32,201,151,.09); }
-.box-spread-page .box-live-opportunities article span.bg-amber-400\\/10 { box-shadow:inset 0 0 0 1px rgba(245,185,66,.08); }
 .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 { border-radius:10px; }
 .box-spread-page .box-live-opportunities [role="group"] button[aria-pressed="true"] { box-shadow:inset 0 0 0 1px currentColor; }
-.box-spread-page .box-live-opportunities article:has(span.bg-emerald-400\\/10) { box-shadow:0 0 0 1px rgba(32,201,151,.04); }
 @media(prefers-reduced-motion:reduce) { .box-spread-page .box-live-opportunities article { transition:none; } }
+
+/* Spot cards: compact price-first layout and status-based accent borders. */
+.box-spread-page #box-overview [aria-label="Box Spread live index prices"] { border-color:rgba(56,189,248,.18); }
+.box-spread-page #box-overview .grid > div { transition:border-color .16s ease,background .16s ease,transform .16s ease; }
+.box-spread-page #box-overview .grid > div:has(.theme-success) { border-color:rgba(32,201,151,.32); background:linear-gradient(160deg,rgba(32,201,151,.055),transparent 60%); }
+.box-spread-page #box-overview .grid > div:has(.theme-warning) { border-color:rgba(245,185,66,.24); }
+.box-spread-page #box-overview .grid > div:has(.theme-muted) { border-color:var(--box-line); }
+.box-spread-page #box-overview .grid > div:hover { transform:translateY(-1px); }
