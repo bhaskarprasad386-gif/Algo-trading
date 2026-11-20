@@ -1410,7 +1410,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }) : visibleHistoryRows;
 
   return (
-    <div className={slug === "box-spread" ? "space-y-5 theme-text" : "min-h-screen space-y-5 theme-bg p-4 theme-text"}>
+    <div className={slug === "box-spread" ? "box-spread-page space-y-5 theme-text" : "min-h-screen space-y-5 theme-bg p-4 theme-text"}>
       <div className="flex items-center justify-between gap-3">
         {slug === "box-spread" ? (
           <span className="text-lg font-black uppercase tracking-wide text-slate-950 sm:text-xl">Box Spread · Live Market Monitor</span>
