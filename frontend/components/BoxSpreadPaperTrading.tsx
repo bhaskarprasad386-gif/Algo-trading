@@ -428,13 +428,14 @@ export default function BoxSpreadPaperTrading() {
         // bounded too, not just an established socket that stops sending.
         lastServerFrameAt = Date.now();
         socket.onopen = () => {
-          if (stopped) { socket?.close(); return; }
+          if (stopped || privateWsRef.current !== socket) { socket?.close(); return; }
           lastServerFrameAt = Date.now();
           retryDelay = 1000;
           socket?.send(JSON.stringify({ ticket: ticketBody.ticket, account_key: account }));
         };
         socket.onmessage = event => {
-          if (stopped) return;
+          // Ignore any late delivery from a retired account/channel transport.
+          if (stopped || privateWsRef.current !== socket) return;
           lastServerFrameAt = Date.now();
           let frame: any;
           try { frame = JSON.parse(String(event.data)); } catch { return; }
@@ -491,7 +492,7 @@ export default function BoxSpreadPaperTrading() {
             socket?.close();
           }
         }, 10000);
-        socket.onerror = () => { if (!stopped) socket?.close(); };
+        socket.onerror = () => { if (!stopped && privateWsRef.current === socket) socket.close(); };
         socket.onclose = () => {
           if (stopped) return;
           privateResyncPendingRef.current = false;
