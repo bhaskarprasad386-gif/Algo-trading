@@ -123,9 +123,21 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
     }
     const next = pageData.payload;
     if (next && typeof next === "object") {
-      setPayload(next as Payload);
-      setLoading(false);
-      setError("");
+      const candidate = next as Partial<Payload>;
+      // PagePush data is external JSON: do not render a malformed partial
+      // snapshot through required shared_snapshot/result fields.
+      if (
+        typeof candidate.runtime_state === "string" &&
+        candidate.shared_snapshot && typeof candidate.shared_snapshot === "object" &&
+        Array.isArray(candidate.results) && Array.isArray(candidate.live_coverage) &&
+        candidate.rejected_counts && typeof candidate.rejected_counts === "object"
+      ) {
+        setPayload(candidate as Payload);
+        setLoading(false);
+        setError("");
+      } else {
+        setError("Received an incomplete shared market snapshot; retaining the last valid data.");
+      }
     }
     if (lastMessageAt !== null) {
       setLastUpdated(new Date(lastMessageAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }));
