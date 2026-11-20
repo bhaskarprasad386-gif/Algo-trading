@@ -55,6 +55,6 @@ test("shared pair monitor and alert/diagnostic sections are excluded only on req
   // These components remain shared for other workspaces (e.g. IV Skew/Flip).
   assert.equal(workspace.includes("Strategy Alerts"), true);
   assert.equal(workspace.includes("Scanner Safety Boundary"), true);
-  assert.equal(workspace.includes("Exchange Coverage Diagnostics"), true);
-  assert.equal(workspace.includes("Session Diagnostics"), true);
+  assert.equal(workspace.includes("Exchange Coverage Diagnostics"), false);
+  assert.equal(workspace.includes("Session Diagnostics"), false);
 });
