@@ -130,10 +130,19 @@ function ScannerContent() {
         if (!cancelled) setMarketSession("UNKNOWN");
       }
     };
-    void loadMarketSession();
-    if (pagePushStatus === "LIVE") return () => { cancelled = true; };
-    const sessionTimer = window.setInterval(loadMarketSession, 15000);
-    return () => { cancelled = true; window.clearInterval(sessionTimer); };
+    let sessionTimer: number | undefined;
+    const pollMarketSession = async () => {
+      await loadMarketSession();
+      if (!cancelled && pagePushStatus !== "LIVE") {
+        // Schedule only after the previous session probe settles.
+        sessionTimer = window.setTimeout(() => { void pollMarketSession(); }, 15000);
+      }
+    };
+    void pollMarketSession();
+    return () => {
+      cancelled = true;
+      if (sessionTimer !== undefined) window.clearTimeout(sessionTimer);
+    };
   }, [pagePushStatus]);
 
   useEffect(() => {
