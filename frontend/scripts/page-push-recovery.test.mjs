@@ -7,6 +7,10 @@ test("REST recovery response applies only while its request remains current", ()
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:7,latestSequence:8,responseValid:true}),false);
   assert.equal(isCurrentRecoveryResponse({active:false,requestSequence:8,latestSequence:8,responseValid:true}),false);
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:8,latestSequence:8,responseValid:false}),false);
+  assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:-1,latestSequence:-1,responseValid:true}),false);
+  assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:8,latestSequence:-1,responseValid:true}),false);
+  assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:8,latestSequence:8.5,responseValid:true}),false);
+  assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:Number.MAX_SAFE_INTEGER + 1,latestSequence:Number.MAX_SAFE_INTEGER + 1,responseValid:true}),false);
 });
 
 test("alert merge replaces duplicate IDs, sorts and bounds rows", () => {
