@@ -158,7 +158,7 @@ function ScannerContent() {
       if (cancelled || marketSession !== "OPEN" || pagePushStatus === "LIVE") return;
       const generation = fallbackGenerationRef.current;
       const isCurrentFallback = () => !cancelled && marketSession === "OPEN" &&
-        pagePushStatus !== "LIVE" && generation === fallbackGenerationRef.current;
+        generation === fallbackGenerationRef.current;
       await load();
       if (!isCurrentFallback()) return;
       await loadPairLive();
