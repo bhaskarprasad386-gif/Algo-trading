@@ -946,3 +946,31 @@ def test_runner_shared_market_snapshot_reuses_scanner_and_depth_without_new_feed
     assert snapshot["depth"]["enabled"] is True
     assert snapshot["depth"]["running"] is True
     assert snapshot["depth"]["records"][0]["option_type"] == "CE"
+
+
+def test_spot_page_callback_is_blocked_after_publisher_ownership_transfers():
+    from app.market_data.box_spread_publication_gate import BoxSpreadPublicationGate
+    from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget
+
+    gate = BoxSpreadPublicationGate()
+    calls = []
+    old_runner = LiveBoxSpreadRunner(
+        object(), [BoxSpreadLiveTarget("NIFTY", "INDEX")],
+        allowed_stock_symbols=set(), on_spot_price=lambda *args: calls.append(("old", args)),
+        publish_enabled=True, publication_gate=gate,
+    )
+    new_runner = LiveBoxSpreadRunner(
+        object(), [BoxSpreadLiveTarget("SENSEX", "INDEX")],
+        allowed_stock_symbols=set(), on_spot_price=lambda *args: calls.append(("new", args)),
+        publish_enabled=False, publication_gate=gate,
+    )
+
+    # Simulate the supervisor's atomic publisher transfer while the retired
+    # runner still has a feed callback queued for execution.
+    gate.activate(new_runner._publisher_owner)
+    old_runner._publish_spot_price("NIFTY", 25000, 1)
+    new_runner.activate_publishing()
+    new_runner._publish_spot_price("SENSEX", 80000, 2)
+
+
+    assert calls == [("new", ("SENSEX", 80000, 2))]
