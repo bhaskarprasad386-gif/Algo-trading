@@ -49,7 +49,9 @@ test("Synthetic page no longer mounts trace panels but keeps scanner workspace",
 test("shared pair monitor and alert/diagnostic sections are excluded only on requested scanner pages", async () => {
   const workspace = await read("components/strategy-workspace.tsx");
   assert.equal(workspace.includes('!["scanner", "calendar-spread", "synthetic-arbitrage"].includes(slug)'), true);
-  assert.equal(workspace.includes('!["box-spread", "scanner", "calendar-spread", "synthetic-arbitrage"].includes(slug)'), true);
+  assert.equal(workspace.includes('slug !== "box-spread" && ('), true);
+  assert.equal(workspace.includes('!["scanner", "calendar-spread", "synthetic-arbitrage"].includes(slug)'), true);
+  assert.equal(workspace.includes('!["calendar-spread", "synthetic-arbitrage"].includes(slug)'), true);
   // These components remain shared for other workspaces (e.g. IV Skew/Flip).
   assert.equal(workspace.includes("Strategy Alerts"), true);
   assert.equal(workspace.includes("Scanner Safety Boundary"), true);

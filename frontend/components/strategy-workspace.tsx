@@ -1819,61 +1819,12 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <button type="button" onClick={() => { setCopyFallbackText(""); setCopyStatus(""); }} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Close</button>
       </div>}
 
-      {!["box-spread", "scanner", "calendar-spread", "synthetic-arbitrage"].includes(slug) && (
+      {slug !== "box-spread" && (
       <div className="grid gap-4 xl:grid-cols-3">
-        <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><Bell className="h-4 w-4 theme-accent" /> Strategy Alerts</div><p className="mt-2 text-xs leading-5 theme-muted">Scanner-wide alerts remain separate from live opportunity rendering.</p><Link href="/custom-alert" className="mt-3 inline-flex text-xs font-semibold theme-accent">Open alerts →</Link></Card>
-        <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner Safety Boundary</div><p className="mt-2 text-xs leading-5 theme-muted">This workspace reads live scanner output only. Broker orders remain OFF and no paper execution logic is changed.</p></Card>
-        {slug === "calendar-spread" && <Card className="theme-border theme-surface p-4">
-          <div className="text-sm font-semibold theme-text">Exchange Coverage Diagnostics</div>
-          <p className="mt-2 text-xs leading-5 theme-muted">This is the runner's actual contract/session/tick report. A closed exchange can have subscribed contracts but no valid live ticks; no historical quote is relabelled as live.</p>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {[
-              ["NFO contracts", (calendarRuntime?.contracts_by_exchange as Record<string, unknown> | undefined)?.NFO],
-              ["BFO contracts", (calendarRuntime?.contracts_by_exchange as Record<string, unknown> | undefined)?.BFO],
-              ["MCX contracts", (calendarRuntime?.contracts_by_exchange as Record<string, unknown> | undefined)?.MCX],
-              ["Stock futures", (calendarRuntime?.contracts_by_family as Record<string, unknown> | undefined)?.STOCK_FUTURE],
-              ["Index futures", (calendarRuntime?.contracts_by_family as Record<string, unknown> | undefined)?.INDEX_FUTURE],
-              ["Commodity futures", (calendarRuntime?.contracts_by_family as Record<string, unknown> | undefined)?.COMMODITY_FUTURE],
-            ].map(([label, value]) => <div key={String(label)} className="rounded-lg border theme-border theme-surface-2 p-3"><p className="text-xs theme-muted">{String(label)}</p><p className="mt-1 text-base font-semibold theme-text">{value == null ? "—" : String(value)}</p></div>)}
-          </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            {(["NFO", "BFO", "MCX"] as const).map((exchange) => {
-              const sessions = (calendarRuntime?.session_by_exchange ?? {}) as Record<string, { open?: boolean }>;
-              const received = (calendarRuntime?.diagnostics as Record<string, unknown> | undefined)?.records_received_by_exchange as Record<string, unknown> | undefined;
-              const emitted = (calendarRuntime?.diagnostics as Record<string, unknown> | undefined)?.records_emitted_by_exchange as Record<string, unknown> | undefined;
-              const sourceDropped = (calendarRuntime?.diagnostics as Record<string, unknown> | undefined)?.source_timestamp_dropped_by_exchange as Record<string, unknown> | undefined;
-              const sessionDropped = (calendarRuntime?.diagnostics as Record<string, unknown> | undefined)?.out_of_session_dropped_by_exchange as Record<string, unknown> | undefined;
-              const isOpen = sessions[exchange]?.open;
-              return <div key={exchange} className="rounded-lg border theme-border p-3"><div className="flex items-center justify-between gap-2"><span className="text-sm font-semibold theme-text">{exchange}</span><span className={"text-xs font-semibold " + (isOpen === true ? "theme-success" : isOpen === false ? "theme-warning" : "theme-muted")}>{isOpen === true ? "SESSION OPEN" : isOpen === false ? "SESSION CLOSED" : "SESSION UNKNOWN"}</span></div><p className="mt-2 text-xs theme-muted">Ticks received: {String(received?.[exchange] ?? 0)} · emitted: {String(emitted?.[exchange] ?? 0)}</p><p className="mt-1 text-xs theme-muted">Missing source time: {String(sourceDropped?.[exchange] ?? 0)} · out-of-session: {String(sessionDropped?.[exchange] ?? 0)}</p></div>;
-            })}
-          </div>
-          {calendarRuntime && <div className="mt-3 rounded-lg border theme-border p-3">
-            <p className="text-sm font-semibold theme-text">Why opportunities may be missing</p>
-            <p className="mt-1 text-xs theme-muted">Live scanner rejection counters from the backend; these are diagnostics, not generated opportunities.</p>
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {[
-                ["Waiting for far expiry", "waiting_for_second_expiry"],
-                ["Invalid quotes", "invalid_quote"],
-                ["Stale ticks", "stale_tick"],
-                ["Stale pairs", "stale_pair"],
-                ["Timestamp mismatch", "timestamp_mismatch"],
-                ["Insufficient depth", "insufficient_depth"],
-                ["No positive edge", "no_positive_edge"],
-                ["Lot-size mismatch", "lot_size_mismatch"],
-                ["Qualified signals", "qualified"],
-              ].map(([label, key]) => {
-                const diag = (calendarRuntime?.scanner_diagnostics ?? {}) as Record<string, unknown>;
-                return <div key={key} className="rounded-lg border theme-border theme-surface-2 p-2">
-                  <p className="text-xs theme-muted">{label}</p>
-                  <p className="mt-1 text-sm font-semibold theme-text">{diag[key] == null ? "—" : String(diag[key])}</p>
-                </div>;
-              })}
-            </div>
-            {calendarRuntime?.scanner_diagnostics == null && <p className="mt-2 text-xs theme-muted">Scanner rejection counters are not available in this backend response yet.</p>}
-          </div>}
-          {!calendarRuntime && <p className="mt-3 rounded-lg border theme-border p-3 text-xs theme-muted">Calendar runner diagnostics are not available yet. Check backend deployment and runner health.</p>}
-        </Card>}
-        <Card className="theme-border theme-surface p-4"><div className="text-sm font-semibold theme-text">Session Diagnostics</div><p className="mt-2 text-xs leading-5 theme-muted">MCX can remain live after NSE closes. Calendar/commodity output therefore follows the common feed and actual exchange session rather than the NSE-only status.</p></Card>
+        {!["calendar-spread", "synthetic-arbitrage"].includes(slug) && (<Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><Bell className="h-4 w-4 theme-accent" /> Strategy Alerts</div><p className="mt-2 text-xs leading-5 theme-muted">Scanner-wide alerts remain separate from live opportunity rendering.</p><Link href="/custom-alert" className="mt-3 inline-flex text-xs font-semibold theme-accent">Open alerts →</Link></Card>)}
+        {!["scanner", "calendar-spread", "synthetic-arbitrage"].includes(slug) && (<Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner Safety Boundary</div><p className="mt-2 text-xs leading-5 theme-muted">This workspace reads live scanner output only. Broker orders remain OFF and no paper execution logic is changed.</p></Card>)}
+
+
       </div>
       )}
     </div>
