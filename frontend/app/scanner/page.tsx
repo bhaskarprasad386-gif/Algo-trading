@@ -142,13 +142,14 @@ function ScannerContent() {
       liveRequestSequenceRef.current += 1;
       pairLiveRequestSequenceRef.current += 1;
     }
+    let cancelled = false;
     let liveTimer: number | undefined;
     const pollFallback = async () => {
-      if (pagePushStatus === "LIVE" || marketSession !== "OPEN") return;
+      if (cancelled || pagePushStatus === "LIVE" || marketSession !== "OPEN") return;
       await load();
-      if (pagePushStatus === "LIVE" || marketSession !== "OPEN") return;
+      if (cancelled || pagePushStatus === "LIVE" || marketSession !== "OPEN") return;
       await loadPairLive();
-      if (pagePushStatus !== "LIVE" && marketSession === "OPEN") {
+      if (!cancelled && pagePushStatus !== "LIVE" && marketSession === "OPEN") {
         // Schedule only after both recovery requests settle; no overlapping
         // scanner or pair REST fallbacks when the backend is slow.
         liveTimer = window.setTimeout(() => { void pollFallback(); }, 15000);
@@ -161,6 +162,7 @@ function ScannerContent() {
     }
     void loadPairHistory();
     return () => {
+      cancelled = true;
       if (liveTimer !== undefined) window.clearTimeout(liveTimer);
       liveRequestSequenceRef.current += 1;
       pairLiveRequestSequenceRef.current += 1;
