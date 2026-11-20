@@ -57,10 +57,17 @@ function quoteTime(value: unknown) {
     hour12: false, timeZone: "Asia/Kolkata",
   }) + " IST";
 }
+const numberFormatters = new Map<number, Intl.NumberFormat>();
 function fmt(value: unknown, digits = 2) {
   if (value === null || value === undefined || value === "") return "—";
   const number = Number(value);
-  return Number.isFinite(number) ? number.toLocaleString("en-IN", { maximumFractionDigits: digits }) : "—";
+  if (!Number.isFinite(number)) return "—";
+  let formatter = numberFormatters.get(digits);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat("en-IN", { maximumFractionDigits: digits });
+    numberFormatters.set(digits, formatter);
+  }
+  return formatter.format(number);
 }
 function quote(row: Opportunity, priceField: string, quantityField: string) {
   return { price: n(row, priceField), qty: n(row, quantityField) };
