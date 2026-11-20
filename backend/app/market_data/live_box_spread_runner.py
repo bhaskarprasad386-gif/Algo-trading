@@ -141,7 +141,13 @@ class LiveBoxSpreadRunner:
         if not self._publish_enabled or not callable(callback):
             return
         try:
-            callback(symbol, price, timestamp_ns)
+            # Serialize spot-page publishing with the shared runner ownership gate.
+            # A late callback from the retired session must not publish after
+            # staged handoff transfers ownership to the replacement runner.
+            self.publication_gate.publish(
+                self._publisher_owner,
+                lambda: callback(symbol, price, timestamp_ns),
+            )
         except Exception:
             app_logger.exception("Box Spread spot page publisher failed")
 

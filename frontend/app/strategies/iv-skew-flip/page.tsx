@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
-import { isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts } from "@/lib/page-push-recovery.mjs";
+import { isCurrentRecoveryResponse, isCurrentPagePushRequest, mergeUniqueAlerts, freshEarlyEntryAlerts } from "@/lib/page-push-recovery.mjs";
 
 type Row = Record<string, unknown>;
 type EarlyAlert = { id: number; observed_at_ns_text?: string; strategy: string; expiry: string; strike: number; direction: string; option_type: string; state: string; observed_at_ns: number; spot: number; premium?: number | null; iv_change_points?: number | null; volume_ratio?: number | null; reason?: string; delivery_status?: string; metadata?: Row };
@@ -413,6 +413,11 @@ export default function IVSkewFlipPage() {
   const [alertFetchError,setAlertFetchError]=useState("");
   const seenAlertIds=useRef<Set<number>>(new Set());
   const alertFetchSequenceRef=useRef(0);
+  const basketFetchSequenceRef=useRef(0);
+  const durableHistoryFetchSequenceRef=useRef(0);
+  const chartHistoryFetchSequenceRef=useRef(0);
+  const brokerSnapshotSequenceRef=useRef(0);
+  useEffect(()=>()=>{brokerSnapshotSequenceRef.current+=1;},[]);
   const selectedNifty="NIFTY_WEEKLY" as const;
   const [busy,setBusy]=useState(false);
   const [snapshotBusy,setSnapshotBusy]=useState(false);
@@ -452,66 +457,75 @@ export default function IVSkewFlipPage() {
         if(alertAudioEnabled&&fresh.length)playEarlyAlertTone();
       }catch(e){if(active&&requestSequence===alertFetchSequenceRef.current)setAlertFetchError(e instanceof Error?e.message:"Alert history unavailable");}
     };
-    if(pagePushStatus!=="LIVE")void poll();
-    // The live alert stream is pushed with IV runtime snapshots. Keep REST as
-    // a slow recovery path only while the page WebSocket is unavailable.
-    if(pagePushStatus==="LIVE")return()=>{active=false;};
-    const timer=window.setInterval(()=>{if(active)void poll();},15000);
-    return()=>{active=false;window.clearInterval(timer);};
+    // Perform one initial REST read in either state, but only one: the
+    // recovery loop below owns the first poll when PagePush is unavailable.
+    if(pagePushStatus==="LIVE"){void poll();return()=>{active=false;};}
+    let timer:number|undefined;
+    const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},15000);};
+    void refresh();
+    return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
   },[base,alertAudioEnabled,pagePushStatus]);
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
+      const requestSequence=++basketFetchSequenceRef.current;
       try{
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/baskets`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&response.ok)setBasketRegistry(body as BasketRegistry);
+        if(isCurrentPagePushRequest({active,requestSequence,latestSequence:basketFetchSequenceRef.current})&&response.ok)setBasketRegistry(body as BasketRegistry);
       }catch{/* keep last known basket registry state */}
     };
-    void poll();
-    // Initial durable registry fetch is retained. REST polling is recovery-only
-    // while the page channel is not synchronized; avoid duplicate refresh traffic.
-    if(pagePushStatus==="LIVE")return()=>{active=false;};
-    const timer=window.setInterval(()=>{if(active)void poll();},10000);
-    return()=>{active=false;window.clearInterval(timer);};
+    // Load the durable registry once when synchronized; otherwise the recovery
+    // loop owns the initial request and subsequent serialized refreshes.
+    if(pagePushStatus==="LIVE"){void poll();return()=>{active=false;};}
+    let timer:number|undefined;
+    const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},10000);};
+    void refresh();
+    return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
   },[base,pagePushStatus]);
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
+      const requestSequence=++durableHistoryFetchSequenceRef.current;
       try{
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY${requestedExpiry?`&expiry=${encodeURIComponent(requestedExpiry)}`:""}`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
+        if(isCurrentPagePushRequest({active,requestSequence,latestSequence:durableHistoryFetchSequenceRef.current})&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
       }catch{/* keep the last successful durable history response */}
     };
-    void poll();
-    // Durable history loads once per expiry selection. REST polling is recovery-only
-    // when the page WebSocket is unavailable.
-    if(pagePushStatus==="LIVE")return()=>{active=false;};
-    const timer=window.setInterval(()=>{if(active)void poll();},10000);
-    return()=>{active=false;window.clearInterval(timer);};
+    // Load durable history once when synchronized; otherwise the recovery loop
+    // owns the initial request and subsequent serialized refreshes.
+    if(pagePushStatus==="LIVE"){void poll();return()=>{active=false;};}
+    let timer:number|undefined;
+    const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},10000);};
+    void refresh();
+    return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
   },[base,requestedExpiry,pagePushStatus]);
   const activeWeeklyExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
+      const requestSequence=++chartHistoryFetchSequenceRef.current;
       try{
         const expiry=activeWeeklyExpiry;
         const query=expiry?`&expiry=${encodeURIComponent(expiry)}`:"";
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/timeseries?underlying=NIFTY&window_seconds=1800&limit=20000${query}`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&response.ok&&body.status==="ok")setChartHistory(body as Row);
+        if(isCurrentPagePushRequest({active,requestSequence,latestSequence:chartHistoryFetchSequenceRef.current})&&response.ok&&body.status==="ok")setChartHistory(body as Row);
       }catch{/* keep last successful chart window */}
     };
-    void poll();
-    // Initial/history load is REST; while the page socket is LIVE, sampler
-    // observations are appended from pushed runtime snapshots instead.
-    if(pagePushStatus==="LIVE")return()=>{active=false;};
-    const timer=window.setInterval(()=>{if(active)void poll();},15000);
-    return()=>{active=false;window.clearInterval(timer);};
+    // Load chart history once when synchronized; otherwise the recovery loop
+    // owns the initial request and subsequent serialized refreshes.
+    if(pagePushStatus==="LIVE"){void poll();return()=>{active=false;};}
+    let timer:number|undefined;
+    const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},15000);};
+    void refresh();
+    return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
   },[base,activeWeeklyExpiry,pagePushStatus]);
   const loadMoreAlerts=async()=>{
     if(loadingMoreAlerts||!hasMoreAlerts||!alertCursor)return;
+    // A later PagePush or recovery poll supersedes this pagination response.
+    const requestSequence=++alertFetchSequenceRef.current;
     const query=new URLSearchParams({
       limit:"30",
       before_observed_at_ns:alertCursor.before_observed_at_ns,
@@ -521,6 +535,7 @@ export default function IVSkewFlipPage() {
     try{
       const response=await fetch(`${base}/api/latest-alert?${query.toString()}`,{cache:"no-store"});
       const body=await response.json();
+      if(requestSequence!==alertFetchSequenceRef.current)return;
       if(!response.ok)throw new Error(apiError(body,"Could not load older alert history"));
       const rows=Array.isArray(body.alerts)?body.alerts as EarlyAlert[]:[];
       loadedOlderAlerts.current=true;
@@ -536,14 +551,17 @@ export default function IVSkewFlipPage() {
       }:null);
       setAlertFetchError("");
     }catch(e){
-      setAlertFetchError(e instanceof Error?e.message:"Could not load older alert history");
+      if(requestSequence===alertFetchSequenceRef.current)setAlertFetchError(e instanceof Error?e.message:"Could not load older alert history");
     }finally{
       setLoadingMoreAlerts(false);
     }
   };
+  const statusFetchSequenceRef=useRef(0);
   const refresh=useCallback(async()=>{
+    const requestSequence=++statusFetchSequenceRef.current;
     const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/status`,{cache:"no-store"});
     const body=await response.json();
+    if(requestSequence!==statusFetchSequenceRef.current)return;
     if(!response.ok) throw new Error(apiError(body,`Status HTTP ${response.status}`));
     setRuntime(body.runtime??null);
     setSelectedEnabled(body.saved_enabled===true);
@@ -552,6 +570,12 @@ export default function IVSkewFlipPage() {
   },[base]);
   useEffect(()=>{
     if(!pagePushData)return;
+    // Any authoritative PagePush invalidates a status REST read that started
+    // before this event, even when it only updates runner config fields.
+    statusFetchSequenceRef.current+=1;
+    basketFetchSequenceRef.current+=1;
+    durableHistoryFetchSequenceRef.current+=1;
+    chartHistoryFetchSequenceRef.current+=1;
     if(String(pagePushData.__event??"").toUpperCase()==="REMOVE"){
       const removedKeys=Array.isArray(pagePushData.remove_keys)
         ? pagePushData.remove_keys.filter((key):key is string=>typeof key==="string")
@@ -563,6 +587,9 @@ export default function IVSkewFlipPage() {
         setRuntime(null);
         setChartHistory(null);
         setEarlyAlertLive(null);
+        // REMOVE is terminal for this frame. Never re-apply a runtime
+        // included in the same malformed mixed REMOVE message.
+        return;
       }
     }
     if(pagePushData.runtime&&typeof pagePushData.runtime==="object"){
@@ -641,18 +668,21 @@ export default function IVSkewFlipPage() {
     finally{setBusy(false);}
   }
   async function fetchBrokerSnapshot(){
+    const requestSequence=++brokerSnapshotSequenceRef.current;
     setSnapshotBusy(true);setSnapshotNotice("");setError("");
     try{
       const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/snapshot`,{method:"POST",cache:"no-store"});
       const body=await response.json();
+      if(requestSequence!==brokerSnapshotSequenceRef.current)return;
       if(!response.ok)throw new Error(apiError(body,"Angel One broker snapshot failed"));
       setSnapshotNotice(`Angel One saved ${fmt(body.saved_contracts,0)}/${fmt(body.expected_contracts,0)} contracts • IV received ${fmt(body.iv_received_contracts,0)} • ${String(body.expiry??"")}`);
       const expiry=String(body.expiry??requestedExpiry);
+      const historySequence=++durableHistoryFetchSequenceRef.current;
       const history=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY${expiry?`&expiry=${encodeURIComponent(expiry)}`:""}`,{cache:"no-store"});
       const saved=await history.json();
-      if(history.ok&&saved.status==="ok")setDurableHistory(saved as Row);
-    }catch(e){setError(e instanceof Error?e.message:"Angel One broker snapshot failed");}
-    finally{setSnapshotBusy(false);}
+      if(requestSequence===brokerSnapshotSequenceRef.current&&historySequence===durableHistoryFetchSequenceRef.current&&history.ok&&saved.status==="ok")setDurableHistory(saved as Row);
+    }catch(e){if(requestSequence===brokerSnapshotSequenceRef.current)setError(e instanceof Error?e.message:"Angel One broker snapshot failed");}
+    finally{if(requestSequence===brokerSnapshotSequenceRef.current)setSnapshotBusy(false);}
   }
   const chains=runtime?.option_chains??{};
   const liveNifty=chains[selectedNifty]??{};

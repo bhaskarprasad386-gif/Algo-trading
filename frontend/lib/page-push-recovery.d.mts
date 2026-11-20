@@ -16,3 +16,11 @@ export function freshEarlyEntryAlerts<T extends AlertLike>(
   alerts: readonly T[],
   seenIds: ReadonlySet<number>,
 ): T[];
+
+export type PagePushRequestGuard = {
+  active: boolean;
+  requestSequence: number;
+  latestSequence: number;
+};
+export function isCurrentPagePushRequest(input: PagePushRequestGuard): boolean;
+export function shouldAllowBoxSpreadEdgeTimingRestRefresh(pagePushStatus: string, eventDriven?: boolean): boolean;

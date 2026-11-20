@@ -665,3 +665,48 @@ def test_shared_quote_snapshot_rejects_invalid_freshness_window():
         scanner.shared_quote_snapshot(max_age_seconds=0)
     with pytest.raises(ValueError, match="max_age_seconds"):
         scanner.shared_quote_snapshot(max_age_seconds=61)
+
+
+def test_incomplete_or_delayed_bucket_cannot_clear_newer_position_monitor_snapshot():
+    import time
+    from app.backtesting.arbitrage_scan_policy import ScanPolicy
+    from app.scanner.box_spread import BoxSpreadScanConfig
+
+    scanner = LiveBoxSpreadScanner(
+        atm_provider=lambda _symbol, _stamp: 100,
+        config_provider=lambda _symbol: BoxSpreadScanConfig(
+            allowed_stock_symbols=frozenset({"ABC"}),
+            min_executable_edge=-100,
+            max_option_spread_pct=200,
+        ),
+        policy=ScanPolicy(stock_box_distances=(1,)),
+    )
+    now = time.time_ns()
+    complete_stamp = now - 100_000_000
+    base = {
+        "underlying": "ABC", "instrument_class": "STOCK",
+        "expiry": "30SEP2026", "bid": 10, "ask": 10.1,
+        "lot_size": 10, "volume": 100, "oi": 100,
+    }
+    for strike in (100, 110):
+        for option_type in ("CE", "PE"):
+            scanner.observe(base | {
+                "source_timestamp_ns": complete_stamp,
+                "strike": strike, "option_type": option_type,
+            })
+
+    before = scanner.monitor_snapshot()
+    assert before["data"]
+    assert before["updated_at_ns"] == complete_stamp
+
+
+
+    # A delayed, incomplete quote bucket is accepted (still within source-age
+    # tolerance), but must not erase the complete monitor snapshot.
+    scanner.observe(base | {
+        "source_timestamp_ns": now - 4_000_000_000,
+        "strike": 120, "option_type": "CE",
+    })
+    after = scanner.monitor_snapshot()
+    assert after["data"] == before["data"]
+    assert after["updated_at_ns"] == before["updated_at_ns"]

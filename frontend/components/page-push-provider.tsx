@@ -140,11 +140,14 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let watchdogTimer: ReturnType<typeof setInterval> | undefined;
     let lastTransportAt = 0;
+    let connectionStartedAt = 0;
+    let initialSnapshotTimer: ReturnType<typeof setTimeout> | undefined;
     let retryMs = 1000;
 
     const connect = () => {
       if (disposed) return;
       setStatus("CONNECTING");
+      connectionStartedAt = Date.now();
       let socket: WebSocket;
       try {
         socket = new WebSocket(getDashboardWsUrl() + "/ws/page-updates");
@@ -160,16 +163,39 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       }
       socketRef.current = socket;
       socket.onopen = () => {
-        if (disposed) return;
+        // A previous transport may finish opening after reconnect replaced it.
+        if (disposed || socketRef.current !== socket) { socket.close(); return; }
         lastTransportAt = Date.now();
-        retryMs = 1000;
+        connectionStartedAt = 0;
+        // Do not reset reconnect backoff merely because TCP/WebSocket opened.
+        // Repeated UNAVAILABLE snapshots close the socket before synchronization
+        // and must progressively back off rather than retry every second.
         // A connected transport is not synchronized until its authoritative
         // page snapshot arrives. Keep REST recovery enabled in the meantime.
         setStatus("CONNECTING");
-        socket.send(JSON.stringify({ action: "subscribe", page }));
+        try {
+          socket.send(JSON.stringify({ action: "subscribe", page }));
+        } catch {
+          // A send failure is not a synchronized connection; force the
+          // existing bounded reconnect path instead of leaving it half-open.
+          socket.close();
+          return;
+        }
+        // Heartbeats can keep the transport healthy even when the initial
+        // page snapshot never arrives. Bound the synchronization wait and
+        // trigger authoritative resync instead of leaving this channel stuck.
+        if (initialSnapshotTimer) clearTimeout(initialSnapshotTimer);
+        initialSnapshotTimer = setTimeout(() => {
+          initialSnapshotTimer = undefined;
+          if (!hasSnapshotRef.current && socketRef.current === socket && !disposed) {
+            setStatus("RECONNECTING");
+            resync();
+          }
+        }, 8000);
       };
       socket.onmessage = (event) => {
-        if (disposed) return;
+        // Never allow a retired transport to deliver stale snapshots/deltas.
+        if (disposed || socketRef.current !== socket) return;
         let message: Record<string, unknown>;
         try { message = JSON.parse(String(event.data)) as Record<string, unknown>; }
         catch { return; }
@@ -209,6 +235,11 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           }
           sequenceRef.current = sequence;
           hasSnapshotRef.current = true;
+          // Reset exponential retry only after a valid authoritative snapshot,
+          // not on a transport open that may immediately fail synchronization.
+          retryMs = 1000;
+          if (initialSnapshotTimer) clearTimeout(initialSnapshotTimer);
+          initialSnapshotTimer = undefined;
           setLastMessageAt(Date.now());
           resyncPendingRef.current = false;
           if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
@@ -274,16 +305,19 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           });
         }
       };
-      socket.onerror = () => socket.close();
+      socket.onerror = () => { if (socketRef.current === socket) socket.close(); };
       socket.onclose = () => {
         if (disposed) return;
         // Ignore stale socket-close callbacks and release recovery timers for this transport.
         if (socketRef.current !== socket) return;
         socketRef.current = null;
+        connectionStartedAt = 0;
         if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
         resyncTimerRef.current = undefined;
         hasSnapshotRef.current = false;
         resyncPendingRef.current = false;
+        if (initialSnapshotTimer) clearTimeout(initialSnapshotTimer);
+        initialSnapshotTimer = undefined;
         setStatus("RECONNECTING");
         retryTimer = setTimeout(connect, retryMs);
         retryMs = Math.min(15000, retryMs * 2);
@@ -292,6 +326,12 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
 
     watchdogTimer = setInterval(() => {
       const now = Date.now();
+      if (socketRef.current?.readyState === WebSocket.CONNECTING && connectionStartedAt && now - connectionStartedAt > 30000) {
+        // Detect a transport that never reaches onopen; it cannot deliver
+        // either snapshots or close notifications while stuck connecting.
+        socketRef.current.close();
+        return;
+      }
       if (lastTransportAt && now - lastTransportAt > 45000) {
         setStatus("RECONNECTING");
         socketRef.current?.close();
@@ -312,8 +352,11 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       if (watchdogTimer) clearInterval(watchdogTimer);
       if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
       resyncTimerRef.current = undefined;
+      if (initialSnapshotTimer) clearTimeout(initialSnapshotTimer);
+      initialSnapshotTimer = undefined;
       socketRef.current?.close();
       socketRef.current = null;
+      connectionStartedAt = 0;
     };
   }, [page, resync]);
 

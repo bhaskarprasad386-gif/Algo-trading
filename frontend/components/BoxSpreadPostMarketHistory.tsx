@@ -55,6 +55,20 @@ type SnapshotResponse = {
   data: Snapshot[];
 };
 
+const validSnapshotHistoryResponse = (body: unknown): body is SnapshotResponse => {
+  if (!body || typeof body !== "object") return false;
+  const response = body as Partial<SnapshotResponse>;
+  const counts = response.expiry_counts;
+  return response.strategy === "box-spread" &&
+    Array.isArray(response.data) &&
+    typeof response.total_count === "number" && Number.isInteger(response.total_count) && response.total_count >= 0 &&
+    typeof response.count === "number" && Number.isInteger(response.count) && response.count >= 0 &&
+    typeof response.has_more === "boolean" &&
+    !!counts && ["WEEKLY", "MONTHLY", "UNKNOWN"].every(key =>
+      Number.isInteger(counts[key as keyof typeof counts]) && counts[key as keyof typeof counts] >= 0
+    );
+};
+
 const number = (value: number | null | undefined) =>
   value == null || !Number.isFinite(Number(value))
     ? "—"
@@ -161,7 +175,7 @@ export default function BoxSpreadPostMarketHistory() {
         const response = await fetch(base + "/api/v1/scanner/box-spread/snapshots?" + params.toString(), { cache: "no-store", signal: AbortSignal.timeout(20000) });
         if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
         const body = (await response.json()) as SnapshotResponse;
-        if (body?.strategy !== "box-spread" || !Array.isArray(body.data)) throw new Error("Unexpected snapshot history response");
+        if (!validSnapshotHistoryResponse(body)) throw new Error("Unexpected snapshot history response");
         if (sortRequestId !== sortingRequestSequence.current) return;
         allRows.push(...body.data);
         nextOffset += body.data.length;
@@ -173,7 +187,11 @@ export default function BoxSpreadPostMarketHistory() {
       setHasMore(false);
       setTotal(allRows.length);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to load complete history for sorting");
+      // A superseded full-history sort must not surface an error over the
+      // newer page/filter/revision request that replaced it.
+      if (sortRequestId === sortingRequestSequence.current) {
+        setError(e instanceof Error ? e.message : "Unable to load complete history for sorting");
+      }
     } finally { if (sortRequestId === sortingRequestSequence.current) setSortingAll(false); }
   };
   const sortMark = (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
@@ -181,14 +199,35 @@ export default function BoxSpreadPostMarketHistory() {
   const sortingRequestSequence = useRef(0);
   const appendInFlight = useRef(false);
 
+  useEffect(() => () => {
+    // Invalidate any REST pagination or all-history sorting still in flight
+    // when this history panel unmounts.
+    requestSequence.current += 1;
+    sortingRequestSequence.current += 1;
+    appendInFlight.current = false;
+  }, []);
+
   const load = useCallback(async (append = false, pageOffset = 0) => {
     if (append && appendInFlight.current) return;
     const requestId = ++requestSequence.current;
     if (append) {
+      // Pagination and full-history sorting both mutate the same visible row set.
+      // Starting a page append invalidates any in-flight all-history sort so
+      // its late completion cannot replace the newly appended page state.
+      sortingRequestSequence.current += 1;
+      setSortingAll(false);
       appendInFlight.current = true;
       setLoadingMore(true);
+    } else {
+      // A fresh filtered/revision load supersedes both pagination and the
+      // all-history sort. Invalidate its sequence so a late sort cannot replace
+      // this newly requested page with stale rows.
+      sortingRequestSequence.current += 1;
+      setSortingAll(false);
+      appendInFlight.current = false;
+      setLoadingMore(false);
+      setLoading(true);
     }
-    else setLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
       const nextOffset = append ? pageOffset : 0;
@@ -206,7 +245,7 @@ export default function BoxSpreadPostMarketHistory() {
       if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
       const body = (await response.json()) as SnapshotResponse;
       if (requestId !== requestSequence.current) return;
-      if (body?.strategy !== "box-spread" || !Array.isArray(body.data) || !body.expiry_counts) {
+      if (!validSnapshotHistoryResponse(body)) {
         throw new Error("Unexpected snapshot history response");
       }
       setRows(current => append ? mergeSnapshots(current, body.data) : mergeSnapshots([], body.data));

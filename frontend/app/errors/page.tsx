@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, RefreshCw, TriangleAlert } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
@@ -22,26 +22,47 @@ export default function ErrorsPage() {
   const [errors, setErrors] = useState<DiagnosticError[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const requestControllerRef = useRef<AbortController | null>(null);
 
   const loadErrors = async () => {
+    requestControllerRef.current?.abort();
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(base + "/api/v1/diagnostics/errors?limit=100", { cache: "no-store" });
+      const response = await fetch(base + "/api/v1/diagnostics/errors?limit=100", { cache: "no-store", signal: controller.signal });
       if (!response.ok) throw new Error("diagnostics");
       const body = await response.json();
+      if (requestControllerRef.current !== controller) return;
       setErrors(Array.isArray(body?.errors) ? body.errors : []);
       setLastUpdated(new Date().toISOString());
     } catch {
       // Do not manufacture an application error when the diagnostics endpoint is unavailable.
+      // Aborted/superseded refreshes are intentionally silent.
     } finally {
-      setLoading(false);
+      if (requestControllerRef.current === controller) {
+        requestControllerRef.current = null;
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    void loadErrors();
-    const timer = window.setInterval(() => void loadErrors(), 2000);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer: number | undefined;
+    const refresh = async () => {
+      await loadErrors();
+      // Diagnostics refresh is completion-driven so a slow response cannot
+      // overlap the next scheduled request.
+      if (!cancelled) timer = window.setTimeout(() => { void refresh(); }, 2000);
+    };
+    void refresh();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      requestControllerRef.current?.abort();
+      requestControllerRef.current = null;
+    };
   }, []);
 
   return (

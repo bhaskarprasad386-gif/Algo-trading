@@ -5,6 +5,7 @@ import { Activity, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
+import { shouldAllowBoxSpreadEdgeTimingRestRefresh } from "@/lib/page-push-recovery.mjs";
 
 type TimingGroup = {
   key: string;
@@ -46,7 +47,12 @@ export default function BoxSpreadEdgeTimingAnalysis() {
   const requestSequence = useRef(0);
   const { data: pagePushData, status: pagePushStatus } = usePagePush("box-spread");
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (eventDriven = false) => {
+    if (!shouldAllowBoxSpreadEdgeTimingRestRefresh(pagePushStatus, eventDriven)) {
+      requestSequence.current += 1;
+      setLoading(false);
+      return;
+    }
     const requestId = ++requestSequence.current;
     setLoading(true);
     try {
@@ -68,7 +74,7 @@ export default function BoxSpreadEdgeTimingAnalysis() {
     } finally {
       if (requestId === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [pagePushStatus]);
 
   useEffect(() => {
     if (pagePushStatus === "LIVE") {
@@ -77,15 +83,36 @@ export default function BoxSpreadEdgeTimingAnalysis() {
       setLoading(false);
       return;
     }
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 30_000);
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      if (cancelled) return;
+      await refresh();
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 30_000);
+    };
+    void poll();
     return () => {
-      window.clearInterval(timer);
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
       requestSequence.current += 1;
     };
   }, [refresh, pagePushStatus]);
 
   useEffect(() => {
+    const event = String(pagePushData?.__event ?? "").toUpperCase();
+    const removeKeys = Array.isArray(pagePushData?.remove_keys)
+      ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
+      : Array.isArray(pagePushData?.keys)
+        ? pagePushData.keys.filter((key): key is string => typeof key === "string")
+        : [];
+    if (event === "REMOVE" && removeKeys.includes("edge_timing_analysis")) {
+      requestSequence.current += 1;
+      setData(null);
+      setError(null);
+      setLoading(false);
+      setUpdatedAt(null);
+      return;
+    }
     const pushed = pagePushData?.edge_timing_analysis as TimingAnalysis | undefined;
     if (!pushed || pushed.strategy !== "box-spread" || !Array.isArray(pushed.by_day) || !Array.isArray(pushed.by_time)) return;
     // A pushed aggregate is authoritative; invalidate an older REST response.
@@ -102,7 +129,7 @@ export default function BoxSpreadEdgeTimingAnalysis() {
     // A WebSocket history_revision is an event-driven invalidation, not a polling
     // interval. Fetch the durable aggregate immediately after the event and cancel
     // any older request via refresh's sequence guard.
-    void refresh();
+    void refresh(true);
   }, [pagePushStatus, pagePushData?.history_revision, refresh]);
 
 

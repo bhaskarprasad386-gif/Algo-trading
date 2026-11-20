@@ -34,6 +34,7 @@ export default function HomePage() {
   const [feedAge, setFeedAge] = useState<number | null>(null);
   const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; connectedGroupNames: string[]; requiredSocketGroups: string[]; requiredSocketGroupCount: number | null; missingSocketGroups: string[]; disconnectedGroups: string[]; maxSocketSessions: number; lastConnectFailure: any; lastSocketFailure: any; retiredTransportCount: number; brokerCooldownRemaining: number; failureRecoveryGroups: string[]; transportCloseTimedOutGroups: string[]; socketHealthByGroup: Record<string, any>; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; payloads: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, connectedGroupNames: [], requiredSocketGroups: [], requiredSocketGroupCount: null, missingSocketGroups: [], disconnectedGroups: [], maxSocketSessions: 3, lastConnectFailure: null, lastSocketFailure: null, retiredTransportCount: 0, brokerCooldownRemaining: 0, failureRecoveryGroups: [], transportCloseTimedOutGroups: [], socketHealthByGroup: {}, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const healthFailureCountRef = useRef(0);
+  const lastDashboardServerSnapshotTimeRef = useRef<number | null>(null);
   const runnerCountersRef = useRef<Record<string, number> | null>(null);
   const runnerCounterSampleAtRef = useRef<number | null>(null);
   const [runnerTps, setRunnerTps] = useState<Record<string, number>>({});
@@ -98,24 +99,59 @@ export default function HomePage() {
     let cancelled = false;
     let socket: WebSocket | null = null;
     let retryTimer: number | null = null;
+    let connectionTimer: number | undefined;
+    let snapshotWatchdogTimer: number | undefined;
+    let lastSnapshotAt = 0;
     let retryMs = 1000;
 
     const connect = () => {
       if (cancelled) return;
       setWsStatus("connecting");
-      socket = new WebSocket(getDashboardWsUrl() + "/ws/dashboard");
-      socket.onopen = () => {
-        retryMs = 1000;
-        setWsStatus("connected");
+      try {
+        socket = new WebSocket(getDashboardWsUrl() + "/ws/dashboard");
+      } catch {
+        setWsStatus("error");
+        retryTimer = window.setTimeout(connect, retryMs);
+        retryMs = Math.min(15000, retryMs * 2);
+        return;
+      }
+      const currentSocket = socket;
+      // A socket stuck in CONNECTING otherwise never reaches onclose and the
+      // dashboard silently loses its realtime connection.
+      connectionTimer = window.setTimeout(() => currentSocket.close(), 12000);
+      currentSocket.onopen = () => {
+        if (socket !== currentSocket || cancelled) return;
+        if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
+        connectionTimer = undefined;
+        // Do not reset reconnect backoff until a valid dashboard snapshot
+        // arrives; transport open alone is not proof of synchronization.
+        // Start a new timestamp ordering epoch for this socket. A backend clock
+        // correction/restart must not leave reconnects rejecting every snapshot.
+        lastDashboardServerSnapshotTimeRef.current = null;
+        lastSnapshotAt = Date.now();
+        if (snapshotWatchdogTimer !== undefined) window.clearInterval(snapshotWatchdogTimer);
+        snapshotWatchdogTimer = window.setInterval(() => {
+          if (socket !== currentSocket || cancelled || currentSocket.readyState !== WebSocket.OPEN) return;
+          if (Date.now() - lastSnapshotAt > 15000) {
+            setWsStatus("error");
+            currentSocket.close();
+          }
+        }, 5000);
       };
-      socket.onmessage = (event) => {
+      currentSocket.onmessage = (event) => {
+        if (socket !== currentSocket || cancelled) return;
         try {
           const message = JSON.parse(event.data);
           if (message?.type !== "dashboard_snapshot") return;
           const serverSnapshotTime = message?.timestamp == null ? NaN : new Date(message.timestamp).getTime();
-          // A future-dated server snapshot must not be rendered as age-zero/live.
-          if (!Number.isFinite(serverSnapshotTime) || serverSnapshotTime > Date.now() + 5_000) return;
-          setLastDashboardMessageAt(Date.now());
+          // Future or out-of-order server snapshots must not rewind dashboard state.
+          if (!Number.isFinite(serverSnapshotTime) || serverSnapshotTime > Date.now() + 5_000 ||
+              (lastDashboardServerSnapshotTimeRef.current != null && serverSnapshotTime < lastDashboardServerSnapshotTimeRef.current)) return;
+          lastDashboardServerSnapshotTimeRef.current = serverSnapshotTime;
+          retryMs = 1000;
+          lastSnapshotAt = Date.now();
+          setWsStatus("connected");
+          setLastDashboardMessageAt(lastSnapshotAt);
           const observedAt = message?.scanner?.health?.last_observation_at;
           const observedTime = observedAt == null ? NaN : new Date(observedAt).getTime();
           const validObservedAt = Number.isFinite(observedTime) && observedTime <= Date.now() + 5_000 ? observedAt : null;
@@ -131,8 +167,19 @@ export default function HomePage() {
           // Ignore malformed dashboard messages without losing the last valid snapshot.
         }
       };
-      socket.onerror = () => setWsStatus("error");
-      socket.onclose = () => {
+      currentSocket.onerror = () => {
+        if (socket !== currentSocket || cancelled) return;
+        setWsStatus("error");
+        // Force the close/reconnect path instead of relying on the browser
+        // to deliver a close event after an error notification.
+        currentSocket.close();
+      };
+      currentSocket.onclose = () => {
+        if (socket !== currentSocket) return;
+        if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
+        connectionTimer = undefined;
+        if (snapshotWatchdogTimer !== undefined) window.clearInterval(snapshotWatchdogTimer);
+        snapshotWatchdogTimer = undefined;
         if (cancelled) return;
         setWsStatus("error");
         retryTimer = window.setTimeout(connect, retryMs);
@@ -144,12 +191,15 @@ export default function HomePage() {
     return () => {
       cancelled = true;
       if (retryTimer !== null) window.clearTimeout(retryTimer);
+      if (connectionTimer !== undefined) window.clearTimeout(connectionTimer);
+      if (snapshotWatchdogTimer !== undefined) window.clearInterval(snapshotWatchdogTimer);
       socket?.close();
     };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | undefined;
     const loadMarketOverview = async () => {
       try {
         const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/market-data/overview", { cache: "no-store", signal: AbortSignal.timeout(4500) });
@@ -178,15 +228,18 @@ export default function HomePage() {
       } catch {
         if (!cancelled) setMarketOverviewError(true);
         // Keep last values visible, but mark the source unavailable/stale.
+      } finally {
+        // Schedule after completion so a slow response cannot overlap the next sample.
+        if (!cancelled) timer = window.setTimeout(() => { void loadMarketOverview(); }, 5000);
       }
     };
-    loadMarketOverview();
-    const timer = window.setInterval(loadMarketOverview, 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    void loadMarketOverview();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | undefined;
     const loadFeedHealth = async () => {
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -210,15 +263,17 @@ export default function HomePage() {
         else setFeedStatus("no-data");
       } catch {
         if (!cancelled) setFeedStatus("error");
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => { void loadFeedHealth(); }, 5000);
       }
     };
     void loadFeedHealth();
-    const timer = window.setInterval(loadFeedHealth, 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | undefined;
     const loadRuntimeHealth = async () => {
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -342,15 +397,17 @@ export default function HomePage() {
         });
       } catch {
         // Keep last values for context; UI separately marks telemetry stale/unavailable.
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => { void loadRuntimeHealth(); }, 5000);
       }
     };
     void loadRuntimeHealth();
-    const timer = window.setInterval(loadRuntimeHealth, 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | undefined;
     const loadDiagnosticErrors = async () => {
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -367,11 +424,12 @@ export default function HomePage() {
       } catch {
         if (!cancelled) setDiagnosticsFetchFailed(true);
         // Do not manufacture a fake runtime error when the diagnostic endpoint is unavailable.
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => { void loadDiagnosticErrors(); }, 2000);
       }
     };
     void loadDiagnosticErrors();
-    const timer = window.setInterval(loadDiagnosticErrors, 2000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
 
 

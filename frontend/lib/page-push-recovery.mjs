@@ -4,9 +4,18 @@
  * cannot rewind the page.
  */
 export function isCurrentRecoveryResponse({ active, requestSequence, latestSequence, responseValid }) {
-  return active === true && Number.isSafeInteger(requestSequence) &&
+  return active === true && Number.isSafeInteger(requestSequence) && requestSequence >= 0 &&
+    Number.isSafeInteger(latestSequence) && latestSequence >= 0 &&
     requestSequence === latestSequence && responseValid === true;
 }
+
+/** Guard page-owned REST responses against superseding requests or PagePush updates. */
+export function isCurrentPagePushRequest({ active, requestSequence, latestSequence }) {
+  return active === true && Number.isSafeInteger(requestSequence) && requestSequence >= 0 &&
+    Number.isSafeInteger(latestSequence) && latestSequence >= 0 &&
+    requestSequence === latestSequence;
+}
+
 
 /** Merge durable alert rows by ID, with incoming rows replacing older versions. */
 export function mergeUniqueAlerts(current, incoming, compare, limit = 100) {
@@ -23,4 +32,9 @@ export function freshEarlyEntryAlerts(alerts, seenIds) {
   if (!Array.isArray(alerts)) return [];
   return alerts.filter(row => row && Number.isSafeInteger(row.id) &&
     row.state === "EARLY_ENTRY" && !seenIds.has(row.id));
+}
+
+/** Manual REST refresh must not override authoritative live PagePush state. */
+export function shouldAllowBoxSpreadEdgeTimingRestRefresh(pagePushStatus, eventDriven = false) {
+  return pagePushStatus !== "LIVE" || eventDriven === true;
 }

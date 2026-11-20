@@ -255,11 +255,19 @@ class LiveBoxSpreadScanner:
             # Scanner.observe handles one symbol/expiry bucket at a time. Keep
             # independent latest snapshots so a NIFTY tick cannot erase SENSEX
             # or another expiry's open-position monitor data.
-            self._monitor_snapshots[(symbol, expiry)] = {
-                "updated_at_ns": monitor_updated_ns,
-                "data": tuple(monitor_results),
-                "entry_data": tuple(entry_results),
-            }
+            monitor_key = (symbol, expiry)
+            previous_monitor = self._monitor_snapshots.get(monitor_key)
+            # Never let a partial quote bucket clear a usable position snapshot,
+            # or let delayed ticks rewind the snapshot to older source time.
+            if monitor_results and (
+                previous_monitor is None
+                or monitor_updated_ns >= previous_monitor.get("updated_at_ns", 0)
+            ):
+                self._monitor_snapshots[monitor_key] = {
+                    "updated_at_ns": monitor_updated_ns,
+                    "data": tuple(monitor_results),
+                    "entry_data": tuple(entry_results),
+                }
             self._increment_diagnostic("snapshots_scanned", symbol=symbol)
             for name,value in scan_stats.items():
                 self._increment_diagnostic("scan_"+name, int(value), symbol=symbol)
