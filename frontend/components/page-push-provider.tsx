@@ -162,7 +162,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       }
       socketRef.current = socket;
       socket.onopen = () => {
-        if (disposed) return;
+        // A previous transport may finish opening after reconnect replaced it.
+        if (disposed || socketRef.current !== socket) { socket.close(); return; }
         lastTransportAt = Date.now();
         connectionStartedAt = 0;
         retryMs = 1000;
@@ -172,7 +173,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         socket.send(JSON.stringify({ action: "subscribe", page }));
       };
       socket.onmessage = (event) => {
-        if (disposed) return;
+        // Never allow a retired transport to deliver stale snapshots/deltas.
+        if (disposed || socketRef.current !== socket) return;
         let message: Record<string, unknown>;
         try { message = JSON.parse(String(event.data)) as Record<string, unknown>; }
         catch { return; }
@@ -277,7 +279,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           });
         }
       };
-      socket.onerror = () => socket.close();
+      socket.onerror = () => { if (socketRef.current === socket) socket.close(); };
       socket.onclose = () => {
         if (disposed) return;
         // Ignore stale socket-close callbacks and release recovery timers for this transport.
