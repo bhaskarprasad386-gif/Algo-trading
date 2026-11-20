@@ -83,6 +83,13 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
     // A PagePush frame can be freshly delivered while its underlying market
     // snapshot is unavailable/old. Freshness must follow market capture time,
     // not just websocket message arrival.
+    const nowNs = Date.now() * 1_000_000;
+    // Reject materially future-dated capture timestamps instead of treating
+    // them as age-zero quotes (clock skew must fail closed).
+    if (capturedAtNs > nowNs + 5_000_000_000) {
+      setSnapshotStale(true);
+      return;
+    }
     const ageMs = Math.max(0, Date.now() - capturedAtNs / 1_000_000);
     if (ageMs >= 5000) {
       setSnapshotStale(true);
