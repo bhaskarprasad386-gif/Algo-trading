@@ -722,3 +722,20 @@ html[data-theme="white"] .box-spread-page .box-live-opportunities article [class
 @media (prefers-reduced-motion: reduce) {
   .box-spread-page .box-spread-refresh-btn { transition: none; }
 }
+
+
+/* Box Spread mobile header/status and expiry selector polish */
+.box-spread-page > div:first-child { flex-wrap: wrap; }
+.box-spread-page > div:first-child > span:first-child { min-width: 0; flex: 1 1 240px; }
+.box-spread-page > div:first-child > span:last-child { flex: 0 0 auto; white-space: nowrap; }
+@media (max-width: 640px) {
+  .box-spread-page > div:first-child { align-items: flex-start; gap: .6rem; }
+  .box-spread-page > div:first-child > span:first-child { flex-basis: 100%; font-size: 1.08rem !important; line-height: 1.35; }
+  .box-spread-page > div:first-child > span:last-child { min-height: 38px; padding-inline: .75rem; font-size: 12px !important; }
+  .box-spread-page :is(button[aria-pressed="true"]) { font-weight: 850; box-shadow: inset 0 0 0 1px currentColor; }
+  .box-spread-page button[aria-pressed="true"][class*="violet"] { background: rgba(139,92,246,.12); }
+  .box-spread-page button[aria-pressed="true"][class*="cyan"] { background: rgba(6,182,212,.12); }
+}
+@media (max-width: 380px) {
+  .box-spread-page > div:first-child > span:last-child { font-size: 11px !important; padding-inline: .6rem; }
+}
