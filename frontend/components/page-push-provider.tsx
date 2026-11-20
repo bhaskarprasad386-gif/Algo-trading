@@ -167,7 +167,9 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         if (disposed || socketRef.current !== socket) { socket.close(); return; }
         lastTransportAt = Date.now();
         connectionStartedAt = 0;
-        retryMs = 1000;
+        // Do not reset reconnect backoff merely because TCP/WebSocket opened.
+        // Repeated UNAVAILABLE snapshots close the socket before synchronization
+        // and must progressively back off rather than retry every second.
         // A connected transport is not synchronized until its authoritative
         // page snapshot arrives. Keep REST recovery enabled in the meantime.
         setStatus("CONNECTING");
@@ -226,6 +228,9 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           }
           sequenceRef.current = sequence;
           hasSnapshotRef.current = true;
+          // Reset exponential retry only after a valid authoritative snapshot,
+          // not on a transport open that may immediately fail synchronization.
+          retryMs = 1000;
           if (initialSnapshotTimer) clearTimeout(initialSnapshotTimer);
           initialSnapshotTimer = undefined;
           setLastMessageAt(Date.now());
