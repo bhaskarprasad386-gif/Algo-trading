@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Bell, ChartNoAxesCombined, Home, Menu, Settings2, ShieldCheck, X } from "lucide-react";
+import { Activity, Bell, Home, Menu, Settings2, ShieldCheck, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { themeOptions, useTheme, type ThemeName } from "@/components/theme-provider";
 import { PagePushProvider } from "@/components/page-push-provider";
@@ -14,11 +14,8 @@ const nav = [
   { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
   { href: "/strategies/iv-skew-flip", label: "IV Skew / IV Flip", icon: Activity },
   { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
-  { href: "/strategies/credit-butterfly-condor/weekly", label: "Weekly Credit Butterfly / Condor", icon: Activity },
   { href: "/strategies/credit-butterfly-condor/monthly", label: "Monthly Credit Butterfly / Condor", icon: Activity },
   { href: "/strategies/box-spread-paper", label: "Box Paper Trading", icon: ShieldCheck },
-  { href: "/strategies/custom-strategy", label: "Custom Scanner", icon: Activity },
-  { href: "/strategies/weekly-swing", label: "Weekly Swing", icon: ChartNoAxesCombined },
   { href: "/custom-alert", label: "Custom Alert", icon: Bell },
 ];
 
@@ -29,9 +26,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     : pathname.startsWith("/strategies/calendar-spread") ? "calendar-spread"
     : pathname.startsWith("/strategies/synthetic-arbitrage") ? "synthetic-arbitrage"
     : pathname.startsWith("/strategies/iv-skew-flip") ? "iv-skew-flip"
-    : pathname.startsWith("/strategies/credit-butterfly-condor/weekly") ? "credit-butterfly-condor-weekly"
     : pathname.startsWith("/strategies/credit-butterfly-condor/monthly") ? "credit-butterfly-condor-monthly"
-    : pathname.startsWith("/strategies/weekly-swing") ? "weekly-swing"
     : null;
   const [mobileOpen, setMobileOpen] = useState(false);
   const { theme, setTheme } = useTheme();

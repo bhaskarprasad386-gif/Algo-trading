@@ -36,6 +36,9 @@ jobs:
       - name: Test WebSocket recovery state helpers
         run: npm run test:page-push-recovery
 
+      - name: Verify requested scanner UI removals
+        run: npm run test:scanner-ui-removal
+
       - name: Typecheck
         run: npm run typecheck
 

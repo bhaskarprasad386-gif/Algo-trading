@@ -1595,55 +1595,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </div>
         </section>
       )}
-      {slug === "box-spread" && (
-        <Card className="scroll-mt-24 theme-border theme-surface p-4 theme-text shadow-xl" aria-label="Box Spread system health" id="box-system-health">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="flex items-center gap-2 text-lg font-black text-slate-950 sm:text-xl"><Activity className="h-5 w-5 text-slate-800" /> System Health</h2>
-              <p className="mt-1 text-xs theme-muted">Common market-data feed and Box Spread runner diagnostics · exchange-level status, not per-index feed confirmation.</p>
-            </div>
-            <span className={"rounded-lg border px-3 py-1.5 text-[11px] font-bold " + (feedStatus === "LIVE" && runner?.running ? "theme-border theme-success-bg theme-success" : feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-border theme-danger-bg theme-danger" : "theme-border theme-warning-bg theme-warning")}>
-              {feedStatus === "LIVE" && runner?.running ? "FEED + RUNNER LIVE" : feedStatus === "UNAVAILABLE" || runner?.running === false ? "HEALTH ATTENTION" : "STATUS CHECKING"}
-            </span>
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-            <div className="rounded-lg border theme-border theme-surface-2 p-3">
-              <p className="text-[10px] uppercase tracking-wide theme-muted">Common Feed</p>
-              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN")}</p>
-              <p className="text-[10px] theme-muted">cumulative ticks</p>
-            </div>
-            <div className="rounded-lg border theme-border theme-surface-2 p-3">
-              <p className="text-[10px] uppercase tracking-wide theme-muted">Feed Age</p>
-              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</p>
-              <p className="text-[10px] theme-muted">oldest required exchange tick</p>
-            </div>
-            <div className="rounded-lg border theme-border theme-surface-2 p-3">
-              <p className="text-[10px] uppercase tracking-wide theme-muted">NSE / NFO</p>
-              <p className="mt-1 text-sm font-bold theme-text">{boxExchangeStatus(feedExchangeFreshness?.NSE?.status)} / {boxExchangeStatus(feedExchangeFreshness?.NFO?.status)}</p>
-              <p className="text-[10px] theme-muted">NSE {typeof feedExchangeFreshness?.NSE?.age_seconds === "number" ? feedExchangeFreshness.NSE.age_seconds.toFixed(1) + "s" : "—"} · NFO {typeof feedExchangeFreshness?.NFO?.age_seconds === "number" ? feedExchangeFreshness.NFO.age_seconds.toFixed(1) + "s" : "—"}</p>
-            </div>
-            <div className="rounded-lg border theme-border theme-surface-2 p-3">
-              <p className="text-[10px] uppercase tracking-wide theme-muted">Box Runner</p>
-              <p className={"mt-1 text-sm font-bold " + (runner?.running ? "theme-success" : "theme-warning")}>{runner?.running ? "RUNNING" : "STOPPED / UNKNOWN"}</p>
-              <p className="text-[10px] theme-muted">{runner?.detail || "Runner detail unavailable"}</p>
-            </div>
-            <div className="rounded-lg border theme-border theme-surface-2 p-3">
-              <p className="text-[10px] uppercase tracking-wide theme-muted">Instruments</p>
-              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</p>
-              <p className="text-[10px] theme-muted">active common-feed instruments</p>
-            </div>
-            <div className="rounded-lg border theme-border theme-surface-2 p-3">
-              <p className="text-[10px] uppercase tracking-wide theme-muted">Feed Errors</p>
-              <p className="mt-1 text-base font-bold tabular-nums theme-text">{feedErrors == null ? "—" : (feedErrors.delivery + feedErrors.normalizer).toLocaleString("en-IN")}</p>
-              <p className="text-[10px] theme-muted">delivery {feedErrors?.delivery ?? "—"} · normalizer {feedErrors?.normalizer ?? "—"}</p>
-            </div>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border theme-border px-3 py-2 text-xs">
-            <span className="theme-muted">Scanner: <b className="theme-text">{String(scannerDiagnostics?.status ?? "not separately reported")}</b></span>
-            <span className="font-bold theme-warning">BROKER ORDERS OFF · NO ORDER ROUTING</span>
-          </div>
-        </Card>
-      )}
+}
       {slug !== "box-spread" && (
       <Card className="theme-border theme-surface px-3 py-3">
         <div className="flex items-center gap-2 text-xs font-semibold theme-text"><Filter className="h-4 w-4 theme-accent" /> Live Scanner Controls</div>
@@ -1718,47 +1670,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       </Card>
       )}
 
-      {slug === "synthetic-arbitrage" && (
-        <Card className="theme-border theme-surface p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-semibold theme-text">Synthetic Scanner Health</h2>
-              <p className="mt-1 text-xs theme-muted">Scanner observations and completed calculations are separate from common-feed tick totals.</p>
-            </div>
-            <span className={"rounded-lg border px-3 py-1.5 text-xs font-semibold " + (String(scannerDiagnostics?.status ?? "UNKNOWN") === "SCANNING" ? "theme-success" : "theme-warning")}>{String(scannerDiagnostics?.status ?? "UNKNOWN")}</span>
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            <div><p className="text-xs theme-muted">Observations</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.observations_received) ?? "—")}</p></div>
-            <div><p className="text-xs theme-muted">Completed scans</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.scan_evaluations) ?? "—")}</p></div>
-            <div><p className="text-xs theme-muted">Empty scans</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.empty_calculations) ?? "—")}</p></div>
-            <div><p className="text-xs theme-muted">Missing CE/PE events</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.missing_ce_or_pe_leg) ?? "—")}</p></div>
-            <div><p className="text-xs theme-muted">Missing CALL</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.missing_call_leg) ?? "—")}</p></div>
-            <div><p className="text-xs theme-muted">Missing PUT</p><p className="mt-1 text-base font-semibold theme-text">{String(((scannerDiagnostics?.counters as Record<string, unknown> | undefined)?.missing_put_leg) ?? "—")}</p></div>
-            <div><p className="text-xs theme-muted">Last scan age</p><p className="mt-1 text-base font-semibold theme-text">{typeof scannerDiagnostics?.last_scan_age_seconds === "number" ? scannerDiagnostics.last_scan_age_seconds.toFixed(1) + "s" : "—"}</p></div>
-          </div>
-          {typeof scannerDiagnostics?.phase_reason === "string" && scannerDiagnostics.phase_reason && <p className="mt-2 rounded-lg border theme-border theme-surface-2 p-2 text-xs theme-muted">Runner phase: {String(scannerDiagnostics.phase ?? scannerDiagnostics.status ?? "UNKNOWN")} · {String(scannerDiagnostics.phase_reason).replaceAll("_", " ")}</p>}
-          {(() => {
-            const counters = (scannerDiagnostics?.counters && typeof scannerDiagnostics.counters === "object" ? scannerDiagnostics.counters : {}) as Record<string, unknown>;
-            const symbols = Object.keys(counters)
-              .filter((key) => /^(scan_evaluations|successful_pairs|opportunities_emitted|empty_calculations)_by_symbol:/.test(key))
-              .reduce((map, key) => {
-                const match = key.match(/^(scan_evaluations|successful_pairs|opportunities_emitted|empty_calculations)_by_symbol:(.+)$/);
-                if (!match) return map;
-                const symbol = match[2];
-                const row = map.get(symbol) ?? { underlying: symbol };
-                row[match[1]] = counters[key];
-                map.set(symbol, row);
-                return map;
-              }, new Map<string, Record<string, unknown>>());
-            const rows = Array.from(symbols.values()).sort((a, b) => String(a.underlying).localeCompare(String(b.underlying)));
-            return <div className="mt-4 border-t theme-border pt-3">
-              <div><h3 className="text-sm font-semibold theme-text">Per-symbol scan outcomes</h3><p className="mt-1 text-xs theme-muted">Calculation and emitted-result counts; these are not trading recommendations.</p></div>
-              {rows.length === 0 ? <p className="mt-2 rounded-lg border theme-border p-3 text-xs theme-muted">Per-symbol scan counters have not arrived yet. Refresh after the backend deployment completes.</p> : <div className="mt-2 overflow-x-auto rounded-lg border theme-border"><table className="w-full min-w-[560px] text-left text-xs"><thead className="theme-surface-2 theme-muted"><tr>{["Symbol", "Calculations", "Pairs evaluated", "Results emitted", "Empty calculations"].map((label) => <th key={label} className="px-3 py-2 font-semibold">{label}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={String(row.underlying)} className="border-t theme-border"><td className="px-3 py-2 font-semibold theme-text">{String(row.underlying)}</td><td className="px-3 py-2 theme-muted">{String(row.scan_evaluations ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(row.successful_pairs ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(row.opportunities_emitted ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(row.empty_calculations ?? "—")}</td></tr>)}</tbody></table></div>}
-            </div>;
-          })()}
-          <p className="mt-3 text-xs theme-muted">Zero signals can be a valid market result. A stale or incomplete scanner is shown as a health problem, not as a successful empty scan. Broker orders remain OFF.</p>
-        </Card>
-      )}
+}
 
       {error && <Card className="theme-border theme-danger-bg p-4 text-sm theme-danger">{error}</Card>}
 
@@ -1791,165 +1703,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         </Card>
       )}
 
-      {slug === "synthetic-arbitrage" && (
-        <Card className="theme-border theme-surface p-4">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-semibold theme-text">Synthetic Scanner Diagnostics</h2>
-              <p className="mt-1 text-xs theme-muted">Calculation health and actual backend blockers • refreshes every 1.5 seconds</p>
-            </div>
-            <span className={"rounded-lg border px-2.5 py-1 text-xs font-semibold " + (diagnosticStatus === "SCANNING" ? "theme-border theme-success-bg theme-success" : "theme-border theme-warning-bg theme-warning")}>{diagnosticStatus}</span>
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-            {([
-              ["Evaluations", diagnosticSummary.evaluations],
-              ["Successful pairs", diagnosticSummary.successful_pairs],
-              ["Opportunities emitted", diagnosticSummary.opportunities_emitted],
-              ["Empty calculations", diagnosticSummary.empty_calculations],
-              ["Last result count", diagnosticSummary.last_result_count],
-            ] as Array<[string, unknown]>).map(([label, raw]) => (
-              <div key={String(label)} className="rounded-xl border theme-border theme-surface-2 p-3">
-                <p className="text-xs theme-muted">{label}</p>
-                <p className="mt-1 text-lg font-semibold theme-text">{typeof raw === "number" ? raw.toLocaleString("en-IN") : "—"}</p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <div className="rounded-xl border theme-border theme-surface-2 p-3">
-              <p className="text-xs theme-muted">Last observation age</p>
-              <p className="mt-1 text-sm font-semibold theme-text">{typeof scannerDiagnostics?.observation_age_seconds === "number" ? scannerDiagnostics.observation_age_seconds.toFixed(1) + "s" : "—"}</p>
-            </div>
-            <div className="rounded-xl border theme-border theme-surface-2 p-3">
-              <p className="text-xs theme-muted">Last successful calculation</p>
-              <p className="mt-1 text-sm font-semibold theme-text">{typeof scannerDiagnostics?.last_scan_age_seconds === "number" ? scannerDiagnostics.last_scan_age_seconds.toFixed(1) + "s ago" : "Not yet completed"}</p>
-              <p className="mt-1 text-[11px] theme-muted">This is calculation age, not merely the latest pair snapshot.</p>
-            </div>
-          </div>
-          <div className="mt-4">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-semibold theme-text">Top blockers</p>
-              <p className="text-[10px] theme-muted">Cumulative events; categories may overlap</p>
-            </div>
-            {diagnosticBlockers.length === 0 ? (
-              <p className="mt-2 rounded-lg border theme-border p-3 text-xs theme-muted">{scannerDiagnostics?.status === "DIAGNOSTICS_UNAVAILABLE" || scannerDiagnostics?.status === "unavailable" ? "Diagnostics endpoint/provider unavailable; backend deployment may be pending." : "No reported blocker counters yet."}</p>
-            ) : (
-              <div className="mt-2 space-y-2">
-                {diagnosticBlockers.map((item, index) => (
-                  <div key={String(item.reason ?? index)} className="flex items-center justify-between gap-3 rounded-lg border theme-border px-3 py-2">
-                    <span className="min-w-0 break-words text-xs theme-muted">{String(item.reason ?? "Unknown blocker").replaceAll("_", " ")}</span>
-                    <span className="shrink-0 text-sm font-semibold theme-text">{typeof item.count === "number" ? item.count.toLocaleString("en-IN") : "—"}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          {(() => {
-            const readiness = (scannerDiagnostics?.atm_readiness_summary && typeof scannerDiagnostics.atm_readiness_summary === "object" ? scannerDiagnostics.atm_readiness_summary : {}) as Row;
-            const atmTracker = (scannerDiagnostics?.atm_tracker_diagnostics && typeof scannerDiagnostics.atm_tracker_diagnostics === "object" ? scannerDiagnostics.atm_tracker_diagnostics : {}) as Row;
-            const subscriptions = (scannerDiagnostics?.subscription_diagnostics && typeof scannerDiagnostics.subscription_diagnostics === "object" ? scannerDiagnostics.subscription_diagnostics : {}) as Row;
-            const atmSymbols = (Array.isArray(atmTracker.symbols) ? atmTracker.symbols : Array.isArray(readiness.not_ready_symbols) ? readiness.not_ready_symbols : []) as Row[];
-            const subscriptionSymbols = (Array.isArray(subscriptions.symbols) ? subscriptions.symbols : []) as Row[];
-            const underlyingFeed = (scannerDiagnostics?.underlying_feed && typeof scannerDiagnostics.underlying_feed === "object" ? scannerDiagnostics.underlying_feed : {}) as Row;
-            const rawFeedSymbols = underlyingFeed.symbols;
-            const feedSymbols: Row[] = Array.isArray(rawFeedSymbols)
-              ? rawFeedSymbols as Row[]
-              : rawFeedSymbols && typeof rawFeedSymbols === "object"
-                ? Object.entries(rawFeedSymbols as Record<string, unknown>).map(([symbol, item]) => ({
-                    ...(item && typeof item === "object" ? item as Row : {}),
-                    underlying: (item && typeof item === "object" ? (item as Row).underlying ?? (item as Row).symbol : undefined) ?? symbol,
-                  }))
-                : [];
-            const symbolRows = new Map<string, Row>();
-            for (const item of atmSymbols) symbolRows.set(String(item.underlying ?? item.symbol ?? "UNKNOWN").toUpperCase(), { ...item, diagnostic_source: "ATM" });
-            for (const item of subscriptionSymbols) {
-              const key = String(item.underlying ?? item.symbol ?? "UNKNOWN").toUpperCase();
-              const previous = symbolRows.get(key) ?? {};
-              symbolRows.set(key, {
-                ...previous,
-                ...item,
-                underlying: key,
-                // Subscription snapshots may omit ATM fields or provide nulls.
-                // Keep the real ATM tracker values so stock/index readiness is not hidden.
-                atm_ready: typeof item.atm_ready === "boolean" ? item.atm_ready : previous.atm_ready,
-                has_underlying_price: typeof item.has_underlying_price === "boolean" ? item.has_underlying_price : previous.has_underlying_price,
-                last_price: item.last_price ?? item.last_underlying_price ?? previous.last_price ?? previous.last_underlying_price,
-                last_underlying_price: item.last_underlying_price ?? item.last_price ?? previous.last_underlying_price ?? previous.last_price,
-                source_age_seconds: item.source_age_seconds ?? previous.source_age_seconds,
-                // Diagnostic endpoints can emit partial snapshots. Nulls must not erase concrete subscription counts.
-                future_count: item.future_count ?? previous.future_count,
-                call_count: item.call_count ?? previous.call_count,
-                put_count: item.put_count ?? previous.put_count,
-                complete_pair_count: item.complete_pair_count ?? previous.complete_pair_count,
-                subscription_count: item.subscription_count ?? previous.subscription_count,
-                expiry: item.expiry ?? previous.expiry,
-                atm_strike: item.atm_strike ?? previous.atm_strike,
-                feed_state: item.feed_state ?? previous.feed_state,
-                feed_reason: item.feed_reason ?? previous.feed_reason,
-                concrete_strike_count: typeof previous.concrete_strike_count === "number" ? previous.concrete_strike_count : item.concrete_strike_count,
-                reason: item.reason || previous.reason,
-              });
-            }
-            for (const item of feedSymbols) {
-              const key = String(item.underlying ?? item.symbol ?? item.name ?? "").toUpperCase();
-              if (!key) continue;
-              const previous = symbolRows.get(key) ?? {};
-              const tickAge = item.last_tick_age_seconds ?? item.receive_age_seconds ?? item.source_timestamp_age_seconds;
-              const feedState = item.state ?? item.status ?? item.feed_state
-                ?? (item.token_resolved === false ? "TOKEN_UNRESOLVED"
-                  : typeof tickAge === "number" ? (tickAge <= 5 ? "LIVE" : "STALE")
-                  : item.token_resolved === true ? "WAITING_FOR_TICK"
-                  : previous.feed_state ?? underlyingFeed.state);
-              const feedReason = feedState === "TOKEN_UNRESOLVED" ? "underlying_token_unresolved"
-                : feedState === "WAITING_FOR_TICK" ? "token_resolved_waiting_for_first_tick"
-                : feedState === "STALE" ? "underlying_tick_stale"
-                : undefined;
-              symbolRows.set(key, {
-                ...previous,
-                ...item,
-                underlying: key,
-                feed_state: feedState,
-                feed_reason: item.state_reason || item.reason || feedReason || previous.feed_reason,
-                token_resolved: typeof item.token_resolved === "boolean" ? item.token_resolved : previous.token_resolved,
-                // Normalize the feed's canonical last_price while preserving a previously observed real price if this diagnostic omits it.
-                last_price: item.last_price ?? item.last_underlying_price ?? previous.last_price ?? previous.last_underlying_price,
-                last_underlying_price: item.last_underlying_price ?? item.last_price ?? previous.last_underlying_price ?? previous.last_price,
-                last_tick_age_seconds: typeof tickAge === "number" ? tickAge : previous.last_tick_age_seconds,
-                // Prefer the actual underlying-feed tick age over an older ATM/subscription age.
-                // Otherwise the merged row can show stale feed age even after a fresh tick arrives.
-                source_age_seconds: typeof tickAge === "number" ? tickAge : previous.source_age_seconds,
-                // Feed-only snapshots must not blank subscription/ATM readiness values.
-                future_count: item.future_count ?? previous.future_count,
-                call_count: item.call_count ?? previous.call_count,
-                put_count: item.put_count ?? previous.put_count,
-                complete_pair_count: item.complete_pair_count ?? previous.complete_pair_count,
-                subscription_count: item.subscription_count ?? previous.subscription_count,
-                expiry: item.expiry ?? previous.expiry,
-                atm_strike: item.atm_strike ?? previous.atm_strike,
-                concrete_strike_count: item.concrete_strike_count ?? previous.concrete_strike_count,
-                reason: previous.reason || item.state_reason || item.reason || feedReason,
-              });
-            }
-            const counters = (scannerDiagnostics?.counters && typeof scannerDiagnostics.counters === "object" ? scannerDiagnostics.counters : {}) as Record<string, unknown>;
-            for (const [counterKey, value] of Object.entries(counters)) {
-              const match = counterKey.match(/^(scan_evaluations|successful_pairs|opportunities_emitted|empty_calculations|missing_atm_price|atm_provider_errors|config_provider_errors|scan_calculation_errors|latest_scan_result_count|latest_scan_at_ns|latest_scan_status)_by_symbol:(.+)$/);
-              if (!match) continue;
-              const key = match[2].toUpperCase();
-              const previous = symbolRows.get(key) ?? { underlying: key };
-              symbolRows.set(key, { ...previous, [match[1]]: value });
-            }
-            const rows = Array.from(symbolRows.values()).sort((a, b) => String(a.underlying ?? "").localeCompare(String(b.underlying ?? "")));
-            return <div className="mt-4 border-t theme-border pt-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div><h3 className="text-sm font-semibold theme-text">Per-symbol readiness</h3><p className="mt-1 text-xs theme-muted">Live diagnostics only; scan counters are cumulative since scanner start, and missing fields are shown as —.</p></div>
-                <span className="rounded-lg border theme-border px-2 py-1 text-xs theme-muted">{typeof readiness.ready_symbols === "number" ? readiness.ready_symbols : "—"} ready / {typeof readiness.tracked_symbols === "number" ? readiness.tracked_symbols : "—"} tracked</span>
-              </div>
-              {rows.length === 0 ? <p className="mt-2 rounded-lg border theme-border p-3 text-xs theme-muted">Per-symbol readiness has not been supplied by the backend yet. Check universe/ATM diagnostics endpoint.</p> : <><div className="mt-3 grid gap-2 md:hidden">{rows.map((item, index) => <div key={String(item.underlying ?? index)} className="rounded-lg border theme-border theme-surface-2 p-3"><div className="flex items-start justify-between gap-2"><div className="font-semibold theme-text">{String(item.underlying ?? item.symbol ?? "—")}</div><span className="rounded-md border theme-border px-2 py-1 text-[10px] font-semibold theme-muted">{String(item.feed_state ?? "FEED UNKNOWN").replaceAll("_", " ")}</span></div><div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs"><div><div className="theme-subtle">Scan outcome</div><div className="mt-0.5 theme-muted">{Number(item.opportunities_emitted ?? 0) > 0 ? "OPPORTUNITY EMITTED" : Number(item.scan_calculation_errors ?? 0) > 0 ? "CALCULATION ERROR" : Number(item.config_provider_errors ?? 0) > 0 ? "CONFIG ERROR" : Number(item.atm_provider_errors ?? 0) > 0 ? "ATM LOOKUP ERROR" : Number(item.missing_atm_price ?? 0) > 0 ? "ATM PRICE MISSING" : Number(item.scan_evaluations ?? 0) > 0 ? "CALCULATED · NO EDGE" : "NOT YET EVALUATED"}</div></div><div><div className="theme-subtle">Latest scan</div><div className="mt-0.5 theme-muted">{item.latest_scan_at_ns ? (Math.max(0, Date.now() - Number(item.latest_scan_at_ns) / 1_000_000) <= 5000 ? "FRESH" : "STALE") + " · " + (Number(item.latest_scan_result_count ?? 0) > 0 ? "RESULTS " + String(item.latest_scan_result_count) : String(item.latest_scan_status ?? "NO EDGE").replaceAll("_", " ")) + " · " + Math.max(0, Math.floor((Date.now() - Number(item.latest_scan_at_ns) / 1_000_000) / 1000)) + "s ago" : "NOT SCANNED"}</div></div><div><div className="theme-subtle">Feed age</div><div className="mt-0.5 theme-muted">{typeof (item.last_tick_age_seconds ?? item.source_age_seconds) === "number" ? Number(item.last_tick_age_seconds ?? item.source_age_seconds).toFixed(1) + "s" : "—"}</div></div><div><div className="theme-subtle">Token resolved</div><div className="mt-0.5 theme-muted">{item.token_resolved === true ? "YES" : item.token_resolved === false ? "NO" : "UNKNOWN"}</div></div><div><div className="theme-subtle">Underlying price</div><div className="mt-0.5 theme-muted">{String(item.last_price ?? item.last_underlying_price ?? item.underlying_price ?? item.price ?? "—")}</div></div><div><div className="theme-subtle">Expiry / ATM</div><div className="mt-0.5 theme-muted">{formatExpiry(item.expiry)} · ATM {String(item.atm_strike ?? "—")}</div></div><div><div className="theme-subtle">Futures / Calls / Puts</div><div className="mt-0.5 theme-muted">{String(item.future_count ?? "—")} / {String(item.call_count ?? "—")} / {String(item.put_count ?? "—")}</div></div><div className="col-span-2"><div className="theme-subtle">Feed blocker</div><div className="mt-0.5 break-words theme-muted">{String(item.feed_reason ?? item.state_reason ?? "—").replaceAll("_", " ")}</div></div><div className="col-span-2"><div className="theme-subtle">Reason / blocker</div><div className="mt-0.5 break-words theme-muted">{String(item.reason ?? item.blocker ?? "—").replaceAll("_", " ")}</div></div></div></div>)}</div><div className="mt-3 overflow-x-auto rounded-lg border theme-border"><table className="w-full min-w-[720px] text-left text-xs"><thead className="theme-surface-2 theme-muted"><tr>{["Symbol","Class","Status","Latest scan","Scan outcome (cumulative)","Feed state","Token","Expiry","Futures","Calls","Puts","CE/PE pairs","ATM strikes","Selected ATM","ATM misses","ATM errors","Config errors","Calculation errors","Calculations","Pairs evaluated","Results emitted","Empty scans","Underlying price","Feed age","Feed blocker","Reason"].map(label => <th key={label} className="px-3 py-2 font-semibold">{label}</th>)}</tr></thead><tbody>{rows.map((item, index) => <tr key={String(item.underlying ?? index)} className="border-t theme-border"><td className="px-3 py-2 font-semibold theme-text">{String(item.underlying ?? item.symbol ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.instrument_class ?? item.asset_class ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.status ?? (item.ready === true || item.atm_ready === true ? "READY" : item.ready === false || item.atm_ready === false ? "WAITING_FOR_ATM" : "—")).replaceAll("_", " ")}</td><td className="px-3 py-2 theme-muted">{item.latest_scan_at_ns ? (Math.max(0, Date.now() - Number(item.latest_scan_at_ns) / 1_000_000) <= 5000 ? "FRESH" : "STALE") + " · " + (item.latest_scan_status && item.latest_scan_status !== "COMPLETED" && item.latest_scan_status !== "RESULTS" && item.latest_scan_status !== "NO_EDGE" ? String(item.latest_scan_status).replaceAll("_", " ") : Number(item.latest_scan_result_count ?? 0) > 0 ? "RESULTS: " + String(item.latest_scan_result_count) : "NO EDGE") + " · " + quoteTimestamp({timestamp_ns: item.latest_scan_at_ns}) + " · " + Math.max(0, Math.floor((Date.now() - Number(item.latest_scan_at_ns) / 1_000_000) / 1000)) + "s ago" : "NOT SCANNED"}</td><td className="px-3 py-2 theme-muted">{Number(item.opportunities_emitted ?? 0) > 0 ? "OPPORTUNITY EMITTED" : Number(item.scan_calculation_errors ?? 0) > 0 ? "CALCULATION ERROR" : Number(item.config_provider_errors ?? 0) > 0 ? "CONFIG ERROR" : Number(item.atm_provider_errors ?? 0) > 0 ? "ATM LOOKUP ERROR" : Number(item.missing_atm_price ?? 0) > 0 ? "ATM PRICE MISSING" : Number(item.scan_evaluations ?? 0) > 0 ? "CALCULATED · NO EDGE" : Number(item.successful_pairs ?? 0) > 0 ? "PAIRS SEEN · NOT EVALUATED" : item.feed_state === "LIVE" && Number(item.complete_pair_count ?? 0) === 0 ? "WAITING FOR CE/PE PAIR" : "NOT YET EVALUATED"}</td><td className="px-3 py-2 theme-muted">{String(item.feed_state ?? "—").replaceAll("_", " ")}</td><td className="px-3 py-2 theme-muted">{item.token_resolved === true ? "YES" : item.token_resolved === false ? "NO" : "—"}</td><td className="px-3 py-2 theme-muted">{formatExpiry(item.expiry)}</td><td className="px-3 py-2 theme-muted">{String(item.future_count ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.call_count ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.put_count ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.complete_pair_count ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.concrete_strike_count ?? item.strike_count ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.atm_strike ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.missing_atm_price ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.atm_provider_errors ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.config_provider_errors ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.scan_calculation_errors ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.scan_evaluations ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.successful_pairs ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.opportunities_emitted ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.empty_calculations ?? "—")}</td><td className="px-3 py-2 theme-muted">{String(item.last_price ?? item.underlying_price ?? item.last_underlying_price ?? item.price ?? (item.underlying_price_present === true || item.has_underlying_price === true ? "present" : "—"))}</td><td className="px-3 py-2 theme-muted">{typeof (item.last_tick_age_seconds ?? item.source_age_seconds) === "number" ? Number(item.last_tick_age_seconds ?? item.source_age_seconds).toFixed(1) + "s" : "—"}</td><td className="px-3 py-2 theme-muted">{String(item.feed_reason ?? "—").replaceAll("_", " ")}</td><td className="px-3 py-2 theme-muted">{String(item.reason ?? item.blocker ?? "—").replaceAll("_", " ")}</td></tr>)}</tbody></table></div></>}
-            </div>;
-          })()}
-        </Card>
-      )}
+}
 
-      {slug !== "box-spread" && (
+      {!["scanner", "calendar-spread", "synthetic-arbitrage"].includes(slug) && (
       <Card className="theme-border theme-surface p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Activity className="h-4 w-4 theme-accent" /> Live {c.pairTitle}</h2><p className="mt-1 text-xs theme-muted">Real backend pairs stay visible during brief empty/error snapshots; retained rows are clearly marked STALE.</p></div>
@@ -2063,7 +1819,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         <button type="button" onClick={() => { setCopyFallbackText(""); setCopyStatus(""); }} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text">Close</button>
       </div>}
 
-      {slug !== "box-spread" && (
+      {!["box-spread", "scanner", "calendar-spread", "synthetic-arbitrage"].includes(slug) && (
       <div className="grid gap-4 xl:grid-cols-3">
         <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><Bell className="h-4 w-4 theme-accent" /> Strategy Alerts</div><p className="mt-2 text-xs leading-5 theme-muted">Scanner-wide alerts remain separate from live opportunity rendering.</p><Link href="/custom-alert" className="mt-3 inline-flex text-xs font-semibold theme-accent">Open alerts →</Link></Card>
         <Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner Safety Boundary</div><p className="mt-2 text-xs leading-5 theme-muted">This workspace reads live scanner output only. Broker orders remain OFF and no paper execution logic is changed.</p></Card>

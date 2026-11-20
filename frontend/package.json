@@ -14,7 +14,8 @@
     "cf:deploy": "opennextjs-cloudflare deploy",
     "cf:deploy:local": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "postbuild": "node scripts/cloudflare-postbuild.mjs",
-    "test:page-push-recovery": "node --test scripts/page-push-recovery.test.mjs"
+    "test:page-push-recovery": "node --test scripts/page-push-recovery.test.mjs",
+    "test:scanner-ui-removal": "node --test scripts/scanner-ui-removal.test.mjs"
   },
   "dependencies": {
     "next": "15.5.29",
