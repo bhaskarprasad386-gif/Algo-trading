@@ -1208,12 +1208,18 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   useEffect(() => {
     if (isCustom || !c.pairEndpoint) return;
-    void loadPairs();
-    if (pagePushStatus === "LIVE" && ["calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
+    if (pagePushStatus === "LIVE" && ["calendar-spread", "synthetic-arbitrage"].includes(slug)) {
+      return () => { pairRequestSequence.current += 1; };
+    }
+    let cancelled = false;
     let timer: number | undefined;
-    const refresh = async () => { await loadPairs(); if (pagePushStatus !== "LIVE") timer = window.setTimeout(() => { void refresh(); }, 15000); };
+    const refresh = async () => {
+      if (cancelled) return;
+      await loadPairs();
+      if (!cancelled) timer = window.setTimeout(() => { void refresh(); }, 15000);
+    };
     void refresh();
-    return () => { if (timer !== undefined) window.clearTimeout(timer); pairRequestSequence.current += 1; };
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); pairRequestSequence.current += 1; };
   }, [isCustom, c.pairEndpoint, pagePushStatus, slug]);
 
   useEffect(() => {
@@ -1309,11 +1315,15 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       return;
     }
     if (pagePushStatus === "LIVE" && ["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug)) return;
-    void load(true);
+    let cancelled = false;
     let timer: number | undefined;
-    const refresh = async () => { await load(true); if (pagePushStatus !== "LIVE") timer = window.setTimeout(() => { void refresh(); }, 15000); };
+    const refresh = async () => {
+      if (cancelled) return;
+      await load(true);
+      if (!cancelled) timer = window.setTimeout(() => { void refresh(); }, 15000);
+    };
     void refresh();
-    return () => { if (timer !== undefined) window.clearTimeout(timer); loadRequestRef.current += 1; };
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); loadRequestRef.current += 1; };
   }, [endpoint, isCustom, slug, pagePushStatus]);
 
   const filteredRows = useMemo(() => {
