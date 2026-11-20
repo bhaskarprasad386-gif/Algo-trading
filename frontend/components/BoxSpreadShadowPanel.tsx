@@ -51,9 +51,15 @@ export default function BoxSpreadShadowPanel() {
       setLoading(false);
       return;
     }
-    void refresh();
-    const id = window.setInterval(() => void refresh(), 15000);
-    return () => { window.clearInterval(id); requestSequence.current += 1; };
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      if (cancelled) return;
+      await refresh();
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 15000);
+    };
+    void poll();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); requestSequence.current += 1; };
   }, [refresh, pagePushStatus]);
   useEffect(() => {
     if (!pagePushData) return;
