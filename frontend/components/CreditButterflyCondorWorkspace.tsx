@@ -136,6 +136,7 @@ export default function CreditButterflyCondorWorkspace({ expiryType }: { expiryT
         setLoading(false);
         setError("");
       } else {
+        setLoading(false);
         setError("Received an incomplete shared market snapshot; retaining the last valid data.");
       }
     }
