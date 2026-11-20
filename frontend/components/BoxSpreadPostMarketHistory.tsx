@@ -219,8 +219,11 @@ export default function BoxSpreadPostMarketHistory() {
       appendInFlight.current = true;
       setLoadingMore(true);
     } else {
-      // A fresh filtered/revision load supersedes pagination. Release the
-      // append gate immediately so the new page can paginate after it completes.
+      // A fresh filtered/revision load supersedes both pagination and the
+      // all-history sort. Invalidate its sequence so a late sort cannot replace
+      // this newly requested page with stale rows.
+      sortingRequestSequence.current += 1;
+      setSortingAll(false);
       appendInFlight.current = false;
       setLoadingMore(false);
       setLoading(true);
