@@ -32,6 +32,13 @@ export default function BoxSpreadShadowPanel() {
   const { data: pagePushData, status: pagePushStatus, lastMessageAt } = usePagePush("box-spread");
   const requestSequence = useRef(0);
   const refresh = useCallback(async () => {
+    // The live PagePush snapshot is authoritative; a manual REST response must
+    // not overwrite it when the user refreshes while the channel is LIVE.
+    if (pagePushStatus === "LIVE") {
+      requestSequence.current += 1;
+      setLoading(false);
+      return;
+    }
     const requestId = ++requestSequence.current;
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -43,7 +50,7 @@ export default function BoxSpreadShadowPanel() {
       setData(body); setError(null);
     } catch (e) { if (requestId === requestSequence.current) setError(e instanceof Error ? e.message : "Unable to load shadow diagnostics"); }
     finally { if (requestId === requestSequence.current) setLoading(false); }
-  }, []);
+  }, [pagePushStatus]);
   useEffect(() => {
     if (pagePushStatus === "LIVE") {
       // A live channel supersedes any REST diagnostics request already in flight.
