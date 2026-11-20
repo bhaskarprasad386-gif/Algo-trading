@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isCurrentRecoveryResponse, mergeUniqueAlerts, freshEarlyEntryAlerts } from "../lib/page-push-recovery.mjs";
+import { isCurrentRecoveryResponse, isCurrentPagePushRequest, mergeUniqueAlerts, freshEarlyEntryAlerts } from "../lib/page-push-recovery.mjs";
 
 test("REST recovery response applies only while its request remains current", () => {
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:8,latestSequence:8,responseValid:true}),true);
@@ -27,4 +27,14 @@ test("fresh early-entry detection respects seen IDs and state", () => {
   const rows=[{id:5,state:"EARLY_ENTRY"},{id:6,state:"WATCH"},{id:7,state:"EARLY_ENTRY"}];
   assert.deepEqual(freshEarlyEntryAlerts(rows,seen),[rows[2]]);
   assert.deepEqual([...seen],[5]);
+});
+
+
+test("PagePush invalidates in-flight REST recovery across superseding request sequences", () => {
+  assert.equal(isCurrentPagePushRequest({active:true,requestSequence:3,latestSequence:3}),true);
+  assert.equal(isCurrentPagePushRequest({active:true,requestSequence:2,latestSequence:3}),false);
+  assert.equal(isCurrentPagePushRequest({active:false,requestSequence:3,latestSequence:3}),false);
+  assert.equal(isCurrentPagePushRequest({active:true,requestSequence:-1,latestSequence:-1}),false);
+  assert.equal(isCurrentPagePushRequest({active:true,requestSequence:1.2,latestSequence:1.2}),false);
+  assert.equal(isCurrentPagePushRequest({active:true,requestSequence:Number.MAX_SAFE_INTEGER+1,latestSequence:Number.MAX_SAFE_INTEGER+1}),false);
 });
