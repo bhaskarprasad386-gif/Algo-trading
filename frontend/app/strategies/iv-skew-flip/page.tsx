@@ -413,6 +413,9 @@ export default function IVSkewFlipPage() {
   const [alertFetchError,setAlertFetchError]=useState("");
   const seenAlertIds=useRef<Set<number>>(new Set());
   const alertFetchSequenceRef=useRef(0);
+  const basketFetchSequenceRef=useRef(0);
+  const durableHistoryFetchSequenceRef=useRef(0);
+  const chartHistoryFetchSequenceRef=useRef(0);
   const selectedNifty="NIFTY_WEEKLY" as const;
   const [busy,setBusy]=useState(false);
   const [snapshotBusy,setSnapshotBusy]=useState(false);
@@ -463,10 +466,11 @@ export default function IVSkewFlipPage() {
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
+      const requestSequence=++basketFetchSequenceRef.current;
       try{
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/baskets`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&response.ok)setBasketRegistry(body as BasketRegistry);
+        if(active&&requestSequence===basketFetchSequenceRef.current&&response.ok)setBasketRegistry(body as BasketRegistry);
       }catch{/* keep last known basket registry state */}
     };
     // Load the durable registry once when synchronized; otherwise the recovery
@@ -480,10 +484,11 @@ export default function IVSkewFlipPage() {
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
+      const requestSequence=++durableHistoryFetchSequenceRef.current;
       try{
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY${requestedExpiry?`&expiry=${encodeURIComponent(requestedExpiry)}`:""}`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
+        if(active&&requestSequence===durableHistoryFetchSequenceRef.current&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
       }catch{/* keep the last successful durable history response */}
     };
     // Load durable history once when synchronized; otherwise the recovery loop
@@ -498,12 +503,13 @@ export default function IVSkewFlipPage() {
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
+      const requestSequence=++chartHistoryFetchSequenceRef.current;
       try{
         const expiry=activeWeeklyExpiry;
         const query=expiry?`&expiry=${encodeURIComponent(expiry)}`:"";
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/timeseries?underlying=NIFTY&window_seconds=1800&limit=20000${query}`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&response.ok&&body.status==="ok")setChartHistory(body as Row);
+        if(active&&requestSequence===chartHistoryFetchSequenceRef.current&&response.ok&&body.status==="ok")setChartHistory(body as Row);
       }catch{/* keep last successful chart window */}
     };
     // Load chart history once when synchronized; otherwise the recovery loop
@@ -565,6 +571,9 @@ export default function IVSkewFlipPage() {
     // Any authoritative PagePush invalidates a status REST read that started
     // before this event, even when it only updates runner config fields.
     statusFetchSequenceRef.current+=1;
+    basketFetchSequenceRef.current+=1;
+    durableHistoryFetchSequenceRef.current+=1;
+    chartHistoryFetchSequenceRef.current+=1;
     if(String(pagePushData.__event??"").toUpperCase()==="REMOVE"){
       const removedKeys=Array.isArray(pagePushData.remove_keys)
         ? pagePushData.remove_keys.filter((key):key is string=>typeof key==="string")
