@@ -470,7 +470,7 @@ export default function IVSkewFlipPage() {
       try{
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/baskets`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&requestSequence===basketFetchSequenceRef.current&&response.ok)setBasketRegistry(body as BasketRegistry);
+        if(isCurrentPagePushRequest({active,requestSequence,latestSequence:basketFetchSequenceRef.current})&&response.ok)setBasketRegistry(body as BasketRegistry);
       }catch{/* keep last known basket registry state */}
     };
     // Load the durable registry once when synchronized; otherwise the recovery
@@ -488,7 +488,7 @@ export default function IVSkewFlipPage() {
       try{
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=NIFTY${requestedExpiry?`&expiry=${encodeURIComponent(requestedExpiry)}`:""}`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&requestSequence===durableHistoryFetchSequenceRef.current&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
+        if(isCurrentPagePushRequest({active,requestSequence,latestSequence:durableHistoryFetchSequenceRef.current})&&response.ok&&body.status==="ok")setDurableHistory(body as Row);
       }catch{/* keep the last successful durable history response */}
     };
     // Load durable history once when synchronized; otherwise the recovery loop
@@ -509,7 +509,7 @@ export default function IVSkewFlipPage() {
         const query=expiry?`&expiry=${encodeURIComponent(expiry)}`:"";
         const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/timeseries?underlying=NIFTY&window_seconds=1800&limit=20000${query}`,{cache:"no-store"});
         const body=await response.json();
-        if(active&&requestSequence===chartHistoryFetchSequenceRef.current&&response.ok&&body.status==="ok")setChartHistory(body as Row);
+        if(isCurrentPagePushRequest({active,requestSequence,latestSequence:chartHistoryFetchSequenceRef.current})&&response.ok&&body.status==="ok")setChartHistory(body as Row);
       }catch{/* keep last successful chart window */}
     };
     // Load chart history once when synchronized; otherwise the recovery loop
