@@ -141,6 +141,7 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
     let watchdogTimer: ReturnType<typeof setInterval> | undefined;
     let lastTransportAt = 0;
     let connectionStartedAt = 0;
+    let initialSnapshotTimer: ReturnType<typeof setTimeout> | undefined;
     let retryMs = 1000;
 
     const connect = () => {
@@ -171,6 +172,17 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         // page snapshot arrives. Keep REST recovery enabled in the meantime.
         setStatus("CONNECTING");
         socket.send(JSON.stringify({ action: "subscribe", page }));
+        // Heartbeats can keep the transport healthy even when the initial
+        // page snapshot never arrives. Bound the synchronization wait and
+        // trigger authoritative resync instead of leaving this channel stuck.
+        if (initialSnapshotTimer) clearTimeout(initialSnapshotTimer);
+        initialSnapshotTimer = setTimeout(() => {
+          initialSnapshotTimer = undefined;
+          if (!hasSnapshotRef.current && socketRef.current === socket && !disposed) {
+            setStatus("RECONNECTING");
+            resync();
+          }
+        }, 8000);
       };
       socket.onmessage = (event) => {
         // Never allow a retired transport to deliver stale snapshots/deltas.
@@ -214,6 +226,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
           }
           sequenceRef.current = sequence;
           hasSnapshotRef.current = true;
+          if (initialSnapshotTimer) clearTimeout(initialSnapshotTimer);
+          initialSnapshotTimer = undefined;
           setLastMessageAt(Date.now());
           resyncPendingRef.current = false;
           if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
@@ -290,6 +304,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
         resyncTimerRef.current = undefined;
         hasSnapshotRef.current = false;
         resyncPendingRef.current = false;
+        if (initialSnapshotTimer) clearTimeout(initialSnapshotTimer);
+        initialSnapshotTimer = undefined;
         setStatus("RECONNECTING");
         retryTimer = setTimeout(connect, retryMs);
         retryMs = Math.min(15000, retryMs * 2);
@@ -324,6 +340,8 @@ export function PagePushProvider({ page, children }: { page: string | null; chil
       if (watchdogTimer) clearInterval(watchdogTimer);
       if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
       resyncTimerRef.current = undefined;
+      if (initialSnapshotTimer) clearTimeout(initialSnapshotTimer);
+      initialSnapshotTimer = undefined;
       socketRef.current?.close();
       socketRef.current = null;
       connectionStartedAt = 0;
