@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { usePagePush } from "@/components/page-push-provider";
 import { Activity, ArrowDownUp, Radio, Wifi, WifiOff } from "lucide-react";
 
@@ -65,7 +65,7 @@ function fmt(value: unknown, digits = 2) {
 function quote(row: Opportunity, priceField: string, quantityField: string) {
   return { price: n(row, priceField), qty: n(row, quantityField) };
 }
-function LegQuote({ row, name, price, qty, side, depthKey }: { row: Opportunity; name: string; price: string; qty: string; side: "BUY" | "SELL"; depthKey: string }) {
+const LegQuote = memo(function LegQuote({ row, name, price, qty, side, depthKey }: { row: Opportunity; name: string; price: string; qty: string; side: "BUY" | "SELL"; depthKey: string }) {
   const q = quote(row, price, qty);
   const buy = side === "BUY";
   const depth = row.market_depth && typeof row.market_depth === "object"
@@ -94,7 +94,7 @@ function LegQuote({ row, name, price, qty, side, depthKey }: { row: Opportunity;
       </div>
     </div>
   );
-}
+});
 
 export default function LiveOpportunityGrid() {
   const { status: pageStatus, data: pageData, lastMessageAt } = usePagePush("box-spread");
