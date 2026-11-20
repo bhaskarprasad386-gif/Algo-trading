@@ -137,7 +137,6 @@ export default function HomePage() {
             currentSocket.close();
           }
         }, 5000);
-        setWsStatus("connected");
       };
       currentSocket.onmessage = (event) => {
         if (socket !== currentSocket || cancelled) return;
@@ -151,6 +150,7 @@ export default function HomePage() {
           lastDashboardServerSnapshotTimeRef.current = serverSnapshotTime;
           retryMs = 1000;
           lastSnapshotAt = Date.now();
+          setWsStatus("connected");
           setLastDashboardMessageAt(lastSnapshotAt);
           const observedAt = message?.scanner?.health?.last_observation_at;
           const observedTime = observedAt == null ? NaN : new Date(observedAt).getTime();
