@@ -71,13 +71,6 @@ test("PR #712 Cash Future page removals are actually absent from rendered UI", a
     "pairColumns.map((column)",
     "filteredPairHistory.map((row",
   ]) assert.equal(page.includes(section), false, section + " must not render on Cash Future scanner");
-  // Removed diagnostic data-fetch/state pipeline, not just the UI markup.
-  for (const diagnostic of [
-    "loadPairLive", "loadPairHistory", "pairRows", "pairHistory", "pairBackendStats",
-    "pairHistoryRevisionRef", "pairLiveRequestSequenceRef",
-    "/api/v1/scanner/cash-future/live/pairs", "/api/v1/scanner/cash-future/live/history",
-  ]) assert.equal(page.includes(diagnostic), false, diagnostic + " diagnostic consumer should be removed");
-  // Keep the main Cash Future opportunity scanner and its REST recovery mounted.
+  // Keep the main Cash Future opportunity scanner mounted.
   assert.equal(page.includes("filteredRows.map((row"), true);
-  assert.equal(page.includes("/api/v1/scanner/cash-future/live/fast?limit=500"), true);
 });

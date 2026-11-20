@@ -101,6 +101,24 @@ function ScannerContent() {
   }, [pagePushStatus]);
 
   useEffect(() => {
+    // Invalidate pending REST recovery when PagePush becomes authoritative.
+    if (pagePushStatus === "LIVE") liveRequestSequenceRef.current += 1;
+    if (marketSession === "OPEN") {
+      if (pagePushStatus !== "LIVE") void load();
+    } else if (pagePushStatus !== "LIVE") {
+      setLoading(false);
+      setRows([]);
+      setError(null);
+    }
+    if (pagePushStatus === "LIVE") return;
+    const liveTimer = window.setInterval(() => {
+      if (marketSession !== "OPEN") return;
+      void load();
+    }, 15000);
+    return () => window.clearInterval(liveTimer);
+  }, [marketSession, pagePushStatus]);
+
+  useEffect(() => {
     if (!pagePushData) return;
     // Any page push supersedes outstanding REST fallback payloads, including REMOVE.
     liveRequestSequenceRef.current += 1;
@@ -229,5 +247,4 @@ export default function ScannerPage() {
     </Suspense>
   );
 }
-
 
