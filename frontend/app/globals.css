@@ -885,3 +885,24 @@ html[data-theme="white"] .box-spread-page .box-live-opportunities article [class
     grid-template-columns: 1fr;
   }
 }
+
+/* Box Spread mobile leg-depth column alignment and visual separation */
+@media (max-width: 640px) {
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 > div:last-child > div:not(:first-child) {
+    min-height: 1.35rem;
+    align-items: center;
+  }
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 > div:last-child > div:not(:first-child) > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 > div:last-child > div:not(:first-child) > span:first-child {
+    padding-right: .25rem;
+  }
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 > div:last-child > div:not(:first-child) > span:last-child {
+    text-align: right;
+  }
+  .box-spread-page .box-live-opportunities article .rounded-lg.border.theme-border.theme-surface-2 > div:last-child > div:first-child span {
+    letter-spacing: .025em;
+  }
+}
