@@ -2,6 +2,7 @@ import time
 from types import SimpleNamespace
 
 from app.scanner import live_box_spread_websocket as websocket
+from app.scanner import page_push_websocket as page_push
 
 
 def _result(now_ns=None):
@@ -159,7 +160,7 @@ def test_publish_emits_empty_frame_when_scan_has_no_qualifying_rows(monkeypatch)
 def test_page_snapshot_falls_back_to_local_live_getter_when_shared_snapshot_unavailable(monkeypatch):
     now_ns = time.time_ns()
     monkeypatch.setattr(websocket.time, "time_ns", lambda: now_ns)
-    monkeypatch.setattr(websocket, "_shared_box_opportunities_snapshot", lambda: {"snapshot_status": "UNAVAILABLE"}, raising=False)
+    monkeypatch.setattr(page_push, "_shared_box_opportunities_snapshot", lambda: {"snapshot_status": "UNAVAILABLE"})
     monkeypatch.setattr(websocket, "_latest_getter", lambda: [_result(now_ns)])
     frame = websocket._page_snapshot()
     assert len(frame["opportunities"]) == 1
