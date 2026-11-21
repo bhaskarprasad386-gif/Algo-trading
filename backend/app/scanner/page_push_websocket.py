@@ -118,12 +118,19 @@ def _requires_resync(last_sequence: int, incoming_sequence: int, snapshot_requir
     return bool(snapshot_required or _sequence_gap(last_sequence, incoming_sequence))
 
 
-def _events_after(cursor: int, limit: int = 100) -> list[dict[str, Any]]:
+def _events_after(page: str, cursor_sequence: int, limit: int = 100) -> list[dict[str, Any]]:
+    """Read journal rows by their per-page transactionally serialized sequence.
+
+    A global auto-increment ID is not a commit-order cursor: transactions can
+    reserve IDs and commit out of order, allowing a tailer to permanently skip
+    a late lower-ID commit. Per-page sequence values are advanced under the
+    sequence-row write lock in the same transaction as the event insert.
+    """
     with engine.connect() as connection:
         rows = connection.execute(
             select(events.c.id, events.c.page, events.c.page_sequence, events.c.event, events.c.data)
-            .where(events.c.id > cursor)
-            .order_by(events.c.id.asc()).limit(limit + 1)
+            .where(events.c.page == page, events.c.page_sequence > cursor_sequence)
+            .order_by(events.c.page_sequence.asc()).limit(limit + 1)
         ).all()
     return [
         {"id": int(row[0]), "page": str(row[1]), "sequence": int(row[2]),
@@ -175,9 +182,16 @@ def _shared_box_opportunities_snapshot() -> dict[str, Any]:
 
 def _snapshot(page: str) -> dict[str, Any]:
     provider = _snapshot_providers.get(page)
+    if not callable(provider):
+        # A missing worker-local provider is not an authoritative empty page.
+        # Signal the client to retain REST recovery and retry synchronization.
+        return {"snapshot_status": "UNAVAILABLE"}
     try:
-        result = provider() if callable(provider) else {}
-        return result if isinstance(result, dict) else {}
+        result = provider()
+        if not isinstance(result, dict):
+            _log.error("Scanner page snapshot provider returned non-object for %s", page)
+            return {"snapshot_status": "UNAVAILABLE"}
+        return result
     except Exception:
         _log.exception("Scanner page snapshot failed for %s", page)
         return {"snapshot_status": "UNAVAILABLE"}
@@ -295,48 +309,60 @@ def publish_collection_change(
 
 async def _journal_dispatch_loop() -> None:
     global _dispatch_ready
-    try:
-        cursor = await asyncio.to_thread(_latest_event_id)
-    except Exception:
-        cursor = 0
-        _log.exception("Scanner page WebSocket journal baseline failed")
+    # Per-page cursors avoid relying on database identity IDs as commit order.
+    # Each page sequence is serialized by its sequence row in publish_page_update.
+    cursors: dict[str, int] = {page: 0 for page in PAGE_CHANNELS}
+    # Start from zero, not a "latest" baseline. The latest sequence can
+    # include committed events not yet fetched; skipping to it on dispatcher
+    # startup loses those events for subscribers joining during the startup
+    # window. Replay retained rows, and let per-subscriber snapshots bridge
+    # retention gaps.
     if _dispatch_ready is not None:
         _dispatch_ready.set()
     while _subscribers:
+        progressed = False
         try:
-            rows = await asyncio.to_thread(_events_after, cursor)
-            if not rows:
-                await asyncio.sleep(DISPATCH_POLL_SECONDS)
-                continue
-            for row in rows:
-                cursor = row["id"]
-                frame = {
-                    "type": "page_update", "page": row["page"],
-                    "event": row["event"], "sequence": row["sequence"],
-                    "generated_at": datetime.now(timezone.utc).isoformat(),
-                    "data": row["data"],
-                }
-                for queue, channels in tuple(_subscribers):
-                    if row["page"] not in channels:
+            for page in PAGE_CHANNELS:
+                rows = await asyncio.to_thread(_events_after, page, cursors.get(page, 0))
+                for row in rows:
+                    sequence = row["sequence"]
+                    # Keep this page cursor monotonic and only advance after the
+                    # committed row has been fetched and processed.
+                    if sequence <= cursors.get(page, 0):
                         continue
-                    if queue.full():
-                        while not queue.empty():
-                            try:
-                                queue.get_nowait()
-                            except asyncio.QueueEmpty:
-                                break
-                        for subscribed_page in channels:
-                            latest_sequence = (
-                                row["sequence"] if subscribed_page == row["page"]
-                                else await asyncio.to_thread(_latest_page_sequence, subscribed_page)
-                            )
-                            queue.put_nowait({
-                                "type": "page_update", "page": subscribed_page,
-                                "event": "SNAPSHOT_REQUIRED", "sequence": latest_sequence,
-                                "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
-                            })
-                    else:
-                        queue.put_nowait(frame)
+                    cursors[page] = sequence
+                    progressed = True
+                    frame = {
+                        "type": "page_update", "page": row["page"],
+                        "event": row["event"], "sequence": sequence,
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                        "data": row["data"],
+                    }
+                    for queue, channels in tuple(_subscribers):
+                        if page not in channels:
+                            continue
+                        if queue.full():
+                            while not queue.empty():
+                                try:
+                                    queue.get_nowait()
+                                except asyncio.QueueEmpty:
+                                    break
+                            for subscribed_page in channels:
+                                # Recovery markers must carry the latest durable cursor,
+                                # not merely the overflowing event's sequence. Later events
+                                # may already be committed while this page is being dispatched.
+                                latest_sequence = await asyncio.to_thread(
+                                    _latest_page_sequence, subscribed_page
+                                )
+                                queue.put_nowait({
+                                    "type": "page_update", "page": subscribed_page,
+                                    "event": "SNAPSHOT_REQUIRED", "sequence": latest_sequence,
+                                    "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
+                                })
+                        else:
+                            queue.put_nowait(frame)
+            if not progressed:
+                await asyncio.sleep(DISPATCH_POLL_SECONDS)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -364,11 +390,33 @@ async def _subscribe_local() -> asyncio.Queue:
 
 
 def _set_channels(queue: asyncio.Queue, channels: frozenset[str]) -> None:
+    previous = frozenset()
     for entry in tuple(_subscribers):
         if entry[0] is queue:
+            previous = entry[1]
             _subscribers.discard(entry)
     _subscribers.add((queue, channels))
-
+    # Activating a channel can race the journal tailer's global cursor: it may
+    # have advanced past events while this subscriber had no active channels.
+    # Force a snapshot for each newly activated page so that the subscriber
+    # cannot silently start from an incomplete local baseline.
+    newly_activated = channels - previous
+    if newly_activated and not queue.empty():
+        # A pre-existing backlog may belong to channels that were previously
+        # active, or may be stale relative to this newly activated page.
+        # Discard it and recover every active channel from authoritative snapshots.
+        while not queue.empty():
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        newly_activated = channels
+    for page in newly_activated:
+        queue.put_nowait({
+            "type": "page_update", "page": page, "event": "SNAPSHOT_REQUIRED",
+            "sequence": _latest_page_sequence(page),
+            "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
+        })
 
 async def _unsubscribe_local(queue: asyncio.Queue) -> None:
     global _dispatch_task, _dispatch_loop, _dispatch_ready
@@ -420,11 +468,39 @@ async def _restart_event_waiter(queue: asyncio.Queue, event_task: asyncio.Task, 
             break
         if isinstance(queued, dict) and queued.get("page") != page_to_reset:
             preserved.append(queued)
+    overflowed = False
     for frame in preserved:
         try:
             queue.put_nowait(frame)
         except asyncio.QueueFull:
+            overflowed = True
             break
+    if overflowed:
+        # Do not silently lose preserved cross-page frames while restarting
+        # the waiter. The only safe recovery after backlog overflow is a
+        # snapshot marker for every channel currently active on this queue.
+        active_pages = frozenset()
+        for subscriber_queue, channels in tuple(_subscribers):
+            if subscriber_queue is queue:
+                active_pages = channels
+                break
+        while not queue.empty():
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        for page in active_pages or frozenset({page_to_reset}):
+            try:
+                queue.put_nowait({
+                    "type": "page_update", "page": page, "event": "SNAPSHOT_REQUIRED",
+                    "sequence": await asyncio.to_thread(_latest_page_sequence, page),
+                    "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
+                })
+            except asyncio.QueueFull:
+                # Queue is sized for all channels; if that assumption changes,
+                # recovery remains explicit for the markers already enqueued.
+                _log.warning("Page Push recovery marker queue overflow for %s", page)
+                break
     return asyncio.create_task(queue.get())
 
 
