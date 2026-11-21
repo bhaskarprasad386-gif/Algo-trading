@@ -269,9 +269,11 @@ export default function LiveOpportunityGrid() {
   }, [pageData]);
 
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const publishRows = () => {
       const now = Date.now();
       let changed = false;
+      let nextDelay = 1500;
       for (const [key, tracked] of rowsRef.current) {
         const age = now - tracked.lastSeen;
         if (age >= 60000) {
@@ -280,13 +282,19 @@ export default function LiveOpportunityGrid() {
         } else if (age >= 1500 && tracked.status !== "STALE") {
           rowsRef.current.set(key, { ...tracked, status: "STALE" });
           changed = true;
+          nextDelay = Math.min(nextDelay, 60000 - age);
+        } else {
+          // Schedule around the next freshness/retention boundary instead of
+          // waking on a fixed one-second interval when the row set is empty.
+          nextDelay = Math.min(nextDelay, tracked.status === "LIVE" ? 1500 - age : 60000 - age);
         }
       }
       // Skip React renders while no row crosses a freshness/retention boundary.
       if (changed) setRows(Array.from(rowsRef.current.values()).sort((a, b) => b.lastSeen - a.lastSeen));
+      timer = setTimeout(publishRows, Math.max(250, Math.min(1500, nextDelay)));
     };
-    const staleTimer = setInterval(publishRows, 1000);
-    return () => clearInterval(staleTimer);
+    timer = setTimeout(publishRows, 1500);
+    return () => { if (timer) clearTimeout(timer); };
   }, []);
 
   const connection = pageStatus === "LIVE" ? "LIVE" : pageStatus === "CONNECTING" ? "CONNECTING" : "RECONNECTING";
