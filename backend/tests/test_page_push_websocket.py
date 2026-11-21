@@ -529,7 +529,12 @@ def test_journal_dispatch_bounded_queue_recovers_slow_consumer(monkeypatch):
         try:
             await asyncio.wait_for(push._dispatch_ready.wait(), timeout=0.5)
             # Intentionally do not drain the socket queue while 250 updates replay.
-            await asyncio.sleep(0.15)
+            # Wait for bounded pagination to reach the final retained row rather
+            # than relying on a fixed sleep that can flake on slow CI workers.
+            async def replay_finished():
+                while not any(target_page == page and cursor >= 200 for target_page, cursor in cursor_reads):
+                    await asyncio.sleep(0)
+            await asyncio.wait_for(replay_finished(), timeout=2.0)
             assert slow_queue.qsize() <= slow_queue.maxsize
             frames = []
             while not slow_queue.empty():
