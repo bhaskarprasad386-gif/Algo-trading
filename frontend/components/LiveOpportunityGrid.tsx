@@ -116,6 +116,8 @@ const LegQuote = memo(function LegQuote({ row, name, price, qty, side, depthKey 
 type OpportunityCardProps = { tracked: TrackedRow; expiryView: "MONTHLY" | "WEEKLY" };
 const OpportunityCard = memo(function OpportunityCard({ tracked, expiryView }: OpportunityCardProps) {
   const { key, row, lastSeen, status } = tracked;
+  const skew = useMemo(() => { const value = n(row, "timestamp_skew_ms"); return value === null || value < 0 ? "—" : fmt(value, 3) + " ms"; }, [row]);
+  const receivedAgo = useMemo(() => Math.max(0, (Date.now() - lastSeen) / 1000).toFixed(1), [lastSeen]);
   return (
   <article className={"overflow-hidden rounded-xl border " + (status === "LIVE" ? "theme-border theme-surface-2" : "border-amber-500/20 theme-surface-2 opacity-75")}>
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b theme-border px-3 py-3 sm:px-4">
@@ -132,9 +134,9 @@ const OpportunityCard = memo(function OpportunityCard({ tracked, expiryView }: O
                     <span className={"rounded-md px-2 py-1 text-[9px] font-bold " + (status === "LIVE" ? "bg-emerald-400/10 text-emerald-300" : "bg-amber-400/10 text-amber-200")}>{status}</span>
                     <div className="flex flex-col items-end gap-0.5 text-[9px] tabular-nums theme-muted">
                       <span>Quote {quoteTime(row.last_update_timestamp_ns)}</span>
-                      <span>4-leg skew {(() => { const skew = n(row, "timestamp_skew_ms"); return skew === null || skew < 0 ? "—" : fmt(skew, 3) + " ms"; })()}</span>
+                      <span>4-leg skew {skew}</span>
                       <span>Received {timeFmt(lastSeen)} IST</span>
-                      <span className={status === "LIVE" ? "text-emerald-400" : "text-amber-300"}>{status === "LIVE" ? "Updated" : "No update"} {Math.max(0, (Date.now() - lastSeen) / 1000).toFixed(1)}s ago</span>
+                      <span className={status === "LIVE" ? "text-emerald-400" : "text-amber-300"}>{status === "LIVE" ? "Updated" : "No update"} {receivedAgo}s ago</span>
                     </div>
                   </div>
                 </div>
