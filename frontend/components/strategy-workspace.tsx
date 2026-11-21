@@ -914,13 +914,17 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     let hasLoaded = false;
     let inFlight = false;
     const loadSelection = async () => {
-      const requestSequence = ++indexSelectionRequestSequence.current;
       if (inFlight) return;
       inFlight = true;
+      const requestSequence = ++indexSelectionRequestSequence.current;
       if (!hasLoaded) setIndexSelectionLoading(true);
       try {
         const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
-        const response = await fetch(base + "/api/v1/scanner/box-spread/index-selection", { cache: "no-store" });
+        const controller = new AbortController();
+        const response = await fetch(base + "/api/v1/scanner/box-spread/index-selection", {
+          cache: "no-store",
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+        });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Unable to load saved index selection");
         const symbols = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : [];
