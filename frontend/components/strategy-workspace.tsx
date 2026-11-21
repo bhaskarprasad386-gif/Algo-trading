@@ -604,7 +604,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [feedErrors, setFeedErrors] = useState<{ delivery: number; normalizer: number } | null>(null);
   const [scannerDiagnostics, setScannerDiagnostics] = useState<Record<string, unknown> | null>(null);
   const [calendarRuntime, setCalendarRuntime] = useState<Record<string, unknown> | null>(null);
-  const [boxDepthShadow, setBoxDepthShadow] = useState<any>(null);
+  const [boxDepthShadow, setBoxDepthShadow] = useState<Record<string, unknown> | null>(null);
   const [indexSelectionDraft, setIndexSelectionDraft] = useState<string[]>([]);
   const [weeklyOnlyDraft, setWeeklyOnlyDraft] = useState<string[]>([]);
   const [activeIndexSymbols, setActiveIndexSymbols] = useState<string[]>([]);
