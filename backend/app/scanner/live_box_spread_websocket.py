@@ -1,10 +1,12 @@
 """Low-latency WebSocket fan-out for Box Spread scanner results."""
 import asyncio
+import logging
 from datetime import datetime, timezone
 import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.scanner.page_push_websocket import configure_snapshot_provider, publish_page_update
 
+_log = logging.getLogger(__name__)
 router = APIRouter(tags=["box-spread"])
 _subscribers = set()
 _loop = None
