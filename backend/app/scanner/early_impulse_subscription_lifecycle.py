@@ -92,10 +92,12 @@ class EarlyImpulseSubscriptionLifecycle:
             added = tuple(item for key, item in staged.items() if key not in old)
             removed = tuple(item for key, item in old.items() if key not in staged)
             if self._enabled:
+                if removed and self._unsubscribe is None:
+                    raise RuntimeError("consumer-scoped unsubscribe transport is not wired")
                 if added:
                     self._subscribe(added)
                 try:
-                    if removed and self._unsubscribe:
+                    if removed:
                         self._unsubscribe(removed)
                 except Exception:
                     if added and self._unsubscribe:
