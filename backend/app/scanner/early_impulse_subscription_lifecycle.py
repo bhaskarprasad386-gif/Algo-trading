@@ -185,7 +185,7 @@ class ShoonyaConsumerSubscriptionMux:
                     if existing_owners[name] != item:
                         raise ValueError("consumer cannot replace an owned descriptor in-place")
                     continue
-n                if not existing_owners:
+                if not existing_owners:
                     physical_add.append(item)
                 existing_owners[name] = item
                 staged[key] = existing_owners
