@@ -353,7 +353,22 @@ def _set_channels(queue: asyncio.Queue, channels: frozenset[str]) -> None:
     # have advanced past events while this subscriber had no active channels.
     # Force a snapshot for each newly activated page so that the subscriber
     # cannot silently start from an incomplete local baseline.
-    for page in channels - previous:
+    newly_activated = channels - previous
+    if newly_activated and queue.full():
+        retained: list[dict[str, Any]] = []
+        while not queue.empty():
+            try:
+                queued = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if isinstance(queued, dict) and queued.get("page") not in newly_activated:
+                retained.append(queued)
+        for frame in retained:
+            try:
+                queue.put_nowait(frame)
+            except asyncio.QueueFull:
+                break
+    for page in newly_activated:
         try:
             queue.put_nowait({
                 "type": "page_update", "page": page, "event": "SNAPSHOT_REQUIRED",
@@ -361,8 +376,21 @@ def _set_channels(queue: asyncio.Queue, channels: frozenset[str]) -> None:
                 "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
             })
         except asyncio.QueueFull:
-            # The dispatcher's overflow handling will also request a snapshot.
-            break
+            # Never silently activate a channel without a recovery marker.
+            # Queue saturation invalidates the entire local backlog.
+            while not queue.empty():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            try:
+                queue.put_nowait({
+                    "type": "page_update", "page": page, "event": "SNAPSHOT_REQUIRED",
+                    "sequence": _latest_page_sequence(page),
+                    "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
+                })
+            except asyncio.QueueFull:
+                break
 
 
 async def _unsubscribe_local(queue: asyncio.Queue) -> None:
