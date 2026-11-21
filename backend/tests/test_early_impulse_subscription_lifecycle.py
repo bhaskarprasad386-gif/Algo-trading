@@ -250,7 +250,7 @@ def test_consumer_mux_quarantines_token_after_partial_physical_subscribe_excepti
     try:
         mux.subscribe("owner", [item])
     except RuntimeError as exc:
-        assert "partially subscribed" in str(exc)
+        assert "partially applied or uncertain" in str(exc)
     else:
         raise AssertionError("physical callback exception must propagate")
     assert mux.snapshot()["physical_tokens"] == 0
@@ -275,7 +275,7 @@ def test_consumer_mux_quarantines_token_after_partial_physical_unsubscribe_excep
     try:
         mux.unsubscribe("owner", [item])
     except RuntimeError as exc:
-        assert "partially unsubscribed" in str(exc)
+        assert "partially applied or uncertain" in str(exc)
     else:
         raise AssertionError("physical callback exception must propagate")
     assert mux.snapshot()["physical_tokens"] == 1
