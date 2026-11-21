@@ -115,6 +115,19 @@ def test_reactivating_existing_channel_does_not_enqueue_recovery(monkeypatch):
     assert queue.empty()
 
 
+def test_channel_activation_queue_overflow_marks_all_active_pages_for_resync(monkeypatch):
+    queue = asyncio.Queue(maxsize=1)
+    queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 8})
+    monkeypatch.setattr(push, "_subscribers", set())
+    monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 9 if page == "box-spread" else 4)
+    push._set_channels(queue, frozenset({"box-spread"}))
+    first = queue.get_nowait()
+    assert first["event"] == "SNAPSHOT_REQUIRED"
+    push._set_channels(queue, frozenset({"box-spread", "iv-skew-flip"}))
+    markers = [queue.get_nowait(), queue.get_nowait()]
+    assert {frame["page"] for frame in markers} == {"box-spread", "iv-skew-flip"}
+    assert all(frame["event"] == "SNAPSHOT_REQUIRED" for frame in markers)
+
 def test_snapshot_provider_is_read_only_and_page_scoped():
     observed = []
     push.configure_snapshot_provider(
