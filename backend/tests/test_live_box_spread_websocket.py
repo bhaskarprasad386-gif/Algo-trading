@@ -153,3 +153,21 @@ def test_publish_emits_empty_frame_when_scan_has_no_qualifying_rows(monkeypatch)
     assert len(queue.items) == 1
     assert queue.items[0]["type"] == "opportunities"
     assert queue.items[0]["data"] == []
+
+
+
+def test_page_snapshot_falls_back_to_local_live_getter_when_shared_snapshot_unavailable(monkeypatch):
+    now_ns = time.time_ns()
+    monkeypatch.setattr(websocket.time, "time_ns", lambda: now_ns)
+    monkeypatch.setattr(websocket, "_shared_box_opportunities_snapshot", lambda: {"snapshot_status": "UNAVAILABLE"}, raising=False)
+    monkeypatch.setattr(websocket, "_latest_getter", lambda: [_result(now_ns)])
+    frame = websocket._page_snapshot()
+    assert len(frame["opportunities"]) == 1
+    assert frame["opportunities"][0]["tradability_status"] == "TRADABLE"
+
+
+def test_page_snapshot_local_fallback_does_not_claim_empty_on_getter_failure(monkeypatch):
+    monkeypatch.setattr(websocket, "_shared_box_opportunities_snapshot", lambda: {"snapshot_status": "UNAVAILABLE"}, raising=False)
+    monkeypatch.setattr(websocket, "_latest_getter", lambda: (_ for _ in ()).throw(RuntimeError("getter down")))
+    frame = websocket._page_snapshot()
+    assert frame == {"snapshot_status": "UNAVAILABLE"}
