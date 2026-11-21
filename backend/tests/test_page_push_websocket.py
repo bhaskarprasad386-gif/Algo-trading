@@ -535,6 +535,11 @@ def test_journal_dispatch_bounded_queue_recovers_slow_consumer(monkeypatch):
                 while not any(target_page == page and cursor >= 200 for target_page, cursor in cursor_reads):
                     await asyncio.sleep(0)
             await asyncio.wait_for(replay_finished(), timeout=2.0)
+            async def overflow_marker_ready():
+                while not any(frame.get("event") == "SNAPSHOT_REQUIRED" and frame.get("sequence") == 250
+                              for frame in slow_queue._queue):
+                    await asyncio.sleep(0)
+            await asyncio.wait_for(overflow_marker_ready(), timeout=2.0)
             assert slow_queue.qsize() <= slow_queue.maxsize
             frames = []
             while not slow_queue.empty():
