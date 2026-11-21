@@ -219,7 +219,7 @@ def test_consumer_mux_does_not_commit_removal_on_short_physical_unsubscribe():
     try:
         mux.unsubscribe("owner", [item])
     except RuntimeError as exc:
-        assert "incomplete count" in str(exc)
+        assert "partially applied or uncertain" in str(exc)
     else:
         raise AssertionError("short unsubscribe must fail closed")
     assert mux.snapshot()["physical_tokens"] == 1
