@@ -224,3 +224,17 @@ def test_consumer_mux_does_not_commit_removal_on_short_physical_unsubscribe():
         raise AssertionError("short unsubscribe must fail closed")
     assert mux.snapshot()["physical_tokens"] == 1
     assert mux.snapshot()["owners"]["NSE:short-unsub"] == ["owner"]
+
+
+def test_lifecycle_universe_rejects_same_exchange_token_with_different_segment():
+    alternate = InstrumentDescriptor(
+        key=InstrumentKey("NSE", "OTHER_SEGMENT", "collision"), symbol="NIFTY", instrument_type="index",
+        exchange="NSE", segment="OTHER_SEGMENT",
+    )
+    lifecycle = EarlyImpulseSubscriptionLifecycle()
+    try:
+        lifecycle.set_universe([_desc("collision"), alternate])
+    except ValueError as exc:
+        assert "duplicate token" in str(exc)
+    else:
+        raise AssertionError("duplicate exchange-token identity should be rejected")
