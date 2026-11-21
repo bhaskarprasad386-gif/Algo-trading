@@ -145,6 +145,29 @@ def _snapshot_frame(page: str, data: dict[str, Any] | None = None, sequence: int
     return _frame(page, "SNAPSHOT", data, sequence)
 
 
+def _box_opportunities_snapshot(events_data: list[dict[str, Any]]) -> dict[str, Any]:
+    """Extract the latest complete Box opportunity collection from journal data."""
+    for data in events_data:
+        if isinstance(data, dict) and isinstance(data.get("opportunities"), list):
+            return {"opportunities": data["opportunities"]}
+    return {"opportunities": []}
+
+
+def _shared_box_opportunities_snapshot() -> dict[str, Any]:
+    """Worker-independent snapshot recovery from the durable shared journal."""
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(
+                select(events.c.data)
+                .where(events.c.page == "box-spread")
+                .order_by(events.c.id.desc())
+                .limit(100)
+            ).all()
+        return _box_opportunities_snapshot([row[0] for row in rows])
+    except Exception:
+        _log.exception("Could not read shared Box Spread snapshot from journal")
+        return {"snapshot_status": "UNAVAILABLE"}
+
 def _snapshot(page: str) -> dict[str, Any]:
     provider = _snapshot_providers.get(page)
     try:
