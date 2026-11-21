@@ -355,43 +355,20 @@ def _set_channels(queue: asyncio.Queue, channels: frozenset[str]) -> None:
     # cannot silently start from an incomplete local baseline.
     newly_activated = channels - previous
     if newly_activated and queue.full():
-        retained: list[dict[str, Any]] = []
+        # Queue saturation means the retained backlog cannot be trusted.
+        # Drop it and mark every active channel for snapshot recovery.
         while not queue.empty():
             try:
-                queued = queue.get_nowait()
+                queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
-            if isinstance(queued, dict) and queued.get("page") not in newly_activated:
-                retained.append(queued)
-        for frame in retained:
-            try:
-                queue.put_nowait(frame)
-            except asyncio.QueueFull:
-                break
+        newly_activated = channels
     for page in newly_activated:
-        try:
-            queue.put_nowait({
-                "type": "page_update", "page": page, "event": "SNAPSHOT_REQUIRED",
-                "sequence": _latest_page_sequence(page),
-                "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
-            })
-        except asyncio.QueueFull:
-            # Never silently activate a channel without a recovery marker.
-            # Queue saturation invalidates the entire local backlog.
-            while not queue.empty():
-                try:
-                    queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-            try:
-                queue.put_nowait({
-                    "type": "page_update", "page": page, "event": "SNAPSHOT_REQUIRED",
-                    "sequence": _latest_page_sequence(page),
-                    "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
-                })
-            except asyncio.QueueFull:
-                break
-
+        queue.put_nowait({
+            "type": "page_update", "page": page, "event": "SNAPSHOT_REQUIRED",
+            "sequence": _latest_page_sequence(page),
+            "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
+        })
 
 async def _unsubscribe_local(queue: asyncio.Queue) -> None:
     global _dispatch_task, _dispatch_loop, _dispatch_ready
