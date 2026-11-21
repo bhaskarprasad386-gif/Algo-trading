@@ -174,7 +174,11 @@ class ShoonyaConsumerSubscriptionMux:
         batch = tuple(descriptors)
         if not batch:
             return 0
+        if any(not isinstance(item, InstrumentDescriptor) for item in batch):
+            raise TypeError("all subscription entries must be InstrumentDescriptor")
         staged_keys = [self._identity(item) for item in batch]
+        if any(not exchange or not token for exchange, token in staged_keys):
+            raise ValueError("exchange and token are required for physical subscription identity")
         if len(staged_keys) != len(set(staged_keys)):
             raise ValueError("duplicate token in consumer request")
         with self._lock:
@@ -213,6 +217,13 @@ class ShoonyaConsumerSubscriptionMux:
         batch = tuple(descriptors)
         if not name or not batch:
             return 0
+        if any(not isinstance(item, InstrumentDescriptor) for item in batch):
+            raise TypeError("all unsubscribe entries must be InstrumentDescriptor")
+        keys = [self._identity(item) for item in batch]
+        if any(not exchange or not token for exchange, token in keys):
+            raise ValueError("exchange and token are required for physical subscription identity")
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate token in consumer unsubscribe request")
         with self._lock:
             staged = {key: dict(owners) for key, owners in self._owners.items()}
             physical_remove = []
