@@ -22,6 +22,11 @@ class EarlyImpulseShoonyaObserver:
         self._lock = RLock()
         self._observer_errors = 0
 
+    def configure_readiness(self, readiness: ProviderReadinessBridge) -> None:
+        with self._lock:
+            self.readiness = readiness
+
+
     def on_session_observation(self, state: str, reason: str | None, epoch: int,
                               connected: bool, authenticated: bool, observed_ns: int) -> None:
         # Fan out to both existing readiness evidence and the strategy cache.
