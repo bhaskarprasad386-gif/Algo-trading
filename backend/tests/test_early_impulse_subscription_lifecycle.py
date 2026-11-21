@@ -115,3 +115,19 @@ def test_cap_constructor_is_validated():
         assert "max_universe" in str(exc)
     else:
         raise AssertionError("cap above hard limit should fail")
+
+
+def test_enabled_universe_change_fails_closed_without_scoped_unsubscribe():
+    subscribed = []
+    lifecycle = EarlyImpulseSubscriptionLifecycle(subscribe=lambda items: subscribed.extend(items) or len(items))
+    lifecycle.set_universe([_desc("1")])
+    lifecycle.enable()
+    try:
+        lifecycle.set_universe([_desc("2")])
+    except RuntimeError as exc:
+        assert "unsubscribe transport" in str(exc)
+    else:
+        raise AssertionError("must reject live replacement without scoped unsubscribe")
+    assert lifecycle.snapshot()["configured_instruments"] == 1
+    assert lifecycle.snapshot()["instrument_keys"] == ["NSE:NFO:1"]
+    assert len(subscribed) == 1
