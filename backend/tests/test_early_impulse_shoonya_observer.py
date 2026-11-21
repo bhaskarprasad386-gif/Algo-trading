@@ -21,7 +21,7 @@ def test_observer_fanout_preserves_readiness_and_cache_data():
     observer.on_session_observation("LIVE", None, 1, True, True, 100)
     observer.on_tick_observation(_record(), 1, True, 200)
     assert cache.snapshot(now_monotonic_ns=300)["fresh_count"] == 1
-    assert readiness.snapshot()["shoonya"]["market_events"] == 1
+    assert readiness.snapshot()["shoonya"]["canonical_identity_valid"] is True
 
 
 def test_observer_errors_are_isolated_and_counted():
