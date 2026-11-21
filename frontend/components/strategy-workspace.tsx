@@ -530,6 +530,17 @@ function runnerLabel(slug: string) {
   return "Strategy Runner";
 }
 
+function LiveClock({ prefix = "" }: { prefix?: string }) {
+  const [time, setTime] = useState("");
+  useEffect(() => {
+    const update = () => setTime(new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }));
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return <>{prefix}{time || "—"}</>;
+}
+
 export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const c = configs[slug];
   const isCustom = slug === "custom-strategy";
@@ -542,7 +553,6 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     slug === "synthetic-arbitrage" ? "/api/v1/scanner/synthetic-cash-carry/live?limit=50" :
     slug === "box-spread" ? "/api/v1/scanner/box-spread/live?limit=50&max_age_seconds=5" : null;
 
-  const [currentLiveTime, setCurrentLiveTime] = useState("");
   const [liveApiLastOkAt, setLiveApiLastOkAt] = useState<number | null>(null);
   const [liveApiStatus, setLiveApiStatus] = useState<"CHECKING" | "RESPONDING" | "ERROR" | "WAITING">("CHECKING");
   const [search, setSearch] = useState("");
@@ -563,6 +573,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [rowsStale, setRowsStale] = useState(false);
   const rowsRef = useRef<Row[]>([]);
   const loadRequestRef = useRef(0);
+  const liveAbortRef = useRef<AbortController | null>(null);
+  const pairAbortRef = useRef<AbortController | null>(null);
   const [historyRows, setHistoryRows] = useState<Row[]>([]);
   const [historyTotalCount, setHistoryTotalCount] = useState(0);
   const [pairRows, setPairRows] = useState<Row[]>([]);
@@ -605,17 +617,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [indexSelectionError, setIndexSelectionError] = useState<string | null>(null);
   const indexSelectionDraftInitialized = useRef(false);
   const historyRequestSequence = useRef(0);
+  const historyAbortController = useRef<AbortController | null>(null);
   const pairRequestSequence = useRef(0);
   const syntheticHistoryPushRevision = useRef<string | null>(null);
   const calendarHistoryPushRevision = useRef<string | null>(null);
   const indexSelectionRequestSequence = useRef(0);
-
-  useEffect(() => {
-    const updateClock = () => setCurrentLiveTime(new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }));
-    updateClock();
-    const timer = window.setInterval(updateClock, 1000);
-    return () => window.clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     setPairColumnPrefsLoaded(false);
@@ -699,6 +705,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   };
 
   const load = async (showLoading = false) => {
+    liveAbortRef.current?.abort();
+    const controller = new AbortController();
+    liveAbortRef.current = controller;
     const requestId = ++loadRequestRef.current;
     if (!endpoint) {
       rowsRef.current = [];
@@ -710,7 +719,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     if (showLoading) setLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(base + endpoint, { cache: "no-store" });
+      const response = await fetch(base + endpoint, { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.detail || c.title + " HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data.filter((item: unknown): item is Row => !!item && typeof item === "object") : [];
@@ -761,7 +770,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       }
       setError(null);
     } catch (e) {
-      if (requestId !== loadRequestRef.current) return;
+      if (requestId !== loadRequestRef.current || controller.signal.aborted) return;
       setLiveApiStatus("ERROR");
       // Preserve the last good rows during a temporary API failure, including
       // after a page reload. Cached rows are never presented as confirmed live.
@@ -784,11 +793,14 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       }
       setError(e instanceof Error ? e.message : "Backend unavailable");
     } finally {
-      if (requestId === loadRequestRef.current) setLoading(false);
+      if (requestId === loadRequestRef.current) { setLoading(false); liveAbortRef.current = null; }
     }
   };
 
   const loadPairs = async () => {
+    pairAbortRef.current?.abort();
+    const controller = new AbortController();
+    pairAbortRef.current = controller;
     const requestSequence = ++pairRequestSequence.current;
     if (isCustom || !c.pairEndpoint) {
       setPairRows(rows);
@@ -796,7 +808,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     }
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(base + c.pairEndpoint, { cache: "no-store" });
+      const response = await fetch(base + c.pairEndpoint, { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) });
       const body = await response.json().catch(() => ({}));
       if (requestSequence !== pairRequestSequence.current) return;
       if (!response.ok) throw new Error(c.title + " pair monitor HTTP " + response.status);
@@ -835,7 +847,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         }
       }
     } catch {
-      if (requestSequence !== pairRequestSequence.current) return;
+      if (requestSequence !== pairRequestSequence.current || controller.signal.aborted) return;
       // On a transient error, preserve the last good snapshot and fall back to cache after reload.
       let cachedRows: Row[] = [];
       if (slug === "synthetic-arbitrage" && pairRows.length === 0) {
@@ -854,6 +866,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const loadHistory = async () => {
     if (isCustom || !c.historyEndpoint) return;
+    historyAbortController.current?.abort();
+    const controller = new AbortController();
+    historyAbortController.current = controller;
     const requestSequence = ++historyRequestSequence.current;
     setHistoryLoading(true);
     try {
@@ -868,7 +883,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         else query.delete("symbol");
         historyUrl = c.historyEndpoint.split("?")[0] + "?" + query.toString();
       }
-      const response = await fetch(base + historyUrl, { cache: "no-store" });
+      const response = await fetch(base + historyUrl, { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(c.title + " history HTTP " + response.status);
       const data = Array.isArray(body?.data) ? body.data : [];
@@ -881,9 +896,20 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       if (requestSequence === historyRequestSequence.current) setHistoryError(e instanceof Error ? e.message : "History API unavailable");
       // Keep last good history snapshot during transient backend failures.
     } finally {
-      if (requestSequence === historyRequestSequence.current) setHistoryLoading(false);
+      if (requestSequence === historyRequestSequence.current) {
+        setHistoryLoading(false);
+        historyAbortController.current = null;
+      }
     }
   };
+
+
+  useEffect(() => () => {
+    historyRequestSequence.current += 1;
+    historyAbortController.current?.abort();
+    historyAbortController.current = null;
+  }, []);
+
 
   useEffect(() => {
     if (slug !== "box-spread") return;
@@ -891,13 +917,17 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     let hasLoaded = false;
     let inFlight = false;
     const loadSelection = async () => {
-      const requestSequence = ++indexSelectionRequestSequence.current;
       if (inFlight) return;
       inFlight = true;
+      const requestSequence = ++indexSelectionRequestSequence.current;
       if (!hasLoaded) setIndexSelectionLoading(true);
       try {
         const base = appConfig.apiBaseUrl.endsWith("/") ? appConfig.apiBaseUrl.slice(0, -1) : appConfig.apiBaseUrl;
-        const response = await fetch(base + "/api/v1/scanner/box-spread/index-selection", { cache: "no-store" });
+        const controller = new AbortController();
+        const response = await fetch(base + "/api/v1/scanner/box-spread/index-selection", {
+          cache: "no-store",
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+        });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Unable to load saved index selection");
         const symbols = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : [];
@@ -1149,15 +1179,35 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     if (health && typeof health === "object" && !removedKeys.includes("runtime_health")) {
       const runtime = health as Record<string, any>;
       const feed = runtime.common_feed && typeof runtime.common_feed === "object" ? runtime.common_feed : {};
-      setFeedTicks(nullableNumber(feed.ticks_received));
-      setFeedAge(nullableNumber(feed.age_seconds));
-      setFeedExchangeFreshness(feed.exchange_freshness && typeof feed.exchange_freshness === "object" ? feed.exchange_freshness : null);
-      setFeedInstruments(nullableNumber(feed.active_instruments));
-      setFeedStatus(String(feed.status ?? "UNKNOWN").toUpperCase());
-      setFeedErrors({ delivery: Number(feed.delivery_errors ?? 0) || 0, normalizer: Number(feed.normalizer_errors ?? 0) || 0 });
+      const nextTicks = nullableNumber(feed.ticks_received);
+      setFeedTicks(current => current === nextTicks ? current : nextTicks);
+      const nextAge = nullableNumber(feed.age_seconds);
+      setFeedAge(current => current === nextAge ? current : nextAge);
+      const nextExchangeFreshness = feed.exchange_freshness && typeof feed.exchange_freshness === "object" ? feed.exchange_freshness : null;
+      setFeedExchangeFreshness(current => {
+        if (current === nextExchangeFreshness) return current;
+        if (!current || !nextExchangeFreshness) return nextExchangeFreshness;
+        const currentKeys = Object.keys(current);
+        const nextKeys = Object.keys(nextExchangeFreshness);
+        return currentKeys.length === nextKeys.length && currentKeys.every(key => current[key] === nextExchangeFreshness[key]) ? current : nextExchangeFreshness;
+      });
+      const nextInstruments = nullableNumber(feed.active_instruments);
+      setFeedInstruments(current => current === nextInstruments ? current : nextInstruments);
+      const nextFeedStatus = String(feed.status ?? "UNKNOWN").toUpperCase();
+      setFeedStatus(current => current === nextFeedStatus ? current : nextFeedStatus);
+      const nextFeedErrors = { delivery: Number(feed.delivery_errors ?? 0) || 0, normalizer: Number(feed.normalizer_errors ?? 0) || 0 };
+      setFeedErrors((current: { delivery: number; normalizer: number } | null) => current && current.delivery === nextFeedErrors.delivery && current.normalizer === nextFeedErrors.normalizer ? current : nextFeedErrors);
       const selected = runtime.runners?.box_spread;
-      setRunner(selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null);
-      setBoxDepthShadow(selected?.depth_shadow && typeof selected.depth_shadow === "object" ? selected.depth_shadow : null);
+      const nextRunner = selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null;
+      setRunner(current => current && nextRunner && current.running === nextRunner.running && current.detail === nextRunner.detail ? current : nextRunner);
+      const nextDepthShadow = selected?.depth_shadow && typeof selected.depth_shadow === "object" ? selected.depth_shadow : null;
+      setBoxDepthShadow(current => {
+        if (current === nextDepthShadow) return current;
+        if (!current || !nextDepthShadow) return nextDepthShadow;
+        const currentKeys = Object.keys(current);
+        const nextKeys = Object.keys(nextDepthShadow);
+        return currentKeys.length === nextKeys.length && currentKeys.every(key => current[key] === nextDepthShadow[key]) ? current : nextDepthShadow;
+      });
     }
     const selectionRuntime = pagePushData.index_selection_runtime;
     if (String(pagePushData.__event ?? "").toUpperCase() === "REMOVE" && removedKeys.includes("index_selection_runtime")) {
@@ -1171,17 +1221,19 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [slug, pagePushData]);
 
   useEffect(() => {
-    if (isCustom) return;
-    // History is a durable query, not a live feed. Refresh on filter/page
-    // changes or explicit user action instead of polling it every 10 seconds.
-    void loadHistory();
+    if (isCustom || !c.historyEndpoint) return;
+    // History is secondary to live scanner data. Give live status/feed requests
+    // the first turn on slower mobile connections; debounce filter/page changes.
+    const timer = window.setTimeout(() => void loadHistory(), 600);
+    return () => window.clearTimeout(timer);
   }, [isCustom, c.historyEndpoint, slug === "box-spread" ? historyExpiryView : "", slug === "box-spread" ? historySymbol : "", slug === "box-spread" ? historyPage : 1]);
 
   useEffect(() => {
     if (slug !== "box-spread" || pagePushData?.history_revision == null) return;
-    // A durable-history revision arrives through page push; refresh only the
-    // active filter/page slice and let request sequencing reject older replies.
-    void loadHistory();
+    // History is low-priority on mobile. Coalesce bursts of persisted-history
+    // revisions so one websocket burst does not trigger multiple REST fetches.
+    const timer = window.setTimeout(() => void loadHistory(), 800);
+    return () => window.clearTimeout(timer);
   }, [slug, pagePushData?.history_revision]);
 
   useEffect(() => {
@@ -1352,8 +1404,14 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   const refresh = async () => {
     setRefreshing(true);
-    await Promise.all([load(), loadHistory(), loadPairs()]);
-    setRefreshing(false);
+    // History is independent and can be slow. Start it in the background so
+    // live scanner/pair refresh feedback is not held hostage by history latency.
+    void loadHistory();
+    try {
+      await Promise.all([load(), loadPairs()]);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const copyTableRows = async (kind: "history" | "pairs") => {
@@ -1409,11 +1467,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     return historySort.direction === "asc" ? delta : -delta;
   }) : visibleHistoryRows;
 
+  const boxOutsideSession = isOutsideNseRegularHours();
+
   return (
-    <div className={slug === "box-spread" ? "space-y-5 theme-text" : "min-h-screen space-y-5 theme-bg p-4 theme-text"}>
+    <div className={slug === "box-spread" ? "box-spread-page space-y-5 theme-text" : "min-h-screen space-y-5 theme-bg p-4 theme-text"}>
       <div className="flex items-center justify-between gap-3">
         {slug === "box-spread" ? (
-          <span className="text-lg font-black uppercase tracking-wide text-slate-950 sm:text-xl">Box Spread · Live Market Monitor</span>
+          <span className="text-lg font-black uppercase tracking-wide text-slate-950 sm:text-xl">Box Spread · System Status</span>
         ) : (
           <Link href="/scanner" className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted hover:theme-border">
             <ArrowLeft className="h-4 w-4" /> Cash Future Scanner
@@ -1429,54 +1489,36 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       {slug !== "box-spread" && <PageTitle eyebrow="Live Strategy Scanner" title={c.title} description={c.description} />}
 
       {slug === "box-spread" ? (
-        <Card className="theme-border theme-surface-2 px-3 py-2">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px]">
-            <span className="font-bold theme-text">INDEX OPTIONS</span>
-            <span className="theme-muted">Feed <b className="theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN") + " ticks"}</b></span>
-            <span className="theme-muted">Runner <b className={runner?.running ? "theme-success" : "theme-warning"}>{runner?.running ? "RUNNING" : "STOPPED"}</b></span>
-            <span className="theme-muted">Eligible <b className="theme-text">{metricValue("Eligible Boxes")}</b></span>
-            <span className="theme-muted">Edges <b className="theme-text">{metricValue("Executable Edges")}</b></span>
-            <span className="theme-muted">Last Scan <b className="theme-text">{metricValue("Last Scan")}</b></span>
-            <span className="theme-muted">Feed age <b className="theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</b></span>
-            <span className="theme-muted">NSE <b className="theme-text">{boxExchangeStatus(feedExchangeFreshness?.NSE?.status)}</b></span>
-            <span className="theme-muted">NFO <b className="theme-text">{boxExchangeStatus(feedExchangeFreshness?.NFO?.status)}</b></span>
-            <span className="theme-muted">Instruments <b className="theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</b></span>
-            <span className="theme-muted">Errors <b className="theme-text">{Number(feedErrors?.delivery ?? 0) + Number(feedErrors?.normalizer ?? 0)}</b></span>
-            <span className="rounded-md border theme-border px-2 py-1 font-bold theme-warning">BROKER OFF</span>
-            <div className="w-full rounded-lg border theme-border theme-surface p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-semibold theme-text">Five-Level Depth Shadow</span>
-                <span className={"rounded-md border theme-border px-2 py-1 text-[10px] font-bold " + (boxDepthShadow?.enabled ? "theme-success" : "theme-muted")}>
-                  {boxDepthShadow?.enabled ? (boxDepthShadow.running ? "ENABLED · RUNNING" : "ENABLED · IDLE") : "DISABLED"}
-                </span>
-              </div>
-              <p className="mt-1 text-[11px] theme-muted">Shadow-only comparison; live scanner Edge and paper execution remain unchanged.</p>
-              {boxDepthShadow?.enabled ? (
-                <>
-                <div className="mt-2 grid grid-cols-2 gap-3 text-[11px] sm:grid-cols-4">
-                  <div><span className="theme-muted">Depth records</span><p className="font-semibold theme-text">{Number(boxDepthShadow.record_count ?? 0).toLocaleString("en-IN")}</p></div>
-                  <div><span className="theme-muted">Complete</span><p className="font-semibold theme-text">{Number(boxDepthShadow.comparison_diagnostics?.status_counts?.COMPLETE ?? 0).toLocaleString("en-IN")}</p></div>
-                  <div><span className="theme-muted">Incomplete</span><p className="font-semibold theme-text">{Number(boxDepthShadow.comparison_diagnostics?.status_counts?.INCOMPLETE ?? 0).toLocaleString("en-IN")}</p></div>
-                  <div><span className="theme-muted">Mean depth − L1 / unit</span><p className="font-semibold theme-text">{typeof boxDepthShadow.comparison_diagnostics?.complete_difference_sample?.mean_per_unit === "number" ? boxDepthShadow.comparison_diagnostics.complete_difference_sample.mean_per_unit.toFixed(2) : "—"}</p></div>
-                </div>
-                {Object.keys(boxDepthShadow.comparison_diagnostics?.incomplete_reasons ?? {}).length > 0 && (
-                  <div className="mt-3 border-t theme-border pt-2">
-                    <span className="text-[11px] font-semibold theme-muted">Incomplete comparison reasons</span>
-                    <div className="mt-1 flex flex-wrap gap-2">
-                      {Object.entries(boxDepthShadow.comparison_diagnostics.incomplete_reasons as Record<string, number>)
-                        .sort((a, b) => Number(b[1]) - Number(a[1]))
-                        .map(([reason, count]) => (
-                          <span key={reason} className="rounded-md border theme-border px-2 py-1 text-[10px] theme-muted">
-                            {reason.replaceAll("_", " ")} <b className="theme-text">{Number(count).toLocaleString("en-IN")}</b>
-                          </span>
-                        ))}
-                    </div>
-                  </div>
-                )}
-                </>
-              ) : <p className="mt-1 text-[11px] theme-muted">No additional depth subscription is active.</p>}
+        <Card className="theme-border theme-surface-2 p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-black tracking-wide theme-text">System Status</h2>
+              <p className="text-xs theme-muted">Box Spread · API, runner, market, connection and feed health</p>
             </div>
-            <Link href="/custom-alert" className="ml-auto inline-flex min-h-8 items-center gap-1.5 rounded-lg border theme-border px-3 font-semibold theme-accent hover:theme-surface" aria-label="Open strategy alerts"><Bell className="h-3.5 w-3.5" /> Alerts</Link>
+            <Link href="/custom-alert" className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border theme-border px-3 text-xs font-semibold theme-accent hover:theme-surface" aria-label="Open strategy alerts"><Bell className="h-3.5 w-3.5" /> Alerts</Link>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {([
+              {label:"API Status",value:loading?"CHECKING":error?"ERROR":liveApiStatus,detail:"Backend response",tone:loading?"theme-muted":error||liveApiStatus==="ERROR"?"theme-danger":liveApiStatus==="RESPONDING"?"theme-success":"theme-warning"},
+              {label:"Runner Status",value:runner?.running?"RUNNING":"STOPPED",detail:"Scanner engine",tone:runner?.running?"theme-success":"theme-warning"},
+              {label:"Market Status",value:boxOutsideSession?"OUTSIDE SESSION":"SESSION WINDOW",detail:"Time window only · holidays not checked",tone:boxOutsideSession?"theme-warning":"theme-success"},
+              {label:"WebSocket Status",value:pagePushStatus==="LIVE"?"CONNECTED":"RECONNECTING",detail:"Live push channel",tone:pagePushStatus==="LIVE"?"theme-success":"theme-warning"},
+              {label:"Feed Status",value:boxFeedDisplayStatus(feedStatus),detail:(feedTicks==null?"—":feedTicks.toLocaleString("en-IN")+" ticks"),tone:feedStatus==="LIVE"?"theme-success":"theme-warning"},
+              {label:"Feed Age",value:feedAge==null?"—":feedAge.toFixed(1)+"s",detail:"Time since last feed update",tone:feedAge==null?"theme-muted":feedAge<=5?"theme-success":feedAge<=15?"theme-warning":"theme-danger"}
+            ]).map((item)=>(
+              <div key={item.label} className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
+                <p className="text-[11px] font-semibold theme-muted">{item.label}</p>
+                <p className={"mt-1 break-words text-sm font-black "+item.tone}>{item.value}</p>
+                <p className="mt-1 text-[10px] theme-muted">{item.detail}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] theme-muted">
+            <span>Broker execution: <b className="theme-warning">OFF</b></span>
+            <span>·</span><span>NSE: <b className="theme-text">{boxExchangeStatus(feedExchangeFreshness?.NSE?.status)}</b></span>
+            <span>·</span><span>NFO: <b className="theme-text">{boxExchangeStatus(feedExchangeFreshness?.NFO?.status)}</b></span>
+            <span>·</span><span>Instrument count: <b className="theme-text">{feedInstruments==null?"—":feedInstruments.toLocaleString("en-IN")}</b></span>
+            <span>·</span><span>Feed errors: <b className="theme-text">{Number(feedErrors?.delivery??0)+Number(feedErrors?.normalizer??0)}</b></span>
           </div>
         </Card>
       ) : (
@@ -1607,8 +1649,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <select value={control} onChange={(e) => void changeControl(e.target.value)} className="min-h-9 w-full rounded-lg border theme-border theme-surface px-3 text-xs theme-text">
             {c.controls.map((x) => <option key={x} value={x}>{slug === "synthetic-arbitrage" && x === "TOP15" ? "NIFTY TOP 15 LIQUID STOCKS (15)" : x}</option>)}
           </select>
-          <button type="button" onClick={refresh} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border theme-border theme-surface px-3 text-xs font-semibold theme-text hover:theme-border">
-            <RefreshCw className={"h-4 w-4 " + (refreshing ? "animate-spin" : "")} /> Refresh
+          <button type="button" onClick={refresh} disabled={refreshing} aria-busy={refreshing} aria-label={refreshing ? "Refreshing Box Spread data" : "Refresh Box Spread data"} title={refreshing ? "Refreshing live scanner, history and pairs" : "Refresh live scanner, history and pairs"} className={"inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border theme-border theme-surface px-3 text-xs font-semibold theme-text hover:theme-border disabled:cursor-wait disabled:opacity-70 " + (slug === "box-spread" ? "box-spread-refresh-btn" : "")}>
+            <RefreshCw className={"h-4 w-4 " + (refreshing ? "animate-spin" : "")} /> {refreshing ? "Refreshing…" : "Refresh"}
           </button>
         </div>
         {slug === "synthetic-arbitrage" && (
@@ -1679,8 +1721,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <div><h2 className="flex items-center gap-2 font-semibold theme-text"><Zap className="h-4 w-4 theme-accent" /> Live Opportunities</h2><p className="mt-1 text-xs theme-muted">Real backend rows only. No fake scanner values are generated in the UI.</p>{slug === "box-spread" && <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Live opportunity expiry type">
               <button type="button" onClick={() => setLiveExpiryView("MONTHLY")} aria-pressed={liveExpiryView === "MONTHLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (liveExpiryView === "MONTHLY" ? "border-violet-500 bg-violet-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Monthly)</button>
               <button type="button" onClick={() => setLiveExpiryView("WEEKLY")} aria-pressed={liveExpiryView === "WEEKLY"} className={"min-h-9 rounded-lg border px-4 text-xs font-bold " + (liveExpiryView === "WEEKLY" ? "border-cyan-500 bg-cyan-500/10 theme-text" : "theme-border theme-muted")}>Opportunity (Weekly)</button>
-            </div>}{slug === "box-spread" && <div className="mt-2 rounded-lg border theme-border theme-surface-2 px-3 py-2 text-xs"><p className={"font-semibold " + (liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "theme-success" : liveApiStatus === "ERROR" || feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-danger" : "theme-warning")}>{liveApiStatus === "ERROR" ? "LIVE API ERROR" : liveApiStatus === "CHECKING" ? "CHECKING LIVE API…" : feedStatus === "LIVE" && runner?.running ? (filteredRows.length === 0 ? "LIVE CHECK OK · NO QUALIFYING OPPORTUNITY RIGHT NOW" : "LIVE CHECK OK · OPPORTUNITIES FOUND") : "LIVE STATUS NEEDS ATTENTION"}</p><p className="mt-1 theme-muted">API response: {liveApiLastOkAt === null ? "not received yet" : new Date(liveApiLastOkAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST"} · UI clock: {currentLiveTime || "—"}</p><p className="mt-1 theme-muted">{liveApiStatus === "ERROR" ? "API request failed; zero rows must NOT be interpreted as no opportunity." : feedStatus !== "LIVE" || !runner?.running ? "Feed/runner health is not confirmed live; zero rows may mean scanner/feed unavailable." : filteredRows.length === 0 ? "The live endpoint responded and the feed/runner report live, but no qualifying rows were returned for this check. This is not a guarantee that every possible contract was evaluated." : "Live endpoint returned qualifying rows. Quote timestamps and freshness are shown per row."}</p></div>}{rowsStale && slug === "synthetic-arbitrage" && rows.length > 0 && <p className="mt-2 rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs theme-warning">Showing last observed opportunities with their original Time values. Data is STALE — not confirmed live; waiting for a fresh scanner response.</p>}</div>
-            <div className="flex flex-col items-start gap-1 sm:items-end"><span className="text-xs font-semibold theme-text">{slug === "box-spread" ? "Current Live Time (IST): " + (currentLiveTime || "—") : ""}</span><span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • {["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug) ? (pagePushStatus === "LIVE" ? "WebSocket push · LIVE" : "WebSocket reconnecting · REST recovery") : "Scanner live"}</span></div>
+            </div>}{slug === "box-spread" && <div className="mt-2 rounded-lg border theme-border theme-surface-2 px-3 py-2 text-xs"><p className={"font-semibold " + (liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "theme-success" : liveApiStatus === "ERROR" || feedStatus === "UNAVAILABLE" || runner?.running === false ? "theme-danger" : "theme-warning")}>{liveApiStatus === "ERROR" ? "LIVE API ERROR" : liveApiStatus === "CHECKING" ? "CHECKING LIVE API…" : feedStatus === "LIVE" && runner?.running ? (filteredRows.length === 0 ? "LIVE CHECK OK · NO QUALIFYING OPPORTUNITY RIGHT NOW" : "LIVE CHECK OK · OPPORTUNITIES FOUND") : "LIVE STATUS NEEDS ATTENTION"}</p><p className="mt-1 theme-muted">API response: {liveApiLastOkAt === null ? "not received yet" : new Date(liveApiLastOkAt).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST"} · UI clock: <LiveClock /></p><p className="mt-1 theme-muted">{liveApiStatus === "ERROR" ? "API request failed; zero rows must NOT be interpreted as no opportunity." : feedStatus !== "LIVE" || !runner?.running ? "Feed/runner health is not confirmed live; zero rows may mean scanner/feed unavailable." : filteredRows.length === 0 ? "The live endpoint responded and the feed/runner report live, but no qualifying rows were returned for this check. This is not a guarantee that every possible contract was evaluated." : "Live endpoint returned qualifying rows. Quote timestamps and freshness are shown per row."}</p></div>}{rowsStale && slug === "synthetic-arbitrage" && rows.length > 0 && <p className="mt-2 rounded-lg border theme-border theme-warning-bg px-3 py-2 text-xs theme-warning">Showing last observed opportunities with their original Time values. Data is STALE — not confirmed live; waiting for a fresh scanner response.</p>}</div>
+            <div className="flex flex-col items-start gap-1 sm:items-end"><span className="text-xs font-semibold theme-text">{slug === "box-spread" ? <LiveClock prefix="Current Live Time (IST): " /> : ""}</span><span className="text-xs theme-muted">{control}{search ? " • " + search : ""} • {["box-spread", "calendar-spread", "synthetic-arbitrage"].includes(slug) ? (pagePushStatus === "LIVE" ? "WebSocket push · LIVE" : "WebSocket reconnecting · REST recovery") : "Scanner live"}</span></div>
           </div>
           <div className="grid gap-2 p-3 md:hidden">
             {loading ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">Loading live data…</div> : filteredRows.length === 0 ? <div className="rounded-xl border theme-border p-4 text-center text-sm theme-muted">{slug === "box-spread" ? liveApiStatus === "ERROR" ? "LIVE API ERROR — zero rows are not proof of no opportunity." : liveApiStatus === "RESPONDING" && feedStatus === "LIVE" && runner?.running ? "LIVE CHECK CONFIRMED · 0 qualifying opportunity rows returned on the latest check." : "WAITING FOR CONFIRMED LIVE STATUS — 0 rows returned; scanner/feed health is not yet confirmed." : "No live opportunity data"}</div> : filteredRows.map((row, index) => <div key={String(row.id ?? row.event_id ?? row.timestamp_ns ?? slug + "-mobile-live-" + index)} className="rounded-xl border theme-border theme-surface-2 p-3">{slug === "synthetic-arbitrage" && <div className="mb-2 flex items-center justify-between gap-2 border-b theme-border pb-2"><span className="text-xs font-bold theme-accent">{String(row.underlying ?? "INDEX").toUpperCase()}</span><span className="text-[10px] theme-muted">INDEX OPPORTUNITY</span></div>}<div className="mb-2 text-sm font-bold theme-text">{formatCell(slug, c.columns[0], row)}</div><div className="grid grid-cols-2 gap-x-3 gap-y-2">{c.columns.slice(1).map((column) => <div key={column} className="min-w-0"><div className="text-[10px] uppercase tracking-wide theme-subtle">{column}</div><div className={"mt-0.5 break-words text-xs font-medium theme-muted " + syntheticCellTone(slug, column, row)}>{slug === "box-spread" && ["Low Call (LTP/Bid Qty/Ask Qty)", "Low Put (LTP/Bid Qty/Ask Qty)", "High Call (LTP/Bid Qty/Ask Qty)", "High Put (LTP/Bid Qty/Ask Qty)"].includes(column) ? <BoxSpreadLegQuote row={row} column={column as BoxSpreadLegColumn} /> : formatCell(slug, column, row)}</div></div>)}</div></div>)}
@@ -1744,6 +1786,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       )}
 
+      {(
       <Card className={"theme-border theme-surface p-4 " + (slug === "box-spread" ? "box-history-contrast" : "")}>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="flex items-center gap-2 text-lg font-black text-slate-950 sm:text-xl"><Activity className="h-5 w-5 text-slate-800" /> {slug === "box-spread" ? "Recent Box Spread Snapshots (Last 24 Hours)" : "Post-Market " + c.title + " Pair History"}</h2><p className="mt-1 text-xs theme-muted">{slug === "box-spread" ? "Persisted scanner snapshots from the rolling last 24 hours · same source as the historical section, with a shorter time window." : "Real backend history/alert records for today's session. No synthetic rows are created in the UI."}</p></div>
@@ -1805,6 +1848,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <button type="button" disabled={safeHistoryPage >= historyPageCount} onClick={() => setHistoryPage((page) => Math.min(historyPageCount, page + 1))} className="min-h-10 rounded-lg border theme-border px-4 text-xs font-semibold theme-text disabled:opacity-40">Next</button>
         </div>}
       </Card>
+      )}
+
+
 
       {copyStatus && <div role="status" aria-live="polite" className="rounded-xl border theme-border theme-surface p-3 text-sm theme-text">{copyStatus}</div>}
       {copyFallbackText && <div className="space-y-2 rounded-xl border theme-border theme-surface p-3">
