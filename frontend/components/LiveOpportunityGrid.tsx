@@ -95,8 +95,8 @@ const LegQuote = memo(function LegQuote({ row, name, price, qty, side, depthKey 
     ? (row.market_depth as Record<string, unknown>)[depthKey] as { status?: string; bids?: Array<{price:number;quantity:number}>; asks?: Array<{price:number;quantity:number}> } | undefined
     : undefined;
   // Reuse the incoming depth arrays; the fixed five-level renderer bounds access.
-  const bids = Array.isArray(depth?.bids) ? depth.bids : undefined;
-  const asks = Array.isArray(depth?.asks) ? depth.asks : undefined;
+  const bids = Array.isArray(depth?.bids) ? depth.bids : [];
+  const asks = Array.isArray(depth?.asks) ? depth.asks : [];
   const live = depth?.status === "LIVE";
   return (
     <div className="flex min-w-[150px] flex-col gap-1 rounded-lg border theme-border theme-surface-2 px-2.5 py-2">
