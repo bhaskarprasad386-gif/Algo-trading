@@ -147,7 +147,7 @@ class ShoonyaConsumerSubscriptionMux:
     """Consumer ownership/ref-count gate for shared physical Shoonya tokens.
 
     Calls the adapter only for zero-to-one and one-to-zero ownership transitions.
-    Does not directly integrate into the global supervisor in this batch.
+    It quarantines tokens when adapter mutations report ambiguous results.
     """
     def __init__(self, *, subscribe_physical: Callable[[tuple[InstrumentDescriptor, ...]], int],
                  unsubscribe_physical: Callable[[tuple[InstrumentDescriptor, ...]], int],
@@ -158,7 +158,10 @@ class ShoonyaConsumerSubscriptionMux:
         self._physical_unsubscribe = unsubscribe_physical
         self._max_tokens = max_tokens
         self._lock = RLock()
-        self._owners: dict[tuple[str, str], dict[str, InstrumentDescriptor]] = {}\n        # Physical adapter mutations that raised or returned short counts are unknown.\n        # Keep these tokens quarantined until a future explicit reconciliation.\n        self._uncertain: dict[tuple[str, str], InstrumentDescriptor] = {}
+        self._owners: dict[tuple[str, str], dict[str, InstrumentDescriptor]] = {}
+        # Adapter may partially mutate before raising/returning short count.
+        # Keep ambiguous tokens quarantined; never guess their physical state.
+        self._uncertain: dict[tuple[str, str], InstrumentDescriptor] = {}
 
     @staticmethod
     def _identity(item: InstrumentDescriptor) -> tuple[str, str]:
@@ -175,6 +178,8 @@ class ShoonyaConsumerSubscriptionMux:
         if len(staged_keys) != len(set(staged_keys)):
             raise ValueError("duplicate token in consumer request")
         with self._lock:
+            if any(key in self._uncertain for key in staged_keys):
+                raise RuntimeError("physical subscription state uncertain; reconcile before reuse")
             staged = {key: dict(owners) for key, owners in self._owners.items()}
             physical_add = []
             for key, item in zip(staged_keys, batch):
@@ -192,9 +197,14 @@ class ShoonyaConsumerSubscriptionMux:
             if len(staged) > self._max_tokens:
                 raise ValueError(f"physical token cap exceeded ({self._max_tokens})")
             if physical_add:
-                added = self._physical_subscribe(tuple(physical_add))
-                if added != len(physical_add):
-                    raise RuntimeError("physical subscribe returned an incomplete count")
+                physical_keys = [self._identity(item) for item in physical_add]
+                try:
+                    added = self._physical_subscribe(tuple(physical_add))
+                    if added != len(physical_add):
+                        raise RuntimeError("physical subscribe returned an incomplete count")
+                except Exception:
+                    self._uncertain.update(zip(physical_keys, physical_add))
+                    raise
             self._owners = staged
             return len(batch)
 
@@ -209,6 +219,8 @@ class ShoonyaConsumerSubscriptionMux:
             removed_count = 0
             for item in batch:
                 key = self._identity(item)
+                if key in self._uncertain:
+                    raise RuntimeError("physical subscription state uncertain; reconcile before removal")
                 owners = staged.get(key)
                 if owners is None or name not in owners:
                     continue
@@ -220,12 +232,24 @@ class ShoonyaConsumerSubscriptionMux:
                     physical_remove.append(item)
                     staged.pop(key, None)
             if physical_remove:
-                removed = self._physical_unsubscribe(tuple(physical_remove))
-                if removed != len(physical_remove):
-                    raise RuntimeError("physical unsubscribe returned an incomplete count")
+                physical_keys = [self._identity(item) for item in physical_remove]
+                try:
+                    removed = self._physical_unsubscribe(tuple(physical_remove))
+                    if removed != len(physical_remove):
+                        raise RuntimeError("physical unsubscribe returned an incomplete count")
+                except Exception:
+                    self._uncertain.update(zip(physical_keys, physical_remove))
+                    raise
             self._owners = staged
             return removed_count
 
     def snapshot(self) -> dict:
         with self._lock:
-            return {"physical_tokens": len(self._owners), "consumer_count": len({name for owners in self._owners.values() for name in owners}), "max_tokens": self._max_tokens, "owners": {":".join(key): sorted(owners) for key, owners in sorted(self._owners.items())}, "physical_transport_wired": True, "uncertain_tokens": sorted(\":\".join(key) for key in self._uncertain)}
+            return {
+                "physical_tokens": len(self._owners),
+                "consumer_count": len({name for owners in self._owners.values() for name in owners}),
+                "max_tokens": self._max_tokens,
+                "owners": {":".join(key): sorted(owners) for key, owners in sorted(self._owners.items())},
+                "physical_transport_wired": True,
+                "uncertain_tokens": sorted(":".join(key) for key in self._uncertain),
+            }
