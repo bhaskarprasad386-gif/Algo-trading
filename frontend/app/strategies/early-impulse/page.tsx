@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, ArrowDown, ArrowUp, RefreshCw, ShieldAlert, ShieldCheck, Target, Waves } from "lucide-react";
 import { appConfig } from "@/lib/config";
 
-type Engine = { id: string; name: string; weight: number; status: string };
+type Engine = { id: string; name: string; weight: number; status: string; role?: string; detail?: string };
 type Status = {
   strategy?: string;
   status?: string;
