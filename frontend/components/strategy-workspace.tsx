@@ -1194,10 +1194,11 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [slug, pagePushData]);
 
   useEffect(() => {
-    if (isCustom) return;
-    // History is a durable query, not a live feed. Refresh on filter/page
-    // changes or explicit user action instead of polling it every 10 seconds.
-    void loadHistory();
+    if (isCustom || !c.historyEndpoint) return;
+    // History is secondary to live scanner data. Give live status/feed requests
+    // the first turn on slower mobile connections; debounce filter/page changes.
+    const timer = window.setTimeout(() => void loadHistory(), 600);
+    return () => window.clearTimeout(timer);
   }, [isCustom, c.historyEndpoint, slug === "box-spread" ? historyExpiryView : "", slug === "box-spread" ? historySymbol : "", slug === "box-spread" ? historyPage : 1]);
 
   useEffect(() => {
