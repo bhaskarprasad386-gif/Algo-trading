@@ -202,9 +202,9 @@ class ShoonyaConsumerSubscriptionMux:
                     added = self._physical_subscribe(tuple(physical_add))
                     if added != len(physical_add):
                         raise RuntimeError("physical subscribe returned an incomplete count")
-                except Exception:
+                except Exception as exc:
                     self._uncertain.update(zip(physical_keys, physical_add))
-                    raise
+                    raise RuntimeError("physical subscribe partially applied or uncertain; tokens quarantined") from exc
             self._owners = staged
             return len(batch)
 
@@ -237,9 +237,9 @@ class ShoonyaConsumerSubscriptionMux:
                     removed = self._physical_unsubscribe(tuple(physical_remove))
                     if removed != len(physical_remove):
                         raise RuntimeError("physical unsubscribe returned an incomplete count")
-                except Exception:
+                except Exception as exc:
                     self._uncertain.update(zip(physical_keys, physical_remove))
-                    raise
+                    raise RuntimeError("physical unsubscribe partially applied or uncertain; tokens quarantined") from exc
             self._owners = staged
             return removed_count
 
