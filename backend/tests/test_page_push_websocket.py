@@ -209,11 +209,8 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
         return frame
 
 
-    def fake_latest_event_id():
-        return journal[-1]["id"] if journal else 0
-
-    def fake_events_after(cursor, limit=100):
-        return [row for row in journal if row["id"] > cursor][:limit + 1]
+    def fake_events_after(target_page, cursor_sequence, limit=100):
+        return [row for row in journal if row["page"] == target_page and row["sequence"] > cursor_sequence][:limit + 1]
 
     def fake_latest_page_sequence(page):
         return page_sequences.get(page, 0)
@@ -236,7 +233,7 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
 
     monkeypatch.setattr(push, "_sequence_gap", trace_sequence_gap)
     monkeypatch.setattr(push, "_consistent_snapshot_frame", trace_snapshot_frame)
-    monkeypatch.setattr(push, "_latest_event_id", fake_latest_event_id)
+    monkeypatch.setattr(push, "_latest_page_sequence", lambda target_page: page_sequences.get(target_page, 0))
     monkeypatch.setattr(push, "_events_after", fake_events_after)
     monkeypatch.setattr(push, "_latest_page_sequence", fake_latest_page_sequence)
     monkeypatch.setattr(push, "publish_page_update", fake_publish)
