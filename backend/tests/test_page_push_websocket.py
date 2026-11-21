@@ -467,6 +467,9 @@ def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch)
         monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 7)
         waiter = asyncio.create_task(queue.get())
         await asyncio.sleep(0)
+        # The waiter has consumed one queued frame; add one more so restoring
+        # the consumed frame plus retained queue exceeds this test queue size.
+        queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 2})
         next_waiter = await push._restart_event_waiter(queue, waiter, "cash-future")
         markers = [await asyncio.wait_for(queue.get(), timeout=0.2) for _ in range(3)]
         assert {frame["page"] for frame in markers} == pages
