@@ -162,7 +162,7 @@ class ShoonyaConsumerSubscriptionMux:
 
     @staticmethod
     def _identity(item: InstrumentDescriptor) -> tuple[str, str, str]:
-        return (item.key.exchange.strip().upper(), item.key.segment.strip().upper(), item.key.token.strip())
+        return (item.key.exchange.strip().upper(), item.key.token.strip())
 
     def subscribe(self, consumer: str, descriptors: Iterable[InstrumentDescriptor]) -> int:
         name = str(consumer).strip()
@@ -192,7 +192,9 @@ class ShoonyaConsumerSubscriptionMux:
             if len(staged) > self._max_tokens:
                 raise ValueError(f"physical token cap exceeded ({self._max_tokens})")
             if physical_add:
-                self._physical_subscribe(tuple(physical_add))
+                added = self._physical_subscribe(tuple(physical_add))
+                if added != len(physical_add):
+                    raise RuntimeError("physical subscribe returned an incomplete count")
             self._owners = staged
             return len(batch)
 
@@ -218,7 +220,9 @@ class ShoonyaConsumerSubscriptionMux:
                     physical_remove.append(item)
                     staged.pop(key, None)
             if physical_remove:
-                self._physical_unsubscribe(tuple(physical_remove))
+                removed = self._physical_unsubscribe(tuple(physical_remove))
+                if removed != len(physical_remove):
+                    raise RuntimeError("physical unsubscribe returned an incomplete count")
             self._owners = staged
             return removed_count
 
