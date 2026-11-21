@@ -507,3 +507,57 @@ def test_dispatcher_replays_retained_events_from_zero_on_worker_start(monkeypatc
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
     asyncio.run(scenario())
+
+
+def test_journal_dispatch_bounded_queue_recovers_slow_consumer(monkeypatch):
+    async def scenario():
+        page = "box-spread"
+        slow_queue = asyncio.Queue(maxsize=8)
+        journal_rows = [
+            {"id": index + 1000, "page": page, "sequence": index + 1,
+             "event": "PATCH", "data": {"n": index + 1}}
+            for index in range(250)
+        ]
+        cursor_reads = []
+        def events_after(target_page, cursor, limit=100):
+            cursor_reads.append((target_page, cursor))
+            return [row for row in journal_rows if row["page"] == target_page and row["sequence"] > cursor][:limit + 1]
+        monkeypatch.setattr(push, "_events_after", events_after)
+        monkeypatch.setattr(push, "_latest_page_sequence", lambda target_page: 250)
+        monkeypatch.setattr(push, "_subscribers", {(slow_queue, frozenset({page}))})
+        monkeypatch.setattr(push, "_dispatch_ready", asyncio.Event())
+        task = asyncio.create_task(push._journal_dispatch_loop())
+        try:
+            await asyncio.wait_for(push._dispatch_ready.wait(), timeout=0.5)
+            # Intentionally do not drain the socket queue while 250 updates replay.
+            await asyncio.sleep(0.15)
+            assert slow_queue.qsize() <= slow_queue.maxsize
+            frames = []
+            while not slow_queue.empty():
+                frames.append(slow_queue.get_nowait())
+            recovery = [frame for frame in frames if frame["event"] == "SNAPSHOT_REQUIRED"]
+            assert recovery, "slow subscriber must be explicitly told to recover"
+            assert recovery[-1]["sequence"] == 250
+            assert len(frames) <= slow_queue.maxsize
+            # Replay pagination itself is bounded and progresses by cursor.
+            assert any(cursor > 0 for target_page, cursor in cursor_reads if target_page == page)
+        finally:
+            monkeypatch.setattr(push, "_subscribers", set())
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(scenario())
+
+
+def test_snapshot_handoff_keeps_cursor_before_unstable_capture(monkeypatch):
+    values = iter([(41, 42), (42, 43), (43, 44)])
+    captured = []
+    def snapshot():
+        captured.append(len(captured))
+        return {"partial": True}
+    monkeypatch.setattr(push, "_latest_page_sequence", lambda page: next(values)[0])
+    monkeypatch.setattr(push, "_snapshot", lambda page: snapshot())
+    frame = push._consistent_snapshot_frame("box-spread", retries=3)
+    assert frame["event"] == "SNAPSHOT"
+    assert frame["sequence"] == 43
+    assert frame["data"]["snapshot_status"] == "UNAVAILABLE"
+    assert len(captured) == 3
