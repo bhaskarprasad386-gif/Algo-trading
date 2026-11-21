@@ -146,11 +146,11 @@ def _snapshot_frame(page: str, data: dict[str, Any] | None = None, sequence: int
 
 
 def _box_opportunities_snapshot(events_data: list[dict[str, Any]]) -> dict[str, Any]:
-    """Extract the latest complete Box opportunity collection from journal data."""
+    """Extract the latest full Box opportunity list; absence is not an empty snapshot."""
     for data in events_data:
         if isinstance(data, dict) and isinstance(data.get("opportunities"), list):
             return {"opportunities": data["opportunities"]}
-    return {"opportunities": []}
+    return {"snapshot_status": "UNAVAILABLE"}
 
 
 def _shared_box_opportunities_snapshot() -> dict[str, Any]:
@@ -160,7 +160,7 @@ def _shared_box_opportunities_snapshot() -> dict[str, Any]:
             rows = connection.execute(
                 select(events.c.data)
                 .where(events.c.page == "box-spread")
-                .order_by(events.c.id.desc())
+                .order_by(events.c.page_sequence.desc())
                 .limit(100)
             ).all()
         return _box_opportunities_snapshot([row[0] for row in rows])
