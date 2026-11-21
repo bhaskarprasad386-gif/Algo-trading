@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, ArrowDown, ArrowUp, RefreshCw, ShieldAlert, ShieldCheck, Target, Waves } from "lucide-react";
 import { appConfig } from "@/lib/config";
 
@@ -42,9 +42,11 @@ export default function EarlyImpulsePage() {
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const requestLock = useRef(false);
 
   const refresh = useCallback(async () => {
-    if (loading) return;
+    if (requestLock.current) return;
+    requestLock.current = true;
     setLoading(true);
     try {
       const base = appConfig.apiBaseUrl.replace(/\/$/, "");
@@ -60,9 +62,10 @@ export default function EarlyImpulsePage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Status request failed");
     } finally {
+      requestLock.current = false;
       setLoading(false);
     }
-  }, [loading]);
+  }, []);
 
   useEffect(() => {
     let disposed = false;
