@@ -45,7 +45,7 @@ class EarlyImpulseShoonyaCache:
             with self._lock:
                 self._rejected_count += 1
             return False
-        if record.timestamp_ns <= 0:
+        if record.timestamp_ns <= 0 or not record.is_executable_quote:
             with self._lock:
                 self._rejected_count += 1
             return False
@@ -89,8 +89,8 @@ class EarlyImpulseShoonyaCache:
             fresh = []
             stale = 0
             for record, epoch, received_ns in self._records.values():
-                age = max(0, now - received_ns)
-                if age <= self.max_age_ns and epoch == self._feed_epoch and self._feed_state == "LIVE":
+                age = now - received_ns
+                if 0 <= age <= self.max_age_ns and epoch == self._feed_epoch and self._feed_state == "LIVE":
                     fresh.append(record.as_dict())
                 else:
                     stale += 1
