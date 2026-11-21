@@ -63,7 +63,7 @@ from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot, configure_shoonya_snapshot, configure_shoonya_supervisor
 from app.scanner.routes import router as scanner_router, full_fno_router, configure_live_cash_future_snapshot
-from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop, configure_page_update_callback as configure_weekly_swing_page_push, nifty200_scan_status
+from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
@@ -378,10 +378,6 @@ def _box_page_push_snapshot():
     return payload
 
 
-configure_page_push_snapshot("weekly-swing", nifty200_scan_status)
-configure_weekly_swing_page_push(
-    lambda payload: publish_page_update("weekly-swing", "PATCH", payload)
-)
 configure_page_push_snapshot("box-spread", _box_page_push_snapshot)
 def _cash_future_page_push_snapshot():
     stats = live_cash_future_scanner.health()
@@ -2166,6 +2162,17 @@ def _save_iv_scanner_enabled(enabled: bool) -> bool:
     return bool(enabled)
 
 
+def _publish_iv_runtime_page_update(snapshot: dict) -> None:
+    payload = {"runtime": snapshot, "alert_live": snapshot.get("early_entry_alerts")}
+    try:
+        payload["alerts"] = AlertCooldownStore(
+            SessionLocal, cooldown_seconds=600
+        ).latest(limit=30)
+    except Exception as exc:
+        app_logger.warning("IV alert page push skipped: {}", exc)
+    publish_page_update("iv-skew-flip", "PATCH", payload)
+
+
 def _start_iv_skew_flip_runtime(*, iv_instruments=None):
     global iv_skew_flip_runtime
     # Serialize start/stop requests so simultaneous UI/API requests cannot
@@ -2226,9 +2233,7 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
             feed_manager=iv_feed_manager,
             close_feed_manager=False,
         )
-        runtime.set_page_update_callback(
-            lambda snapshot: publish_page_update("iv-skew-flip", "PATCH", {"runtime": snapshot})
-        )
+        runtime.set_page_update_callback(_publish_iv_runtime_page_update)
         try:
             snapshot = runtime.start(instruments=iv_instruments)
         except Exception:
@@ -2260,9 +2265,20 @@ def _iv_page_push_snapshot():
     with _iv_skew_flip_runtime_lock:
         runtime = iv_skew_flip_runtime
         snapshot = runtime.snapshot() if runtime is not None else None
+    try:
+        alerts = AlertCooldownStore(SessionLocal, cooldown_seconds=600).latest(limit=30)
+    except Exception:
+        alerts = []
+    try:
+        baskets = iv_skew_flip_basket_registry()
+    except Exception:
+        baskets = {"status": "UNAVAILABLE", "baskets": []}
     return {
         "saved_enabled": enabled,
         "runtime": snapshot,
+        "alerts": alerts,
+        "alert_live": snapshot.get("early_entry_alerts") if isinstance(snapshot, dict) else None,
+        "baskets": baskets,
         "orders_enabled": False,
     }
 
