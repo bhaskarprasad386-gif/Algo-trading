@@ -228,16 +228,28 @@ async def live_opportunities(websocket: WebSocket):
 
 
 def _page_snapshot():
-    """Return the latest safe Box opportunity rows for page-push reconnects."""
+    """Recover a worker-independent journal snapshot, filtering expired quotes."""
+    from app.scanner.page_push_websocket import _shared_box_opportunities_snapshot
+    shared = _shared_box_opportunities_snapshot()
+    if shared.get("snapshot_status") == "UNAVAILABLE":
+        return shared
+    now_ns = time.time_ns()
     rows = []
-    if callable(_latest_getter):
-        try:
-            for item in (_latest_getter() or ()):
-                row = _row(item)
-                if row is not None and _passes_edge_threshold(row):
-                    rows.append(row)
-        except Exception:
-            return {"opportunities": []}
+    for row in shared.get("opportunities", []):
+        if not isinstance(row, dict) or row.get("tradability_status") != "TRADABLE":
+            continue
+        stamps = [_timestamp_ns(row.get(key)) for key in (
+            "low_call_timestamp_ns", "low_put_timestamp_ns",
+            "high_call_timestamp_ns", "high_put_timestamp_ns")]
+        if any(stamp is None for stamp in stamps):
+            continue
+        oldest, newest = min(stamps), max(stamps)
+        if not all(now_ns - MAX_QUOTE_AGE_NS <= stamp <= now_ns for stamp in stamps):
+            continue
+        if newest - oldest > MAX_LEG_TIMESTAMP_SKEW_NS:
+            continue
+        if _passes_edge_threshold(row):
+            rows.append(row)
     return {"opportunities": rows}
 
 
