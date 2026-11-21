@@ -197,3 +197,30 @@ def test_consumer_mux_conflicts_on_same_exchange_token_even_if_segment_differs()
         assert "descriptor conflict" in str(exc)
     else:
         raise AssertionError("exchange-token collision should be rejected regardless of segment")
+
+
+def test_consumer_mux_does_not_commit_owner_on_short_physical_subscribe():
+    from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
+    mux = ShoonyaConsumerSubscriptionMux(subscribe_physical=lambda items: 0, unsubscribe_physical=lambda items: len(items))
+    try:
+        mux.subscribe("owner", [_desc("short-sub")])
+    except RuntimeError as exc:
+        assert "incomplete count" in str(exc)
+    else:
+        raise AssertionError("short subscribe must fail closed")
+    assert mux.snapshot()["physical_tokens"] == 0
+
+
+def test_consumer_mux_does_not_commit_removal_on_short_physical_unsubscribe():
+    from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
+    mux = ShoonyaConsumerSubscriptionMux(subscribe_physical=lambda items: len(items), unsubscribe_physical=lambda items: 0)
+    item = _desc("short-unsub")
+    mux.subscribe("owner", [item])
+    try:
+        mux.unsubscribe("owner", [item])
+    except RuntimeError as exc:
+        assert "incomplete count" in str(exc)
+    else:
+        raise AssertionError("short unsubscribe must fail closed")
+    assert mux.snapshot()["physical_tokens"] == 1
+    assert mux.snapshot()["owners"]["NSE:short-unsub"] == ["owner"]
