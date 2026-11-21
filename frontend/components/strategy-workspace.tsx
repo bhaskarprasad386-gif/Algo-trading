@@ -1207,9 +1207,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
   useEffect(() => {
     if (slug !== "box-spread" || pagePushData?.history_revision == null) return;
-    // A durable-history revision arrives through page push; refresh only the
-    // active filter/page slice and let request sequencing reject older replies.
-    void loadHistory();
+    // History is low-priority on mobile. Coalesce bursts of persisted-history
+    // revisions so one websocket burst does not trigger multiple REST fetches.
+    const timer = window.setTimeout(() => void loadHistory(), 800);
+    return () => window.clearTimeout(timer);
   }, [slug, pagePushData?.history_revision]);
 
   useEffect(() => {
