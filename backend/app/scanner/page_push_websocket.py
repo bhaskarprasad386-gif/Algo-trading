@@ -438,11 +438,39 @@ async def _restart_event_waiter(queue: asyncio.Queue, event_task: asyncio.Task, 
             break
         if isinstance(queued, dict) and queued.get("page") != page_to_reset:
             preserved.append(queued)
+    overflowed = False
     for frame in preserved:
         try:
             queue.put_nowait(frame)
         except asyncio.QueueFull:
+            overflowed = True
             break
+    if overflowed:
+        # Do not silently lose preserved cross-page frames while restarting
+        # the waiter. The only safe recovery after backlog overflow is a
+        # snapshot marker for every channel currently active on this queue.
+        active_pages = frozenset()
+        for subscriber_queue, channels in tuple(_subscribers):
+            if subscriber_queue is queue:
+                active_pages = channels
+                break
+        while not queue.empty():
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        for page in active_pages or frozenset({page_to_reset}):
+            try:
+                queue.put_nowait({
+                    "type": "page_update", "page": page, "event": "SNAPSHOT_REQUIRED",
+                    "sequence": await asyncio.to_thread(_latest_page_sequence, page),
+                    "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
+                })
+            except asyncio.QueueFull:
+                # Queue is sized for all channels; if that assumption changes,
+                # recovery remains explicit for the markers already enqueued.
+                _log.warning("Page Push recovery marker queue overflow for %s", page)
+                break
     return asyncio.create_task(queue.get())
 
 
