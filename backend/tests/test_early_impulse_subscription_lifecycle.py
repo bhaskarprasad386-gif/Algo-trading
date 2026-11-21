@@ -138,7 +138,7 @@ def test_consumer_mux_subscribes_physical_token_only_on_first_owner_and_unsub_la
     physical = []
     mux = ShoonyaConsumerSubscriptionMux(
         subscribe_physical=lambda items: physical.append(("subscribe", tuple(items))) or len(items),
-        unsubscribe_physical=lambda items: physical.append(("unsubscribe", tuple(items))) or len(items,
+        unsubscribe_physical=lambda items: physical.append(("unsubscribe", tuple(items))) or len(items),
     )
     one = _desc("shared")
     mux.subscribe("early-impulse", [one])
