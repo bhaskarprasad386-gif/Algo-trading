@@ -147,9 +147,16 @@ def _snapshot_frame(page: str, data: dict[str, Any] | None = None, sequence: int
 
 def _snapshot(page: str) -> dict[str, Any]:
     provider = _snapshot_providers.get(page)
+    if not callable(provider):
+        # A missing worker-local provider is not an authoritative empty page.
+        # Signal the client to retain REST recovery and retry synchronization.
+        return {"snapshot_status": "UNAVAILABLE"}
     try:
-        result = provider() if callable(provider) else {}
-        return result if isinstance(result, dict) else {}
+        result = provider()
+        if not isinstance(result, dict):
+            _log.error("Scanner page snapshot provider returned non-object for %s", page)
+            return {"snapshot_status": "UNAVAILABLE"}
+        return result
     except Exception:
         _log.exception("Scanner page snapshot failed for %s", page)
         return {"snapshot_status": "UNAVAILABLE"}
