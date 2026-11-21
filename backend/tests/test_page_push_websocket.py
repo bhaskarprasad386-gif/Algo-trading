@@ -370,15 +370,18 @@ def test_unsubscribe_does_not_clear_dispatcher_restarted_by_new_subscriber(monke
     asyncio.run(scenario())
 
 
-def test_box_snapshot_recovery_is_worker_independent_and_ignores_partial_events():
-    complete = {"opportunities": [{"id": "worker-a-row", "edge": 7.2}]}
-    partial = {"collection_changes": [{"operation": "UPDATE", "key": "x"}]}
-    assert push._box_opportunities_snapshot([partial, complete, {}]) == complete
+def test_box_snapshot_recovery_ignores_partial_patch_with_opportunities_field():
+    partial = {"event": "PATCH", "data": {"opportunities": [{"id": "patch-row"}]}}
+    complete = {"event": "SNAPSHOT", "data": {"opportunities": [{"id": "snapshot-row", "edge": 7.2}]}}
+    assert push._box_opportunities_snapshot([partial, complete]) == complete["data"]
 
 
 def test_box_snapshot_recovery_marks_missing_full_snapshot_unavailable():
-    assert push._box_opportunities_snapshot([{"collection_changes": []}, {}]) == {"snapshot_status": "UNAVAILABLE"}
+    partial = {"event": "PATCH", "data": {"collection_changes": []}}
+    assert push._box_opportunities_snapshot([partial]) == {"snapshot_status": "UNAVAILABLE"}
 
 
-def test_box_snapshot_recovery_accepts_valid_empty_snapshot():
-    assert push._box_opportunities_snapshot([{"opportunities": []}]) == {"opportunities": []}
+def test_box_snapshot_recovery_accepts_valid_empty_snapshot_only_when_full():
+    patch = {"event": "PATCH", "data": {"opportunities": []}}
+    empty_snapshot = {"event": "SNAPSHOT", "data": {"opportunities": []}}
+    assert push._box_opportunities_snapshot([patch, empty_snapshot]) == {"opportunities": []}
