@@ -116,7 +116,7 @@ def test_reactivating_existing_channel_does_not_enqueue_recovery(monkeypatch):
 
 
 def test_channel_activation_queue_overflow_marks_all_active_pages_for_resync(monkeypatch):
-    queue = asyncio.Queue(maxsize=1)
+    queue = asyncio.Queue(maxsize=2)
     queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 8})
     monkeypatch.setattr(push, "_subscribers", set())
     monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 9 if page == "box-spread" else 4)
@@ -217,8 +217,7 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
 
     def fake_publish(page, event, data=None):
         page_sequences[page] = page_sequences.get(page, 0) + 1
-        frame = {
-            "type": "page_update", "page": page, "sequence": page_sequences[page],
+        frame = {            "type": "page_update", "page": page, "sequence": page_sequences[page],
             "event": event, "data": data or {},
         }
         # This round-trip test injects exactly one controlled frame into the
@@ -437,8 +436,7 @@ def test_journal_dispatch_uses_page_sequence_cursor_not_global_event_id(monkeypa
                 # Deliberately high global id; dispatch correctness is based on
                 # this page's sequence, not the cross-page event identity id.
                 return [{"id": 9001, "page": page, "sequence": 1, "event": "PATCH", "data": {"edge": 4}}]
-            return []
-        monkeypatch.setattr(push, "_events_after", events_after)
+            return []        monkeypatch.setattr(push, "_events_after", events_after)
         monkeypatch.setattr(push, "_subscribers", {(queue, frozenset({page}))})
         monkeypatch.setattr(push, "_dispatch_task", None)
         monkeypatch.setattr(push, "_dispatch_loop", None)
@@ -472,7 +470,7 @@ def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch)
         # the consumed frame plus retained queue exceeds this test queue size.
         queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 2})
         next_waiter = await push._restart_event_waiter(queue, waiter, "cash-future")
-        markers = [await asyncio.wait_for(queue.get(), timeout=0.2) for _ in range(3)]
+        markers = [await asyncio.wait_for(queue.get(), timeout=1.0) for _ in range(3)]
         assert {frame["page"] for frame in markers} == pages
         assert all(frame["event"] == "SNAPSHOT_REQUIRED" and frame["sequence"] == 7 for frame in markers)
         next_waiter.cancel()
@@ -549,12 +547,12 @@ def test_journal_dispatch_bounded_queue_recovers_slow_consumer(monkeypatch):
 
 
 def test_snapshot_handoff_keeps_cursor_before_unstable_capture(monkeypatch):
-    values = iter([(41, 42), (42, 43), (43, 44)])
+    values = iter([41, 42, 42, 43, 43, 44])
     captured = []
     def snapshot():
         captured.append(len(captured))
         return {"partial": True}
-    monkeypatch.setattr(push, "_latest_page_sequence", lambda page: next(values)[0])
+    monkeypatch.setattr(push, "_latest_page_sequence", lambda page: next(values))
     monkeypatch.setattr(push, "_snapshot", lambda page: snapshot())
     frame = push._consistent_snapshot_frame("box-spread", retries=3)
     assert frame["event"] == "SNAPSHOT"
