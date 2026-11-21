@@ -36,6 +36,7 @@ _SCAN_STATE = {
 _SCAN_THREAD = None
 
 _PAGE_UPDATE_CALLBACK = None
+_LAST_PAGE_PUSH_AT = 0.0
 
 
 def configure_page_update_callback(callback):
@@ -45,10 +46,15 @@ def configure_page_update_callback(callback):
     _PAGE_UPDATE_CALLBACK = callback
 
 
-def _notify_page_update():
+def _notify_page_update(*, force: bool = False):
+    global _LAST_PAGE_PUSH_AT
     callback = _PAGE_UPDATE_CALLBACK
     if not callable(callback):
         return
+    now = time.monotonic()
+    if not force and now - _LAST_PAGE_PUSH_AT < 0.5:
+        return
+    _LAST_PAGE_PUSH_AT = now
     with _SCAN_LOCK:
         payload = copy.deepcopy(_SCAN_STATE)
     payload["orders_placed"] = False
@@ -232,7 +238,7 @@ def _run_nifty200_scan():
             "started_at": time.time(), "finished_at": None, "batch_size": SCAN_BATCH_SIZE,
             "cache_mode": "persistent_daily_incremental",
         }
-    _notify_page_update()
+    _notify_page_update(force=True)
     try:
         symbols = _nifty200_symbols()
         master = InstrumentMaster()
@@ -285,14 +291,14 @@ def _run_nifty200_scan():
             _SCAN_STATE["status"] = "completed"
             _SCAN_STATE["current_symbol"] = None
             _SCAN_STATE["finished_at"] = time.time()
-        _notify_page_update()
+        _notify_page_update(force=True)
     except Exception as exc:
         with _SCAN_LOCK:
             _SCAN_STATE["status"] = "paused" if isinstance(exc, HTTPException) and exc.status_code == 409 else "failed"
             _SCAN_STATE["current_symbol"] = None
             _SCAN_STATE["fatal_error"] = str(exc.detail if isinstance(exc, HTTPException) else exc)[:240]
             _SCAN_STATE["finished_at"] = time.time()
-        _notify_page_update()
+        _notify_page_update(force=True)
 
 
 async def weekly_swing_daily_refresh_loop():
@@ -319,7 +325,7 @@ async def weekly_swing_daily_refresh_loop():
             global _SCAN_THREAD
             _SCAN_THREAD = threading.Thread(target=_run_nifty200_scan, daemon=True, name="weekly-nifty200-daily")
             _SCAN_THREAD.start()
-        _notify_page_update()
+        _notify_page_update(force=True)
 
 
 def weekly_bars(rows):
