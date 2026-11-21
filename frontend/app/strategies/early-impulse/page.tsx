@@ -23,8 +23,8 @@ const engineDetails: Engine[] = [
   { id: "absorption", name: "Absorption Detection", weight: 30, status: "WAITING", role: "Entry-location engine", detail: "Executed pressure versus price progress, liquidity replenishment and rejection at a level." },
   { id: "synthetic_spot", name: "Synthetic Future vs Spot", weight: 20, status: "WAITING", role: "Early pressure", detail: "Synchronized same-strike CE/PE synthetic value compared with spot; spread and quote age gates." },
   { id: "failed_auction", name: "Failed Auction / Rejection", weight: 15, status: "WAITING", role: "Trap filter", detail: "Sweep, failed breakout, reclaim or rejection. Avoids chasing a move after price has extended." },
-  { id: "market_impact", name: "Market Impact Efficiency", weight: 20, role: "Pressure quality", detail: "How much price progress is produced by executed flow; flags effort without progress and weak follow-through." },
-  { id: "cross_instrument", name: "Cross-Instrument Confirmation", weight: 15, role: "Validation", detail: "Spot and futures context. Confirmation is a quality filter, not a late mandatory trigger." },
+  { id: "market_impact", name: "Market Impact Efficiency", weight: 20, status: "WAITING", role: "Pressure quality", detail: "How much price progress is produced by executed flow; flags effort without progress and weak follow-through." },
+  { id: "cross_instrument", name: "Cross-Instrument Confirmation", weight: 15, status: "WAITING", role: "Validation", detail: "Spot and futures context. Confirmation is a quality filter, not a late mandatory trigger." },
 ];
 
 const fmtTime = (value?: string | null) => value ? new Date(value).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }) : "—";
