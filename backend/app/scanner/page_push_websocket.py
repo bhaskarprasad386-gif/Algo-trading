@@ -217,7 +217,8 @@ def publish_page_update(page: str, event: str, data: dict[str, Any] | None = Non
         return
     safe_data = _json_safe(data if isinstance(data, dict) else {})
     try:
-        with engine.begin() as connection:            row = connection.execute(
+        with engine.begin() as connection:
+            row = connection.execute(
                 update(sequences)
                 .where(sequences.c.page == page)
                 .values(sequence=sequences.c.sequence + 1)
@@ -438,7 +439,8 @@ async def _restart_event_waiter(queue: asyncio.Queue, event_task: asyncio.Task, 
             break
         if isinstance(queued, dict) and queued.get("page") != page_to_reset:
             preserved.append(queued)
-    overflowed = False    for frame in preserved:
+    overflowed = False
+    for frame in preserved:
         try:
             queue.put_nowait(frame)
         except asyncio.QueueFull:
