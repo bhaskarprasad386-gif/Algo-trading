@@ -1,0 +1,47 @@
+name: VPS Deployment Job Status
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Existing GitHub run ID returned by VPS Durable Deploy Job"
+        required: true
+        type: string
+      include_log_tail:
+        description: "Print last 120 remote deployment log lines (may contain operational details)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Read existing remote job status
+        env:
+          VPS_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          JOB_ID: ${{ inputs.job_id }}
+          INCLUDE_LOG_TAIL: ${{ inputs.include_log_tail }}
+        run: |
+          set -euo pipefail
+          [[ "$JOB_ID" =~ ^[0-9]{1,24}$ ]] || { echo "job_id must be numeric" >&2; exit 1; }
+          printf '%s' "$VPS_KEY_B64" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          ssh-keyscan -T 10 -p 22 -H "$VPS_HOST" > /tmp/vps_known_hosts
+          test -s /tmp/vps_known_hosts
+          SSH_OPTS=(-i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o UserKnownHostsFile=/tmp/vps_known_hosts -o StrictHostKeyChecking=yes)
+          REMOTE_RUNNER="/var/lib/algo-trading-deploy/jobs/$JOB_ID/runner.sh"
+          ssh -T "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" \
+            "bash '$REMOTE_RUNNER' status '$JOB_ID'"
+          if [[ "$INCLUDE_LOG_TAIL" == "true" ]]; then
+            echo "::warning::Remote service logs may contain operational details. Share the output only with authorized maintainers."
+            ssh -T "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" \
+              "bash '$REMOTE_RUNNER' logs '$JOB_ID'"
+          fi
+          rm -f /tmp/vps_key /tmp/vps_known_hosts

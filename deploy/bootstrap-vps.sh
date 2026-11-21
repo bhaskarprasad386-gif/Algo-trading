@@ -28,9 +28,16 @@ log "Checking repository state"
 git diff --quiet || die "Working tree has uncommitted changes; refusing to overwrite them."
 git diff --cached --quiet || die "Index has staged changes; refusing to continue."
 
-log "Syncing main from GitHub"
-git fetch origin main
-git merge --ff-only origin/main
+if [[ -n "${DEPLOY_TARGET_SHA:-}" ]]; then
+  [[ "$DEPLOY_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || die "DEPLOY_TARGET_SHA must be a full immutable commit SHA."
+  CURRENT_SHA="$(git rev-parse HEAD)"
+  [[ "$CURRENT_SHA" == "$DEPLOY_TARGET_SHA" ]] || die "Checkout does not match requested immutable deployment SHA."
+  log "Using immutable deployment commit $DEPLOY_TARGET_SHA; no moving-branch fetch/merge will occur."
+else
+  log "Syncing main from GitHub"
+  git fetch origin main
+  git merge --ff-only origin/main
+fi
 
 log "Installing OS prerequisites"
 export DEBIAN_FRONTEND=noninteractive
