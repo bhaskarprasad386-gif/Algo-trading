@@ -227,30 +227,49 @@ async def live_opportunities(websocket: WebSocket):
 
 
 
+def _safe_snapshot_rows(items):
+    """Normalize local scanner rows using the same live quote and edge guards."""
+    rows = []
+    for item in items or ():
+        row = _row(item)
+        if row is not None and _passes_edge_threshold(row):
+            rows.append(row)
+    return rows
+
+
 def _page_snapshot():
-    """Recover a worker-independent journal snapshot, filtering expired quotes."""
+    """Recover from shared journal, falling back to this worker's safe live rows."""
     from app.scanner.page_push_websocket import _shared_box_opportunities_snapshot
     shared = _shared_box_opportunities_snapshot()
-    if shared.get("snapshot_status") == "UNAVAILABLE":
-        return shared
-    now_ns = time.time_ns()
-    rows = []
-    for row in shared.get("opportunities", []):
-        if not isinstance(row, dict) or row.get("tradability_status") != "TRADABLE":
-            continue
-        stamps = [_timestamp_ns(row.get(key)) for key in (
-            "low_call_timestamp_ns", "low_put_timestamp_ns",
-            "high_call_timestamp_ns", "high_put_timestamp_ns")]
-        if any(stamp is None for stamp in stamps):
-            continue
-        oldest, newest = min(stamps), max(stamps)
-        if not all(now_ns - MAX_QUOTE_AGE_NS <= stamp <= now_ns for stamp in stamps):
-            continue
-        if newest - oldest > MAX_LEG_TIMESTAMP_SKEW_NS:
-            continue
-        if _passes_edge_threshold(row):
-            rows.append(row)
-    return {"opportunities": rows}
+    if shared.get("snapshot_status") != "UNAVAILABLE":
+        now_ns = time.time_ns()
+        rows = []
+        for row in shared.get("opportunities", []):
+            if not isinstance(row, dict) or row.get("tradability_status") != "TRADABLE":
+                continue
+            stamps = [_timestamp_ns(row.get(key)) for key in (
+                "low_call_timestamp_ns", "low_put_timestamp_ns",
+                "high_call_timestamp_ns", "high_put_timestamp_ns")]
+            if any(stamp is None for stamp in stamps):
+                continue
+            oldest, newest = min(stamps), max(stamps)
+            if not all(now_ns - MAX_QUOTE_AGE_NS <= stamp <= now_ns for stamp in stamps):
+                continue
+            if newest - oldest > MAX_LEG_TIMESTAMP_SKEW_NS:
+                continue
+            if _passes_edge_threshold(row):
+                rows.append(row)
+        return {"opportunities": rows}
+
+    # A worker may have no retained full journal snapshot yet. Its local scanner
+    # state can still provide a validated reconnect baseline; never invent empty.
+    if not callable(_latest_getter):
+        return {"snapshot_status": "UNAVAILABLE"}
+    try:
+        return {"opportunities": _safe_snapshot_rows(_latest_getter())}
+    except Exception:
+        _log.exception("Could not recover local Box Spread snapshot fallback")
+        return {"snapshot_status": "UNAVAILABLE"}
 
 
 # The shared page gateway reads this getter on subscribe/resync. It does not
