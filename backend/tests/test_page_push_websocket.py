@@ -437,7 +437,8 @@ def test_journal_dispatch_uses_page_sequence_cursor_not_global_event_id(monkeypa
                 # Deliberately high global id; dispatch correctness is based on
                 # this page's sequence, not the cross-page event identity id.
                 return [{"id": 9001, "page": page, "sequence": 1, "event": "PATCH", "data": {"edge": 4}}]
-            return []        monkeypatch.setattr(push, "_events_after", events_after)
+            return []
+        monkeypatch.setattr(push, "_events_after", events_after)
         monkeypatch.setattr(push, "_subscribers", {(queue, frozenset({page}))})
         monkeypatch.setattr(push, "_dispatch_task", None)
         monkeypatch.setattr(push, "_dispatch_loop", None)
