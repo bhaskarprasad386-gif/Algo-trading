@@ -1442,7 +1442,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     <div className={slug === "box-spread" ? "box-spread-page space-y-5 theme-text" : "min-h-screen space-y-5 theme-bg p-4 theme-text"}>
       <div className="flex items-center justify-between gap-3">
         {slug === "box-spread" ? (
-          <span className="text-lg font-black uppercase tracking-wide text-slate-950 sm:text-xl">Box Spread · Live Market Monitor</span>
+          <span className="text-lg font-black uppercase tracking-wide text-slate-950 sm:text-xl">Box Spread · System Status</span>
         ) : (
           <Link href="/scanner" className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface px-3 text-xs font-semibold theme-muted hover:theme-border">
             <ArrowLeft className="h-4 w-4" /> Cash Future Scanner
