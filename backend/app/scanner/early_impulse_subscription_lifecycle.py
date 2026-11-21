@@ -39,7 +39,7 @@ class EarlyImpulseSubscriptionLifecycle:
         self._subscribe = subscribe
         self._unsubscribe = unsubscribe
         self._lock = RLock()
-        self._desired: dict[tuple[str, str, str], InstrumentDescriptor] = {}
+        self._desired: dict[tuple[str, str], InstrumentDescriptor] = {}
         self._enabled = False
 
     @staticmethod
