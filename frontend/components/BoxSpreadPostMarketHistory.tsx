@@ -69,16 +69,19 @@ const validSnapshotHistoryResponse = (body: unknown): body is SnapshotResponse =
     );
 };
 
+const historyNumberFormatter = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
+const historyDateTimeFormatter = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "medium" });
+const historyClockFormatter = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour12: false });
 const number = (value: number | null | undefined) =>
   value == null || !Number.isFinite(Number(value))
     ? "—"
-    : Number(value).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+    : historyNumberFormatter.format(Number(value));
 
 const observedTime = (value: string) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
-    : date.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "short", timeStyle: "medium" });
+    : historyDateTimeFormatter.format(date);
 };
 
 const quoteField = (row: Snapshot, prefix: string, field: string) => number(row[(prefix + "_" + field) as keyof Snapshot] as number | null | undefined);
@@ -117,7 +120,7 @@ const quoteTime = (value: number | string | null | undefined) => {
   const date = new Date(milliseconds);
   return Number.isNaN(date.getTime())
     ? "—"
-    : date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false }) + " IST";
+    : historyClockFormatter.format(date) + " IST";
 };
 
 export default function BoxSpreadPostMarketHistory() {
@@ -139,63 +142,60 @@ export default function BoxSpreadPostMarketHistory() {
   const [sortDirection, setSortDirection] = useState<"desc" | "asc">("desc");
   const [depthSnapshot, setDepthSnapshot] = useState<Snapshot | null>(null);
   const strikeGap = (row: Snapshot) => Number(row.high_strike) - Number(row.low_strike);
+  const executableLotsCache = useRef(new WeakMap<Snapshot, number | null>());
   const executableLots = (row: Snapshot) => {
+    // Snapshot objects are immutable across history sorting. Cache depth-derived
+    // capacity for repeated mobile-card and sort metric reads.
+    const cached = executableLotsCache.current.get(row);
+    if (cached !== undefined || executableLotsCache.current.has(row)) return cached ?? null;
     const savedLots = Number(row.max_executable_lots);
-    if (row.max_executable_lots != null && Number.isFinite(savedLots) && savedLots >= 0) return Math.floor(savedLots);
-    const lotSize = Number(row.lot_size);
-    if (!Number.isFinite(lotSize) || lotSize <= 0 || !Array.isArray(row.depth_legs) || row.depth_legs.length !== 4) return null;
-    const capacities = row.depth_legs.map(leg => Number(leg.available_quantity));
-    if (capacities.some(quantity => !Number.isFinite(quantity) || quantity < 0)) return null;
-    return Math.floor(Math.min(...capacities) / lotSize);
+    let result: number | null = null;
+    if (row.max_executable_lots != null && Number.isFinite(savedLots) && savedLots >= 0) result = Math.floor(savedLots);
+    else {
+      const lotSize = Number(row.lot_size);
+      if (Number.isFinite(lotSize) && lotSize > 0 && Array.isArray(row.depth_legs) && row.depth_legs.length === 4) {
+        const capacities = row.depth_legs.map(leg => Number(leg.available_quantity));
+        if (capacities.every(quantity => Number.isFinite(quantity) && quantity >= 0)) result = Math.floor(Math.min(...capacities) / lotSize);
+      }
+    }
+    executableLotsCache.current.set(row, result);
+    return result;
   };
-  const sortedRows = useMemo(() => [...rows].sort((a, b) => {
-    const metric = (row: Snapshot) => sortKey === "profit" ? row.gross_pnl : sortKey === "edge" ? row.executable_edge : sortKey === "edgePerLot" ? row.edge_per_lot : sortKey === "gap" ? strikeGap(row) : sortKey === "lots" ? executableLots(row) : new Date(row.observed_at).getTime();
-    const av = metric(a), bv = metric(b);
-    if (av == null && bv == null) return 0;
-    if (av == null) return 1;
-    if (bv == null) return -1;
-    return (sortDirection === "desc" ? -1 : 1) * (Number(av) - Number(bv));
-  }), [rows, sortKey, sortDirection]);
-  const selectSort = async (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => {
+  const sortedRows = useMemo(() => {
+    // Calculate the active sort value once per row. Previously the comparator
+    // repeatedly parsed timestamps and recomputed four-leg depth capacity
+    // (including a min() over legs) on every comparison.
+    const metric = (row: Snapshot): number | null => {
+      const raw = sortKey === "profit" ? row.gross_pnl
+        : sortKey === "edge" ? row.executable_edge
+        : sortKey === "edgePerLot" ? row.edge_per_lot
+        : sortKey === "gap" ? strikeGap(row)
+        : sortKey === "lots" ? executableLots(row)
+        : new Date(row.observed_at).getTime();
+      const value = Number(raw);
+      return raw == null || !Number.isFinite(value) ? null : value;
+    };
+    const decorated = rows.map((row, index) => ({ row, index, value: metric(row) }));
+    decorated.sort((a, b) => {
+      if (a.value == null && b.value == null) return a.index - b.index;
+      if (a.value == null) return 1;
+      if (b.value == null) return -1;
+      const difference = (sortDirection === "desc" ? -1 : 1) * (a.value - b.value);
+      return difference || a.index - b.index;
+    });
+    return decorated.map(item => item.row);
+  }, [rows, sortKey, sortDirection]);
+  const selectSort = (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => {
+    // Sorting stays local to the currently loaded page. The old implementation
+    // downloaded every history page (potentially thousands of rows) on each sort,
+    // making the UI appear frozen and competing with refresh/filter requests.
     const nextDirection = sortKey === key ? (sortDirection === "desc" ? "asc" : "desc") : "desc";
     setSortKey(key);
     setSortDirection(nextDirection);
-    if (!hasMore || sortingAll) return;
-    const sortRequestId = ++sortingRequestSequence.current;
-    setSortingAll(true);
-    try {
-      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const allRows = [...rows];
-      let nextOffset = offset;
-      let more = true;
-      while (more) {
-        const params = new URLSearchParams({ days: String(days), limit: "5000", offset: String(nextOffset) });
-        if (expiryType !== "ALL") params.set("expiry_type", expiryType);
-        if (selectedIndex !== "ALL") params.set("symbol", selectedIndex);
-        const response = await fetch(base + "/api/v1/scanner/box-spread/snapshots?" + params.toString(), { cache: "no-store", signal: AbortSignal.timeout(20000) });
-        if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
-        const body = (await response.json()) as SnapshotResponse;
-        if (!validSnapshotHistoryResponse(body)) throw new Error("Unexpected snapshot history response");
-        if (sortRequestId !== sortingRequestSequence.current) return;
-        allRows.push(...body.data);
-        nextOffset += body.data.length;
-        more = body.has_more === true && body.data.length > 0;
-      }
-      if (sortRequestId !== sortingRequestSequence.current) return;
-      setRows(mergeSnapshots([], allRows));
-      setOffset(nextOffset);
-      setHasMore(false);
-      setTotal(allRows.length);
-    } catch (e) {
-      // A superseded full-history sort must not surface an error over the
-      // newer page/filter/revision request that replaced it.
-      if (sortRequestId === sortingRequestSequence.current) {
-        setError(e instanceof Error ? e.message : "Unable to load complete history for sorting");
-      }
-    } finally { if (sortRequestId === sortingRequestSequence.current) setSortingAll(false); }
   };
   const sortMark = (key: "profit" | "edge" | "edgePerLot" | "time" | "gap" | "lots") => sortKey === key ? (sortDirection === "desc" ? " ↓" : " ↑") : " ↕";
   const requestSequence = useRef(0);
+  const historyAbortController = useRef<AbortController | null>(null);
   const sortingRequestSequence = useRef(0);
   const appendInFlight = useRef(false);
 
@@ -209,6 +209,10 @@ export default function BoxSpreadPostMarketHistory() {
 
   const load = useCallback(async (append = false, pageOffset = 0) => {
     if (append && appendInFlight.current) return;
+    if (!append) {
+      historyAbortController.current?.abort();
+      historyAbortController.current = null;
+    }
     const requestId = ++requestSequence.current;
     if (append) {
       // Pagination and full-history sorting both mutate the same visible row set.
@@ -233,14 +237,16 @@ export default function BoxSpreadPostMarketHistory() {
       const nextOffset = append ? pageOffset : 0;
       const params = new URLSearchParams({
         days: String(days),
-        limit: "500",
+        limit: "100",
         offset: String(nextOffset),
       });
       if (expiryType !== "ALL") params.set("expiry_type", expiryType);
       if (selectedIndex !== "ALL") params.set("symbol", selectedIndex);
+      const controller = append ? null : new AbortController();
+      if (controller) historyAbortController.current = controller;
       const response = await fetch(base + "/api/v1/scanner/box-spread/snapshots?" + params.toString(), {
         cache: "no-store",
-        signal: AbortSignal.timeout(12000),
+        signal: controller ? AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000),
       });
       if (!response.ok) throw new Error("Snapshot history HTTP " + response.status);
       const body = (await response.json()) as SnapshotResponse;
@@ -264,9 +270,18 @@ export default function BoxSpreadPostMarketHistory() {
         setLoading(false);
         setLoadingMore(false);
         appendInFlight.current = false;
+        historyAbortController.current = null;
       }
     }
   }, [days, expiryType, selectedIndex]);
+
+  useEffect(() => () => {
+    requestSequence.current += 1;
+    sortingRequestSequence.current += 1;
+    historyAbortController.current?.abort();
+    historyAbortController.current = null;
+    appendInFlight.current = false;
+  }, []);
 
   useEffect(() => {
     sortingRequestSequence.current += 1;
@@ -285,11 +300,13 @@ export default function BoxSpreadPostMarketHistory() {
 
   useEffect(() => {
     if (pagePushData?.history_revision == null) return;
-    // Cancel a long all-history sort so an older completed page set cannot
-    // overwrite the refreshed slice following the durable-save notification.
-    sortingRequestSequence.current += 1;
-    setSortingAll(false);
-    void load(false);
+    // Debounce repeated saves to avoid redundant history API calls.
+    const timer = setTimeout(() => {
+      sortingRequestSequence.current += 1;
+      setSortingAll(false);
+      void load(false);
+    }, 350);
+    return () => clearTimeout(timer);
   }, [pagePushData?.history_revision, load]);
 
   const refresh = () => {
@@ -350,10 +367,10 @@ export default function BoxSpreadPostMarketHistory() {
       {!rows.length && !loading && !error && <p className="mt-4 rounded-lg border-2 border-slate-400 dark:border-slate-500 theme-border p-3 text-sm theme-muted">No qualifying snapshots were saved in this window. No synthetic or sample rows are displayed.</p>}
 
       {rows.length > 0 && <div className="mt-4 space-y-2">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5" aria-label="Sort saved history">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5" aria-label="Sort loaded history">
           {(["profit","edge","edgePerLot","gap","lots","time"] as const).map(key => <button key={key} type="button" onClick={() => void selectSort(key)} disabled={sortingAll} aria-pressed={sortKey === key} className={"min-h-14 rounded-xl border px-3 text-base font-extrabold shadow-sm disabled:opacity-50 " + (sortKey === key ? "theme-accent theme-accent-bg theme-border" : "theme-border theme-surface theme-text")}>{key === "profit" ? "Gross Profit" : key === "edge" ? "Edge" : key === "edgePerLot" ? "Edge / Lot" : key === "gap" ? "Strike Gap" : key === "lots" ? "Max Lots" : "Timing"}<span className="block mt-1 text-sm font-medium">{sortKey === key ? (sortDirection === "desc" ? "Highest first ↓" : "Lowest first ↑") : "Tap to sort ↕"}</span></button>)}
         </div>
-        {sortingAll && <p role="status" className="text-sm theme-muted">Loading complete history for sorting…</p>}
+        <p className="text-xs theme-muted">Sort is instant and applies only to loaded rows. Use Load more to fetch additional pages.</p>
       </div>}
       {rows.length > 0 && <div className="mt-4 grid gap-3 md:hidden">
         {sortedRows.map(row => <article key={snapshotKey(row)} className="rounded-xl border-2 border-slate-400 dark:border-slate-500 theme-border theme-surface-2 p-3">
