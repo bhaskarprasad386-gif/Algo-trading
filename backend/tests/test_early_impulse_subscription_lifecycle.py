@@ -238,3 +238,45 @@ def test_lifecycle_universe_rejects_same_exchange_token_with_different_segment()
         assert "duplicate token" in str(exc)
     else:
         raise AssertionError("duplicate exchange-token identity should be rejected")
+
+
+def test_consumer_mux_quarantines_token_after_partial_physical_subscribe_exception():
+    from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
+    def partial_subscribe(items):
+        # Simulate adapter mutating one token before failing.
+        raise RuntimeError("adapter partially subscribed")
+    mux = ShoonyaConsumerSubscriptionMux(subscribe_physical=partial_subscribe, unsubscribe_physical=lambda items: len(items))
+    item = _desc("uncertain-sub")
+    try:
+        mux.subscribe("owner", [item])
+    except RuntimeError as exc:
+        assert "partially subscribed" in str(exc)
+    else:
+        raise AssertionError("physical callback exception must propagate")
+    assert mux.snapshot()["physical_tokens"] == 0
+    assert mux.snapshot()["uncertain_tokens"] == ["NSE:uncertain-sub"]
+    try:
+        mux.subscribe("another-owner", [item])
+    except RuntimeError as exc:
+        assert "uncertain" in str(exc)
+    else:
+        raise AssertionError("uncertain token must be quarantined")
+
+
+def test_consumer_mux_quarantines_token_after_partial_physical_unsubscribe_exception():
+    from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
+    def partial_unsubscribe(items):
+        # Simulate adapter removing a token then raising before reporting count.
+        raise RuntimeError("adapter partially unsubscribed")
+    mux = ShoonyaConsumerSubscriptionMux(subscribe_physical=lambda items: len(items), unsubscribe_physical=partial_unsubscribe)
+    item = _desc("uncertain-unsub")
+    mux.subscribe("owner", [item])
+    try:
+        mux.unsubscribe("owner", [item])
+    except RuntimeError as exc:
+        assert "partially unsubscribed" in str(exc)
+    else:
+        raise AssertionError("physical callback exception must propagate")
+    assert mux.snapshot()["physical_tokens"] == 1
+    assert mux.snapshot()["owners"]["NSE:uncertain-unsub"] == ["owner"]
+    assert mux.snapshot()["uncertain_tokens"] == ["NSE:uncertain-unsub"]
