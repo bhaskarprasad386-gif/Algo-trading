@@ -324,10 +324,10 @@ def test_page_push_dispatcher_marks_queue_overflow_for_snapshot(monkeypatch):
         page = "cash-future"
         queue = asyncio.Queue(maxsize=1)
         queue.put_nowait({"page": page, "event": "PATCH", "sequence": 1})
-        monkeypatch.setattr(push, "_latest_event_id", lambda: 0)
-        monkeypatch.setattr(push, "_events_after", lambda cursor: [
-            {"id": 1, "page": page, "sequence": 2, "event": "PATCH", "data": {"rows": []}}
-        ] if cursor == 0 else [])
+        monkeypatch.setattr(push, "_latest_page_sequence", lambda target_page: 0)
+        monkeypatch.setattr(push, "_events_after", lambda target_page, cursor, limit=100: [
+            {"id": 91, "page": page, "sequence": 2, "event": "PATCH", "data": {"rows": []}}
+        ] if target_page == page and cursor == 0 else [])
         monkeypatch.setattr(push, "_subscribers", {(queue, frozenset({page}))})
         monkeypatch.setattr(push, "_dispatch_ready", asyncio.Event())
         task = asyncio.create_task(push._journal_dispatch_loop())
@@ -424,4 +424,37 @@ def test_unsubscribe_does_not_clear_dispatcher_restarted_by_new_subscriber(monke
         assert any(queue is new_queue for queue, _ in push._subscribers)
         monkeypatch.setattr(push.asyncio, "wait", original_wait)
         await push._unsubscribe_local(new_queue)
+    asyncio.run(scenario())
+
+
+def test_journal_dispatch_uses_page_sequence_cursor_not_global_event_id(monkeypatch):
+    async def scenario():
+        page = "box-spread"
+        queue = asyncio.Queue(maxsize=4)
+        monkeypatch.setattr(push, "_latest_page_sequence", lambda target: 0)
+        calls = []
+        def events_after(target_page, cursor, limit=100):
+            calls.append((target_page, cursor))
+            if target_page == page and cursor == 0:
+                # Deliberately high global id; dispatch correctness is based on
+                # this page's sequence, not the cross-page event identity id.
+                return [{"id": 9001, "page": page, "sequence": 1, "event": "PATCH", "data": {"edge": 4}}]
+            return []
+        monkeypatch.setattr(push, "_events_after", events_after)
+        monkeypatch.setattr(push, "_subscribers", {(queue, frozenset({page}))})
+        monkeypatch.setattr(push, "_dispatch_task", None)
+        monkeypatch.setattr(push, "_dispatch_loop", None)
+        monkeypatch.setattr(push, "_dispatch_ready", asyncio.Event())
+        task = asyncio.create_task(push._journal_dispatch_loop())
+        try:
+            await asyncio.wait_for(push._dispatch_ready.wait(), timeout=0.5)
+            frame = await asyncio.wait_for(queue.get(), timeout=0.5)
+            assert frame["page"] == page and frame["sequence"] == 1
+            assert frame["event"] == "PATCH" and frame["data"] == {"edge": 4}
+            await asyncio.sleep(0.05)
+            assert (page, 1) in calls
+        finally:
+            monkeypatch.setattr(push, "_subscribers", set())
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
     asyncio.run(scenario())
