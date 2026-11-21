@@ -13,6 +13,9 @@ type Opportunity = Record<string, unknown> & {
 type TrackedRow = { key: string; row: Opportunity; lastSeen: number; status: "LIVE" | "STALE" };
 
 const DEPTH_LEVELS = [0, 1, 2, 3, 4] as const;
+function ladder(levels?: Array<{ price: number; quantity: number }>) {
+  return Array.isArray(levels) ? levels.slice(0, 5) : [];
+}
 
 function keyOf(row: Opportunity) {
   return [row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].map(String).join("|");
