@@ -13,9 +13,6 @@ type Opportunity = Record<string, unknown> & {
 type TrackedRow = { key: string; row: Opportunity; lastSeen: number; status: "LIVE" | "STALE" };
 
 const DEPTH_LEVELS = [0, 1, 2, 3, 4] as const;
-function ladder(levels?: Array<{ price: number; quantity: number }>) {
-  return Array.isArray(levels) ? levels.slice(0, 5) : [];
-}
 
 function keyOf(row: Opportunity) {
   return [row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].map(String).join("|");
@@ -85,8 +82,9 @@ const LegQuote = memo(function LegQuote({ row, name, price, qty, side, depthKey 
   const depth = row.market_depth && typeof row.market_depth === "object"
     ? (row.market_depth as Record<string, unknown>)[depthKey] as { status?: string; bids?: Array<{price:number;quantity:number}>; asks?: Array<{price:number;quantity:number}> } | undefined
     : undefined;
-  const bids = ladder(depth?.bids);
-  const asks = ladder(depth?.asks);
+  // Reuse the incoming depth arrays; the fixed five-level renderer bounds access.
+  const bids = Array.isArray(depth?.bids) ? depth.bids : undefined;
+  const asks = Array.isArray(depth?.asks) ? depth.asks : undefined;
   const live = depth?.status === "LIVE";
   return (
     <div className="flex min-w-[150px] flex-col gap-1 rounded-lg border theme-border theme-surface-2 px-2.5 py-2">
