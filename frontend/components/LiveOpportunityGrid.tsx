@@ -263,9 +263,12 @@ export default function LiveOpportunityGrid() {
         }
       }
     }
-    rowsRef.current = nextRows;
+    // If the authoritative frame contains only identical/older quotes and the same keys,
+    // keep the previous Map identity instead of replacing it on every websocket frame.
+    const committedRows = changed ? nextRows : previousRows;
+    rowsRef.current = committedRows;
     // Delta frames containing only duplicate/older timestamps are no-ops.
-    if (changed) setRows(Array.from(nextRows.values()).sort((a, b) => b.lastSeen - a.lastSeen));
+    if (changed) setRows(Array.from(committedRows.values()).sort((a, b) => b.lastSeen - a.lastSeen));
   }, [pageData]);
 
   useEffect(() => {
