@@ -117,8 +117,8 @@ class EarlyImpulseLiveRunner:
                 now_ns=received_ns, max_age_ns=self.max_age_ns,
                 max_skew_ns=self.max_skew_ns, required_instruments=required,
             )
-            if not sync["aligned"]:
-                self._last_result = {"status": "UNALIGNED", "diagnostics": sync}
+            if not sync["aligned"] or any(len(self._history.get(key, ())) < 3 for key in required):
+                self._last_result = {"status": "UNALIGNED_OR_INSUFFICIENT_HISTORY", "diagnostics": sync,                    "minimum_quotes_per_instrument": 3}
                 return None
             self._aligned_evaluations += 1
             role_keys = {role: key for key, role in self._roles.items()}
