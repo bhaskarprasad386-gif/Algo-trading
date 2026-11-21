@@ -1438,6 +1438,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     return historySort.direction === "asc" ? delta : -delta;
   }) : visibleHistoryRows;
 
+  const boxOutsideSession = isOutsideNseRegularHours();
+
   return (
     <div className={slug === "box-spread" ? "box-spread-page space-y-5 theme-text" : "min-h-screen space-y-5 theme-bg p-4 theme-text"}>
       <div className="flex items-center justify-between gap-3">
@@ -1470,7 +1472,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             {([
               {label:"API Status",value:loading?"CHECKING":error?"ERROR":liveApiStatus,detail:"Backend response",tone:loading?"theme-muted":error||liveApiStatus==="ERROR"?"theme-danger":liveApiStatus==="RESPONDING"?"theme-success":"theme-warning"},
               {label:"Runner Status",value:runner?.running?"RUNNING":"STOPPED",detail:"Scanner engine",tone:runner?.running?"theme-success":"theme-warning"},
-              {label:"Market Status",value:isOutsideNseRegularHours()?"OUTSIDE SESSION":"SESSION WINDOW",detail:"Time window only · holidays not checked",tone:isOutsideNseRegularHours()?"theme-warning":"theme-success"},
+              {label:"Market Status",value:boxOutsideSession?"OUTSIDE SESSION":"SESSION WINDOW",detail:"Time window only · holidays not checked",tone:boxOutsideSession?"theme-warning":"theme-success"},
               {label:"WebSocket Status",value:pagePushStatus==="LIVE"?"CONNECTED":"RECONNECTING",detail:"Live push channel",tone:pagePushStatus==="LIVE"?"theme-success":"theme-warning"},
               {label:"Feed Status",value:boxFeedDisplayStatus(feedStatus),detail:(feedTicks==null?"—":feedTicks.toLocaleString("en-IN")+" ticks"),tone:feedStatus==="LIVE"?"theme-success":"theme-warning"},
               {label:"Feed Age",value:feedAge==null?"—":feedAge.toFixed(1)+"s",detail:"Time since last feed update",tone:feedAge==null?"theme-muted":feedAge<=5?"theme-success":feedAge<=15?"theme-warning":"theme-danger"}
