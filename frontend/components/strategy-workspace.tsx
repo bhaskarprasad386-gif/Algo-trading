@@ -615,6 +615,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [indexSelectionSaving, setIndexSelectionSaving] = useState(false);
   const [indexSelectionMessage, setIndexSelectionMessage] = useState("");
   const [indexSelectionError, setIndexSelectionError] = useState<string | null>(null);
+  const [indexSettingsExpanded, setIndexSettingsExpanded] = useState(false);
   const indexSelectionDraftInitialized = useRef(false);
   const historyRequestSequence = useRef(0);
   const historyAbortController = useRef<AbortController | null>(null);
@@ -1530,17 +1531,20 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       </div>
       )}
 
+      {slug === "box-spread" && <div id="box-live-opportunities" className="scroll-mt-24"><LiveOpportunityGrid /></div>}
+
       {slug === "box-spread" && (
         <Card className="theme-border theme-surface p-4 theme-text shadow-xl" aria-label="Manual Box Spread index selection">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+          <button type="button" aria-expanded={indexSettingsExpanded} onClick={() => setIndexSettingsExpanded(current => !current)} className="flex w-full flex-wrap items-center justify-between gap-3 text-left">
             <div>
-              <h2 className="text-lg font-black text-slate-950 sm:text-xl">Manual Index Subscription</h2>
-              <p className="mt-1 text-xs theme-muted">Saved selection is applied only after the replacement feed is live-ready. During staging, the previous feed remains active.</p>
+              <h2 className="text-base font-black text-slate-950 sm:text-xl">Manual Index Subscription <span className="ml-1 text-xs theme-muted">{indexSettingsExpanded ? "▲" : "▼"}</span></h2>
+              <p className="mt-1 text-xs theme-muted">Saved selection applies after replacement feed is live-ready.</p>
             </div>
             <span className="rounded-lg border theme-border px-3 py-1.5 text-[10px] font-bold theme-muted">
-              {indexSelectionLoading ? "LOADING FEED STATE" : activeIndexSymbols.length + " ACTIVE INDICES"}
+              {indexSelectionLoading ? "LOADING FEED STATE" : activeIndexSymbols.length + " ACTIVE"}
             </span>
-          </div>
+          </button>
+          {indexSettingsExpanded && <div className="box-index-settings-content">
           <div className="mt-3 flex flex-wrap gap-2">
             <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">All Indices</button>
             <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","SENSEX"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY + SENSEX</button>
@@ -1610,6 +1614,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </div>
           {indexSelectionMessage && <p role="status" className="mt-3 rounded-lg border theme-border theme-success-bg p-3 text-xs theme-success">{indexSelectionMessage}</p>}
           {indexSelectionError && <p role="alert" className="mt-3 rounded-lg border theme-border theme-danger-bg p-3 text-xs theme-danger">{indexSelectionError}. Previous saved selection is retained.</p>}
+          </div>}
         </Card>
       )}
 
@@ -1619,7 +1624,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <div><h2 className="text-lg font-black text-slate-950 sm:text-xl">Live Index Prices</h2><p className="mt-1 text-[10px] theme-muted">Direct spot-feed snapshots · refresh 1s · LIVE only when quote age is 5s or less</p></div>
             <span className="rounded-lg border theme-border px-3 py-1.5 text-[10px] font-bold theme-muted">{activeIndexSymbols.length} SELECTED INDEX SPOTS</span>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+          {activeIndexSymbols.length === 0 ? <p className="rounded-lg border theme-border theme-surface-2 px-3 py-2 text-xs theme-muted">No index spots selected. Choose indices in Manual Index Subscription to display live prices.</p> : <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
             {activeIndexSymbols.map(symbol => {
               const item = indexSpotRows.find(row => row.symbol === symbol);
               const age = item?.spot_age_seconds;
@@ -1634,7 +1639,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
                 <p className="mt-1 text-[9px] theme-muted">{stamp}</p>
               </div>;
             })}
-          </div>
+          </div>}
         </section>
       )}
       {slug !== "box-spread" && (
@@ -1713,7 +1718,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
 
       {error && <Card className="theme-border theme-danger-bg p-4 text-sm theme-danger">{error}</Card>}
 
-      {slug === "box-spread" && <div id="box-live-opportunities" className="scroll-mt-24"><LiveOpportunityGrid /></div>}
+
 
       {slug !== "box-spread" && (
         <Card className="overflow-hidden theme-border theme-surface">
