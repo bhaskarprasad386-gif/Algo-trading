@@ -29,7 +29,7 @@ def test_snapshot_fails_closed_on_skew_and_missing_required():
 def test_snapshot_rejects_stale_and_future_timestamps():
     result = build_synchronized_snapshot(
         {"stale": [q("stale", 1_000_000_000)], "future": [q("future", 3_000_000_000)]},
-        now_ns=2_000_000_000, required_instruments=["stale", "future"],
+        now_ns=2_000_000_000, max_age_ns=500_000_000, required_instruments=["stale", "future"],
     )
     assert result["aligned"] is False
     assert result["stale_instruments"] == ["stale"]
