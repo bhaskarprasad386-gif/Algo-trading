@@ -1179,15 +1179,29 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     if (health && typeof health === "object" && !removedKeys.includes("runtime_health")) {
       const runtime = health as Record<string, any>;
       const feed = runtime.common_feed && typeof runtime.common_feed === "object" ? runtime.common_feed : {};
-      setFeedTicks(nullableNumber(feed.ticks_received));
-      setFeedAge(nullableNumber(feed.age_seconds));
-      setFeedExchangeFreshness(feed.exchange_freshness && typeof feed.exchange_freshness === "object" ? feed.exchange_freshness : null);
-      setFeedInstruments(nullableNumber(feed.active_instruments));
-      setFeedStatus(String(feed.status ?? "UNKNOWN").toUpperCase());
-      setFeedErrors({ delivery: Number(feed.delivery_errors ?? 0) || 0, normalizer: Number(feed.normalizer_errors ?? 0) || 0 });
+      const nextTicks = nullableNumber(feed.ticks_received);
+      setFeedTicks(current => current === nextTicks ? current : nextTicks);
+      const nextAge = nullableNumber(feed.age_seconds);
+      setFeedAge(current => current === nextAge ? current : nextAge);
+      const nextExchangeFreshness = feed.exchange_freshness && typeof feed.exchange_freshness === "object" ? feed.exchange_freshness : null;
+      setFeedExchangeFreshness(current => {
+        if (current === nextExchangeFreshness) return current;
+        if (!current || !nextExchangeFreshness) return nextExchangeFreshness;
+        const currentKeys = Object.keys(current);
+        const nextKeys = Object.keys(nextExchangeFreshness);
+        return currentKeys.length === nextKeys.length && currentKeys.every(key => current[key] === nextExchangeFreshness[key]) ? current : nextExchangeFreshness;
+      });
+      const nextInstruments = nullableNumber(feed.active_instruments);
+      setFeedInstruments(current => current === nextInstruments ? current : nextInstruments);
+      const nextFeedStatus = String(feed.status ?? "UNKNOWN").toUpperCase();
+      setFeedStatus(current => current === nextFeedStatus ? current : nextFeedStatus);
+      const nextFeedErrors = { delivery: Number(feed.delivery_errors ?? 0) || 0, normalizer: Number(feed.normalizer_errors ?? 0) || 0 };
+      setFeedErrors(current => current && current.delivery === nextFeedErrors.delivery && current.normalizer === nextFeedErrors.normalizer ? current : nextFeedErrors);
       const selected = runtime.runners?.box_spread;
-      setRunner(selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null);
-      setBoxDepthShadow(selected?.depth_shadow && typeof selected.depth_shadow === "object" ? selected.depth_shadow : null);
+      const nextRunner = selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null;
+      setRunner(current => current && nextRunner && current.running === nextRunner.running && current.detail === nextRunner.detail ? current : nextRunner);
+      const nextDepthShadow = selected?.depth_shadow && typeof selected.depth_shadow === "object" ? selected.depth_shadow : null;
+      setBoxDepthShadow(current => current && nextDepthShadow && current === nextDepthShadow ? current : nextDepthShadow);
     }
     const selectionRuntime = pagePushData.index_selection_runtime;
     if (String(pagePushData.__event ?? "").toUpperCase() === "REMOVE" && removedKeys.includes("index_selection_runtime")) {
