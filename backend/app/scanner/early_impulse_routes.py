@@ -1,10 +1,12 @@
-"""Read-only status and pure score evaluation routes for Early Impulse Pro."""
+"""Read-only market-feature and score evaluation routes for Early Impulse Pro."""
 from __future__ import annotations
+
+from typing import List
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from app.scanner.early_impulse_engine import evaluate_early_impulse
+from app.scanner.early_impulse_engine import evaluate_early_impulse, evaluate_market_features
 
 router = APIRouter(prefix="/api/v1/early-impulse", tags=["early-impulse"])
 
@@ -25,6 +27,23 @@ class EvaluationRequest(BaseModel):
     entry_not_extended: bool = False
     invalidation_defined: bool = False
     no_strong_opposite: bool = False
+
+
+class MarketFeatureRequest(BaseModel):
+    prices: List[float] = Field(default_factory=list, max_length=120)
+    volumes: List[float] = Field(default_factory=list, max_length=120)
+    current_price: float | None = None
+    bid: float | None = None
+    ask: float | None = None
+    bid_qty: float | None = None
+    ask_qty: float | None = None
+    quote_age_seconds: float | None = None
+    feed_authenticated: bool = False
+    future_prices: List[float] = Field(default_factory=list, max_length=120)
+    spot_prices: List[float] = Field(default_factory=list, max_length=120)
+    cross_prices: List[float] = Field(default_factory=list, max_length=120)
+    reference_high: float | None = None
+    reference_low: float | None = None
 
 
 @router.get("/status")
@@ -48,13 +67,19 @@ def status() -> dict:
             {"id": "cross_instrument", "name": "Cross-Instrument Confirmation", "weight": 15, "status": "WAITING"},
         ],
         "notes": [
-            "Live feed subscription and runner are not wired in this initial page batch.",
-            "No market signal is fabricated; this route is read-only and scanner-only.",
+            "Live shared-feed subscription and signal runner are not enabled yet.",
+            "No market signal is fabricated; both evaluation routes are read-only.",
         ],
     }
 
 
 @router.post("/evaluate")
 def evaluate(request: EvaluationRequest) -> dict:
-    """Score a normalized sample. This endpoint never routes broker orders."""
+    """Score normalized engine values; never routes broker orders."""
     return evaluate_early_impulse(request.model_dump())
+
+
+@router.post("/evaluate-market")
+def evaluate_market(request: MarketFeatureRequest) -> dict:
+    """Calculate features from caller-supplied observations; never claims live feed."""
+    return evaluate_market_features(request.model_dump())
