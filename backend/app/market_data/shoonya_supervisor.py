@@ -14,6 +14,7 @@ from app.core.logger import app_logger
 from .registry import InstrumentDescriptor, InstrumentRegistry
 from .contracts import MarketDataRecord
 from .shoonya_websocket import ShoonyaWebSocket
+from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
 
 
 class ShoonyaMarketDataSupervisor:
@@ -66,6 +67,37 @@ class ShoonyaMarketDataSupervisor:
             frame_timeout_seconds=frame_timeout_seconds,
             auth_timeout_seconds=auth_timeout_seconds,
         )
+        # Scanner consumers share this adapter through an explicit ref-counted
+        # ownership gate. Existing direct subscription owners remain isolated:
+        # tokens already registered outside the mux cannot be silently adopted.
+        self.consumer_mux = ShoonyaConsumerSubscriptionMux(
+            subscribe_physical=self._subscribe_consumer_physical,
+            unsubscribe_physical=self._unsubscribe_consumer_physical,
+            max_tokens=self._max_tokens,
+        )
+
+    def _subscribe_consumer_physical(self, descriptors: tuple[InstrumentDescriptor, ...]) -> int:
+        with self._lock:
+            existing = {
+                (item.key.exchange.strip().upper(), item.key.token.strip()): item
+                for item in self._descriptors.values()
+        }
+        for item in descriptors:
+            identity = (item.key.exchange.strip().upper(), item.key.token.strip())
+            if identity in existing:
+                raise RuntimeError("consumer mux cannot adopt a token owned by direct supervisor subscriptions")
+        return self.subscribe(descriptors)
+
+    def _unsubscribe_consumer_physical(self, descriptors: tuple[InstrumentDescriptor, ...]) -> int:
+        return self.unsubscribe(descriptors)
+
+    def subscribe_consumer(self, consumer: str, descriptors: Iterable[InstrumentDescriptor]) -> int:
+        """Acquire consumer-owned token references; physical socket only on 0->1."""
+        return self.consumer_mux.subscribe(consumer, descriptors)
+
+    def unsubscribe_consumer(self, consumer: str, descriptors: Iterable[InstrumentDescriptor]) -> int:
+        """Release consumer-owned references; physical socket only on 1->0."""
+        return self.consumer_mux.unsubscribe(consumer, descriptors)
 
     def register(self, descriptors: Iterable[InstrumentDescriptor]) -> int:
         batch = tuple(descriptors)
@@ -247,4 +279,5 @@ class ShoonyaMarketDataSupervisor:
                 "credentials_exposed": False,
                 "order_routing_enabled": False,
                 "strategy_fanout_enabled": False,
+                "consumer_subscription_mux": self.consumer_mux.snapshot(),
             }
