@@ -1458,54 +1458,35 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       {slug !== "box-spread" && <PageTitle eyebrow="Live Strategy Scanner" title={c.title} description={c.description} />}
 
       {slug === "box-spread" ? (
-        <Card className="theme-border theme-surface-2 px-3 py-2">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px]">
-            <span className="font-bold theme-text">INDEX OPTIONS</span>
-            <span className="theme-muted">Feed <b className="theme-text">{feedTicks == null ? "—" : feedTicks.toLocaleString("en-IN") + " ticks"}</b></span>
-            <span className="theme-muted">Runner <b className={runner?.running ? "theme-success" : "theme-warning"}>{runner?.running ? "RUNNING" : "STOPPED"}</b></span>
-            <span className="theme-muted">Eligible <b className="theme-text">{metricValue("Eligible Boxes")}</b></span>
-            <span className="theme-muted">Edges <b className="theme-text">{metricValue("Executable Edges")}</b></span>
-            <span className="theme-muted">Last Scan <b className="theme-text">{metricValue("Last Scan")}</b></span>
-            <span className="theme-muted">Feed age <b className="theme-text">{feedAge == null ? "—" : feedAge.toFixed(1) + "s"}</b></span>
-            <span className="theme-muted">NSE <b className="theme-text">{boxExchangeStatus(feedExchangeFreshness?.NSE?.status)}</b></span>
-            <span className="theme-muted">NFO <b className="theme-text">{boxExchangeStatus(feedExchangeFreshness?.NFO?.status)}</b></span>
-            <span className="theme-muted">Instruments <b className="theme-text">{feedInstruments == null ? "—" : feedInstruments.toLocaleString("en-IN")}</b></span>
-            <span className="theme-muted">Errors <b className="theme-text">{Number(feedErrors?.delivery ?? 0) + Number(feedErrors?.normalizer ?? 0)}</b></span>
-            <span className="rounded-md border theme-border px-2 py-1 font-bold theme-warning">BROKER OFF</span>
-            <div className="w-full rounded-lg border theme-border theme-surface p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-semibold theme-text">Five-Level Depth Shadow</span>
-                <span className={"rounded-md border theme-border px-2 py-1 text-[10px] font-bold " + (boxDepthShadow?.enabled ? "theme-success" : "theme-muted")}>
-                  {boxDepthShadow?.enabled ? (boxDepthShadow.running ? "ENABLED · RUNNING" : "ENABLED · IDLE") : "DISABLED"}
-                </span>
-              </div>
-              <p className="mt-1 text-[11px] theme-muted">Shadow-only comparison; live scanner Edge and paper execution remain unchanged.</p>
-              {boxDepthShadow?.enabled ? (
-                <>
-                <div className="mt-2 grid grid-cols-2 gap-3 text-[11px] sm:grid-cols-4">
-                  <div><span className="theme-muted">Depth records</span><p className="font-semibold theme-text">{Number(boxDepthShadow.record_count ?? 0).toLocaleString("en-IN")}</p></div>
-                  <div><span className="theme-muted">Complete</span><p className="font-semibold theme-text">{Number(boxDepthShadow.comparison_diagnostics?.status_counts?.COMPLETE ?? 0).toLocaleString("en-IN")}</p></div>
-                  <div><span className="theme-muted">Incomplete</span><p className="font-semibold theme-text">{Number(boxDepthShadow.comparison_diagnostics?.status_counts?.INCOMPLETE ?? 0).toLocaleString("en-IN")}</p></div>
-                  <div><span className="theme-muted">Mean depth − L1 / unit</span><p className="font-semibold theme-text">{typeof boxDepthShadow.comparison_diagnostics?.complete_difference_sample?.mean_per_unit === "number" ? boxDepthShadow.comparison_diagnostics.complete_difference_sample.mean_per_unit.toFixed(2) : "—"}</p></div>
-                </div>
-                {Object.keys(boxDepthShadow.comparison_diagnostics?.incomplete_reasons ?? {}).length > 0 && (
-                  <div className="mt-3 border-t theme-border pt-2">
-                    <span className="text-[11px] font-semibold theme-muted">Incomplete comparison reasons</span>
-                    <div className="mt-1 flex flex-wrap gap-2">
-                      {Object.entries(boxDepthShadow.comparison_diagnostics.incomplete_reasons as Record<string, number>)
-                        .sort((a, b) => Number(b[1]) - Number(a[1]))
-                        .map(([reason, count]) => (
-                          <span key={reason} className="rounded-md border theme-border px-2 py-1 text-[10px] theme-muted">
-                            {reason.replaceAll("_", " ")} <b className="theme-text">{Number(count).toLocaleString("en-IN")}</b>
-                          </span>
-                        ))}
-                    </div>
-                  </div>
-                )}
-                </>
-              ) : <p className="mt-1 text-[11px] theme-muted">No additional depth subscription is active.</p>}
+        <Card className="theme-border theme-surface-2 p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-black tracking-wide theme-text">System Status</h2>
+              <p className="text-xs theme-muted">Box Spread · API, runner, market, connection and feed health</p>
             </div>
-            <Link href="/custom-alert" className="ml-auto inline-flex min-h-8 items-center gap-1.5 rounded-lg border theme-border px-3 font-semibold theme-accent hover:theme-surface" aria-label="Open strategy alerts"><Bell className="h-3.5 w-3.5" /> Alerts</Link>
+            <Link href="/custom-alert" className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border theme-border px-3 text-xs font-semibold theme-accent hover:theme-surface" aria-label="Open strategy alerts"><Bell className="h-3.5 w-3.5" /> Alerts</Link>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            {([
+              {label:"API Status",value:loading?"CHECKING":error?"ERROR":liveApiStatus,detail:"Backend response",tone:loading?"theme-muted":error||liveApiStatus==="ERROR"?"theme-danger":liveApiStatus==="RESPONDING"?"theme-success":"theme-warning"},
+              {label:"Runner Status",value:runner?.running?"RUNNING":"STOPPED",detail:"Scanner engine",tone:runner?.running?"theme-success":"theme-warning"},
+              {label:"Market Status",value:isOutsideNseRegularHours()?"CLOSED / OFF HOURS":"REGULAR SESSION",detail:"NSE session window",tone:isOutsideNseRegularHours()?"theme-warning":"theme-success"},
+              {label:"WebSocket Status",value:pagePushStatus==="LIVE"?"CONNECTED":"RECONNECTING",detail:"Live push channel",tone:pagePushStatus==="LIVE"?"theme-success":"theme-warning"},
+              {label:"Feed Status",value:boxFeedDisplayStatus(feedStatus),detail:(feedTicks==null?"—":feedTicks.toLocaleString("en-IN")+" ticks")+" · "+(feedAge==null?"age —":feedAge.toFixed(1)+"s old"),tone:feedStatus==="LIVE"?"theme-success":"theme-warning"}
+            ]).map((item)=>(
+              <div key={item.label} className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
+                <p className="text-[11px] font-semibold theme-muted">{item.label}</p>
+                <p className={"mt-1 break-words text-sm font-black "+item.tone}>{item.value}</p>
+                <p className="mt-1 text-[10px] theme-muted">{item.detail}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] theme-muted">
+            <span>Broker execution: <b className="theme-warning">OFF</b></span>
+            <span>·</span><span>NSE: <b className="theme-text">{boxExchangeStatus(feedExchangeFreshness?.NSE?.status)}</b></span>
+            <span>·</span><span>NFO: <b className="theme-text">{boxExchangeStatus(feedExchangeFreshness?.NFO?.status)}</b></span>
+            <span>·</span><span>Instrument count: <b className="theme-text">{feedInstruments==null?"—":feedInstruments.toLocaleString("en-IN")}</b></span>
+            <span>·</span><span>Feed errors: <b className="theme-text">{Number(feedErrors?.delivery??0)+Number(feedErrors?.normalizer??0)}</b></span>
           </div>
         </Card>
       ) : (
