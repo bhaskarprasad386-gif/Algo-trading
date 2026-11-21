@@ -26,7 +26,9 @@ def test_duplicate_and_stale_frames_do_not_trigger_resync():
     assert not push._requires_resync(3, 2)
     assert not push._requires_resync(0, 1)
     assert push._requires_resync(0, 3)
-    assert push._requires_resync(3, 3, snapshot_required=True)
+    assert not push._requires_resync(3, 3, snapshot_required=True)
+    assert not push._requires_resync(3, 2, snapshot_required=True)
+    assert push._requires_resync(3, 4, snapshot_required=True)
 
 
 
