@@ -131,3 +131,52 @@ def test_enabled_universe_change_fails_closed_without_scoped_unsubscribe():
     assert lifecycle.snapshot()["configured_instruments"] == 1
     assert lifecycle.snapshot()["instrument_keys"] == ["NSE:NFO:1"]
     assert len(subscribed) == 1
+
+
+def test_consumer_mux_subscribes_physical_token_only_on_first_owner_and_unsub_last():
+    from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
+    physical = []
+    mux = ShoonyaConsumerSubscriptionMux(
+        subscribe_physical=lambda items: physical.append(("subscribe", tuple(items))) or len(items),
+        unsubscribe_physical=lambda items: physical.append(("unsubscribe", tuple(items))) or len(items,
+    )
+    one = _desc("shared")
+    mux.subscribe("early-impulse", [one])
+    mux.subscribe("box-shadow", [one])
+    assert len(physical) == 1 and physical[0][0] == "subscribe"
+    assert mux.snapshot()["owners"]["NSE:NFO:shared"] == ["box-shadow", "early-impulse"]
+    mux.unsubscribe("early-impulse", [one])
+    assert len(physical) == 1
+    mux.unsubscribe("box-shadow", [one])
+    assert len(physical) == 2 and physical[1][0] == "unsubscribe"
+
+
+def test_consumer_mux_rejects_token_conflict_and_duplicate_batch():
+    from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
+    mux = ShoonyaConsumerSubscriptionMux(subscribe_physical=lambda items: len(items), unsubscribe_physical=lambda items: len(items))
+    mux.subscribe("consumer-a", [_desc("same")])
+    try:
+        mux.subscribe("consumer-b", [_desc("same", symbol="DIFFERENT")])
+    except ValueError as exc:
+        assert "descriptor conflict" in str(exc)
+    else:
+        raise AssertionError("descriptor collision should fail")
+    try:
+        mux.subscribe("consumer-b", [_desc("dup"), _desc("dup")])
+    except ValueError as exc:
+        assert "duplicate token" in str(exc)
+    else:
+        raise AssertionError("duplicate request should fail")
+
+
+def test_consumer_mux_physical_token_limit_is_atomic():
+    from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
+    mux = ShoonyaConsumerSubscriptionMux(subscribe_physical=lambda items: len(items), unsubscribe_physical=lambda items: len(items), max_tokens=1)
+    mux.subscribe("a", [_desc("one")])
+    try:
+        mux.subscribe("b", [_desc("two")])
+    except ValueError as exc:
+        assert "physical token cap" in str(exc)
+    else:
+        raise AssertionError("cap should fail")
+    assert mux.snapshot()["physical_tokens"] == 1
