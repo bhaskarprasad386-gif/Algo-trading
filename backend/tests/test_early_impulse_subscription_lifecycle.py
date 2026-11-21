@@ -205,7 +205,7 @@ def test_consumer_mux_does_not_commit_owner_on_short_physical_subscribe():
     try:
         mux.subscribe("owner", [_desc("short-sub")])
     except RuntimeError as exc:
-        assert "incomplete count" in str(exc)
+        assert "partially applied or uncertain" in str(exc)
     else:
         raise AssertionError("short subscribe must fail closed")
     assert mux.snapshot()["physical_tokens"] == 0
@@ -310,7 +310,11 @@ def test_consumer_mux_rejects_empty_physical_identity_before_adapter_call():
     from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
     physical_calls = []
     mux = ShoonyaConsumerSubscriptionMux(subscribe_physical=lambda items: physical_calls.append(items) or len(items), unsubscribe_physical=lambda items: len(items))
-    malformed = InstrumentDescriptor(key=InstrumentKey("NSE", "NFO", ""), symbol="NIFTY", instrument_type="index", exchange="NSE", segment="NFO")
+    key = object.__new__(InstrumentKey)
+    object.__setattr__(key, "exchange", "NSE")
+    object.__setattr__(key, "segment", "NFO")
+    object.__setattr__(key, "token", "")
+    malformed = InstrumentDescriptor(key=key, symbol="NIFTY", instrument_type="index", exchange="NSE", segment="NFO")
     try:
         mux.subscribe("consumer", [malformed])
     except ValueError as exc:
