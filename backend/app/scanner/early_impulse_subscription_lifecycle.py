@@ -162,6 +162,7 @@ class ShoonyaConsumerSubscriptionMux:
         # Adapter may partially mutate before raising/returning short count.
         # Keep ambiguous tokens quarantined; never guess their physical state.
         self._uncertain: dict[tuple[str, str], InstrumentDescriptor] = {}
+        self._reconciliation_required = False
 
     @staticmethod
     def _identity(item: InstrumentDescriptor) -> tuple[str, str]:
@@ -182,7 +183,7 @@ class ShoonyaConsumerSubscriptionMux:
         if len(staged_keys) != len(set(staged_keys)):
             raise ValueError("duplicate token in consumer request")
         with self._lock:
-            if any(key in self._uncertain for key in staged_keys):
+            if self._reconciliation_required or any(key in self._uncertain for key in staged_keys):
                 raise RuntimeError("physical subscription state uncertain; reconcile before reuse")
             staged = {key: dict(owners) for key, owners in self._owners.items()}
             physical_add = []
@@ -208,6 +209,7 @@ class ShoonyaConsumerSubscriptionMux:
                         raise RuntimeError("physical subscribe returned an incomplete count")
                 except Exception as exc:
                     self._uncertain.update(zip(physical_keys, physical_add))
+                    self._reconciliation_required = True
                     raise RuntimeError("physical subscribe partially applied or uncertain; tokens quarantined") from exc
             self._owners = staged
             return len(batch)
@@ -250,6 +252,7 @@ class ShoonyaConsumerSubscriptionMux:
                         raise RuntimeError("physical unsubscribe returned an incomplete count")
                 except Exception as exc:
                     self._uncertain.update(zip(physical_keys, physical_remove))
+                    self._reconciliation_required = True
                     raise RuntimeError("physical unsubscribe partially applied or uncertain; tokens quarantined") from exc
             self._owners = staged
             return removed_count
@@ -263,4 +266,5 @@ class ShoonyaConsumerSubscriptionMux:
                 "owners": {":".join(key): sorted(owners) for key, owners in sorted(self._owners.items())},
                 "physical_transport_wired": True,
                 "uncertain_tokens": sorted(":".join(key) for key in self._uncertain),
+                "reconciliation_required": self._reconciliation_required,
             }
