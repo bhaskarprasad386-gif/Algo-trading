@@ -424,3 +424,37 @@ def test_supervisor_passes_session_observer_additively_to_adapter(monkeypatch):
     supervisor = build_supervisor(monkeypatch, on_session_observation=callback)
     assert supervisor._adapter.kwargs["on_session_observation"] is callback
     assert supervisor._adapter.kwargs["on_state"] == supervisor._observe_state
+
+
+def test_consumer_mux_refcounts_physical_subscription_for_multiple_owners(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+    item = descriptor()
+    assert supervisor.subscribe_consumer("early-impulse", [item]) == 1
+    assert supervisor.subscribe_consumer("observer-2", [item]) == 1
+    assert supervisor._adapter.descriptors == {("NFO", item.key.token): item}
+    state = supervisor.snapshot()["consumer_subscription_mux"]
+    assert state["physical_tokens"] == 1
+    assert state["owners"]["NFO:" + item.key.token] == ["early-impulse", "observer-2"]
+    assert supervisor._adapter.started == 1
+
+    assert supervisor.unsubscribe_consumer("early-impulse", [item]) == 1
+    assert supervisor._adapter.stopped == 0
+    assert supervisor.snapshot()["adapter"]["subscriptions"] == 1
+
+    assert supervisor.unsubscribe_consumer("observer-2", [item]) == 1
+    assert supervisor._adapter.stopped == 1
+    assert supervisor.snapshot()["adapter"]["subscriptions"] == 0
+
+
+def test_consumer_mux_cannot_adopt_direct_supervisor_subscription(monkeypatch):
+    supervisor = build_supervisor(monkeypatch)
+    item = descriptor()
+    supervisor.subscribe([item])
+    try:
+        supervisor.subscribe_consumer("early-impulse", [item])
+    except RuntimeError as exc:
+        assert "cannot adopt" in str(exc)
+    else:
+        raise AssertionError("consumer mux must not adopt untracked direct ownership")
+    assert supervisor.snapshot()["consumer_subscription_mux"]["physical_tokens"] == 0
+    assert supervisor.snapshot()["registry_instruments"] == 1
