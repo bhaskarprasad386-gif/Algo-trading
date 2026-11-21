@@ -31,6 +31,7 @@ class EarlyImpulseShoonyaCache:
         self._rejected_count = 0
         self._last_received_ns: int | None = None
         self._session_authenticated = False
+        self._last_session_observation_ns = 0
 
     @staticmethod
     def _key(record: MarketDataRecord) -> tuple[str, str, str]:
@@ -75,7 +76,15 @@ class EarlyImpulseShoonyaCache:
 
     def on_session_observation(self, state: str, reason: str | None, feed_epoch: int, authenticated: bool, connected: bool, observed_ns: int) -> None:
         state_value = str(state).strip().upper() or "UNKNOWN"
+        if (isinstance(feed_epoch, bool) or not isinstance(feed_epoch, int) or feed_epoch < 0
+                or isinstance(observed_ns, bool) or not isinstance(observed_ns, int) or observed_ns <= 0):
+            return
         with self._lock:
+            if feed_epoch < (self._feed_epoch if self._feed_epoch is not None else 0):
+                return
+            if feed_epoch == self._feed_epoch and observed_ns <= self._last_session_observation_ns:
+                return
+            self._last_session_observation_ns = observed_ns
             epoch_changed = self._feed_epoch != int(feed_epoch)
             if epoch_changed or not connected:
                 # Clear old-generation data and exchange timestamp monotonicity state.
