@@ -291,9 +291,15 @@ export default function LiveOpportunityGrid() {
 
   const connection = pageStatus === "LIVE" ? "LIVE" : pageStatus === "CONNECTING" ? "CONNECTING" : "RECONNECTING";
   const expiryRows = useMemo(() => rows.filter((item) => String(item.row.expiry_type || "").toUpperCase() === expiryView), [rows, expiryView]);
-  const orderedRows = useMemo(() => [...expiryRows].sort((a, b) => sortByEdge
-    ? (n(b.row, "executable_edge") ?? -Infinity) - (n(a.row, "executable_edge") ?? -Infinity)
-    : b.lastSeen - a.lastSeen), [expiryRows, sortByEdge]);
+  const orderedRows = useMemo(() => {
+    if (!sortByEdge) return [...expiryRows].sort((a, b) => b.lastSeen - a.lastSeen);
+    // Parse each row's edge once instead of repeatedly converting values in the
+    // O(n log n) sort comparator on mobile/slow-network clients.
+    return expiryRows
+      .map((item) => ({ item, edge: n(item.row, "executable_edge") ?? -Infinity }))
+      .sort((a, b) => b.edge - a.edge)
+      .map(({ item }) => item);
+  }, [expiryRows, sortByEdge]);
   const liveCount = useMemo(() => expiryRows.filter((item) => item.status === "LIVE").length, [expiryRows]);
   // An open socket alone is not proof of a healthy stream; require a recent server frame.
   const streamLabel = connection !== "LIVE" ? connection : lastMessageAt === null ? "WAITING DATA" : Date.now() - lastMessageAt > 15000 ? "NO RECENT DATA" : "LIVE";
