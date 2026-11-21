@@ -40,7 +40,7 @@ def evaluate_early_impulse(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         key: _score(raw_engines.get(key))
         for key in WEIGHTS
     }
-    weighted = sum(round(components[key] * weight / 100) for key, weight in WEIGHTS.items())
+    weighted = round(sum(components[key] * weight / 100 for key, weight in WEIGHTS.items()))
     direction = str(snapshot.get("direction", "NEUTRAL")).upper()
     if direction not in {"BUY", "SELL", "NEUTRAL"}:
         direction = "NEUTRAL"
