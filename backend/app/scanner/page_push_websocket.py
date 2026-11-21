@@ -283,13 +283,12 @@ async def _journal_dispatch_loop() -> None:
     global _dispatch_ready
     # Per-page cursors avoid relying on database identity IDs as commit order.
     # Each page sequence is serialized by its sequence row in publish_page_update.
-    cursors: dict[str, int] = {}
-    try:
-        for page in PAGE_CHANNELS:
-            cursors[page] = await asyncio.to_thread(_latest_page_sequence, page)
-    except Exception:
-        cursors = {page: 0 for page in PAGE_CHANNELS}
-        _log.exception("Scanner page WebSocket journal baseline failed")
+    cursors: dict[str, int] = {page: 0 for page in PAGE_CHANNELS}
+    # Start from zero, not a "latest" baseline. The latest sequence can
+    # include committed events not yet fetched; skipping to it on dispatcher
+    # startup loses those events for subscribers joining during the startup
+    # window. Replay retained rows, and let per-subscriber snapshots bridge
+    # retention gaps.
     if _dispatch_ready is not None:
         _dispatch_ready.set()
     while _subscribers:
