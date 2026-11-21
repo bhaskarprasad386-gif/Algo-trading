@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from app.scanner.early_impulse_engine import evaluate_early_impulse, evaluate_market_features
 from app.scanner.early_impulse_signal_store import EarlyImpulseSignalStore
+from app.scanner.early_impulse_shoonya_observer import early_impulse_observer
 
 router = APIRouter(prefix="/api/v1/early-impulse", tags=["early-impulse"])
 signal_store = EarlyImpulseSignalStore()
@@ -48,9 +49,13 @@ class MarketFeatureRequest(BaseModel):
 @router.get("/status")
 def status() -> dict:
     history = signal_store.snapshot()
+    feed = early_impulse_observer.snapshot()
     return {
-        "strategy": "EARLY_IMPULSE_PRO", "status": "WAITING_FOR_FEED_INTEGRATION",
-        "feed_connected": False, "scanner_active": False,
+        "strategy": "EARLY_IMPULSE_PRO", "status": "FEED_OBSERVED" if feed["status"] == "LIVE" else "WAITING_FOR_FEED",
+        "feed_connected": feed["connected"], "scanner_active": False,
+        "feed_status": feed["status"], "feed_epoch": feed["feed_epoch"],
+        "fresh_quote_count": feed["fresh_count"], "stale_quote_count": feed["stale_count"],
+        "observer_errors": feed["observer_errors"],
         "signal_count": history["signal_count"], "latest_signal": history["signals"][0] if history["signals"] else None,
         "market_regime": "UNKNOWN", "order_routing_enabled": False, "iv_scanner_dependency": False,
         "signal_history_capacity": history["capacity"], "suppressed_duplicate_count": history["suppressed_duplicate_count"],
@@ -61,7 +66,7 @@ def status() -> dict:
             {"id": "market_impact", "name": "Market Impact Efficiency", "weight": 20, "status": "WAITING"},
             {"id": "cross_instrument", "name": "Cross-Instrument Confirmation", "weight": 15, "status": "WAITING"},
         ],
-        "notes": ["Live shared-feed consumer and scanner runner remain disabled until isolated ownership-safe subscription wiring is completed.",
+        "notes": ["Shared Shoonya observer is wired; scanner runner and consumer-owned subscriptions are not yet enabled.",
                   "No live signals fabricated; order routing is disabled."],
     }
 
