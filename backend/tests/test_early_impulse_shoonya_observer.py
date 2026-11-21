@@ -2,7 +2,7 @@ from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataR
 from app.market_data.provider_readiness_bridge import ProviderReadinessBridge
 from app.scanner.early_impulse_shoonya_cache import EarlyImpulseShoonyaCache
 from app.scanner.early_impulse_shoonya_observer import EarlyImpulseShoonyaObserver
-from time import time_ns
+from time import time_ns, monotonic_ns
 
 
 def _record():
@@ -40,12 +40,13 @@ def test_observer_errors_are_isolated_and_counted():
 def test_disconnect_and_epoch_reset_clear_cached_quotes():
     cache = EarlyImpulseShoonyaCache()
     observer = EarlyImpulseShoonyaObserver(readiness=ProviderReadinessBridge(), cache=cache)
-    observer.on_session_observation("LIVE", None, 1, True, True, 100)
-    observer.on_tick_observation(_record(), 1, True, 200)
+    now = monotonic_ns()
+    observer.on_session_observation("LIVE", None, 1, True, True, now)
+    observer.on_tick_observation(_record(), 1, True, now + 1)
     assert observer.snapshot()["fresh_count"] == 1
-    observer.on_session_observation("RECONNECTING", "disconnect", 2, False, False, 300)
+    observer.on_session_observation("RECONNECTING", "disconnect", 2, False, False, now + 2)
     assert observer.snapshot()["fresh_count"] == 0
-    observer.on_session_observation("LIVE", None, 2, True, True, 400)
+    observer.on_session_observation("LIVE", None, 2, True, True, now + 3)
     assert observer.snapshot()["feed_epoch"] == 2
     assert observer.snapshot()["fresh_count"] == 0
 
