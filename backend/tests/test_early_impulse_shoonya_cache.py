@@ -47,7 +47,7 @@ def test_rejects_duplicate_and_out_of_order_exchange_timestamps():
 
 def test_stale_quote_is_not_exposed_as_fresh():
     cache = EarlyImpulseShoonyaCache(max_age_seconds=1)
-    assert cache.on_tick_observation(_record(), 3, True, 1_000_000_000)
+    assert _tick(cache, _record(), 3, True, 1_000_000_000)
     snap = cache.snapshot(now_monotonic_ns=2_100_000_000)
     assert snap["fresh_count"] == 0
     assert snap["stale_count"] == 0
@@ -55,7 +55,7 @@ def test_stale_quote_is_not_exposed_as_fresh():
 
 def test_disconnect_invalidates_fresh_signal_data():
     cache = EarlyImpulseShoonyaCache()
-    assert cache.on_tick_observation(_record(), 4, True, 1_000_000_000)
+    assert _tick(cache, _record(), 4, True, 1_000_000_000)
     cache.on_session_observation("DISCONNECTED", "network", 4, False, False, 1_100_000_000)
     snap = cache.snapshot(now_monotonic_ns=1_200_000_000)
     assert snap["status"] == "DISCONNECTED"
@@ -88,7 +88,7 @@ def test_rejects_non_executable_quote_without_bid_ask():
 
 def test_future_receive_time_is_not_fresh():
     cache = EarlyImpulseShoonyaCache()
-    assert cache.on_tick_observation(_record(), 1, True, 10_000_000_000)
+    assert _tick(cache, _record(), 1, True, 10_000_000_000)
     snap = cache.snapshot(now_monotonic_ns=9_000_000_000)
     assert snap["fresh_count"] == 0
     assert snap["stale_count"] == 1
