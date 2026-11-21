@@ -141,3 +141,87 @@ class EarlyImpulseSubscriptionLifecycle:
                 "signals_enabled": False,
                 "order_routing_enabled": False,
             }
+
+
+class ShoonyaConsumerSubscriptionMux:
+    """Consumer ownership/ref-count gate for shared physical Shoonya tokens.
+
+    Calls the adapter only for zero-to-one and one-to-zero ownership transitions.
+    Does not directly integrate into the global supervisor in this batch.
+    """
+    def __init__(self, *, subscribe_physical: Callable[[tuple[InstrumentDescriptor, ...]], int],
+                 unsubscribe_physical: Callable[[tuple[InstrumentDescriptor, ...]], int],
+                 max_tokens: int = 500):
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or not 1 <= max_tokens <= 500:
+            raise ValueError("max_tokens must be 1..500")
+        self._physical_subscribe = subscribe_physical
+        self._physical_unsubscribe = unsubscribe_physical
+        self._max_tokens = max_tokens
+        self._lock = RLock()
+        self._owners: dict[tuple[str, str, str], dict[str, InstrumentDescriptor]] = {}
+
+    @staticmethod
+    def _identity(item: InstrumentDescriptor) -> tuple[str, str, str]:
+        return (item.key.exchange.strip().upper(), item.key.segment.strip().upper(), item.key.token.strip())
+
+    def subscribe(self, consumer: str, descriptors: Iterable[InstrumentDescriptor]) -> int:
+        name = str(consumer).strip()
+        if not name:
+            raise ValueError("consumer name required")
+        batch = tuple(descriptors)
+        if not batch:
+            return 0
+        staged_keys = [self._identity(item) for item in batch]
+        if len(staged_keys) != len(set(staged_keys)):
+            raise ValueError("duplicate token in consumer request")
+        with self._lock:
+            staged = {key: dict(owners) for key, owners in self._owners.items()}
+            physical_add = []
+            for key, item in zip(staged_keys, batch):
+                existing_owners = staged.get(key, {})
+                if existing_owners and any(value != item for value in existing_owners.values()):
+                    raise ValueError(f"descriptor conflict for physical token {key}")
+                if name in existing_owners:
+                    if existing_owners[name] != item:
+                        raise ValueError("consumer cannot replace an owned descriptor in-place")
+                    continue
+n                if not existing_owners:
+                    physical_add.append(item)
+                existing_owners[name] = item
+                staged[key] = existing_owners
+            if len(staged) > self._max_tokens:
+                raise ValueError(f"physical token cap exceeded ({self._max_tokens})")
+            if physical_add:
+                self._physical_subscribe(tuple(physical_add))
+            self._owners = staged
+            return len(batch)
+
+    def unsubscribe(self, consumer: str, descriptors: Iterable[InstrumentDescriptor]) -> int:
+        name = str(consumer).strip()
+        batch = tuple(descriptors)
+        if not name or not batch:
+            return 0
+        with self._lock:
+            staged = {key: dict(owners) for key, owners in self._owners.items()}
+            physical_remove = []
+            removed_count = 0
+            for item in batch:
+                key = self._identity(item)
+                owners = staged.get(key)
+                if owners is None or name not in owners:
+                    continue
+                if owners[name] != item:
+                    raise ValueError("unsubscribe descriptor does not match owned descriptor")
+                owners.pop(name)
+                removed_count += 1
+                if not owners:
+                    physical_remove.append(item)
+                    staged.pop(key, None)
+            if physical_remove:
+                self._physical_unsubscribe(tuple(physical_remove))
+            self._owners = staged
+            return removed_count
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {"physical_tokens": len(self._owners), "consumer_count": len({name for owners in self._owners.values() for name in owners}), "max_tokens": self._max_tokens, "owners": {":".join(key): sorted(owners) for key, owners in sorted(self._owners.items())}, "physical_transport_wired": True}
