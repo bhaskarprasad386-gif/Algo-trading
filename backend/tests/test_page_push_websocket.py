@@ -90,6 +90,31 @@ def test_snapshot_sequence_retries_until_page_is_stable(monkeypatch):
     assert frame["data"]["observed_sequence"] == 1
     assert len(captured) == 2
 
+def test_activating_page_channel_requests_snapshot_recovery(monkeypatch):
+    queue = asyncio.Queue(maxsize=push.QUEUE_SIZE)
+    monkeypatch.setattr(push, "_subscribers", set())
+    monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 27 if page == "box-spread" else 0)
+    push._set_channels(queue, frozenset({"box-spread"}))
+    marker = queue.get_nowait()
+    assert marker["page"] == "box-spread"
+    assert marker["event"] == "SNAPSHOT_REQUIRED"
+    assert marker["sequence"] == 27
+
+
+def test_reactivating_existing_channel_does_not_enqueue_recovery(monkeypatch):
+    queue = asyncio.Queue(maxsize=push.QUEUE_SIZE)
+    monkeypatch.setattr(push, "_subscribers", set())
+    monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 3)
+    push._set_channels(queue, frozenset({"box-spread"}))
+    first = queue.get_nowait()
+    assert first["event"] == "SNAPSHOT_REQUIRED"
+    push._set_channels(queue, frozenset({"box-spread", "iv-skew-flip"}))
+    second = queue.get_nowait()
+    assert second["page"] == "iv-skew-flip"
+    assert second["event"] == "SNAPSHOT_REQUIRED"
+    assert queue.empty()
+
+
 def test_snapshot_provider_is_read_only_and_page_scoped():
     observed = []
     push.configure_snapshot_provider(
