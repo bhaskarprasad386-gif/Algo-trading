@@ -95,13 +95,20 @@ class EarlyImpulseSubscriptionLifecycle:
                 if removed and self._unsubscribe is None:
                     raise RuntimeError("consumer-scoped unsubscribe transport is not wired")
                 if added:
-                    self._subscribe(added)
+                    subscribed = self._subscribe(added)
+                    if subscribed != len(added):
+                        raise RuntimeError("consumer subscribe returned an incomplete count")
                 try:
                     if removed:
-                        self._unsubscribe(removed)
+                        unsubscribed = self._unsubscribe(removed)
+                        if unsubscribed != len(removed):
+                            raise RuntimeError("consumer unsubscribe returned an incomplete count")
                 except Exception:
+                    # Added physical tokens may need a consumer-scoped rollback.
                     if added and self._unsubscribe:
-                        self._unsubscribe(added)
+                        rolled_back = self._unsubscribe(added)
+                        if rolled_back != len(added):
+                            raise RuntimeError("consumer subscribe rollback returned an incomplete count")
                     raise
             self._desired = staged
             return {"configured": len(staged), "added": len(added), "removed": len(removed), "enabled": self._enabled}
