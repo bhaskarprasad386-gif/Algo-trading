@@ -1201,7 +1201,13 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const nextRunner = selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null;
       setRunner(current => current && nextRunner && current.running === nextRunner.running && current.detail === nextRunner.detail ? current : nextRunner);
       const nextDepthShadow = selected?.depth_shadow && typeof selected.depth_shadow === "object" ? selected.depth_shadow : null;
-      setBoxDepthShadow(current => current && nextDepthShadow && current === nextDepthShadow ? current : nextDepthShadow);
+      setBoxDepthShadow(current => {
+        if (current === nextDepthShadow) return current;
+        if (!current || !nextDepthShadow) return nextDepthShadow;
+        const currentKeys = Object.keys(current);
+        const nextKeys = Object.keys(nextDepthShadow);
+        return currentKeys.length === nextKeys.length && currentKeys.every(key => current[key] === nextDepthShadow[key]) ? current : nextDepthShadow;
+      });
     }
     const selectionRuntime = pagePushData.index_selection_runtime;
     if (String(pagePushData.__event ?? "").toUpperCase() === "REMOVE" && removedKeys.includes("index_selection_runtime")) {
