@@ -321,7 +321,8 @@ def test_page_push_dispatcher_marks_queue_overflow_for_snapshot(monkeypatch):
         page = "cash-future"
         queue = asyncio.Queue(maxsize=1)
         queue.put_nowait({"page": page, "event": "PATCH", "sequence": 1})
-        monkeypatch.setattr(push, "_latest_page_sequence", lambda target_page: 0)
+        latest_reads = []
+        monkeypatch.setattr(push, "_latest_page_sequence", lambda target_page: latest_reads.append(target_page) or 99)
         monkeypatch.setattr(push, "_events_after", lambda target_page, cursor, limit=100: [
             {"id": 91, "page": page, "sequence": 2, "event": "PATCH", "data": {"rows": []}}
         ] if target_page == page and cursor == 0 else [])
@@ -476,4 +477,33 @@ def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch)
         assert all(frame["event"] == "SNAPSHOT_REQUIRED" and frame["sequence"] == 7 for frame in markers)
         next_waiter.cancel()
         await asyncio.gather(next_waiter, return_exceptions=True)
+    asyncio.run(scenario())
+
+
+def test_dispatcher_replays_retained_events_from_zero_on_worker_start(monkeypatch):
+    async def scenario():
+        page = "box-spread"
+        queue = asyncio.Queue(maxsize=4)
+        latest_reads = []
+        monkeypatch.setattr(push, "_latest_page_sequence", lambda target: latest_reads.append(target) or 5)
+        calls = []
+        def events_after(target_page, cursor, limit=100):
+            calls.append((target_page, cursor))
+            if target_page == page and cursor == 0:
+                return [{"id": 812, "page": page, "sequence": 1, "event": "PATCH", "data": {"replay": True}}]
+            return []
+        monkeypatch.setattr(push, "_events_after", events_after)
+        monkeypatch.setattr(push, "_subscribers", {(queue, frozenset({page}))})
+        monkeypatch.setattr(push, "_dispatch_ready", asyncio.Event())
+        task = asyncio.create_task(push._journal_dispatch_loop())
+        try:
+            await asyncio.wait_for(push._dispatch_ready.wait(), timeout=0.5)
+            frame = await asyncio.wait_for(queue.get(), timeout=0.5)
+            assert frame["sequence"] == 1 and frame["data"] == {"replay": True}
+            assert (page, 0) in calls
+            assert latest_reads == []  # startup must not skip to latest sequence
+        finally:
+            monkeypatch.setattr(push, "_subscribers", set())
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
     asyncio.run(scenario())
