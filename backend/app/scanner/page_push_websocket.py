@@ -118,12 +118,19 @@ def _requires_resync(last_sequence: int, incoming_sequence: int, snapshot_requir
     return bool(snapshot_required or _sequence_gap(last_sequence, incoming_sequence))
 
 
-def _events_after(cursor: int, limit: int = 100) -> list[dict[str, Any]]:
+def _events_after(page: str, cursor_sequence: int, limit: int = 100) -> list[dict[str, Any]]:
+    """Read journal rows by their per-page transactionally serialized sequence.
+
+    A global auto-increment ID is not a commit-order cursor: transactions can
+    reserve IDs and commit out of order, allowing a tailer to permanently skip
+    a late lower-ID commit. Per-page sequence values are advanced under the
+    sequence-row write lock in the same transaction as the event insert.
+    """
     with engine.connect() as connection:
         rows = connection.execute(
             select(events.c.id, events.c.page, events.c.page_sequence, events.c.event, events.c.data)
-            .where(events.c.id > cursor)
-            .order_by(events.c.id.asc()).limit(limit + 1)
+            .where(events.c.page == page, events.c.page_sequence > cursor_sequence)
+            .order_by(events.c.page_sequence.asc()).limit(limit + 1)
         ).all()
     return [
         {"id": int(row[0]), "page": str(row[1]), "sequence": int(row[2]),
@@ -274,48 +281,59 @@ def publish_collection_change(
 
 async def _journal_dispatch_loop() -> None:
     global _dispatch_ready
+    # Per-page cursors avoid relying on database identity IDs as commit order.
+    # Each page sequence is serialized by its sequence row in publish_page_update.
+    cursors: dict[str, int] = {}
     try:
-        cursor = await asyncio.to_thread(_latest_event_id)
+        for page in PAGE_CHANNELS:
+            cursors[page] = await asyncio.to_thread(_latest_page_sequence, page)
     except Exception:
-        cursor = 0
+        cursors = {page: 0 for page in PAGE_CHANNELS}
         _log.exception("Scanner page WebSocket journal baseline failed")
     if _dispatch_ready is not None:
         _dispatch_ready.set()
     while _subscribers:
+        progressed = False
         try:
-            rows = await asyncio.to_thread(_events_after, cursor)
-            if not rows:
-                await asyncio.sleep(DISPATCH_POLL_SECONDS)
-                continue
-            for row in rows:
-                cursor = row["id"]
-                frame = {
-                    "type": "page_update", "page": row["page"],
-                    "event": row["event"], "sequence": row["sequence"],
-                    "generated_at": datetime.now(timezone.utc).isoformat(),
-                    "data": row["data"],
-                }
-                for queue, channels in tuple(_subscribers):
-                    if row["page"] not in channels:
+            for page in PAGE_CHANNELS:
+                rows = await asyncio.to_thread(_events_after, page, cursors.get(page, 0))
+                for row in rows:
+                    sequence = row["sequence"]
+                    # Keep this page cursor monotonic and only advance after the
+                    # committed row has been fetched and processed.
+                    if sequence <= cursors.get(page, 0):
                         continue
-                    if queue.full():
-                        while not queue.empty():
-                            try:
-                                queue.get_nowait()
-                            except asyncio.QueueEmpty:
-                                break
-                        for subscribed_page in channels:
-                            latest_sequence = (
-                                row["sequence"] if subscribed_page == row["page"]
-                                else await asyncio.to_thread(_latest_page_sequence, subscribed_page)
-                            )
-                            queue.put_nowait({
-                                "type": "page_update", "page": subscribed_page,
-                                "event": "SNAPSHOT_REQUIRED", "sequence": latest_sequence,
-                                "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
-                            })
-                    else:
-                        queue.put_nowait(frame)
+                    cursors[page] = sequence
+                    progressed = True
+                    frame = {
+                        "type": "page_update", "page": row["page"],
+                        "event": row["event"], "sequence": sequence,
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                        "data": row["data"],
+                    }
+                    for queue, channels in tuple(_subscribers):
+                        if page not in channels:
+                            continue
+                        if queue.full():
+                            while not queue.empty():
+                                try:
+                                    queue.get_nowait()
+                                except asyncio.QueueEmpty:
+                                    break
+                            for subscribed_page in channels:
+                                latest_sequence = (
+                                    sequence if subscribed_page == page
+                                    else await asyncio.to_thread(_latest_page_sequence, subscribed_page)
+                                )
+                                queue.put_nowait({
+                                    "type": "page_update", "page": subscribed_page,
+                                    "event": "SNAPSHOT_REQUIRED", "sequence": latest_sequence,
+                                    "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
+                                })
+                        else:
+                            queue.put_nowait(frame)
+            if not progressed:
+                await asyncio.sleep(DISPATCH_POLL_SECONDS)
         except asyncio.CancelledError:
             raise
         except Exception:
