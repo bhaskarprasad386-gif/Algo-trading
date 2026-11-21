@@ -12,6 +12,8 @@ type Opportunity = Record<string, unknown> & {
 };
 type TrackedRow = { key: string; row: Opportunity; lastSeen: number; status: "LIVE" | "STALE" };
 
+const DEPTH_LEVELS = [0, 1, 2, 3, 4] as const;
+
 function keyOf(row: Opportunity) {
   return [row.symbol, row.expiry, row.low_strike, row.high_strike, row.direction].map(String).join("|");
 }
@@ -80,7 +82,6 @@ const LegQuote = memo(function LegQuote({ row, name, price, qty, side, depthKey 
   const depth = row.market_depth && typeof row.market_depth === "object"
     ? (row.market_depth as Record<string, unknown>)[depthKey] as { status?: string; bids?: Array<{price:number;quantity:number}>; asks?: Array<{price:number;quantity:number}> } | undefined
     : undefined;
-  const ladder = (levels: Array<{price:number;quantity:number}> | undefined) => (levels || []).slice(0, 5);
   const bids = ladder(depth?.bids);
   const asks = ladder(depth?.asks);
   const live = depth?.status === "LIVE";
@@ -94,7 +95,7 @@ const LegQuote = memo(function LegQuote({ row, name, price, qty, side, depthKey 
       <div className="text-[10px] theme-muted">L1 Qty {fmt(q.qty, 0)}</div>
       <div className="mt-1 border-t theme-border pt-1">
         <div className="mb-1 flex justify-between text-[9px] font-bold uppercase tracking-wide theme-muted"><span>Bid · Qty</span><span>Ask · Qty</span></div>
-        {live ? [0, 1, 2, 3, 4].map((index) => (
+        {live ? DEPTH_LEVELS.map((index) => (
           <div key={index} className="grid grid-cols-2 gap-2 text-[9px] tabular-nums">
             <span className="flex justify-between gap-1 text-rose-300"><span>{bids[index] ? fmt(bids[index].price) : "—"}</span><span className="theme-muted">{bids[index] ? fmt(bids[index].quantity, 0) : "—"}</span></span>
             <span className="flex justify-between gap-1 text-emerald-300"><span>{asks[index] ? fmt(asks[index].price) : "—"}</span><span className="theme-muted">{asks[index] ? fmt(asks[index].quantity, 0) : "—"}</span></span>
