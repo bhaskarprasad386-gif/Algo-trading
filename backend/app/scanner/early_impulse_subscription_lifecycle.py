@@ -43,7 +43,7 @@ class EarlyImpulseSubscriptionLifecycle:
         self._enabled = False
 
     @staticmethod
-    def _key(item: InstrumentDescriptor) -> tuple[str, str, str]:
+    def _key(item: InstrumentDescriptor) -> tuple[str, str]:
         return (item.key.exchange.strip().upper(), item.key.token.strip())
 
     @staticmethod
@@ -51,7 +51,7 @@ class EarlyImpulseSubscriptionLifecycle:
         batch = tuple(items)
         if not batch:
             raise ValueError("subscription universe cannot be empty")
-        seen: dict[tuple[str, str, str], InstrumentDescriptor] = {}
+        seen: dict[tuple[str, str], InstrumentDescriptor] = {}
         expiry_sets: dict[str, set[str]] = {}
         for item in batch:
             if not isinstance(item, InstrumentDescriptor):
@@ -70,7 +70,7 @@ class EarlyImpulseSubscriptionLifecycle:
                 expiry_sets.setdefault(underlying, set()).add(str(item.expiry).strip())
             elif item.option_type is not None or item.strike is not None:
                 raise ValueError("strike and option_type are valid only for options")
-            key = (exchange, segment, token)
+            key = (exchange, token)
             if key in seen:
                 if seen[key] != item:
                     raise ValueError("conflicting token descriptors in requested universe")
