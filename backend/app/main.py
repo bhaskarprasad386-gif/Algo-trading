@@ -55,6 +55,7 @@ from app.market_data.provider_quote_parity_store import SQLiteQuoteParityStore
 from app.market_data.provider_quote_parity_routes import router as provider_quote_parity_router, configure_store as configure_provider_quote_parity_store, configure_worker as configure_provider_quote_parity_worker
 from app.market_data.provider_quote_parity_worker import BoundedQuoteParityWorker
 from app.market_data.provider_readiness_bridge import ProviderReadinessBridge
+from app.scanner.early_impulse_shoonya_observer import early_impulse_observer
 from app.market_data.box_spread_expiry import classify_index_expiry_dates
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
 from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS_ORDERED, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
@@ -647,8 +648,8 @@ async def lifespan(app: FastAPI):
             reconnect_max_seconds=settings.SHOONYA_MARKET_DATA_RECONNECT_MAX_SECONDS,
             frame_timeout_seconds=settings.SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS,
             auth_timeout_seconds=settings.SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS,
-            on_session_observation=provider_readiness_bridge.shoonya_state,
-            on_tick_observation=provider_readiness_bridge.shoonya_market_event,
+            on_session_observation=early_impulse_observer.on_session_observation,
+            on_tick_observation=early_impulse_observer.on_tick_observation,
         )
         configure_shoonya_snapshot(shoonya_market_data_supervisor.snapshot)
         configure_shoonya_supervisor(lambda: shoonya_market_data_supervisor)
