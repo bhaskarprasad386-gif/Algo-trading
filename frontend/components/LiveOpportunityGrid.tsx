@@ -52,12 +52,18 @@ function spotFeedStatus(row: Opportunity, receivedAt?: number) {
   }
   return { label: ageSeconds <= 5 ? "SPOT LIVE" : "SPOT STALE", age: ageSeconds, live: ageSeconds <= 5 };
 }
+const quoteTimeCache = new Map<string, string>();
 function quoteTime(value: unknown) {
+  const key = value == null ? "" : String(value);
+  const cached = quoteTimeCache.get(key);
+  if (cached !== undefined) return cached;
   const milliseconds = timestampMilliseconds(value);
-  if (milliseconds === null || !Number.isFinite(milliseconds) || milliseconds <= 0) return "—";
-  return new Date(milliseconds).toLocaleTimeString("en-IN", {
-    hour12: false, timeZone: "Asia/Kolkata",
-  }) + " IST";
+  const formatted = milliseconds === null || !Number.isFinite(milliseconds) || milliseconds <= 0
+    ? "—"
+    : new Date(milliseconds).toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }) + " IST";
+  if (quoteTimeCache.size >= 500) quoteTimeCache.clear();
+  quoteTimeCache.set(key, formatted);
+  return formatted;
 }
 const numberFormatters = new Map<number, Intl.NumberFormat>();
 const timeFormatter = new Intl.DateTimeFormat("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
