@@ -144,7 +144,7 @@ def test_consumer_mux_subscribes_physical_token_only_on_first_owner_and_unsub_la
     mux.subscribe("early-impulse", [one])
     mux.subscribe("box-shadow", [one])
     assert len(physical) == 1 and physical[0][0] == "subscribe"
-    assert mux.snapshot()["owners"]["NSE:NFO:shared"] == ["box-shadow", "early-impulse"]
+    assert mux.snapshot()["owners"]["NSE:shared"] == ["box-shadow", "early-impulse"]
     mux.unsubscribe("early-impulse", [one])
     assert len(physical) == 1
     mux.unsubscribe("box-shadow", [one])
@@ -180,3 +180,20 @@ def test_consumer_mux_physical_token_limit_is_atomic():
     else:
         raise AssertionError("cap should fail")
     assert mux.snapshot()["physical_tokens"] == 1
+
+
+def test_consumer_mux_conflicts_on_same_exchange_token_even_if_segment_differs():
+    from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
+    mux = ShoonyaConsumerSubscriptionMux(subscribe_physical=lambda items: len(items), unsubscribe_physical=lambda items: len(items))
+    original = _desc("collision")
+    mux.subscribe("owner-1", [original])
+    alternate = InstrumentDescriptor(
+        key=InstrumentKey("NSE", "OTHER_SEGMENT", "collision"), symbol="NIFTY", instrument_type="index",
+        exchange="NSE", segment="OTHER_SEGMENT",
+    )
+    try:
+        mux.subscribe("owner-2", [alternate])
+    except ValueError as exc:
+        assert "descriptor conflict" in str(exc)
+    else:
+        raise AssertionError("exchange-token collision should be rejected regardless of segment")
