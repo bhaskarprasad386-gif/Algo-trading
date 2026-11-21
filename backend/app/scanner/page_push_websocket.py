@@ -109,13 +109,12 @@ def _sequence_gap(last_sequence: int, incoming_sequence: int) -> bool:
 
 
 def _requires_resync(last_sequence: int, incoming_sequence: int, snapshot_required: bool = False) -> bool:
-    """Resync only on an explicit reset marker or a missing forward sequence.
+    """Resync on a forward reset marker or a missing forward sequence.
 
-
-
-    Duplicate and stale frames should be ignored by the caller, not reset the stream.
+    Duplicate and stale reset markers are redundant once the client has reached
+    their sequence, and must not trigger repeated expensive snapshots.
     """
-    return bool(snapshot_required or _sequence_gap(last_sequence, incoming_sequence))
+    return bool(_sequence_gap(last_sequence, incoming_sequence) or (snapshot_required and incoming_sequence > last_sequence))
 
 
 def _events_after(page: str, cursor_sequence: int, limit: int = 100) -> list[dict[str, Any]]:
