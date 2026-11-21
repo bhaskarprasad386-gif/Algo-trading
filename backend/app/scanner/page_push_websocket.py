@@ -343,10 +343,26 @@ async def _subscribe_local() -> asyncio.Queue:
 
 
 def _set_channels(queue: asyncio.Queue, channels: frozenset[str]) -> None:
+    previous = frozenset()
     for entry in tuple(_subscribers):
         if entry[0] is queue:
+            previous = entry[1]
             _subscribers.discard(entry)
     _subscribers.add((queue, channels))
+    # Activating a channel can race the journal tailer's global cursor: it may
+    # have advanced past events while this subscriber had no active channels.
+    # Force a snapshot for each newly activated page so that the subscriber
+    # cannot silently start from an incomplete local baseline.
+    for page in channels - previous:
+        try:
+            queue.put_nowait({
+                "type": "page_update", "page": page, "event": "SNAPSHOT_REQUIRED",
+                "sequence": _latest_page_sequence(page),
+                "generated_at": datetime.now(timezone.utc).isoformat(), "data": {},
+            })
+        except asyncio.QueueFull:
+            # The dispatcher's overflow handling will also request a snapshot.
+            break
 
 
 async def _unsubscribe_local(queue: asyncio.Queue) -> None:
