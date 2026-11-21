@@ -59,6 +59,14 @@ def test_keyed_collection_change_publisher_rejects_invalid_identity_and_reserved
     change = published[0][2]["collection_changes"][0]
     assert change["operation"] == "ADD" and change["key"] == "ok"
 
+def test_missing_or_invalid_snapshot_provider_is_unavailable(monkeypatch):
+    page = "box-spread"
+    monkeypatch.delitem(push._snapshot_providers, page, raising=False)
+    assert push._snapshot(page) == {"snapshot_status": "UNAVAILABLE"}
+    monkeypatch.setitem(push._snapshot_providers, page, lambda: [])
+    assert push._snapshot(page) == {"snapshot_status": "UNAVAILABLE"}
+
+
 def test_page_snapshot_frame_uses_explicit_durable_sequence():
     frame = push._snapshot_frame("box-spread", {"rows": []}, sequence=17)
     assert frame["type"] == "page_update"
