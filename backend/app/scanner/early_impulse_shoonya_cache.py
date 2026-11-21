@@ -30,6 +30,7 @@ class EarlyImpulseShoonyaCache:
         self._received_count = 0
         self._rejected_count = 0
         self._last_received_ns: int | None = None
+        self._session_authenticated = False
 
     @staticmethod
     def _key(record: MarketDataRecord) -> tuple[str, str, str]:
@@ -51,6 +52,11 @@ class EarlyImpulseShoonyaCache:
             return False
         key = self._key(record)
         with self._lock:
+            # A tick is accepted only for the current authenticated session epoch.
+            # Session lifecycle callbacks are the authoritative epoch boundary.
+            if feed_epoch != self._feed_epoch or not self._session_authenticated or self._feed_state not in {"LIVE", "CONNECTED_NO_TICKS"}:
+                self._rejected_count += 1
+                return False
             previous = self._last_exchange_ts.get(key)
             if previous is not None and record.timestamp_ns <= previous:
                 self._rejected_count += 1
@@ -61,7 +67,6 @@ class EarlyImpulseShoonyaCache:
             while len(self._records) > self.capacity:
                 evicted, _ = self._records.popitem(last=False)
                 self._last_exchange_ts.pop(evicted, None)
-            self._feed_epoch = int(feed_epoch)
             self._feed_state = "LIVE"
             self._feed_reason = None
             self._received_count += 1
@@ -71,7 +76,15 @@ class EarlyImpulseShoonyaCache:
     def on_session_observation(self, state: str, reason: str | None, feed_epoch: int, authenticated: bool, connected: bool, observed_ns: int) -> None:
         state_value = str(state).strip().upper() or "UNKNOWN"
         with self._lock:
+            epoch_changed = self._feed_epoch != int(feed_epoch)
+            if epoch_changed or not connected:
+                # Clear old-generation data and exchange timestamp monotonicity state.
+                # Prevent reconnect from being blocked by pre-reconnect timestamps.
+                self._records.clear()
+                self._last_exchange_ts.clear()
+                self._last_received_ns = None
             self._feed_epoch = int(feed_epoch)
+            self._session_authenticated = bool(connected and authenticated)
             self._feed_reason = (str(reason)[:240] if reason else None)
             if connected and authenticated:
                 self._feed_state = "LIVE" if self._last_received_ns is not None else "CONNECTED_NO_TICKS"
