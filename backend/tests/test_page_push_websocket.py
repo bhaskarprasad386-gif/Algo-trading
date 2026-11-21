@@ -368,3 +368,13 @@ def test_unsubscribe_does_not_clear_dispatcher_restarted_by_new_subscriber(monke
         monkeypatch.setattr(push.asyncio, "wait", original_wait)
         await push._unsubscribe_local(new_queue)
     asyncio.run(scenario())
+
+
+def test_box_snapshot_recovery_is_worker_independent_and_ignores_partial_events():
+    complete = {"opportunities": [{"id": "worker-a-row", "edge": 7.2}]}
+    partial = {"collection_changes": [{"operation": "UPDATE", "key": "x"}]}
+    assert push._box_opportunities_snapshot([partial, complete, {}]) == complete
+
+
+def test_box_snapshot_recovery_returns_empty_when_no_complete_snapshot():
+    assert push._box_opportunities_snapshot([{"collection_changes": []}, {}]) == {"opportunities": []}
