@@ -114,7 +114,9 @@ class EarlyImpulseSubscriptionLifecycle:
                 raise ValueError("configure an instrument universe before enabling")
             if self._subscribe is None:
                 raise RuntimeError("subscription transport is not wired")
-            self._subscribe(tuple(self._desired.values()))
+            subscribed = self._subscribe(tuple(self._desired.values()))
+            if subscribed != len(self._desired):
+                raise RuntimeError("consumer subscribe returned an incomplete count")
             self._enabled = True
             return self.snapshot()
 
@@ -124,7 +126,9 @@ class EarlyImpulseSubscriptionLifecycle:
                 return self.snapshot()
             if self._unsubscribe is None:
                 raise RuntimeError("consumer-scoped unsubscribe transport is not wired")
-            self._unsubscribe(tuple(self._desired.values()))
+            unsubscribed = self._unsubscribe(tuple(self._desired.values()))
+            if unsubscribed != len(self._desired):
+                raise RuntimeError("consumer unsubscribe returned an incomplete count")
             self._enabled = False
             return self.snapshot()
 
