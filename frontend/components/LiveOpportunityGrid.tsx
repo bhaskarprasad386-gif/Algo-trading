@@ -255,7 +255,13 @@ export default function LiveOpportunityGrid() {
       changed = true;
     }
     if (authoritativeList) {
-      if (nextRows.size !== previousRows.size || Array.from(previousRows.keys()).some((key) => !nextRows.has(key))) changed = true;
+      if (nextRows.size !== previousRows.size) changed = true;
+      else {
+        // Avoid allocating an intermediate keys array on every authoritative frame.
+        for (const key of previousRows.keys()) {
+          if (!nextRows.has(key)) { changed = true; break; }
+        }
+      }
     }
     rowsRef.current = nextRows;
     // Delta frames containing only duplicate/older timestamps are no-ops.
