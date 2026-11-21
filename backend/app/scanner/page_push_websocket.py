@@ -373,9 +373,10 @@ def _set_channels(queue: asyncio.Queue, channels: frozenset[str]) -> None:
     # Force a snapshot for each newly activated page so that the subscriber
     # cannot silently start from an incomplete local baseline.
     newly_activated = channels - previous
-    if newly_activated and queue.full():
-        # Queue saturation means the retained backlog cannot be trusted.
-        # Drop it and mark every active channel for snapshot recovery.
+    if newly_activated and not queue.empty():
+        # A pre-existing backlog may belong to channels that were previously
+        # active, or may be stale relative to this newly activated page.
+        # Discard it and recover every active channel from authoritative snapshots.
         while not queue.empty():
             try:
                 queue.get_nowait()
