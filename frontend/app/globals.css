@@ -928,3 +928,40 @@ html[data-theme="white"] .box-spread-page .box-live-opportunities article [class
 @media (prefers-reduced-motion: reduce) {
   .box-spread-page :is(button,a,[role="button"]):focus-visible { transition: none !important; }
 }
+
+/* Box Spread mobile compactness: reduce vertical waste while keeping tap targets. */
+@media (max-width: 640px) {
+  .box-spread-page.space-y-5 > :not([hidden]) ~ :not([hidden]) { margin-top: .75rem !important; }
+  .box-spread-page > nav.box-workspace-nav { gap: .15rem !important; padding: .25rem !important; border-radius: 10px !important; }
+  .box-spread-page > nav.box-workspace-nav a { min-height: 34px !important; padding: .35rem .5rem !important; font-size: 10px !important; }
+  .box-spread-page #box-overview { padding: 10px !important; }
+  .box-spread-page :is(h1,h2,h3) { letter-spacing: -.01em; }
+  .box-spread-page :is(section,article,[class*="rounded-xl"],[class*="rounded-2xl"]) { border-radius: 12px !important; }
+  .box-spread-page #box-overview .grid > div { padding: 8px !important; }
+  .box-spread-page [aria-label="Manual Box Spread index selection"] { padding: 10px !important; }
+  .box-spread-page [aria-label="Manual Box Spread index selection"] h2 { font-size: 15px !important; line-height: 1.25 !important; }
+  .box-spread-page [aria-label="Manual Box Spread index selection"] button { min-height: 34px !important; padding: 6px 8px !important; font-size: 10px !important; line-height: 1.2 !important; }
+  .box-spread-page [aria-label="Manual Box Spread index selection"] input[type="checkbox"] { width: 15px; height: 15px; flex: 0 0 15px; }
+  .box-spread-page [aria-label="Manual Box Spread index selection"] label { min-height: 36px !important; padding: 6px 8px !important; font-size: 10px !important; line-height: 1.25 !important; }
+  .box-spread-page [aria-label="Manual Box Spread index selection"] > div.rounded-lg { padding: 8px !important; }
+  .box-spread-page [aria-label="Manual Box Spread index selection"] p { font-size: 10px !important; line-height: 1.3 !important; }
+  .box-spread-page [aria-label="Manual Box Spread index selection"] [class*="sm:grid-cols-3"] { gap: 6px !important; }
+  .box-spread-page [aria-label="Manual Box Spread index selection"] [class*="sm:grid-cols-2"][class*="xl:grid-cols-3"] { grid-template-columns: repeat(2,minmax(0,1fr)) !important; gap: 6px !important; }
+  .box-spread-page [aria-label="Manual Box Spread index selection"] [class*="xl:grid-cols-6"] { gap: 6px !important; }
+  .box-spread-page .box-live-opportunities article { box-shadow: none !important; }
+}
+
+/* Box Spread mobile trading-first workspace refinements. */
+@media (max-width: 640px) {
+  .box-spread-page #box-live-opportunities { scroll-margin-top: 70px; }
+  .box-spread-page .box-live-opportunities > div:first-child { padding: 10px !important; }
+  .box-spread-page .box-live-opportunities > div:first-child .flex.flex-col { gap: 8px !important; }
+  .box-spread-page .box-live-opportunities > div:first-child p { font-size: 10px !important; line-height: 1.3 !important; }
+  .box-spread-page [aria-label="Manual Box Spread index selection"] .box-index-settings-content { padding-top: 2px; }
+  .box-spread-page [aria-label="Manual Box Spread index selection"] > button { min-height: 42px; }
+  .box-spread-page [aria-label="Box Spread live index prices"] { padding: 10px !important; }
+  .box-spread-page [aria-label="Box Spread live index prices"] > div:first-of-type { gap: 6px !important; }
+  .box-spread-page [aria-label="Box Spread live index prices"] > div:first-of-type p { font-size: 10px !important; line-height: 1.3 !important; }
+  .box-spread-page [aria-label="Box Spread live index prices"] > div:first-of-type span { font-size: 9px !important; padding: 4px 6px !important; }
+  .box-spread-page .box-live-opportunities .grid.grid-cols-2.gap-px > div { padding: 7px !important; }
+}
