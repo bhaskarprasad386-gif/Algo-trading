@@ -280,3 +280,33 @@ def test_consumer_mux_quarantines_token_after_partial_physical_unsubscribe_excep
     assert mux.snapshot()["physical_tokens"] == 1
     assert mux.snapshot()["owners"]["NSE:uncertain-unsub"] == ["owner"]
     assert mux.snapshot()["uncertain_tokens"] == ["NSE:uncertain-unsub"]
+
+
+def test_consumer_mux_rejects_empty_physical_identity_before_adapter_call():
+    from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
+    physical_calls = []
+    mux = ShoonyaConsumerSubscriptionMux(subscribe_physical=lambda items: physical_calls.append(items) or len(items), unsubscribe_physical=lambda items: len(items))
+    malformed = InstrumentDescriptor(key=InstrumentKey("NSE", "NFO", ""), symbol="NIFTY", instrument_type="index", exchange="NSE", segment="NFO")
+    try:
+        mux.subscribe("consumer", [malformed])
+    except ValueError as exc:
+        assert "exchange and token" in str(exc)
+    else:
+        raise AssertionError("empty physical identity must be rejected")
+    assert physical_calls == []
+
+
+def test_consumer_mux_rejects_duplicate_unsubscribe_batch_atomically():
+    from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
+    physical_calls = []
+    item = _desc("dup-unsub")
+    mux = ShoonyaConsumerSubscriptionMux(subscribe_physical=lambda items: len(items), unsubscribe_physical=lambda items: physical_calls.append(items) or len(items))
+    mux.subscribe("owner", [item])
+    try:
+        mux.unsubscribe("owner", [item, item])
+    except ValueError as exc:
+        assert "duplicate token" in str(exc)
+    else:
+        raise AssertionError("duplicate unsubscribe entries should fail")
+    assert physical_calls == []
+    assert mux.snapshot()["owners"]["NSE:dup-unsub"] == ["owner"]
