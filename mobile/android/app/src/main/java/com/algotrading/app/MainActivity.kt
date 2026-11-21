@@ -81,6 +81,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ApiService.initializeOwnerSession(applicationContext)
         setContentView(R.layout.activity_main)
         tvStatus = findViewById(R.id.tvStatus)
         mainScroll = findViewById(R.id.mainScroll)
@@ -278,7 +279,7 @@ class MainActivity : AppCompatActivity() {
                     try {
                         val response = ApiService.retrofitService.loginRealOwner(RealOwnerLoginRequest(password))
                         if (response.access_token.isBlank()) throw IllegalStateException("Server returned no owner token")
-                        ApiService.setRealOwnerAccessToken(response.access_token)
+                        ApiService.setRealOwnerAccessToken(response.access_token, response.expires_in)
                         withContext(Dispatchers.Main) {
                             ownerLoginPromptShown = false
                             tvBrokerStatus.text = "Broker Status: Owner authenticated • Real Trading OFF"
