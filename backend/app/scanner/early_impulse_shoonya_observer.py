@@ -12,13 +12,15 @@ from typing import Any
 
 from app.market_data.provider_readiness_bridge import ProviderReadinessBridge
 from app.scanner.early_impulse_shoonya_cache import EarlyImpulseShoonyaCache
+from app.scanner.early_impulse_shoonya_runner import EarlyImpulseLiveRunner
 
 
 class EarlyImpulseShoonyaObserver:
     def __init__(self, *, readiness: ProviderReadinessBridge | None = None,
-                 cache: EarlyImpulseShoonyaCache | None = None) -> None:
+                 cache: EarlyImpulseShoonyaCache | None = None, runner: EarlyImpulseLiveRunner | None = None) -> None:
         self.readiness = readiness or ProviderReadinessBridge()
         self.cache = cache or EarlyImpulseShoonyaCache()
+        self.runner = runner or EarlyImpulseLiveRunner()
         self._lock = RLock()
         self._observer_errors = 0
 
@@ -37,6 +39,7 @@ class EarlyImpulseShoonyaObserver:
                 self._observer_errors += 1
         try:
             self.cache.on_session_observation(state, reason, epoch, authenticated, connected, observed_ns)
+            self.runner.on_session(state, epoch, authenticated, connected)
         except Exception:
             with self._lock:
                 self._observer_errors += 1
@@ -50,6 +53,7 @@ class EarlyImpulseShoonyaObserver:
                 self._observer_errors += 1
         try:
             self.cache.on_tick_observation(record, epoch, authenticated, received_monotonic_ns)
+            self.runner.on_tick(record, epoch, authenticated, received_monotonic_ns)
         except Exception:
             with self._lock:
                 self._observer_errors += 1
@@ -57,7 +61,7 @@ class EarlyImpulseShoonyaObserver:
     def snapshot(self) -> dict:
         with self._lock:
             errors = self._observer_errors
-        return {**self.cache.snapshot(), "observer_errors": errors,
+        return {**self.cache.snapshot(), "runner": self.runner.snapshot(), "observer_errors": errors,
                 "scanner_enabled": False, "signal_generation_enabled": False,
                 "order_routing_enabled": False}
 
