@@ -1470,7 +1470,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             {([
               {label:"API Status",value:loading?"CHECKING":error?"ERROR":liveApiStatus,detail:"Backend response",tone:loading?"theme-muted":error||liveApiStatus==="ERROR"?"theme-danger":liveApiStatus==="RESPONDING"?"theme-success":"theme-warning"},
               {label:"Runner Status",value:runner?.running?"RUNNING":"STOPPED",detail:"Scanner engine",tone:runner?.running?"theme-success":"theme-warning"},
-              {label:"Market Status",value:isOutsideNseRegularHours()?"CLOSED / OFF HOURS":"REGULAR SESSION",detail:"NSE session window",tone:isOutsideNseRegularHours()?"theme-warning":"theme-success"},
+              {label:"Market Status",value:isOutsideNseRegularHours()?"OUTSIDE SESSION":"SESSION WINDOW",detail:"Time window only · holidays not checked",tone:isOutsideNseRegularHours()?"theme-warning":"theme-success"},
               {label:"WebSocket Status",value:pagePushStatus==="LIVE"?"CONNECTED":"RECONNECTING",detail:"Live push channel",tone:pagePushStatus==="LIVE"?"theme-success":"theme-warning"},
               {label:"Feed Status",value:boxFeedDisplayStatus(feedStatus),detail:(feedTicks==null?"—":feedTicks.toLocaleString("en-IN")+" ticks")+" · "+(feedAge==null?"age —":feedAge.toFixed(1)+"s old"),tone:feedStatus==="LIVE"?"theme-success":"theme-warning"}
             ]).map((item)=>(
