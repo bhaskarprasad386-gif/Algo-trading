@@ -59,3 +59,17 @@ def test_auth_pending_session_does_not_allow_tick_into_cache():
     assert snap["status"] == "AUTH_PENDING"
     assert snap["fresh_count"] == 0
     assert snap["rejected_count"] == 1
+
+
+def test_runner_evaluation_throttle_resets_on_feed_epoch_and_disable():
+    from app.scanner.early_impulse_shoonya_runner import EarlyImpulseLiveRunner
+    runner = EarlyImpulseLiveRunner()
+    runner._last_eval_ns = 987654321
+    runner.on_session("LIVE", 1, True, True)
+    assert runner._last_eval_ns == 0
+    runner._last_eval_ns = 987654321
+    runner.on_session("RECONNECTING", 2, False, False)
+    assert runner._last_eval_ns == 0
+    runner._last_eval_ns = 987654321
+    runner.disable()
+    assert runner._last_eval_ns == 0
