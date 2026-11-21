@@ -73,3 +73,9 @@ test("PR #712 Cash Future page removals are actually absent from rendered UI", a
   // Keep the main Cash Future opportunity scanner mounted.
   assert.equal(page.includes("filteredRows.map((row"), true);
 });
+
+
+test("Box Spread depth-shadow state updater remains explicitly typed", async () => {
+  const workspace = await read("components/strategy-workspace.tsx");
+  assert.match(workspace, /const \\[boxDepthShadow, setBoxDepthShadow\\] = useState<Record<string, unknown> \\| null>\\(null\\);/);
+});
