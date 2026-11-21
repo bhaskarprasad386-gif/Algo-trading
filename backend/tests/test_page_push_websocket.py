@@ -376,5 +376,9 @@ def test_box_snapshot_recovery_is_worker_independent_and_ignores_partial_events(
     assert push._box_opportunities_snapshot([partial, complete, {}]) == complete
 
 
-def test_box_snapshot_recovery_returns_empty_when_no_complete_snapshot():
-    assert push._box_opportunities_snapshot([{"collection_changes": []}, {}]) == {"opportunities": []}
+def test_box_snapshot_recovery_marks_missing_full_snapshot_unavailable():
+    assert push._box_opportunities_snapshot([{"collection_changes": []}, {}]) == {"snapshot_status": "UNAVAILABLE"}
+
+
+def test_box_snapshot_recovery_accepts_valid_empty_snapshot():
+    assert push._box_opportunities_snapshot([{"opportunities": []}]) == {"opportunities": []}
