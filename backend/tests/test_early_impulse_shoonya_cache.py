@@ -16,6 +16,11 @@ def _record(ts=1_700_000_000_000_000_000, token="123"):
     )
 
 
+def _tick(cache, record, epoch, authenticated, receive_ns):
+    cache.on_session_observation("LIVE", None, epoch, authenticated, True, receive_ns - 1)
+    return _tick(cache, record, epoch, authenticated, receive_ns)
+
+
 def test_accepts_authenticated_tick_and_reports_fresh_quote():
     cache = EarlyImpulseShoonyaCache(capacity=3)
     assert cache.on_tick_observation(_record(), 2, True, 5_000_000_000)
@@ -87,3 +92,23 @@ def test_future_receive_time_is_not_fresh():
     snap = cache.snapshot(now_monotonic_ns=9_000_000_000)
     assert snap["fresh_count"] == 0
     assert snap["stale_count"] == 1
+
+
+def test_epoch_change_clears_old_quotes_and_allows_exchange_timestamp_restart():
+    cache = EarlyImpulseShoonyaCache()
+    assert _tick(cache, _record(ts=500), 1, True, 2_000_000_000)
+    # Same exchange timestamp is valid in a new authenticated session epoch.
+    assert _tick(cache, _record(ts=500), 2, True, 3_000_000_000)
+    snap = cache.snapshot(now_monotonic_ns=3_100_000_000)
+    assert snap["feed_epoch"] == 2
+    assert snap["fresh_count"] == 1
+    assert snap["quotes"][0]["timestamp_ns"] == 500
+
+
+def test_stale_epoch_tick_is_rejected_after_new_session_epoch():
+    cache = EarlyImpulseShoonyaCache()
+    cache.on_session_observation("LIVE", None, 2, True, True, 1_000_000_000)
+    assert not cache.on_tick_observation(_record(), 1, True, 1_100_000_000)
+    snap = cache.snapshot(now_monotonic_ns=1_200_000_000)
+    assert snap["fresh_count"] == 0
+    assert snap["rejected_count"] == 1
