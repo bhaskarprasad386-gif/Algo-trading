@@ -50,7 +50,7 @@ def test_stale_quote_is_not_exposed_as_fresh():
     assert _tick(cache, _record(), 3, True, 1_000_000_000)
     snap = cache.snapshot(now_monotonic_ns=2_100_000_000)
     assert snap["fresh_count"] == 0
-    assert snap["stale_count"] == 0
+    assert snap["stale_count"] == 1
 
 
 def test_disconnect_invalidates_fresh_signal_data():
