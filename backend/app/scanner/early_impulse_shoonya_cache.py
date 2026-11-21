@@ -1,7 +1,7 @@
 """Isolated Shoonya quote cache for Early Impulse Pro (scanner-only).
 
-This module is deliberately not wired into the existing scanner consumers. It is a
-bounded, fail-closed cache that can be attached as a separate read-only observer.
+This module is wired as a separate, read-only observer of the shared Shoonya
+callback. It is not connected to signal generation or order execution.
 """
 from __future__ import annotations
 
