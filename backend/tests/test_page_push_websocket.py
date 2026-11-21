@@ -124,6 +124,7 @@ def test_channel_activation_queue_overflow_marks_all_active_pages_for_resync(mon
     first = queue.get_nowait()
     assert first["event"] == "SNAPSHOT_REQUIRED"
     queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 10})
+    queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 11})
     push._set_channels(queue, frozenset({"box-spread", "iv-skew-flip"}))
     markers = [queue.get_nowait(), queue.get_nowait()]
     assert {frame["page"] for frame in markers} == {"box-spread", "iv-skew-flip"}
