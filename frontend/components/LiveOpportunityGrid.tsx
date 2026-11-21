@@ -23,20 +23,26 @@ function n(row: Opportunity, field: string) {
   const value = Number(raw);
   return Number.isFinite(value) ? value : null;
 }
+const timestampMsCache = new Map<string, number | null>();
 function timestampMilliseconds(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const raw = String(value);
-  if (!/^\d+$/.test(raw)) return null;
-  try {
-    // Keep nanosecond epoch values exact until after conversion to milliseconds.
-    const integer = BigInt(raw);
-    if (integer >= BigInt("100000000000000000")) return Number(integer / BigInt("1000000"));
-    if (integer >= BigInt("1000000000000")) return Number(integer);
-    if (integer >= BigInt("1000000000")) return Number(integer * BigInt("1000"));
-  } catch {
-    return null;
+  if (timestampMsCache.has(raw)) return timestampMsCache.get(raw)!;
+  let result: number | null = null;
+  if (/^\d+$/.test(raw)) {
+    try {
+      // Keep nanosecond epoch values exact until after conversion to milliseconds.
+      const integer = BigInt(raw);
+      if (integer >= BigInt("100000000000000000")) result = Number(integer / BigInt("1000000"));
+      else if (integer >= BigInt("1000000000000")) result = Number(integer);
+      else if (integer >= BigInt("1000000000")) result = Number(integer * BigInt("1000"));
+    } catch {
+      result = null;
+    }
   }
-  return null;
+  if (timestampMsCache.size >= 500) timestampMsCache.clear();
+  timestampMsCache.set(raw, result);
+  return result;
 }
 function spotFeedStatus(row: Opportunity, receivedAt?: number) {
   const price = n(row, "spot_price");
