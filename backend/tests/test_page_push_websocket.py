@@ -455,3 +455,22 @@ def test_journal_dispatch_uses_page_sequence_cursor_not_global_event_id(monkeypa
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
     asyncio.run(scenario())
+
+
+def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch):
+    async def scenario():
+        queue = asyncio.Queue(maxsize=3)
+        pages = {"box-spread", "iv-skew-flip", "weekly-swing"}
+        for page in pages:
+            queue.put_nowait({"page": page, "event": "PATCH", "sequence": 1})
+        monkeypatch.setattr(push, "_subscribers", {(queue, frozenset(pages))})
+        monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 7)
+        waiter = asyncio.create_task(queue.get())
+        await asyncio.sleep(0)
+        next_waiter = await push._restart_event_waiter(queue, waiter, "cash-future")
+        markers = [await asyncio.wait_for(queue.get(), timeout=0.2) for _ in range(3)]
+        assert {frame["page"] for frame in markers} == pages
+        assert all(frame["event"] == "SNAPSHOT_REQUIRED" and frame["sequence"] == 7 for frame in markers)
+        next_waiter.cancel()
+        await asyncio.gather(next_waiter, return_exceptions=True)
+    asyncio.run(scenario())
