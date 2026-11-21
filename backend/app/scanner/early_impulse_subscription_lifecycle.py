@@ -73,7 +73,7 @@ class EarlyImpulseSubscriptionLifecycle:
             key = (exchange, token)
             if key in seen:
                 if seen[key] != item:
-                    raise ValueError("conflicting token descriptors in requested universe")
+                    raise ValueError("duplicate token with conflicting descriptors in requested universe")
                 raise ValueError("duplicate token in requested universe")
             seen[key] = item
         if any(len(expiries) > MAX_OPTION_EXPIRIES_PER_UNDERLYING for expiries in expiry_sets.values()):
@@ -136,7 +136,7 @@ class EarlyImpulseSubscriptionLifecycle:
                 "max_universe": self.max_universe,
                 "enabled": self._enabled,
                 "transport_wired": self._subscribe is not None and self._unsubscribe is not None,
-                "instrument_keys": sorted(f"{e}:{s}:{t}" for e, s, t in self._desired),
+                "instrument_keys": sorted(f"{e}:{t}" for e, t in self._desired),
                 "scanner_enabled": False,
                 "signals_enabled": False,
                 "order_routing_enabled": False,
