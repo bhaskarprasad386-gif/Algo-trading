@@ -255,6 +255,7 @@ def test_consumer_mux_quarantines_token_after_partial_physical_subscribe_excepti
         raise AssertionError("physical callback exception must propagate")
     assert mux.snapshot()["physical_tokens"] == 0
     assert mux.snapshot()["uncertain_tokens"] == ["NSE:uncertain-sub"]
+    assert mux.snapshot()["reconciliation_required"] is True
     try:
         mux.subscribe("another-owner", [item])
     except RuntimeError as exc:
@@ -280,6 +281,29 @@ def test_consumer_mux_quarantines_token_after_partial_physical_unsubscribe_excep
     assert mux.snapshot()["physical_tokens"] == 1
     assert mux.snapshot()["owners"]["NSE:uncertain-unsub"] == ["owner"]
     assert mux.snapshot()["uncertain_tokens"] == ["NSE:uncertain-unsub"]
+    assert mux.snapshot()["reconciliation_required"] is True
+
+
+
+def test_consumer_mux_global_quarantine_blocks_unrelated_new_tokens_after_partial_failure():
+    from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
+    mux = ShoonyaConsumerSubscriptionMux(subscribe_physical=lambda items: (_ for _ in ()).throw(RuntimeError("ambiguous adapter")), unsubscribe_physical=lambda items: len(items))
+    try:
+        mux.subscribe("owner", [_desc("unknown-state")])
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("partial mutation must raise")
+    # A failure can affect adapter-wide state, not just the requested token.
+    try:
+        mux.subscribe("owner-2", [_desc("unrelated-token")])
+    except RuntimeError as exc:
+        assert "uncertain" in str(exc)
+    else:
+        raise AssertionError("global uncertain state should block new mutations")
+    assert mux.snapshot()["reconciliation_required"] is True
+    assert mux.snapshot()["physical_tokens"] == 0
+
 
 
 def test_consumer_mux_rejects_empty_physical_identity_before_adapter_call():
