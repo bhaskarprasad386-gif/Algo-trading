@@ -23,7 +23,7 @@ class EarlyImpulseShoonyaObserver:
         self._observer_errors = 0
 
     def on_session_observation(self, state: str, reason: str | None, epoch: int,
-                              authenticated: bool, connected: bool, observed_ns: int) -> None:
+                              connected: bool, authenticated: bool, observed_ns: int) -> None:
         # Fan out to both existing readiness evidence and the strategy cache.
         try:
             self.readiness.shoonya_state(state, reason, epoch, connected, authenticated, observed_ns)
