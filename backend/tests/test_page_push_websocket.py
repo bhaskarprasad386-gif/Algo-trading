@@ -330,7 +330,7 @@ def test_page_push_dispatcher_marks_queue_overflow_for_snapshot(monkeypatch):
         queue = asyncio.Queue(maxsize=1)
         queue.put_nowait({"page": page, "event": "PATCH", "sequence": 1})
         latest_reads = []
-        monkeypatch.setattr(push, "_latest_page_sequence", lambda target_page: latest_reads.append(target_page) or 99)
+        monkeypatch.setattr(push, "_latest_page_sequence", lambda target_page: latest_reads.append(target_page) or 2)
         monkeypatch.setattr(push, "_events_after", lambda target_page, cursor, limit=100: [
             {"id": 91, "page": page, "sequence": 2, "event": "PATCH", "data": {"rows": []}}
         ] if target_page == page and cursor == 0 else [])
@@ -475,9 +475,11 @@ def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch)
         monkeypatch.setattr(push, "_subscribers", {(queue, frozenset(pages))})
         monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 7)
         waiter = asyncio.create_task(queue.get())
-        await asyncio.sleep(0)
-        # The waiter has consumed one queued frame; add one more so restoring
-        # the consumed frame plus retained queue exceeds this test queue size.
+        # Await completion deterministically: helper needs the completed task's
+        # result to restore the consumed frame, not a scheduling assumption.
+        await asyncio.wait_for(waiter, timeout=0.5)
+        # Add one more so restoring the consumed frame plus retained queue
+        # exceeds this test queue size.
         queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 2})
         next_waiter = await push._restart_event_waiter(queue, waiter, "cash-future")
         markers = [await asyncio.wait_for(queue.get(), timeout=1.0) for _ in range(3)]
