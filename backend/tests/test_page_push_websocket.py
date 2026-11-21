@@ -482,11 +482,13 @@ def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch)
         # exceeds this test queue size.
         queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 2})
         next_waiter = await push._restart_event_waiter(queue, waiter, "cash-future")
-        markers = [await asyncio.wait_for(queue.get(), timeout=1.0) for _ in range(3)]
-        assert {frame["page"] for frame in markers} == pages
-        assert all(frame["event"] == "SNAPSHOT_REQUIRED" and frame["sequence"] == 7 for frame in markers)
+        # Cancel the restarted consumer before inspecting the recovery queue so
+        # it cannot race the test and steal one of the snapshot markers.
         next_waiter.cancel()
         await asyncio.gather(next_waiter, return_exceptions=True)
+        markers = [queue.get_nowait() for _ in range(3)]
+        assert {frame["page"] for frame in markers} == pages
+        assert all(frame["event"] == "SNAPSHOT_REQUIRED" and frame["sequence"] == 7 for frame in markers)
     asyncio.run(scenario())
 
 
