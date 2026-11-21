@@ -3,7 +3,7 @@ from app.market_data.registry import InstrumentDescriptor
 from app.scanner.early_impulse_subscription_lifecycle import EarlyImpulseSubscriptionLifecycle
 
 
-def _desc(token="1", symbol="NIFTY", kind="index", expiry=None, strike=None, opt=None, underlying=None):
+def _desc(token="1", symbol="NIFTY", kind="index", expiry=None, strike=None, opt=None, underlying="NIFTY"):
     return InstrumentDescriptor(
         key=InstrumentKey("NSE", "NFO", token),
         symbol=symbol,
@@ -40,7 +40,7 @@ def test_conflicting_duplicate_tokens_rejected():
     try:
         lifecycle.set_universe([_desc("1"), _desc("1", symbol="OTHER")])
     except ValueError as exc:
-        assert "conflicting token" in str(exc)
+        assert "duplicate token with conflicting" in str(exc)
     else:
         raise AssertionError("conflicting token should be rejected")
 
