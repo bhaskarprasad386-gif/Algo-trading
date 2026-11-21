@@ -146,24 +146,29 @@ def _snapshot_frame(page: str, data: dict[str, Any] | None = None, sequence: int
 
 
 def _box_opportunities_snapshot(events_data: list[dict[str, Any]]) -> dict[str, Any]:
-    """Extract the latest full Box opportunity list; absence is not an empty snapshot."""
-    for data in events_data:
+    """Accept only complete snapshot journal records, never partial PATCH payloads."""
+    for record in events_data:
+        if not isinstance(record, dict) or record.get("event") != "SNAPSHOT":
+            continue
+        data = record.get("data")
         if isinstance(data, dict) and isinstance(data.get("opportunities"), list):
             return {"opportunities": data["opportunities"]}
     return {"snapshot_status": "UNAVAILABLE"}
 
 
 def _shared_box_opportunities_snapshot() -> dict[str, Any]:
-    """Worker-independent snapshot recovery from the durable shared journal."""
+    """Worker-independent recovery from the newest durable full snapshot."""
     try:
         with engine.connect() as connection:
             rows = connection.execute(
-                select(events.c.data)
-                .where(events.c.page == "box-spread")
+                select(events.c.event, events.c.data)
+                .where(events.c.page == "box-spread", events.c.event == "SNAPSHOT")
                 .order_by(events.c.page_sequence.desc())
-                .limit(100)
+                .limit(1)
             ).all()
-        return _box_opportunities_snapshot([row[0] for row in rows])
+        return _box_opportunities_snapshot(
+            [{"event": row[0], "data": row[1]} for row in rows]
+        )
     except Exception:
         _log.exception("Could not read shared Box Spread snapshot from journal")
         return {"snapshot_status": "UNAVAILABLE"}
