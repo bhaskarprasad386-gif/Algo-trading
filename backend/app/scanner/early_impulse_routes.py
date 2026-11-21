@@ -1,14 +1,13 @@
 """Read-only market-feature and score evaluation routes for Early Impulse Pro."""
 from __future__ import annotations
-
 from typing import List
-
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-
 from app.scanner.early_impulse_engine import evaluate_early_impulse, evaluate_market_features
+from app.scanner.early_impulse_signal_store import EarlyImpulseSignalStore
 
 router = APIRouter(prefix="/api/v1/early-impulse", tags=["early-impulse"])
+signal_store = EarlyImpulseSignalStore()
 
 
 class EngineScores(BaseModel):
@@ -48,17 +47,13 @@ class MarketFeatureRequest(BaseModel):
 
 @router.get("/status")
 def status() -> dict:
-    """Explicitly report that feed integration is not active yet."""
+    history = signal_store.snapshot()
     return {
-        "strategy": "EARLY_IMPULSE_PRO",
-        "status": "WAITING_FOR_FEED_INTEGRATION",
-        "feed_connected": False,
-        "scanner_active": False,
-        "signal_count": 0,
-        "latest_signal": None,
-        "market_regime": "UNKNOWN",
-        "order_routing_enabled": False,
-        "iv_scanner_dependency": False,
+        "strategy": "EARLY_IMPULSE_PRO", "status": "WAITING_FOR_FEED_INTEGRATION",
+        "feed_connected": False, "scanner_active": False,
+        "signal_count": history["signal_count"], "latest_signal": history["signals"][0] if history["signals"] else None,
+        "market_regime": "UNKNOWN", "order_routing_enabled": False, "iv_scanner_dependency": False,
+        "signal_history_capacity": history["capacity"], "suppressed_duplicate_count": history["suppressed_duplicate_count"],
         "engines": [
             {"id": "absorption", "name": "Absorption Detection", "weight": 30, "status": "WAITING"},
             {"id": "synthetic_spot", "name": "Synthetic Future vs Spot", "weight": 20, "status": "WAITING"},
@@ -66,20 +61,24 @@ def status() -> dict:
             {"id": "market_impact", "name": "Market Impact Efficiency", "weight": 20, "status": "WAITING"},
             {"id": "cross_instrument", "name": "Cross-Instrument Confirmation", "weight": 15, "status": "WAITING"},
         ],
-        "notes": [
-            "Live shared-feed subscription and signal runner are not enabled yet.",
-            "No market signal is fabricated; both evaluation routes are read-only.",
-        ],
+        "notes": ["Live shared-feed consumer and scanner runner remain disabled until isolated ownership-safe subscription wiring is completed.",
+                  "No live signals fabricated; order routing is disabled."],
     }
+
+
+@router.get("/signals")
+def signals() -> dict:
+    """Return bounded scanner-only history; never returns broker order records."""
+    return signal_store.snapshot()
 
 
 @router.post("/evaluate")
 def evaluate(request: EvaluationRequest) -> dict:
-    """Score normalized engine values; never routes broker orders."""
+    """Score normalized engine values; no live feed or broker side effects."""
     return evaluate_early_impulse(request.model_dump())
 
 
 @router.post("/evaluate-market")
 def evaluate_market(request: MarketFeatureRequest) -> dict:
-    """Calculate features from caller-supplied observations; never claims live feed."""
+    """Calculate feature scores from caller-supplied observations only."""
     return evaluate_market_features(request.model_dump())
