@@ -44,7 +44,7 @@ class EarlyImpulseSubscriptionLifecycle:
 
     @staticmethod
     def _key(item: InstrumentDescriptor) -> tuple[str, str, str]:
-        return (item.key.exchange.strip().upper(), item.key.segment.strip().upper(), item.key.token.strip())
+        return (item.key.exchange.strip().upper(), item.key.token.strip())
 
     @staticmethod
     def validate(items: Iterable[InstrumentDescriptor]) -> tuple[InstrumentDescriptor, ...]:
@@ -158,7 +158,7 @@ class ShoonyaConsumerSubscriptionMux:
         self._physical_unsubscribe = unsubscribe_physical
         self._max_tokens = max_tokens
         self._lock = RLock()
-        self._owners: dict[tuple[str, str, str], dict[str, InstrumentDescriptor]] = {}
+        self._owners: dict[tuple[str, str], dict[str, InstrumentDescriptor]] = {}
 
     @staticmethod
     def _identity(item: InstrumentDescriptor) -> tuple[str, str, str]:
