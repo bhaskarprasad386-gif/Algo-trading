@@ -158,10 +158,10 @@ class ShoonyaConsumerSubscriptionMux:
         self._physical_unsubscribe = unsubscribe_physical
         self._max_tokens = max_tokens
         self._lock = RLock()
-        self._owners: dict[tuple[str, str], dict[str, InstrumentDescriptor]] = {}
+        self._owners: dict[tuple[str, str], dict[str, InstrumentDescriptor]] = {}\n        # Physical adapter mutations that raised or returned short counts are unknown.\n        # Keep these tokens quarantined until a future explicit reconciliation.\n        self._uncertain: dict[tuple[str, str], InstrumentDescriptor] = {}
 
     @staticmethod
-    def _identity(item: InstrumentDescriptor) -> tuple[str, str, str]:
+    def _identity(item: InstrumentDescriptor) -> tuple[str, str]:
         return (item.key.exchange.strip().upper(), item.key.token.strip())
 
     def subscribe(self, consumer: str, descriptors: Iterable[InstrumentDescriptor]) -> int:
@@ -228,4 +228,4 @@ class ShoonyaConsumerSubscriptionMux:
 
     def snapshot(self) -> dict:
         with self._lock:
-            return {"physical_tokens": len(self._owners), "consumer_count": len({name for owners in self._owners.values() for name in owners}), "max_tokens": self._max_tokens, "owners": {":".join(key): sorted(owners) for key, owners in sorted(self._owners.items())}, "physical_transport_wired": True}
+            return {"physical_tokens": len(self._owners), "consumer_count": len({name for owners in self._owners.values() for name in owners}), "max_tokens": self._max_tokens, "owners": {":".join(key): sorted(owners) for key, owners in sorted(self._owners.items())}, "physical_transport_wired": True, "uncertain_tokens": sorted(\":\".join(key) for key in self._uncertain)}
