@@ -17,7 +17,11 @@ type Status = {
   iv_scanner_dependency?: boolean;
   engines?: Engine[];
   notes?: string[];
+  signal_history_capacity?: number;
+  suppressed_duplicate_count?: number;
 };
+type Signal = { underlying?: string; direction?: string; score?: number; grade?: string; timestamp?: string; entry?: number; invalidation?: number; target_1?: number; reason?: string; scanner_only?: boolean; };
+type SignalHistory = { signals?: Signal[]; signal_count?: number; capacity?: number; suppressed_duplicate_count?: number; cooldown_seconds?: number; scanner_only?: boolean; order_routing_enabled?: boolean; };
 
 const engineDetails: Engine[] = [
   { id: "absorption", name: "Absorption Detection", weight: 30, status: "WAITING", role: "Entry-location engine", detail: "Executed pressure versus price progress, liquidity replenishment and rejection at a level." },
@@ -42,6 +46,7 @@ export default function EarlyImpulsePage() {
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [signalHistory, setSignalHistory] = useState<SignalHistory | null>(null);
   const requestLock = useRef(false);
 
   const refresh = useCallback(async () => {
@@ -57,6 +62,10 @@ export default function EarlyImpulsePage() {
       if (!response.ok) throw new Error("API returned HTTP " + response.status);
       const body = await response.json() as Status;
       setStatus(body);
+      try {
+        const historyResponse = await fetch(base + "/api/v1/early-impulse/signals", { cache: "no-store", signal: AbortSignal.timeout(5000) });
+        if (historyResponse.ok) setSignalHistory(await historyResponse.json() as SignalHistory);
+      } catch { /* status page remains usable when history endpoint is unavailable */ }
       setError(null);
       setUpdatedAt(new Date().toISOString());
     } catch (err) {
@@ -81,7 +90,8 @@ export default function EarlyImpulsePage() {
 
   const engines = status?.engines ?? engineDetails;
   const feedReady = status?.feed_connected === true;
-  const liveSignals = status?.signal_count ?? 0;
+  const liveSignals = signalHistory?.signal_count ?? status?.signal_count ?? 0;
+  const recentSignals = signalHistory?.signals ?? [];
   const backendUnavailable = !!error;
 
   return <main className="space-y-4">
@@ -148,10 +158,14 @@ export default function EarlyImpulsePage() {
 
     <section className="rounded-2xl border theme-border theme-surface">
       <div className="border-b theme-border p-3 sm:p-4"><h2 className="text-base font-bold">Live Signals</h2><p className="mt-1 text-xs theme-muted">Only backend-generated, validated signals will appear here.</p></div>
-      <div className="p-8 text-center">
-        <Activity size={28} className="mx-auto theme-muted"/>
-        <div className="mt-2 text-sm font-semibold theme-text">{feedReady && liveSignals > 0 ? "Signals ready" : "No live signals"}</div>
-        <p className="mt-1 text-xs theme-muted">{feedReady ? "No validated opportunity at this moment." : "Live shared-feed integration is pending. This empty state is intentional—not demo data."}</p>
+      <div className="space-y-3 p-3 sm:p-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Metric title="History capacity" value={String(signalHistory?.capacity ?? status?.signal_history_capacity ?? "—")} subtitle="Bounded records"/>
+          <Metric title="Duplicate suppressed" value={String(signalHistory?.suppressed_duplicate_count ?? status?.suppressed_duplicate_count ?? 0)} subtitle="Cooldown filter"/>
+          <Metric title="Cooldown" value={`${signalHistory?.cooldown_seconds ?? 30}s`} subtitle="Per underlying/direction"/>
+          <Metric title="Routing" value={signalHistory?.order_routing_enabled === false ? "OFF" : "OFF"} subtitle="Scanner only"/>
+        </div>
+        {recentSignals.length ? <div className="overflow-x-auto"><table className="w-full min-w-[650px] text-left text-xs"><thead className="theme-muted"><tr><th className="p-2">Time</th><th className="p-2">Underlying</th><th className="p-2">Direction</th><th className="p-2">Score</th><th className="p-2">Grade</th><th className="p-2">Entry</th><th className="p-2">Invalidation</th><th className="p-2">Target</th></tr></thead><tbody className="divide-y theme-border">{recentSignals.map((signal, i) => <tr key={`${signal.underlying}-${signal.direction}-${signal.timestamp ?? i}`}><td className="p-2">{fmtTime(signal.timestamp)}</td><td className="p-2 font-semibold theme-text">{signal.underlying ?? "—"}</td><td className="p-2 font-bold">{signal.direction ?? "—"}</td><td className="p-2">{signal.score ?? "—"}</td><td className="p-2">{signal.grade ?? "—"}</td><td className="p-2">{signal.entry ?? "—"}</td><td className="p-2">{signal.invalidation ?? "—"}</td><td className="p-2">{signal.target_1 ?? "—"}</td></tr>)}</tbody></table></div> : <div className="p-8 text-center"><Activity size={28} className="mx-auto theme-muted"/><div className="mt-2 text-sm font-semibold theme-text">No live signals</div><p className="mt-1 text-xs theme-muted">Live feed/scanner is not active; history is empty by design. No demo signals.</p></div>}
       </div>
     </section>
 
