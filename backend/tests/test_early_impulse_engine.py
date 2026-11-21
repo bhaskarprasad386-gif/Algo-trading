@@ -26,7 +26,8 @@ def test_missing_mandatory_gate_rejects_even_high_score():
 
 def test_neutral_direction_cannot_be_trade_eligible():
     result = evaluate_early_impulse(_valid_snapshot(direction="NEUTRAL"))
-    assert not result["eligible"] and "NO_DIRECTION" in result["rejection_reasons
+    assert not result["eligible"]
+    assert "NO_DIRECTION" in result["rejection_reasons"]
 
 
 def test_invalid_engine_value_scores_zero():
@@ -37,7 +38,7 @@ def test_invalid_engine_value_scores_zero():
 def test_low_score_is_rejected():
     result = evaluate_early_impulse(_valid_snapshot(engines={key: .5 for key in (
         "absorption", "synthetic_spot", "failed_auction", "market_impact", "cross_instrument")}))
-    assert result["score"] == 50 and result["grade"] == "REJECT" and not result["eligible"]
+    assert result["score"] == 50 and result["grade"] == "REJECT" and not result["eligible"
 
 
 def test_market_features_calculate_directional_buy_candidate_from_quotes():
@@ -79,4 +80,4 @@ def test_missing_quote_depth_and_cross_confirmation_fail_closed():
 def test_non_finite_engine_input_never_scores():
     result = evaluate_early_impulse(_valid_snapshot(engines={"absorption": float("nan")}))
     assert result["components"]["absorption"] == 0
-    assert not result["eligible"]
+    assert not result["eligible"
