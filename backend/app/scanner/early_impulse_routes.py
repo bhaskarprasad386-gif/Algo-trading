@@ -8,7 +8,7 @@ from app.scanner.early_impulse_signal_store import EarlyImpulseSignalStore
 from app.scanner.early_impulse_shoonya_observer import early_impulse_observer
 
 router = APIRouter(prefix="/api/v1/early-impulse", tags=["early-impulse"])
-signal_store = EarlyImpulseSignalStore()
+signal_store = early_impulse_observer.runner.store
 
 
 class EngineScores(BaseModel):
@@ -17,6 +17,10 @@ class EngineScores(BaseModel):
     failed_auction: float = Field(default=0, ge=0, le=1)
     market_impact: float = Field(default=0, ge=0, le=1)
     cross_instrument: float = Field(default=0, ge=0, le=1)
+
+
+class RunnerConfig(BaseModel):
+    roles: dict[str, str] = Field(default_factory=dict, max_length=5)
 
 
 class EvaluationRequest(BaseModel):
@@ -52,7 +56,8 @@ def status() -> dict:
     feed = early_impulse_observer.snapshot()
     return {
         "strategy": "EARLY_IMPULSE_PRO", "status": "FEED_OBSERVED" if feed["status"] == "LIVE" else "WAITING_FOR_FEED",
-        "feed_connected": feed["connected"], "scanner_active": False,
+        "feed_connected": feed["connected"], "scanner_active": feed["runner"]["enabled"],
+        "runner": feed["runner"],
         "feed_status": feed["status"], "feed_epoch": feed["feed_epoch"],
         "fresh_quote_count": feed["fresh_count"], "stale_quote_count": feed["stale_count"],
         "observer_errors": feed["observer_errors"],
@@ -66,9 +71,38 @@ def status() -> dict:
             {"id": "market_impact", "name": "Market Impact Efficiency", "weight": 20, "status": "WAITING"},
             {"id": "cross_instrument", "name": "Cross-Instrument Confirmation", "weight": 15, "status": "WAITING"},
         ],
-        "notes": ["Shared Shoonya observer is wired; scanner runner and consumer-owned subscriptions are not yet enabled.",
+        "notes": ["Shared observer and synchronized runner are connected. Instrument roles must be configured; subscription ownership remains external to this scanner.",
                   "No live signals fabricated; order routing is disabled."],
     }
+
+
+
+@router.post("/runner/config")
+def configure_runner(request: RunnerConfig) -> dict:
+    try:
+        return early_impulse_observer.runner.configure_roles(request.roles)
+    except (TypeError, ValueError) as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/runner/start")
+def start_runner() -> dict:
+    try:
+        return early_impulse_observer.runner.enable()
+    except (TypeError, ValueError, RuntimeError) as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/runner/stop")
+def stop_runner() -> dict:
+    return early_impulse_observer.runner.disable()
+
+
+@router.get("/runner")
+def runner_status() -> dict:
+    return early_impulse_observer.runner.snapshot()
 
 
 @router.get("/signals")
