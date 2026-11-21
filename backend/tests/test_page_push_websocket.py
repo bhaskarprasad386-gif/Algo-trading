@@ -107,6 +107,24 @@ def test_snapshot_provider_is_read_only_and_page_scoped():
         raise AssertionError("unknown page must be rejected")
 
 
+
+
+def test_missing_snapshot_provider_is_not_an_authoritative_empty_snapshot():
+    page = "credit-butterfly-condor-weekly"
+    push.configure_snapshot_provider(page, None)
+    assert push._snapshot(page) == {"snapshot_status": "UNAVAILABLE"}
+    frame = push._consistent_snapshot_frame(page)
+    assert frame["event"] == "SNAPSHOT"
+    assert frame["data"] == {"snapshot_status": "UNAVAILABLE"}
+
+
+def test_non_object_snapshot_provider_is_not_authoritative(monkeypatch):
+    page = "credit-butterfly-condor-monthly"
+    push.configure_snapshot_provider(page, lambda: [])
+    assert push._snapshot(page) == {"snapshot_status": "UNAVAILABLE"}
+    push.configure_snapshot_provider(page, None)
+
+
 def test_origin_policy_rejects_untrusted_hosts(monkeypatch):
     monkeypatch.setenv("SCANNER_PAGE_WS_ALLOWED_ORIGINS", "https://algo-trading.pages.dev,https://terminal.example.com")
     assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.vercel.app"}))
