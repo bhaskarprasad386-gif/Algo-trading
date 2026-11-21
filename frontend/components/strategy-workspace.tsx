@@ -1196,7 +1196,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const nextFeedStatus = String(feed.status ?? "UNKNOWN").toUpperCase();
       setFeedStatus(current => current === nextFeedStatus ? current : nextFeedStatus);
       const nextFeedErrors = { delivery: Number(feed.delivery_errors ?? 0) || 0, normalizer: Number(feed.normalizer_errors ?? 0) || 0 };
-      setFeedErrors(current => current && current.delivery === nextFeedErrors.delivery && current.normalizer === nextFeedErrors.normalizer ? current : nextFeedErrors);
+      setFeedErrors((current: { delivery: number; normalizer: number } | null) => current && current.delivery === nextFeedErrors.delivery && current.normalizer === nextFeedErrors.normalizer ? current : nextFeedErrors);
       const selected = runtime.runners?.box_spread;
       const nextRunner = selected ? { running: Boolean(selected.running), detail: String(selected.detail ?? (selected.running ? "RUNNING" : "STOPPED")) } : null;
       setRunner(current => current && nextRunner && current.running === nextRunner.running && current.detail === nextRunner.detail ? current : nextRunner);
