@@ -71,3 +71,19 @@ def test_invalid_capacity_rejected():
         pass
     else:
         raise AssertionError("capacity zero must be rejected")
+
+
+def test_rejects_non_executable_quote_without_bid_ask():
+    from dataclasses import replace
+    cache = EarlyImpulseShoonyaCache()
+    record = replace(_record(), bid=None, ask=None)
+    assert not cache.on_tick_observation(record, 1, True, 5_000_000_000)
+    assert cache.snapshot(now_monotonic_ns=5_100_000_000)["rejected_count"] == 1
+
+
+def test_future_receive_time_is_not_fresh():
+    cache = EarlyImpulseShoonyaCache()
+    assert cache.on_tick_observation(_record(), 1, True, 10_000_000_000)
+    snap = cache.snapshot(now_monotonic_ns=9_000_000_000)
+    assert snap["fresh_count"] == 0
+    assert snap["stale_count"] == 1
