@@ -1466,13 +1466,14 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             </div>
             <Link href="/custom-alert" className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border theme-border px-3 text-xs font-semibold theme-accent hover:theme-surface" aria-label="Open strategy alerts"><Bell className="h-3.5 w-3.5" /> Alerts</Link>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {([
               {label:"API Status",value:loading?"CHECKING":error?"ERROR":liveApiStatus,detail:"Backend response",tone:loading?"theme-muted":error||liveApiStatus==="ERROR"?"theme-danger":liveApiStatus==="RESPONDING"?"theme-success":"theme-warning"},
               {label:"Runner Status",value:runner?.running?"RUNNING":"STOPPED",detail:"Scanner engine",tone:runner?.running?"theme-success":"theme-warning"},
               {label:"Market Status",value:isOutsideNseRegularHours()?"OUTSIDE SESSION":"SESSION WINDOW",detail:"Time window only · holidays not checked",tone:isOutsideNseRegularHours()?"theme-warning":"theme-success"},
               {label:"WebSocket Status",value:pagePushStatus==="LIVE"?"CONNECTED":"RECONNECTING",detail:"Live push channel",tone:pagePushStatus==="LIVE"?"theme-success":"theme-warning"},
-              {label:"Feed Status",value:boxFeedDisplayStatus(feedStatus),detail:(feedTicks==null?"—":feedTicks.toLocaleString("en-IN")+" ticks")+" · "+(feedAge==null?"age —":feedAge.toFixed(1)+"s old"),tone:feedStatus==="LIVE"?"theme-success":"theme-warning"}
+              {label:"Feed Status",value:boxFeedDisplayStatus(feedStatus),detail:(feedTicks==null?"—":feedTicks.toLocaleString("en-IN")+" ticks"),tone:feedStatus==="LIVE"?"theme-success":"theme-warning"},
+              {label:"Feed Age",value:feedAge==null?"—":feedAge.toFixed(1)+"s",detail:"Time since last feed update",tone:feedAge==null?"theme-muted":feedAge<=5?"theme-success":feedAge<=15?"theme-warning":"theme-danger"}
             ]).map((item)=>(
               <div key={item.label} className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
                 <p className="text-[11px] font-semibold theme-muted">{item.label}</p>
