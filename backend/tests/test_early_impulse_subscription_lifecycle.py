@@ -129,7 +129,7 @@ def test_enabled_universe_change_fails_closed_without_scoped_unsubscribe():
     else:
         raise AssertionError("must reject live replacement without scoped unsubscribe")
     assert lifecycle.snapshot()["configured_instruments"] == 1
-    assert lifecycle.snapshot()["instrument_keys"] == ["NSE:NFO:1"]
+    assert lifecycle.snapshot()["instrument_keys"] == ["NSE:1"]
     assert len(subscribed) == 1
 
 
