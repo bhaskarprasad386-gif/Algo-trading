@@ -334,3 +334,51 @@ def test_consumer_mux_rejects_duplicate_unsubscribe_batch_atomically():
         raise AssertionError("duplicate unsubscribe entries should fail")
     assert physical_calls == []
     assert mux.snapshot()["owners"]["NSE:dup-unsub"] == ["owner"]
+
+
+def test_lifecycle_enable_rejects_short_subscribe_without_enabling():
+    lifecycle = EarlyImpulseSubscriptionLifecycle(
+        subscribe=lambda items: len(items) - 1,
+        unsubscribe=lambda items: len(items),
+    )
+    lifecycle.set_universe([_desc("short-enable")])
+    try:
+        lifecycle.enable()
+    except RuntimeError as exc:
+        assert "incomplete count" in str(exc)
+    else:
+        raise AssertionError("short subscribe must fail closed")
+    assert lifecycle.snapshot()["enabled"] is False
+
+
+def test_lifecycle_disable_rejects_short_unsubscribe_and_keeps_enabled():
+    calls = []
+    lifecycle = EarlyImpulseSubscriptionLifecycle(
+        subscribe=lambda items: len(items),
+        unsubscribe=lambda items: calls.append(len(items)) or 0,
+    )
+    lifecycle.set_universe([_desc("short-disable")])
+    lifecycle.enable()
+    try:
+        lifecycle.disable()
+    except RuntimeError as exc:
+        assert "incomplete count" in str(exc)
+    else:
+        raise AssertionError("short unsubscribe must fail closed")
+    assert lifecycle.snapshot()["enabled"] is True
+
+
+def test_lifecycle_live_universe_change_rejects_short_subscribe_and_keeps_old_config():
+    lifecycle = EarlyImpulseSubscriptionLifecycle(
+        subscribe=lambda items: 0 if items[0].key.token == "new-token" else len(items),
+        unsubscribe=lambda items: len(items),
+    )
+    lifecycle.set_universe([_desc("old-token")])
+    lifecycle.enable()
+    try:
+        lifecycle.set_universe([_desc("new-token")])
+    except RuntimeError as exc:
+        assert "incomplete count" in str(exc)
+    else:
+        raise AssertionError("short replacement subscribe must fail closed")
+    assert lifecycle.snapshot()["instrument_keys"] == ["NSE:old-token"]
