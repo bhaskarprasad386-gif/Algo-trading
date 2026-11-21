@@ -2,6 +2,7 @@ from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataR
 from app.market_data.provider_readiness_bridge import ProviderReadinessBridge
 from app.scanner.early_impulse_shoonya_cache import EarlyImpulseShoonyaCache
 from app.scanner.early_impulse_shoonya_observer import EarlyImpulseShoonyaObserver
+from time import time_ns
 
 
 def _record():
@@ -9,7 +10,7 @@ def _record():
         instrument=InstrumentKey("NSE", "NFO", "101"),
         symbol="NIFTY",
         instrument_type=InstrumentType.INDEX,
-        timestamp_ns=1_700_000_000_000_000_000,
+        timestamp_ns=time_ns(),
         ltp=22000, bid=21999, ask=22001, bid_qty=10, ask_qty=20,
     )
 
@@ -22,6 +23,7 @@ def test_observer_fanout_preserves_readiness_and_cache_data():
     observer.on_tick_observation(_record(), 1, True, 200)
     assert cache.snapshot(now_monotonic_ns=300)["fresh_count"] == 1
     assert readiness.snapshot()["shoonya"]["canonical_identity_valid"] is True
+    assert readiness.snapshot()["shoonya"]["exchange_timestamp_valid"] is True
 
 
 def test_observer_errors_are_isolated_and_counted():
@@ -46,3 +48,13 @@ def test_disconnect_and_epoch_reset_clear_cached_quotes():
     observer.on_session_observation("LIVE", None, 2, True, True, 400)
     assert observer.snapshot()["feed_epoch"] == 2
     assert observer.snapshot()["fresh_count"] == 0
+
+def test_auth_pending_session_does_not_allow_tick_into_cache():
+    cache = EarlyImpulseShoonyaCache()
+    observer = EarlyImpulseShoonyaObserver(readiness=ProviderReadinessBridge(), cache=cache)
+    observer.on_session_observation("AUTHENTICATING", None, 7, True, False, 100)
+    observer.on_tick_observation(_record(), 7, True, 200)
+    snap = observer.snapshot()
+    assert snap["status"] == "AUTH_PENDING"
+    assert snap["fresh_count"] == 0
+    assert snap["rejected_count"] == 1
