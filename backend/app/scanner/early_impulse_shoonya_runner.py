@@ -57,6 +57,7 @@ class EarlyImpulseLiveRunner:
             self._history.clear()
             self._last_volume.clear()
             self._last_result = None
+            self._last_eval_ns = 0
         return self.snapshot()
 
     def enable(self) -> dict:
@@ -72,6 +73,7 @@ class EarlyImpulseLiveRunner:
             self._history.clear()
             self._last_volume.clear()
             self._last_result = None
+            self._last_eval_ns = 0
         return self.snapshot()
 
     def on_session(self, state: str, epoch: int, authenticated: bool, connected: bool) -> None:
@@ -82,6 +84,7 @@ class EarlyImpulseLiveRunner:
             self._epoch = epoch
             self._authenticated = bool(authenticated and connected and str(state).upper() == "LIVE")
             if changed or not connected or not self._authenticated:
+                self._last_eval_ns = 0
                 self._history.clear()
                 self._last_volume.clear()
                 self._last_result = None
