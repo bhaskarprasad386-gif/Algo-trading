@@ -118,3 +118,17 @@ def test_runner_rejects_duplicate_and_out_of_order_ticks_without_volume_corrupti
     quotes = list(runner._history["NSE:NFO:101"])
     assert [q.timestamp_ns for q in quotes] == [1_000_000_000, 2_000_000_000, 3_000_000_000]
     assert [q.volume_delta for q in quotes] == [None, 50, 30]
+
+
+def test_runner_does_not_rewind_global_eval_clock_for_cross_role_tick():
+    from app.scanner.early_impulse_shoonya_runner import EarlyImpulseLiveRunner
+    runner = EarlyImpulseLiveRunner()
+    runner.configure_roles({
+        "NSE:NFO:101": "spot", "NSE:NFO:102": "future", "NSE:NFO:103": "cross",
+    })
+    runner.on_session("LIVE", 1, True, True)
+    runner.enable()
+    runner._last_eval_ns = 2_000_000_000
+    record = _record()
+    assert runner.on_tick(record, 1, True, 1_900_000_000) is None
+    assert runner._last_eval_ns == 2_000_000_000
