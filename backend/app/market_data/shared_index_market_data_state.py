@@ -10,7 +10,7 @@ from .shared_cache import put_market_data_record
 
 
 class SharedIndexMarketDataState:
-    MAX_INSTRUMENTS = 50  # locked universe: 48 options + 2 spot
+    MAX_INSTRUMENTS = 52  # 48 options + 2 spot + 2 index futures
 
 
 
