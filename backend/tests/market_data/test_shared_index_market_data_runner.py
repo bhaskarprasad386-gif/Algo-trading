@@ -133,6 +133,10 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
     assert snap["live_data_ready"] is True
     assert len(snap["records"]) == 52
     assert all(row["feed_age_seconds"] >= 0 and row["fresh"] for row in snap["records"])
+    futures_rows = [row for row in snap["records"] if row["instrument_type"] == "future"]
+    assert len(futures_rows) == 2
+    assert all(row["oi"] == 8888 and row["volume"] == 1000 for row in futures_rows)
+    assert {row["expiry"] for row in futures_rows} == {"2026-11-26", "2026-12-24"}
     option_rows = [row for row in snap["records"] if row["instrument_type"] == "option"]
     assert len(option_rows) == 48
     assert all(row["volume"] == 1000 and row["oi"] == 500 for row in option_rows)
