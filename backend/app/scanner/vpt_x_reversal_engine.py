@@ -13,6 +13,7 @@ SUPPORTED_UNDERLYINGS = {"NIFTY", "BANKNIFTY"}
 PATTERNS = ("SWING_EXHAUSTION", "COMPRESSION_REVERSAL", "V_REVERSAL")
 MAX_TICKS = 500
 MAX_AGE_MS = 5_000
+MAX_TICK_GAP_MS = 2_500
 MIN_TICKS = 24
 
 
@@ -198,6 +199,11 @@ def evaluate_vptx(snapshot: Mapping[str, Any], *, now_ms: int | None = None) -> 
     if len(ticks) < MIN_TICKS or age is None or not 0 <= age <= MAX_AGE_MS:
         return {"underlying": underlying, "status": "WAITING_DATA", "tick_count": len(ticks),
                 "quote_age_ms": age, "reason": "INSUFFICIENT_OR_STALE_TICKS",
+                "candidates": [], "scanner_only": True, "order_routing_enabled": False}
+    if any((later["timestamp_ms"] - earlier["timestamp_ms"]) > MAX_TICK_GAP_MS
+           for earlier, later in zip(ticks, ticks[1:])):
+        return {"underlying": underlying, "status": "WAITING_DATA", "tick_count": len(ticks),
+                "quote_age_ms": age, "reason": "DISCONTINUOUS_TICK_HISTORY",
                 "candidates": [], "scanner_only": True, "order_routing_enabled": False}
     metrics = _metrics(ticks)
     cross_confirmation = _clamp(_finite(snapshot.get("cross_confirmation")) or 0.0)
