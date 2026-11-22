@@ -215,3 +215,41 @@ def test_recovery_supervisor_uses_bounded_backoff_after_transient_errors():
     assert state["recovery_backoff_resets"] >= 1
     assert state["recovery_backoff_max_seconds"] == 0.04
     manager.close()
+
+
+
+def test_simultaneous_shard_failures_coalesce_callback_recovery_workers():
+    release = Event()
+    started = Event()
+    manager = CommonWebSocketManager()
+    groups = [SocketGroup(1, 0), SocketGroup(1, 1)]
+    sockets = [BlockingSocket(), BlockingSocket()]
+    for group, socket in zip(groups, sockets):
+        manager._sockets[group] = socket
+        manager._socket_generation[group] = 1
+        manager._socket_generation_counter[group] = 1
+        manager._socket_tokens[group] = {(1, str(group.shard))}
+    manager._close_socket_tracked = lambda *args, **kwargs: Thread()  # dead worker: close completed
+
+
+    def wait_recovery(**kwargs):
+        started.set()
+        release.wait(timeout=1.0)
+        return 0
+
+
+    manager.recover_disconnected = wait_recovery
+    manager._reconcile = lambda: None
+    manager._schedule_socket_failure_recovery(groups[0], sockets[0], 1, "test failure")
+    assert started.wait(timeout=1.0)
+    manager._schedule_socket_failure_recovery(groups[1], sockets[1], 1, "test failure")
+    state = manager.snapshot()
+    assert state["failure_recovery_worker_active"] is True
+    assert state["failure_recovery_admission_rejections"] == 1
+    assert state["failure_recovery_pending_groups"] == ["1:1"]
+    release.set()
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert manager.snapshot()["failure_recovery_worker_active"] is False
+    manager.close()
