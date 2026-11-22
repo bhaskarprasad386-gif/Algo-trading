@@ -2,6 +2,16 @@ from threading import Event, Thread
 import time
 
 from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+from app.market_data.contracts import InstrumentKey
+from app.market_data.registry import Subscription
+
+
+def _valid_subscription():
+    return Subscription(
+        key=InstrumentKey(exchange="NSE", segment="NSE", token="test-token"),
+        consumers=frozenset({"test-consumer"}),
+        mode=1,
+    )
 
 
 class TimedOutAdapter:
