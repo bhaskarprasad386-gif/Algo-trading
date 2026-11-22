@@ -110,7 +110,23 @@ class SharedIndexFeedLifecycle:
         with self._lock:
             if self._options_started:
                 raise RuntimeError("options subscription owner is already active")
-            keys = self._options_feed.start(items, self._callback)
+            manager = self._options_feed.manager
+            registered_keys = [d.key for d in items if manager.registry.get(d.key) is None]
+            try:
+                keys = self._options_feed.start(items, self._callback)
+            except Exception:
+                # CommonStrategyMarketFeed registers descriptors/callback before
+                # subscribe/reconcile. A failed initial start must not leave a
+                # ghost options consumer or unconsumed descriptors behind.
+                try:
+                    manager.clear_consumer(self.OPTIONS_CONSUMER)
+                except Exception:
+                    manager.registry.clear_consumer(self.OPTIONS_CONSUMER)
+                    manager._callbacks.pop(self.OPTIONS_CONSUMER, None)
+                    manager._record_callbacks.pop(self.OPTIONS_CONSUMER, None)
+                    manager._record_observers.pop(self.OPTIONS_CONSUMER, None)
+                manager.registry.unregister_many(registered_keys)
+                raise
             self._option_keys = keys
             self._options_started = True
             return keys
