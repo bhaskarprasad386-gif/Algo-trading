@@ -564,6 +564,11 @@ async def _shared_index_market_data_recovery_loop() -> None:
     max_retry_delay = 60.0
     try:
         while True:
+            # Do not redownload the Angel One master while the runner is
+            # already active; only retry after a failed start.
+            if shared_index_market_data_runner.snapshot().get("enabled"):
+                await asyncio.sleep(15.0)
+                continue
             try:
                 rows = await run_blocking_daemon(
                     shared_index_market_data_runner.instrument_master.download,
