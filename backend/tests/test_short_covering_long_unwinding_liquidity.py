@@ -22,3 +22,10 @@ def test_liquidity_events_fail_closed_invalid_and_expired():
     assert detect_reclaim(price=100.1,level=100,side="BULLISH",timestamp_ms=1200,sweep=sweep) is None
     assert not event_is_fresh(sweep,900)
     assert not event_is_fresh(sweep,1200)
+
+def test_cross_sweep_requires_fresh_level_crossing():
+    from app.scanner.short_covering_long_unwinding.liquidity import detect_cross_sweep
+    assert detect_cross_sweep(previous_price=100.1,price=99.6,level=100,side="BULLISH",timestamp_ms=500,min_sweep=.2)
+    assert detect_cross_sweep(previous_price=99.7,price=99.4,level=100,side="BULLISH",timestamp_ms=500,min_sweep=.2) is None
+    assert detect_cross_sweep(previous_price=99.9,price=100.5,level=100,side="BEARISH",timestamp_ms=500,min_sweep=.2) is None
+    assert detect_cross_sweep(previous_price=99.9,price=100.3,level=100,side="BEARISH",timestamp_ms=500,min_sweep=.2)
