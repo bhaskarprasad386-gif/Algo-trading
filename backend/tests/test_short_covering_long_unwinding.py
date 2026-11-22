@@ -23,3 +23,6 @@ def test_robust_z_guards():
     assert robust_z(5,[1,2,3,4,5,6,7,8]) is not None
     assert robust_z(4,[4]*10) is None
     assert robust_z(4,[1,2,3]) is None
+    assert robust_z("bad", [1,2,3,4,5,6,7,8]) is None
+    assert robust_z(5, ["bad", None, 1,2,3,4,5,6,7,8]) is not None
+    assert robust_z(float("nan"), [1,2,3,4,5,6,7,8]) is None
