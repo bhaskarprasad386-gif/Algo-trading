@@ -128,8 +128,11 @@ class SharedIndexMarketDataRunner:
                     strike=contract.strike, option_type=contract.option_type,
                     lot_size=contract.lot_size, underlying=contract.underlying,
                 ) for contract in selected.contracts)
-            self.lifecycle.start_options(tuple(descriptors))
-            self._sync_state_universe()
+            with self._lock:
+                if not self._running or not self._bootstrap_inflight:
+                    return False
+                self.lifecycle.start_options(tuple(descriptors))
+                self._sync_state_universe()
             with self._lock:
                 self._start_error = None
                 self._bootstrap_options_done = True
@@ -147,7 +150,11 @@ class SharedIndexMarketDataRunner:
         self.state.retain_instruments(self.lifecycle.active_keys())
 
     def _on_record(self, record) -> None:
-        if not self.state.on_record(record):
+        with self._lock:
+            if not self._running:
+                return
+            accepted = self.state.on_record(record)
+        if not accepted:
             return
         if getattr(record, "instrument_type", None) is not None and getattr(record.instrument_type, "value", "") == "index":
             underlying = str(getattr(record, "underlying", "") or "").strip().upper()
@@ -188,8 +195,8 @@ class SharedIndexMarketDataRunner:
             spots = resolve_locked_index_spot_descriptors(self.instrument_master)
             with self._lock:
                 self._rows = rows
-            self.lifecycle.start_spot(spots)
             with self._lock:
+                self.lifecycle.start_spot(spots)
                 self._running = True
                 self._started_at = datetime.now(IST).isoformat()
             return self.snapshot()
