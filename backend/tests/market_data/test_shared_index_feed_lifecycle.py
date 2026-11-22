@@ -167,3 +167,22 @@ def test_failed_rotation_rolls_back_new_option_refs_and_preserves_old_set():
     assert len(manager.registry.active_keys()) == 50
     assert lifecycle.snapshot()["spot_instruments"] == 2
     assert manager.registry.get(replacement[0].key) is None
+
+def test_failed_initial_options_start_rolls_back_owner_and_preserves_spot():
+    manager = FailAfterMutationManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    lifecycle.start_spot(_spot_descriptors())
+    manager.fail_next_subscribe = True
+    try:
+        lifecycle.start_options(_options())
+    except RuntimeError as exc:
+        assert "forced reconcile failure" in str(exc)
+    else:
+        raise AssertionError("failed options startup must propagate")
+
+    assert not manager.active.get(lifecycle.OPTIONS_CONSUMER)
+    assert len(manager.active[lifecycle.SPOT_CONSUMER]) == 2
+    assert lifecycle.snapshot()["options_active"] is False
+    assert lifecycle.snapshot()["options_instruments"] == 0
+    assert lifecycle.OPTIONS_CONSUMER not in manager.callbacks
+    assert len(manager.registry.active_keys()) == 2
