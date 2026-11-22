@@ -14,6 +14,7 @@ const nav = [
   { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
   { href: "/strategies/early-impulse", label: "Early Impulse Pro", icon: Activity },
   { href: "/strategies/vpt-x", label: "VPT-X Reversal Scanner", icon: Activity },
+  { href: "/strategies/bi-directional-microstructure", label: "Bi-Directional System", icon: Activity },
   { href: "/strategies/iv-skew-flip", label: "IV Skew / IV Flip", icon: Activity },
   { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
   { href: "/strategies/credit-butterfly-condor/monthly", label: "Monthly Credit Butterfly / Condor", icon: Activity },
