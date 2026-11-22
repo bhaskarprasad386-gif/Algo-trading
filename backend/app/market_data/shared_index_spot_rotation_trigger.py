@@ -103,6 +103,15 @@ class SpotRotationTrigger:
                 self._inflight.add(symbol)
             return due
 
+    def reset(self) -> None:
+        """Reset anchors/pending work at runner OFF/ON boundaries."""
+        with self._lock:
+            self._last_spot.clear()
+            self._anchor_spot.clear()
+            self._last_request.clear()
+            self._pending.clear()
+            self._inflight.clear()
+
     def snapshot(self) -> dict:
         with self._lock:
             return {"pending_underlyings": sorted(self._pending),
