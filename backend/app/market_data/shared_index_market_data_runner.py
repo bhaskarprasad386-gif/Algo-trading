@@ -142,14 +142,13 @@ class SharedIndexMarketDataRunner:
                 lot_size = int(float(raw_lot)) if raw_lot else None
                 replacements.append(CommonStrategyMarketFeed.descriptor(
                     exchange="NFO", token=selected["token"], symbol=selected["symbol"],
-                    instrument_type="future", segment="NFO", expiry=selected["expiry",
+                    instrument_type="future", segment="NFO", expiry=selected["expiry"],
                     lot_size=lot_size, underlying=underlying,
                 ))
                 expiry_updates[underlying] = selected["expiry"]
             if not replacements:
                 return ()
             # Keep unchanged underlying's existing future descriptor alongside replacements.
-            current = self.lifecycle.option_descriptors()  # options accessor is not futures; construct from current keys below
             futures_manager = self.lifecycle._futures_feed.manager
             current_futures = [
                 descriptor for key in self.lifecycle._futures_keys
