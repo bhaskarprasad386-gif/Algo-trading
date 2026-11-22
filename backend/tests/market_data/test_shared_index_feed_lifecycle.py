@@ -77,3 +77,58 @@ def test_invalid_locked_option_count_rejected_before_mutation():
     else:
         raise AssertionError("invalid option universe must be rejected")
     assert not manager.registry.subscriptions()
+
+def test_locked_options_reject_unbalanced_pair_before_registry_mutation():
+    manager = StubManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    broken = list(_options())
+    # Replace one NIFTY PE with a second CE for the same strike.
+    target = broken[1]
+    broken[1] = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "NFO", "duplicate-side-token"),
+        symbol="duplicate-side-token", instrument_type="option", exchange="NFO", segment="NFO",
+        expiry=target.expiry, strike=target.strike, option_type="CE", underlying=target.underlying,
+    )
+    try:
+        lifecycle.start_options(broken)
+    except ValueError as exc:
+        assert "exactly one CE and PE" in str(exc)
+    else:
+        raise AssertionError("unbalanced option pairs must be rejected")
+    assert not manager.registry.subscriptions()
+    assert not manager.registry.active_keys()
+
+
+def test_locked_options_reject_expiry_mismatch_and_asymmetric_strike_window():
+    manager = StubManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    broken_expiry = list(_options())
+    broken_expiry[0] = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "NFO", "expiry-mismatch"),
+        symbol="expiry-mismatch", instrument_type="option", exchange="NFO", segment="NFO",
+        expiry="DIFFERENT", strike=broken_expiry[0].strike, option_type=broken_expiry[0].option_type,
+        underlying=broken_expiry[0].underlying,
+    )
+    try:
+        lifecycle.start_options(broken_expiry)
+    except ValueError as exc:
+        assert "expiry must be uniform" in str(exc)
+    else:
+        raise AssertionError("mixed expiries must be rejected")
+    assert not manager.registry.active_keys()
+
+    broken_strikes = list(_options())
+    original = broken_strikes[0]
+    broken_strikes[0] = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "NFO", "off-grid"),
+        symbol="off-grid", instrument_type="option", exchange="NFO", segment="NFO",
+        expiry=original.expiry, strike=original.strike + 10, option_type=original.option_type,
+        underlying=original.underlying,
+    )
+    try:
+        lifecycle.start_options(broken_strikes)
+    except ValueError as exc:
+        assert "strike window must be symmetric" in str(exc) or "uniform spacing" in str(exc)
+    else:
+        raise AssertionError("asymmetric strikes must be rejected")
+    assert not manager.registry.active_keys()
