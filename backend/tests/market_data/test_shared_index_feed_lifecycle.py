@@ -243,3 +243,50 @@ def test_failed_initial_spot_start_rolls_back_owner_and_added_descriptors():
     assert lifecycle.SPOT_CONSUMER not in manager.callbacks
     assert not manager.registry.active_keys()
     assert lifecycle.snapshot()["spot_active"] is False
+
+
+class FailBeforeObsoleteUnsubscribeManager(StubManager):
+    def __init__(self):
+        super().__init__()
+        self.fail_unsubscribe = False
+    def unsubscribe(self, consumer, keys=None):
+        keys = list(keys or self.registry.active_keys())
+        if self.fail_unsubscribe and keys:
+            self.fail_unsubscribe = False
+            raise RuntimeError("obsolete unsubscribe failed")
+        return super().unsubscribe(consumer, keys)
+
+
+def test_option_rotation_unsubscribe_failure_rolls_back_new_keys():
+    manager = FailBeforeObsoleteUnsubscribeManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    lifecycle.start_options(_options())
+    old_keys = set(lifecycle._option_keys)
+    manager.fail_unsubscribe = True
+    try:
+        lifecycle.rotate_options(_options(shift=25))
+    except RuntimeError as exc:
+        assert "obsolete unsubscribe failed" in str(exc)
+    else:
+        raise AssertionError("obsolete unsubscribe failure should propagate")
+    assert set(lifecycle._option_keys) == old_keys
+    assert manager.active[lifecycle.OPTIONS_CONSUMER] == old_keys
+    assert set(manager.registry.active_keys()) == old_keys
+
+
+def test_futures_rotation_unsubscribe_failure_rolls_back_new_keys():
+    manager = FailBeforeObsoleteUnsubscribeManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    old = _future_descriptors("old")
+    lifecycle.start_futures(old)
+    old_keys = set(lifecycle._futures_keys)
+    manager.fail_unsubscribe = True
+    try:
+        lifecycle.rotate_futures(_future_descriptors("new"))
+    except RuntimeError as exc:
+        assert "obsolete unsubscribe failed" in str(exc)
+    else:
+        raise AssertionError("obsolete unsubscribe failure should propagate")
+    assert set(lifecycle._futures_keys) == old_keys
+    assert manager.active[lifecycle.FUTURES_CONSUMER] == old_keys
+    assert set(manager.registry.active_keys()) == old_keys
