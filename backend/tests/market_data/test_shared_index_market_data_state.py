@@ -230,6 +230,9 @@ def test_retaining_active_keys_invalidates_retired_cache_and_baselines():
     assert state.retain_instruments([new_key]) == 1
     assert state.latest(old_key.value) is None
     assert get_shared_market_data_cache().get(old_key.value) is None
+    # Late frames from an old subscription cannot restore retired quote state.
+    assert not state.on_record(tick(old_key, time_ns(), 999, 999))
+    assert state.snapshot()["retired_contract_ticks_dropped"] == 1
     assert old_key.value not in state._oi_history
     assert old_key.value not in state._volume_history
     assert old_key.value not in state._tick_history
