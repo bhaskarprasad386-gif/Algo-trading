@@ -84,7 +84,8 @@ def evaluate(payload: SnapshotRequest):
                     # immediate retrigger spam on consecutive trigger-ready snapshots.
                     state = "WATCH"
                 elif prior.get("status") == "EXPIRED":
-                    state = "WATCH" if not candidate["trigger_ready"] else "TRIGGERED"
+                    # Expiry ends the old setup; require a fresh WATCH observation before any re-trigger.
+                    state = "WATCH"
                 elif state == "TRIGGERED":
                     state = "TRIGGERED"
             item = {**candidate, "underlying": symbol, "status": state,
