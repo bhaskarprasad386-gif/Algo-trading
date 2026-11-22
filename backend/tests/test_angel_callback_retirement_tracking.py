@@ -228,7 +228,10 @@ def test_recovery_supervisor_uses_bounded_backoff_after_transient_errors():
     assert recovery_succeeded.wait(timeout=1.0)
     state = manager.snapshot()
     assert state["recovery_backoff_errors"] == 2
-    assert state["recovery_backoff_current_seconds"] == manager._recovery_interval_seconds
+    # The recovery loop enforces a 100ms minimum to avoid busy-loop retries.
+    assert state["recovery_backoff_current_seconds"] == max(
+        0.1, manager._recovery_interval_seconds
+    )
     assert state["recovery_backoff_resets"] >= 1
     assert state["recovery_backoff_max_seconds"] == 0.04
     manager.close()
