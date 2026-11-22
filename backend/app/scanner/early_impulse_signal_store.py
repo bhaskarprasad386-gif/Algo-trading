@@ -51,6 +51,10 @@ class EarlyImpulseSignalStore:
         if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)) or not isfinite(timestamp):
             raise ValueError("timestamp must be numeric")
         feed_epoch = signal.get("feed_epoch")
+        with self._lock:
+            if feed_epoch is None and self._feed_epoch is not None:
+                self._suppressed += 1
+                return False
         if feed_epoch is not None:
             if isinstance(feed_epoch, bool) or not isinstance(feed_epoch, int) or feed_epoch < 0:
                 raise ValueError("feed_epoch must be a nonnegative integer")
