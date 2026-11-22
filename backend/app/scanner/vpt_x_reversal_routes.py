@@ -89,6 +89,7 @@ def evaluate(payload: SnapshotRequest):
                 elif state == "TRIGGERED":
                     state = "TRIGGERED"
             item = {**candidate, "underlying": symbol, "status": state,
+                    "invalidation_price": invalidation,
                     "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now / 1000)),
                     "last_price": latest_price, "scanner_only": True,
                     "order_routing_enabled": False}
