@@ -25,6 +25,19 @@ def test_stale_tick_data_fails_closed():
     assert result["status"]=="WAITING_DATA" and result["candidates"]==[]
 
 
+def test_future_tick_timestamps_fail_closed():
+    future_start = int(time.time() * 1000) + 10_000
+    result = evaluate_vptx({"underlying": "NIFTY", "ticks": _ticks([100+i*.1 for i in range(30)], start=future_start)})
+    assert result["status"] == "WAITING_DATA" and result["candidates"] == []
+
+
+def test_nonfinite_ticks_are_filtered():
+    raw = _ticks([100+i*.1 for i in range(30)])
+    raw.insert(3, {"timestamp_ms": raw[3]["timestamp_ms"] + 1, "price": float("nan")})
+    result = evaluate_vptx({"underlying": "BANKNIFTY", "ticks": raw})
+    assert result["status"] == "EVALUATED" and result["tick_count"] == 30
+
+
 def test_short_or_bad_tick_series_fails_closed():
     assert evaluate_vptx({"underlying":"BANKNIFTY","ticks":_ticks([100,101,102])})["status"]=="WAITING_DATA"
 
