@@ -121,3 +121,15 @@ def test_signal_limit_is_clamped_and_symbol_filter_is_normalized():
     assert response.status_code == 200
     assert response.json()["count"] <= 1
     assert client.get("/api/v1/scanner/vpt-x/signals?underlying=FINNIFTY").status_code == 422
+
+
+def test_signal_state_expiry_uses_state_age_not_refresh_time():
+    from app.scanner.vpt_x_reversal_routes import _cleanup, _history
+    with _lock:
+        _history["test:signal"] = {
+            "status": "WATCH", "_updated_ms": 50_000, "_state_started_ms": 10_000,
+            "underlying": "NIFTY"
+        }
+        # Refresh occurred recently, but the WATCH state itself is 46s old.
+        _cleanup(56_000)
+        assert _history["test:signal"]["status"] == "EXPIRED"
