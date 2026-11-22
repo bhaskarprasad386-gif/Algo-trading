@@ -1,4 +1,5 @@
 from time import time_ns
+import pytest
 
 from app.market_data.shared_index_market_data_state import SharedIndexMarketDataState
 from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
@@ -142,3 +143,33 @@ def test_state_cache_capacity_is_bounded_and_reports_dropped_ticks():
     assert snap["instrument_count"] == state.MAX_INSTRUMENTS
     assert snap["capacity_ticks_dropped"] == 1
     assert len(state.records_snapshot()) == state.MAX_INSTRUMENTS
+
+
+def test_snapshot_exposes_microstructure_and_multi_window_momentum_metrics():
+    state = SharedIndexMarketDataState(max_age_seconds=6)
+    now = time_ns()
+    inst = InstrumentKey("NFO", "NFO", "opt-micro")
+    from app.market_data.contracts import OptionType
+    def tick(ts, price, bid, ask, bq, aq, volume, oi):
+        return MarketDataRecord(
+            instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION,
+            timestamp_ns=ts, ltp=price, bid=bid, ask=ask, bid_qty=bq, ask_qty=aq,
+            volume=volume, oi=oi, underlying="NIFTY", expiry="2026-11-26",
+            strike=25000, option_type=OptionType.CALL, lot_size=25,
+        )
+    assert state.on_record(tick(now-4_200_000_000, 100, 99, 101, 10, 20, 1000, 2000))
+    assert state.on_record(tick(now-2_200_000_000, 102, 101, 103, 20, 10, 1050, 2030))
+    assert state.on_record(tick(now-200_000_000, 104, 103, 105, 30, 10, 1100, 2060))
+    row = state.records_snapshot()[0]
+    assert row["ltp_delta_3s"] == 2
+    assert row["ltp_change_pct_3s"] == 2
+    assert row["mid_price"] == 104
+    assert row["spread"] == 2
+    assert row["spread_pct"] == pytest.approx(2/104*100)
+    assert row["quote_imbalance"] == pytest.approx(20/40)
+    assert row["microprice"] == pytest.approx((105*30 + 103*10)/40)
+    assert row["tick_rate_1s"] == 1
+    assert row["oi_delta_3s"] == 30
+    assert row["volume_delta_3s"] == 100
+    assert row["oi_delta_5s"] is None
+    assert row["volume_delta_5s"] is None
