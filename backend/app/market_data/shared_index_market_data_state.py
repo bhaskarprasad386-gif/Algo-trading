@@ -51,6 +51,16 @@ class SharedIndexMarketDataState:
 
 
 
+    def retain_instruments(self, keys) -> int:
+        """Drop cached runner records for contracts no longer subscribed."""
+        allowed = {key.value for key in keys}
+        with self._lock:
+            removed = [key for key in self._latest if key not in allowed]
+            for key in removed:
+                self._latest.pop(key, None)
+            return len(removed)
+
+
     def latest(self, key: str) -> Any | None:
         with self._lock:
             record = self._latest.get(str(key))
