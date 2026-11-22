@@ -181,7 +181,8 @@ def evaluate_vptx(snapshot: Mapping[str, Any], *, now_ms: int | None = None) -> 
     if underlying not in SUPPORTED_UNDERLYINGS:
         return {"underlying": underlying or None, "status": "REJECTED", "reason": "UNSUPPORTED_UNDERLYING",
                 "candidates": [], "scanner_only": True, "order_routing_enabled": False}
-    ticks = _normalize_ticks(snapshot.get("ticks", []))
+    raw_ticks = snapshot.get("ticks")
+    ticks = _normalize_ticks(raw_ticks if isinstance(raw_ticks, Sequence) and not isinstance(raw_ticks, (str, bytes)) else [])
     now = now_ms if now_ms is not None else (ticks[-1]["timestamp_ms"] if ticks else 0)
     age = now - ticks[-1]["timestamp_ms"] if ticks else None
     if len(ticks) < MIN_TICKS or age is None or not 0 <= age <= MAX_AGE_MS:
