@@ -21,6 +21,7 @@ _CLOSED_OVERVIEW_CACHE_LOCK = Lock()
 _live_cash_future_runner_snapshot_provider = None
 _shoonya_snapshot_provider = None
 _shoonya_supervisor_provider = None
+_shared_index_runner_snapshot_provider = None
 
 
 def configure_live_cash_future_runner_snapshot(provider) -> None:
@@ -39,6 +40,12 @@ def configure_shoonya_supervisor(provider) -> None:
     """Configure the process-local Shoonya supervisor control reference."""
     global _shoonya_supervisor_provider
     _shoonya_supervisor_provider = provider
+
+
+def configure_shared_index_runner_snapshot(provider) -> None:
+    """Configure read-only health snapshot for isolated shared index runner."""
+    global _shared_index_runner_snapshot_provider
+    _shared_index_runner_snapshot_provider = provider
 
 
 class ShoonyaInstrumentInput(BaseModel):
@@ -584,3 +591,16 @@ def get_market_overview():
             _CLOSED_OVERVIEW_CACHE.clear()
             _CLOSED_OVERVIEW_CACHE[cache_key] = result
     return result
+
+
+@router.get("/shared-index-runner/health")
+def get_shared_index_runner_health():
+    """Read-only health/status snapshot of the strategy-unconnected live runner."""
+    provider = _shared_index_runner_snapshot_provider
+    if provider is None:
+        return {"runner": "shared-index-market-data", "enabled": False, "state": "NOT_INITIALIZED"}
+    try:
+        snapshot = provider()
+        return snapshot if isinstance(snapshot, dict) else {"runner": "shared-index-market-data", "state": "UNAVAILABLE"}
+    except Exception:
+        return {"runner": "shared-index-market-data", "state": "UNAVAILABLE"}
