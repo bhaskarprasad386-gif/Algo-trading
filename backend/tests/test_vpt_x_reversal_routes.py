@@ -99,7 +99,7 @@ def test_signal_identity_stable_for_duplicate_state(monkeypatch):
 def test_triggered_signal_invalidates_and_does_not_reactivate(monkeypatch):
     import app.scanner.vpt_x_reversal_routes as routes
     clock = [20_000]
-    states = [{"price": 101, "trigger": True}, {"price": 98, "trigger": True}, {"price": 101, "trigger": True}]
+    states = [{"price": 101, "trigger": True, "invalidation": 99}, {"price": 98, "trigger": True, "invalidation": 90}, {"price": 101, "trigger": True, "invalidation": 90}]
     monkeypatch.setattr(routes, "_now_ms", lambda: clock[0])
     monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"]))
     triggered = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
@@ -109,6 +109,7 @@ def test_triggered_signal_invalidates_and_does_not_reactivate(monkeypatch):
     monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"]))
     invalidated = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
     assert invalidated["status"] == "INVALIDATED"
+    assert invalidated["invalidation_price"] == 99.0  # prior trigger level is immutable
     states.pop(0)
     clock[0] += 100
     monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"]))
