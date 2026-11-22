@@ -1322,6 +1322,9 @@ class CommonWebSocketManager:
                 with self._lock:
                     self._recovery_backoff_current_seconds = retry_delay
                     self._recovery_backoff_resets += 1
+                    # A successful full-registry recovery pass absorbs the
+                    # coalesced shard failures; clear only after that pass.
+                    self._failure_recovery_pending_groups.clear()
             except Exception as exc:
                 with self._lock:
                     if self._closed:
