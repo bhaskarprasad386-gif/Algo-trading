@@ -59,6 +59,15 @@ class SharedIndexMarketDataState:
 
 
 
+    def clear(self) -> int:
+        """Clear current cached records/history without resetting cumulative counters."""
+        with self._lock:
+            removed = len(self._latest)
+            self._latest.clear()
+            self._oi_history.clear()
+            return removed
+
+
     def retain_instruments(self, keys) -> int:
         """Drop cached runner records for contracts no longer subscribed."""
         allowed = {key.value for key in keys}
