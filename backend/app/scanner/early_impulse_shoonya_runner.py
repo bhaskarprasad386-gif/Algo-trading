@@ -34,6 +34,7 @@ class EarlyImpulseLiveRunner:
         self._roles: dict[str, str] = {}
         self._history: dict[str, deque[TimedQuote]] = {}
         self._last_volume: dict[str, int] = {}
+        self._last_received_ns: dict[str, int] = {}
         self._last_eval_ns = 0
         self._evaluations = 0
         self._aligned_evaluations = 0
@@ -57,6 +58,7 @@ class EarlyImpulseLiveRunner:
             self._roles = staged
             self._history.clear()
             self._last_volume.clear()
+            self._last_received_ns.clear()
             self._last_result = None
             self._last_eval_ns = 0
         return self.snapshot()
@@ -88,6 +90,7 @@ class EarlyImpulseLiveRunner:
                 self._last_eval_ns = 0
                 self._history.clear()
                 self._last_volume.clear()
+                self._last_received_ns.clear()
                 self._last_result = None
 
     def on_tick(self, record: Any, epoch: int, authenticated: bool, received_ns: int) -> dict | None:
@@ -101,6 +104,10 @@ class EarlyImpulseLiveRunner:
             if not self._enabled or epoch != self._epoch or not self._authenticated or identity not in self._roles:
                 return None
             role = self._roles[identity]
+            previous_received_ns = self._last_received_ns.get(identity)
+            if previous_received_ns is not None and received_ns <= previous_received_ns:
+                return None
+            self._last_received_ns[identity] = received_ns
             volume_delta = None
             if record.volume is not None:
                 previous = self._last_volume.get(identity)
