@@ -206,7 +206,7 @@ class SharedIndexMarketDataRunner:
             "state": state,
             "lifecycle": lifecycle,
             "rotation": rotation,
-            "live_data_ready": running and state["fresh_count"] > 0,
+            "live_data_ready": running and state["instrument_count"] == 50 and state["fresh_count"] == 50,
         }
 
 
