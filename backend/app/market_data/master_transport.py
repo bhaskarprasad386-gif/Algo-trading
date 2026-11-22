@@ -139,6 +139,12 @@ def download_master_rows(
             return payload
         except Exception as exc:
             last_error = exc
+            # HTTP 429 is an explicit provider rate-limit signal. Do not
+            # immediately retry the same host with alternate TLS profiles; the
+            # caller's master-download cooldown protects subsequent refreshes.
+            response_status = getattr(getattr(exc, "response", None), "status_code", None)
+            if response_status == 429:
+                break
             if attempt + 1 < retries:
                 time.sleep(backoff_seconds * (2 ** attempt))
         finally:
