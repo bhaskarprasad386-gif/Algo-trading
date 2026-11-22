@@ -86,6 +86,8 @@ class EarlyImpulseLiveRunner:
                 return
             changed = epoch != self._epoch
             self._epoch = epoch
+            if changed:
+                self.store.begin_epoch(epoch)
             self._authenticated = bool(authenticated and connected and str(state).upper() == "LIVE")
             if changed or not connected or not self._authenticated:
                 self._last_eval_ns = 0
