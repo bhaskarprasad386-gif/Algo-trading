@@ -274,7 +274,6 @@ def test_refresh_started_before_off_cannot_publish_after_off():
     assert runner._running is False
     assert runner._rows is original_rows
     assert runner.snapshot()["state"]["instrument_count"] == 0
-\n
 
 
 def test_external_pending_rotation_flush_syncs_state_and_retired_cache():
