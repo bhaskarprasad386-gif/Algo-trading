@@ -70,6 +70,8 @@ def test_nifty_chooses_nearest_weekly_and_banknifty_next_month_last_listed():
     rows = _rows()
     assert choose_locked_expiry(rows, "NIFTY", today=date(2026, 11, 20)) == "2026-12-03"
     assert choose_locked_expiry(rows, "BANKNIFTY", today=date(2026, 11, 22)) == "2026-12-24"
+    assert SharedIndexMarketDataRunner.choose_nearest_future(rows, "NIFTY", today=date(2026, 11, 22))["expiry"] == "2026-11-26"
+    assert SharedIndexMarketDataRunner.choose_nearest_future(rows, "BANKNIFTY", today=date(2026, 11, 22))["expiry"] == "2026-12-24"
 
 
 def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
@@ -78,7 +80,7 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
     runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=manager)
     status = runner.start()
     assert status["enabled"] is True
-    assert len(manager.registry.active_keys()) == 2
+    assert len(manager.registry.active_keys()) == 4
     spot_consumer = runner.lifecycle.SPOT_CONSUMER
     manager.callbacks[spot_consumer](MarketDataRecord(
         instrument=InstrumentKey("NSE", "NSE", "99001"), symbol="NIFTY",
@@ -100,7 +102,7 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
     bank_strikes = sorted({d.strike for d in option_descriptors if d.underlying == "BANKNIFTY"})
     assert len(nifty_strikes) == 13 and nifty_strikes[6] == 22000
     assert len(bank_strikes) == 11 and bank_strikes[5] == 48000
-    assert runner.snapshot()["state"]["fresh_count"] == 4
+    assert runner.snapshot()["state"]["fresh_count"] == 2
     assert runner.snapshot()["live_data_ready"] is False
     futures_consumer = runner.lifecycle.FUTURES_CONSUMER
     for key in manager.registry.active_keys():
