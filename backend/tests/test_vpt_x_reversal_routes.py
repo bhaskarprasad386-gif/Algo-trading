@@ -35,6 +35,11 @@ def test_client_clock_field_is_not_accepted_to_bypass_freshness():
     assert response.status_code == 200
     assert response.json()["status"] == "WAITING_DATA"
 
+def test_request_schema_has_no_client_clock_field():
+    from app.scanner.vpt_x_reversal_routes import SnapshotRequest
+    assert "now_ms" not in SnapshotRequest.model_fields
+
+
 def test_future_timestamp_snapshot_fails_closed():
     future_start = int(time.time() * 1000) + 10_000
     response = client.post("/api/v1/scanner/vpt-x/evaluate", json={
