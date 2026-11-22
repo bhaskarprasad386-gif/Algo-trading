@@ -36,8 +36,8 @@ def test_plan_rejects_more_than_three_groups_without_mutating_current_plan():
     planner.commit(original)
     candidate = planner.plan({
         NIFTY: AffinitySlot(3, 0), BANK: AffinitySlot(3, 1),
-        OPTIONS: AffinitySlot(3, 2), "other": AffinitySlot(2, 0),
-    }, {NIFTY: tokens(1, 1), BANK: tokens(2, 1), OPTIONS: tokens(3, 1), "other": tokens(4, 1)})
+        OPTIONS: AffinitySlot(3, 2),
+    }, {NIFTY: tokens(1, 1), BANK: tokens(2, 1), OPTIONS: tokens(3, 1)})
     with pytest.raises(ValueError, match="global socket limit"):
         planner.plan(candidate.owner_slots | {"other": AffinitySlot(2, 0)},
             candidate.owner_tokens | {"other": tokens(4, 1)})
