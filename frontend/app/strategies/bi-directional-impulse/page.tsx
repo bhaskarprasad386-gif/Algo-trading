@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, ArrowDownRight, ArrowUpRight, Clock3, Layers3, RefreshCw, ShieldAlert, Signal, Waves, Zap } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowUpRight, Clock3, Layers3, RefreshCw, ShieldAlert, Signal, Waves } from "lucide-react";
 import { appConfig } from "@/lib/config";
 
 type Signal = { underlying?: string; direction?: string; score?: number; grade?: string; timestamp?: string; entry?: number; invalidation?: number; target_1?: number; reason?: string };
