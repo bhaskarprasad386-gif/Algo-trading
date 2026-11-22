@@ -170,9 +170,9 @@ def test_snapshot_exposes_microstructure_and_multi_window_momentum_metrics():
     assert row["microprice"] == pytest.approx((105*30 + 103*10)/40)
     assert row["tick_rate_1s"] == 1
     assert row["oi_delta_3s"] == 30
-    assert row["volume_delta_3s"] == 100
-    assert row["oi_delta_5s"] is None
-    assert row["volume_delta_5s"] is None
+    assert row["volume_delta_3s"] == 50
+    assert row["oi_delta_5s"] == 60
+    assert row["volume_delta_5s"] == 100
 
 
 def test_quote_depth_and_spread_change_windows():
@@ -194,8 +194,8 @@ def test_quote_depth_and_spread_change_windows():
     assert row["bid_qty_delta_3s"] == 20
     assert row["ask_qty_delta_3s"] == -10
     assert row["spread_delta_3s"] == 1
-    assert row["bid_qty_delta_5s"] is None
-    assert row["ask_qty_delta_5s"] is None
+    assert row["bid_qty_delta_5s"] == 20
+    assert row["ask_qty_delta_5s"] == -10
 
 
 
