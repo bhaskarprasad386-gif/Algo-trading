@@ -20,6 +20,7 @@ class SharedIndexFeedLifecycle:
 
     SPOT_CONSUMER = "shared-index-market-data:spot"
     OPTIONS_CONSUMER = "shared-index-market-data:options"
+    FUTURES_CONSUMER = "shared-index-market-data:futures"
 
 
 
@@ -27,9 +28,12 @@ class SharedIndexFeedLifecycle:
         self._lock = RLock()
         self._spot_feed = CommonStrategyMarketFeed(self.SPOT_CONSUMER, manager=manager, warm_start=True)
         self._options_feed = CommonStrategyMarketFeed(self.OPTIONS_CONSUMER, manager=self._spot_feed.manager, warm_start=True)
+        self._futures_feed = CommonStrategyMarketFeed(self.FUTURES_CONSUMER, manager=self._spot_feed.manager, warm_start=True)
         self._callback = record_callback or (lambda _record: None)
         self._spot_keys: tuple[InstrumentKey, ...] = ()
         self._option_keys: tuple[InstrumentKey, ...] = ()
+        self._futures_keys: tuple[InstrumentKey, ...] = ()
+        self._futures_started = False
         self._spot_started = False
         self._options_started = False
 
@@ -148,6 +152,31 @@ class SharedIndexFeedLifecycle:
 
 
 
+
+    def start_futures(self, descriptors: Iterable[InstrumentDescriptor]) -> tuple[InstrumentKey, ...]:
+        items = self._validated_descriptors(descriptors)
+        if len(items) != 2 or {d.underlying for d in items} != {"NIFTY", "BANKNIFTY"}:
+            raise ValueError("futures subscription must be exactly NIFTY and BANKNIFTY")
+        if any(d.instrument_type != "future" or d.exchange.strip().upper() != "NFO" or d.segment.strip().upper() != "NFO" or not d.expiry for d in items):
+            raise ValueError("futures descriptors must be valid NFO index futures with expiry")
+        with self._lock:
+            if self._futures_started:
+                raise RuntimeError("futures subscription owner is already active")
+            manager = self._futures_feed.manager
+            registered_keys = [d.key for d in items if manager.registry.get(d.key) is None]
+            try:
+                keys = self._futures_feed.start(items, self._callback)
+            except Exception:
+                try:
+                    manager.clear_consumer(self.FUTURES_CONSUMER)
+                except Exception:
+                    manager.registry.clear_consumer(self.FUTURES_CONSUMER)
+                manager.registry.unregister_many(registered_keys)
+                raise
+            self._futures_keys = keys
+            self._futures_started = True
+            return keys
+
     def rotate_options(self, descriptors: Iterable[InstrumentDescriptor]) -> tuple[InstrumentKey, ...]:
         items = self._validated_descriptors(descriptors)
         self._validate_locked_options(items)
@@ -189,7 +218,7 @@ class SharedIndexFeedLifecycle:
     def active_keys(self) -> tuple[InstrumentKey, ...]:
         """Return currently owned spot and option subscription keys."""
         with self._lock:
-            return tuple(dict.fromkeys(self._spot_keys + self._option_keys))
+            return tuple(dict.fromkeys(self._spot_keys + self._option_keys + self._futures_keys))
 
 
     def option_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
@@ -221,6 +250,7 @@ class SharedIndexFeedLifecycle:
     def stop(self) -> None:
         # Independent consumers: stopping one never clears the other's registry refs.
         self.stop_options()
+        self.stop_futures()
         self.stop_spot()
 
 
@@ -232,6 +262,9 @@ class SharedIndexFeedLifecycle:
                 "spot_instruments": len(self._spot_keys),
                 "options_active": self._options_started,
                 "options_instruments": len(self._option_keys),
+                "futures_active": self._futures_started,
+                "futures_instruments": len(self._futures_keys),
+                "futures_consumer": self.FUTURES_CONSUMER,
                 "spot_consumer": self.SPOT_CONSUMER,
                 "options_consumer": self.OPTIONS_CONSUMER,
                 "shared_websocket": self._spot_feed.snapshot(),
