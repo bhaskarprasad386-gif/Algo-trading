@@ -6,6 +6,7 @@ which index/future is intended from a symbol or option descriptor.
 from __future__ import annotations
 
 from collections import deque
+from math import isfinite
 from threading import RLock
 from time import monotonic_ns
 from typing import Any
@@ -93,7 +94,7 @@ class EarlyImpulseLiveRunner:
         if not isinstance(record, MarketDataRecord) or not authenticated or received_ns <= 0:
             return None
         price = record.ltp or record.close
-        if not isinstance(price, (int, float)) or isinstance(price, bool) or price <= 0:
+        if not isinstance(price, (int, float)) or isinstance(price, bool) or not isfinite(price) or price <= 0:
             return None
         identity = f"{record.instrument.exchange.strip().upper()}:{record.instrument.segment.strip().upper()}:{record.instrument.token.strip()}"
         with self._lock:
