@@ -240,3 +240,42 @@ def test_retaining_active_keys_invalidates_retired_cache_and_baselines():
     new_rows = state.records_snapshot()
     assert len(new_rows) == 1 and new_rows[0]["volume_delta_1s"] is None
     assert new_rows[0]["oi_delta_1s"] is None
+
+
+def test_cache_publication_is_serialized_with_retiring_instrument(monkeypatch):
+    from threading import Event, Thread
+    from app.market_data import shared_index_market_data_state as state_module
+    from app.market_data.shared_cache import get_shared_market_data_cache
+
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    key = InstrumentKey("NFO", "NFO", "race-retired-cache")
+    record = _record(key.token)
+    record.instrument = key
+    publication_started, release_publication, retirement_done = Event(), Event(), Event()
+    original_put = state_module.put_market_data_record
+
+    def blocked_put(item):
+        publication_started.set()
+        assert release_publication.wait(timeout=3)
+        return original_put(item)
+
+
+    monkeypatch.setattr(state_module, "put_market_data_record", blocked_put)
+    accepted = []
+    tick_thread = Thread(target=lambda: accepted.append(state.on_record(record)), daemon=True)
+    tick_thread.start()
+    assert publication_started.wait(timeout=2)
+
+    retire_thread = Thread(target=lambda: (state.retain_instruments([]), retirement_done.set()), daemon=True)
+    retire_thread.start()
+    # Retirement cannot delete the cache and then be overtaken by a late write.
+    assert not retirement_done.wait(timeout=0.05)
+    release_publication.set()
+    tick_thread.join(timeout=3)
+    retire_thread.join(timeout=3)
+
+    assert not tick_thread.is_alive() and not retire_thread.is_alive()
+    assert accepted == [True]
+    assert retirement_done.is_set()
+    assert state.latest(key.value) is None
+    assert get_shared_market_data_cache().get(key.value) is None
