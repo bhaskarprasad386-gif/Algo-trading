@@ -150,7 +150,7 @@ class SharedIndexMarketDataRunner:
 
         def worker():
             try:
-                refreshed = tuple(self.instrument_master.download(force=False))
+                refreshed = tuple(self.instrument_master.download(force=True))
                 if not refreshed:
                     raise LookupError("refreshed instrument master was empty")
                 with self._lock:
