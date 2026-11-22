@@ -93,8 +93,12 @@ def _metrics(ticks: Sequence[Mapping[str, float]]) -> dict[str, float | bool]:
     price_range = max(max(prices) - min(prices), latest["price"] * 0.00005)
     n = max(8, len(ticks) // 3)
     old, new = ticks[:-n], ticks[-n:]
-    sell_impact_decay = _ratio(_impact(old, "SELL") - _impact(new, "SELL"), max(_impact(old, "SELL"), 1e-12))
-    buy_impact_decay = _ratio(_impact(old, "BUY") - _impact(new, "BUY"), max(_impact(old, "BUY"), 1e-12))
+    old_sell_impact, new_sell_impact = _impact(old, "SELL"), _impact(new, "SELL")
+    old_buy_impact, new_buy_impact = _impact(old, "BUY"), _impact(new, "BUY")
+    # Decay is meaningful only if the earlier tape showed non-zero force;
+    # otherwise epsilon division turns noise into an enormous false decay.
+    sell_impact_decay = _clamp((old_sell_impact - new_sell_impact) / old_sell_impact) if old_sell_impact > 1e-12 else 0.0
+    buy_impact_decay = _clamp((old_buy_impact - new_buy_impact) / old_buy_impact) if old_buy_impact > 1e-12 else 0.0
     old_delta, _, _, _ = _flow(old)
     new_delta, _, _, _ = _flow(new)
     buy_flip = new_delta > max(0.08, old_delta + 0.05)
