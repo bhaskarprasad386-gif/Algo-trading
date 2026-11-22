@@ -8,7 +8,7 @@ type Status = { scanner?: string; status?: string; feed_connected?: boolean; sca
 const patterns = [["SWING_EXHAUSTION", "Swing exhaustion"], ["COMPRESSION_REVERSAL", "Impulse + compression"], ["V_REVERSAL", "Immediate V reversal"]];
 const fmt = (value?: string) => value ? new Date(value).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) : "—";
 
-export default function VptXPage() {
+export default function VptXPage({ pageTitle = "VPT-X REVERSAL SCANNER", pageSubtitle = "3 pattern families • BUY & SELL • scanner-only" }: { pageTitle?: string; pageSubtitle?: string }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [busy, setBusy] = useState(false);
@@ -81,8 +81,8 @@ export default function VptXPage() {
       <section className="rounded-2xl border theme-border theme-surface overflow-hidden">
         <div className="p-4 sm:p-5 border-b theme-border">
           <div className="text-xs uppercase font-bold tracking-widest theme-accent flex items-center gap-2"><Activity size={15} /> Isolated Reversal Engine</div>
-          <h1 className="text-2xl sm:text-3xl font-black mt-1">VPT-X REVERSAL SCANNER</h1>
-          <p className="text-sm theme-muted mt-1">3 pattern families • BUY & SELL • scanner-only</p>
+          <h1 className="text-2xl sm:text-3xl font-black mt-1">{pageTitle}</h1>
+          <p className="text-sm theme-muted mt-1">{pageSubtitle}</p>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 sm:p-4">
           <Metric label="Feed" value={status?.feed_connected ? "CONNECTED" : "NOT CONNECTED"} />
