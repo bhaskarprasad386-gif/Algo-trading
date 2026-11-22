@@ -257,6 +257,39 @@ class SharedIndexMarketDataRunner:
         }
         spot_prices = {symbol: record.ltp for symbol, record in spot_records.items() if record.ltp is not None and now_ns - record.timestamp_ns <= self.state.max_age_ns}
         enriched_records = self.derived_iv.decorate(self.state.records_snapshot(), spot_prices)
+        aggregates = {}
+        for underlying in LOCKED:
+            side = {"CE": {}, "PE": {}}
+            for record in enriched_records:
+                if record.get("underlying") != underlying or record.get("instrument_type") != "option" or not record.get("fresh"):
+                    continue
+                option_side = record.get("option_type")
+                if option_side not in side:
+                    continue
+                bucket = side[option_side]
+                for field in ("oi", "volume", "oi_delta_1s", "oi_delta_3s", "oi_delta_5s", "volume_delta_1s", "volume_delta_3s", "volume_delta_5s"):
+                    bucket[field] = (bucket.get(field) or 0) + (record.get(field) or 0)
+            calls, puts = side["CE"], side["PE"]
+            call_oi, put_oi = calls.get("oi", 0), puts.get("oi", 0)
+            call_volume, put_volume = calls.get("volume", 0), puts.get("volume", 0)
+            aggregates[underlying] = {
+                "call": calls, "put": puts,
+                "oi_put_call_ratio": (put_oi / call_oi) if call_oi > 0 else None,
+                "oi_side_imbalance": ((put_oi - call_oi) / (put_oi + call_oi)) if put_oi + call_oi > 0 else None,
+                "volume_side_imbalance": ((put_volume - call_volume) / (put_volume + call_volume)) if put_volume + call_volume > 0 else None,
+            }
+        for row in enriched_records:
+            underlying = str(row.get("underlying") or "").upper()
+            spot = spot_prices.get(underlying)
+            strike = row.get("strike")
+            if row.get("instrument_type") == "option" and spot is not None and strike is not None:
+                row["distance_from_spot"] = float(strike) - float(spot)
+                row["distance_from_spot_pct"] = (float(strike) - float(spot)) / float(spot) * 100.0 if float(spot) > 0 else None
+                row["moneyness"] = "ATM" if abs(float(strike) - float(spot)) <= max(float(row.get("tick_size") or 0), 1.0) else ("ITM" if (row.get("option_type") == "CE" and float(strike) < float(spot)) or (row.get("option_type") == "PE" and float(strike) > float(spot)) else "OTM")
+            else:
+                row["distance_from_spot"] = None
+                row["distance_from_spot_pct"] = None
+                row["moneyness"] = None
         return {
             "runner": "shared-index-market-data",
             "enabled": running,
@@ -268,7 +301,8 @@ class SharedIndexMarketDataRunner:
             "option_universe": {"NIFTY": "weekly ATM +/- 6", "BANKNIFTY": "monthly ATM +/- 5"},
             "state": state,
             "records": enriched_records,
-            "derived_iv_model": {"method": "Black-Scholes", "source": "derived_bsm", "risk_free_rate": 0.065, "risk_free_rate_unit": "annual_decimal", "expiry_time_ist": "15:30", "iv_unit": "percent", "velocity_window_seconds": 1, "volume_source": "broker_day_volume", "volume_delta_window_seconds": 1, "oi_source": "broker_open_interest", "oi_delta_window_seconds": 1},
+            "option_flow_aggregates": aggregates,
+            "derived_iv_model": {"method": "Black-Scholes", "source": "derived_bsm", "risk_free_rate": 0.065, "risk_free_rate_unit": "annual_decimal", "expiry_time_ist": "15:30", "iv_unit": "percent", "velocity_windows_seconds": [1, 3, 5], "quote_metrics": ["mid_price", "microprice", "spread_pct", "quote_imbalance", "tick_rate_1s"], "option_flow_aggregate_windows_seconds": [1, 3, 5], "volume_source": "broker_day_volume", "volume_delta_window_seconds": 1, "oi_source": "broker_open_interest", "oi_delta_window_seconds": 1},
             "lifecycle": lifecycle,
             "rotation": rotation,
             "live_data_ready": running and bootstrap_done and state["instrument_count"] == 50 and state["fresh_count"] == 50,
