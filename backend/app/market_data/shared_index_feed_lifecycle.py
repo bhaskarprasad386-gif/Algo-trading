@@ -6,6 +6,7 @@ It never creates a socket or submits orders.
 from __future__ import annotations
 
 from threading import RLock
+import math
 from typing import Callable, Iterable
 
 from .common_strategy_feed import CommonStrategyMarketFeed
@@ -35,6 +36,50 @@ class SharedIndexFeedLifecycle:
 
 
     @staticmethod
+    def _validate_locked_options(items: tuple[InstrumentDescriptor, ...]) -> None:
+        """Fail closed unless the exact locked symmetric CE/PE strike grids exist."""
+        expected = {"NIFTY": 13, "BANKNIFTY": 11}
+        by_underlying: dict[str, list[InstrumentDescriptor]] = {name: [] for name in expected}
+        for descriptor in items:
+            if descriptor.underlying not in expected:
+                raise ValueError("option descriptors contain an unlocked underlying")
+            if descriptor.instrument_type != "option":
+                raise ValueError("locked option set contains a non-option descriptor")
+            if descriptor.exchange.strip().upper() != "NFO" or descriptor.segment.strip().upper() != "NFO":
+                raise ValueError("option descriptor exchange/segment must be NFO")
+            if descriptor.key.exchange.strip().upper() != "NFO" or descriptor.key.segment.strip().upper() != "NFO":
+                raise ValueError("option instrument key exchange/segment must be NFO")
+            if descriptor.option_type not in {"CE", "PE"}:
+                raise ValueError("option_type must be CE or PE")
+            if descriptor.strike is None or not isinstance(descriptor.strike, (int, float)) or isinstance(descriptor.strike, bool) or not math.isfinite(float(descriptor.strike)) or descriptor.strike <= 0:
+                raise ValueError("option strike must be finite and positive")
+            if not descriptor.expiry or not str(descriptor.expiry).strip():
+                raise ValueError("option expiry is required")
+            if not descriptor.symbol or not str(descriptor.symbol).strip():
+                raise ValueError("option symbol is required")
+            by_underlying[descriptor.underlying].append(descriptor)
+        if len({d.key for d in items}) != len(items) or len({d.key.token for d in items}) != len(items):
+            raise ValueError("duplicate option instrument/token")
+        for name, strike_count in expected.items():
+            group = by_underlying[name]
+            if len(group) != strike_count * 2:
+                raise ValueError(f"{name} must contain exactly {strike_count * 2} options")
+            strikes = sorted({float(d.strike) for d in group})
+            if len(strikes) != strike_count:
+                raise ValueError(f"{name} must contain {strike_count} unique strikes")
+            step = strikes[1] - strikes[0]
+            if step <= 0 or any(abs((strikes[i + 1] - strikes[i]) - step) > 1e-7 for i in range(len(strikes) - 1)):
+                raise ValueError(f"{name} strikes must have uniform spacing")
+            if any(abs(strikes[i] + strikes[-1 - i] - (strikes[0] + strikes[-1])) > 1e-7 for i in range(len(strikes))):
+                raise ValueError(f"{name} strike window must be symmetric")
+            expiries = {str(d.expiry).strip() for d in group}
+            if len(expiries) != 1:
+                raise ValueError(f"{name} option expiry must be uniform")
+            pairs = {(float(d.strike), d.option_type) for d in group}
+            if len(pairs) != len(group) or any((strike, side) not in pairs for strike in strikes for side in ("CE", "PE")):
+                raise ValueError(f"{name} requires exactly one CE and PE per strike")
+
+    @staticmethod
     def _validated_descriptors(descriptors: Iterable[InstrumentDescriptor]) -> tuple[InstrumentDescriptor, ...]:
         items = tuple(descriptors)
         if not items:
@@ -61,10 +106,7 @@ class SharedIndexFeedLifecycle:
 
     def start_options(self, descriptors: Iterable[InstrumentDescriptor]) -> tuple[InstrumentKey, ...]:
         items = self._validated_descriptors(descriptors)
-        counts = {"NIFTY": 26, "BANKNIFTY": 22}
-        per_underlying = {name: sum(1 for d in items if d.underlying == name) for name in counts}
-        if per_underlying != counts or any(d.instrument_type != "option" for d in items):
-            raise ValueError("option set must contain exactly 26 NIFTY weekly and 22 BANKNIFTY monthly contracts")
+        self._validate_locked_options(items)
         with self._lock:
             if self._options_started:
                 raise RuntimeError("options subscription owner is already active")
@@ -77,10 +119,7 @@ class SharedIndexFeedLifecycle:
 
     def rotate_options(self, descriptors: Iterable[InstrumentDescriptor]) -> tuple[InstrumentKey, ...]:
         items = self._validated_descriptors(descriptors)
-        counts = {"NIFTY": 26, "BANKNIFTY": 22}
-        per_underlying = {name: sum(1 for d in items if d.underlying == name) for name in counts}
-        if per_underlying != counts or any(d.instrument_type != "option" for d in items):
-            raise ValueError("rotation rejected: option set violates locked counts")
+        self._validate_locked_options(items)
         new_keys = tuple(d.key for d in items)
         with self._lock:
             if not self._options_started:
