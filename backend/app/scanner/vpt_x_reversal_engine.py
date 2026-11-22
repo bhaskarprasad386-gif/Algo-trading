@@ -36,7 +36,8 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
 
 def _normalize_ticks(raw: Sequence[Any]) -> list[dict[str, float]]:
     ticks: list[dict[str, float]] = []
-    for item in raw[-MAX_TICKS:]:
+    # Normalize and timestamp-sort before bounding: callers may provide out-of-order ticks.
+    for item in raw:
         if not isinstance(item, Mapping):
             continue
         timestamp, price = _finite(item.get("timestamp_ms")), _finite(item.get("price"))
@@ -47,6 +48,7 @@ def _normalize_ticks(raw: Sequence[Any]) -> list[dict[str, float]]:
             tick[field] = max(0.0, _finite(item.get(field)) or 0.0)
         ticks.append(tick)
     ticks.sort(key=lambda row: row["timestamp_ms"])
+    ticks = ticks[-MAX_TICKS:]
     deduplicated: dict[float, dict[str, float]] = {}
     for tick in ticks:
         deduplicated[tick["timestamp_ms"]] = tick
