@@ -77,17 +77,17 @@ jobs:
           git_fetch_with_retry() {
             local attempt status
             for attempt in 1 2 3; do
-              printf "GIT_FETCH_ATTEMPT=%s/3 timeout=300s\\n" "$attempt"
+              printf "GIT_FETCH_ATTEMPT=%s/3 timeout=300s\n" "$attempt"
               if timeout 300s git fetch origin main; then
-                printf "GIT_FETCH_SUCCESS attempt=%s\\n" "$attempt"
+                printf "GIT_FETCH_SUCCESS attempt=%s\n" "$attempt"
                 return 0
               else
                 status=$?
-                printf "GIT_FETCH_FAILED attempt=%s status=%s\\n" "$attempt" "$status" >&2
+                printf "GIT_FETCH_FAILED attempt=%s status=%s\n" "$attempt" "$status" >&2
               fi
               if [[ "$attempt" -lt 3 ]]; then sleep "$((attempt * 10))"; fi
             done
-            printf "DEPLOY_ABORTED_GIT_FETCH_FAILED: merge not attempted\\n" >&2
+            printf "DEPLOY_ABORTED_GIT_FETCH_FAILED: merge not attempted\n" >&2
             return 1
           }
           git_fetch_with_retry || exit 1
