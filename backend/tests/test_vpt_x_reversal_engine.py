@@ -79,6 +79,19 @@ def test_invalid_and_duplicate_timestamps_are_cleaned():
     assert result["status"]=="EVALUATED" and result["tick_count"]==30
 
 
+def test_duplicate_bursts_do_not_evict_unique_ticks_before_cap():
+    start = int(time.time() * 1000) - 3_500
+    ticks = [{"timestamp_ms": start + i * 5, "price": 100 + i * .01,
+              "buy_volume": 30, "sell_volume": 20, "bid_qty": 80, "ask_qty": 50}
+             for i in range(600)]
+    ticks.extend(ticks[-100:])
+    result = evaluate_vptx({"underlying": "NIFTY", "ticks": ticks})
+    assert result["status"] == "EVALUATED"
+    assert result["tick_count"] == 500
+    assert result["features"]["low"] == pytest.approx(101.00)
+    assert result["features"]["price"] == pytest.approx(105.99)
+
+
 def test_signal_never_routes_orders_even_with_cross_confirmation():
     result=evaluate_vptx({"underlying":"BANKNIFTY","ticks":_ticks([100+i*.1 for i in range(30)]),"cross_confirmation":.9})
     assert all(c["order_routing_enabled"] is False for c in result["candidates"])
