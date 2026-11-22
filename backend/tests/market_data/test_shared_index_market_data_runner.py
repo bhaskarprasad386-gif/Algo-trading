@@ -36,7 +36,7 @@ class RunnerManager:
 
 def _rows():
     expiries = {
-        "NIFTY": ["26NOV2026", "03DEC2026", "10DEC2026"],
+        "NIFTY": ["19NOV2026", "26NOV2026", "03DEC2026", "10DEC2026"],
         "BANKNIFTY": ["24DEC2026", "27JAN2027", "24FEB2027"],
     }
     rows = []
@@ -60,7 +60,7 @@ def _rows():
 
 def test_nifty_chooses_nearest_weekly_and_banknifty_next_month_last_listed():
     rows = _rows()
-    assert choose_locked_expiry(rows, "NIFTY", today=date(2026, 11, 22)) == "2026-11-26"
+    assert choose_locked_expiry(rows, "NIFTY", today=date(2026, 11, 20)) == "2026-11-26"
     assert choose_locked_expiry(rows, "BANKNIFTY", today=date(2026, 11, 22)) == "2026-12-24"
 
 
