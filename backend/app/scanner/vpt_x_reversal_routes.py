@@ -80,9 +80,9 @@ def evaluate(payload: SnapshotRequest):
                     invalid = (latest_price < invalidation) if candidate["direction"] == "BUY" else (latest_price > invalidation)
                     state = "INVALIDATED" if invalid else "TRIGGERED"
                 elif prior.get("status") == "INVALIDATED":
-                    # Require a fresh non-triggered observation before re-arming. Prevents
-                    # immediate retrigger spam on consecutive trigger-ready snapshots.
-                    state = "WATCH"
+                    # Keep invalidation sticky while trigger-ready; re-arm only on a
+                    # fresh non-triggered WATCH observation.
+                    state = "INVALIDATED" if candidate["trigger_ready"] else "WATCH"
                 elif prior.get("status") == "EXPIRED":
                     # Expiry ends the old setup; require a fresh WATCH observation before any re-trigger.
                     state = "WATCH"
