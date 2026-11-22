@@ -1,6 +1,7 @@
 """Bounded, thread-safe Early Impulse Pro signal history and cooldown dedupe."""
 from __future__ import annotations
 from collections import deque
+from math import isfinite
 from threading import RLock
 from time import monotonic
 from typing import Any, Mapping
@@ -11,7 +12,7 @@ class EarlyImpulseSignalStore:
     def __init__(self, *, max_signals: int = 300, cooldown_seconds: float = 30.0) -> None:
         if isinstance(max_signals, bool) or not isinstance(max_signals, int) or max_signals < 1:
             raise ValueError("max_signals must be a positive integer")
-        if isinstance(cooldown_seconds, bool) or not isinstance(cooldown_seconds, (int, float)) or cooldown_seconds < 0:
+        if isinstance(cooldown_seconds, bool) or not isinstance(cooldown_seconds, (int, float)) or not isfinite(cooldown_seconds) or cooldown_seconds < 0:
             raise ValueError("cooldown_seconds must be nonnegative")
         self.max_signals, self.cooldown_seconds = max_signals, float(cooldown_seconds)
         self._lock = RLock()
@@ -30,16 +31,16 @@ class EarlyImpulseSignalStore:
     def publish(self, signal: Mapping[str, Any], *, now: float | None = None) -> bool:
         key = self._key(signal)
         score = signal.get("score")
-        if isinstance(score, bool) or not isinstance(score, (int, float)) or not 75 <= score <= 100:
+        if isinstance(score, bool) or not isinstance(score, (int, float)) or not isfinite(score) or not 75 <= score <= 100:
             raise ValueError("signal score must be numeric 75..100")
         timestamp = monotonic() if now is None else now
-        if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
+        if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)) or not isfinite(timestamp):
             raise ValueError("timestamp must be numeric")
         payload = dict(signal)
         payload.update({"underlying": key[0], "direction": key[1], "scanner_only": True, "order_routing_enabled": False})
         with self._lock:
             previous = self._last_by_key.get(key)
-            if previous is not None and timestamp - previous < self.cooldown_seconds:
+            if previous is not None and (timestamp < previous or timestamp - previous < self.cooldown_seconds):
                 self._suppressed += 1
                 return False
             self._last_by_key[key] = timestamp
