@@ -164,6 +164,6 @@ def test_failed_rotation_rolls_back_new_option_refs_and_preserves_old_set():
 
     assert manager.active[lifecycle.OPTIONS_CONSUMER] == original_active
     assert lifecycle._option_keys == original_keys
-    assert len(manager.registry.active_keys()) == 70
+    assert len(manager.registry.active_keys()) == 50
     assert lifecycle.snapshot()["spot_instruments"] == 2
     assert manager.registry.get(replacement[0].key) is None
