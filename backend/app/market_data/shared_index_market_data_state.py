@@ -78,8 +78,11 @@ class SharedIndexMarketDataState:
                 while history and history[0][0] < cutoff:
                     history.popleft()
             self._accepted += 1
-        put_market_data_record(record)
-        self._publish(record)
+            # Keep cache publication ordered with universe retirement. Otherwise
+            # retain_instruments() can delete a retired key while this accepted
+            # tick is outside the lock, and the delayed cache write resurrects it.
+            put_market_data_record(record)
+            self._publish(record)
         return True
 
 
