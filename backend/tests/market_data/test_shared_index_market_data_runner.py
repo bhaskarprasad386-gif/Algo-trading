@@ -2,7 +2,7 @@ from datetime import date
 from app.market_data.shared_index_market_data_runner import (
     SharedIndexMarketDataRunner, choose_locked_expiry,
 )
-from app.market_data.contracts import MarketDataRecord, InstrumentKey, InstrumentType
+from app.market_data.contracts import MarketDataRecord, InstrumentKey, InstrumentType, OptionType
 
 
 class FakeMaster:
@@ -86,5 +86,20 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
     assert runner.snapshot()["lifecycle"]["options_active"] is True
     assert runner.snapshot()["state"]["fresh_count"] == 2
     assert runner.snapshot()["live_data_ready"] is False
+    option_consumer = runner.lifecycle.OPTIONS_CONSUMER
+    for key in manager.registry.active_keys():
+        descriptor = manager.registry.get(key)
+        if descriptor.instrument_type != "option":
+            continue
+        manager.callbacks[option_consumer](MarketDataRecord(
+            instrument=key, symbol=descriptor.symbol, instrument_type=InstrumentType.OPTION,
+            timestamp_ns=__import__("time").time_ns(), ltp=100.0, bid=99.5, ask=100.5,
+            bid_qty=10, ask_qty=12, volume=1000, oi=500,
+            underlying=descriptor.underlying, expiry=descriptor.expiry,
+            strike=descriptor.strike, option_type=OptionType(descriptor.option_type),
+            lot_size=descriptor.lot_size,
+        ))
+    assert runner.snapshot()["state"]["instrument_count"] == 50
+    assert runner.snapshot()["live_data_ready"] is True
     runner.stop()
     assert manager.registry.active_keys() == ()
