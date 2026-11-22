@@ -57,7 +57,7 @@ def evaluate(payload: SnapshotRequest):
         raise HTTPException(status_code=422, detail="underlying must be NIFTY or BANKNIFTY")
     snapshot = payload.model_dump()
     snapshot["underlying"] = symbol
-    result = evaluate_vptx(snapshot, now_ms=payload.now_ms)
+    result = evaluate_vptx(snapshot, now_ms=_now_ms())
     if result.get("status") != "EVALUATED":
         return result
     now = _now_ms()
