@@ -52,3 +52,24 @@ def test_clear_resets_history_and_cooldowns():
     store.clear()
     assert store.snapshot()["signal_count"] == 0
     assert store.publish(_signal(), now=101)
+
+
+def test_cooldown_rejects_clock_regression():
+    store = EarlyImpulseSignalStore(cooldown_seconds=20)
+    assert store.publish(_signal(), now=100)
+    assert not store.publish(_signal(score=90), now=90)
+    assert not store.publish(_signal(score=91), now=110)
+    assert store.snapshot()["suppressed_duplicate_count"] == 2
+    assert store.publish(_signal(), now=121)
+
+
+@pytest.mark.parametrize("bad_timestamp", [float("nan"), float("inf"), float("-inf")])
+def test_publish_rejects_non_finite_timestamp(bad_timestamp):
+    with pytest.raises(ValueError):
+        EarlyImpulseSignalStore().publish(_signal(), now=bad_timestamp)
+
+
+@pytest.mark.parametrize("bad_score", [float("nan"), float("inf"), float("-inf")])
+def test_publish_rejects_non_finite_score(bad_score):
+    with pytest.raises(ValueError):
+        EarlyImpulseSignalStore().publish(_signal(score=bad_score), now=1)
