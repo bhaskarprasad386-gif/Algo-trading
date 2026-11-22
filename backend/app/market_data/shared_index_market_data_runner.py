@@ -286,6 +286,14 @@ class SharedIndexMarketDataRunner:
             return self.snapshot()
         except Exception as exc:
             with self._lock:
+                self._running = False
+                self._bootstrap_options_done = False
+                self._bootstrap_inflight = False
+                self._spot_records.clear()
+                self._futures_expiries.clear()
+                self._started_at = None
+                self.state.clear()
+                self.derived_iv.clear()
                 self._start_error = f"{type(exc).__name__}: {exc}"[:240]
             try:
                 self.lifecycle.stop()
