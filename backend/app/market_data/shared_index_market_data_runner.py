@@ -133,7 +133,6 @@ class SharedIndexMarketDataRunner:
                     return False
                 self.lifecycle.start_options(tuple(descriptors))
                 self._sync_state_universe()
-            with self._lock:
                 self._start_error = None
                 self._bootstrap_options_done = True
                 self._bootstrap_inflight = False
@@ -168,10 +167,10 @@ class SharedIndexMarketDataRunner:
                 return
             self._bootstrap_options()
             with self._lock:
-                bootstrap_ready = self._bootstrap_options_done
-            # ATM rotations are enabled only after both initial option chains
-            # are active; before that, the next spot ticks retry bootstrap.
-            if bootstrap_ready:
+                # Stop and rotate are serialized; no subscription can be added
+                # after an explicit OFF lifecycle completes.
+                if not self._running or not self._bootstrap_options_done:
+                    return
                 rotated = self.rotation.on_record(record)
                 if rotated:
                     self._sync_state_universe()
