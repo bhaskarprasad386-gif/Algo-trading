@@ -18,6 +18,7 @@ from .shared_index_option_rotation_controller import SharedIndexOptionRotationCo
 from .shared_index_option_selection import select_locked_index_options
 from .shared_index_spot_resolver import resolve_locked_index_spot_descriptors
 from .shared_index_option_selection import _parse_expiry
+from .box_spread_expiry import classify_index_expiry_dates
 
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -39,23 +40,24 @@ def _expiry_candidates(rows: Iterable[dict], underlying: str) -> list[date]:
 
 
 def choose_locked_expiry(rows: Iterable[dict], underlying: str, *, today: date | None = None) -> str:
-    """Choose next listed NIFTY weekly or next listed BANKNIFTY monthly expiry."""
+    """Choose next NIFTY weekly or BANKNIFTY monthly expiry using exchange classification."""
     symbol = str(underlying).strip().upper()
     if symbol not in LOCKED:
         raise ValueError("expiry selection is restricted to NIFTY/BANKNIFTY")
     current = today or datetime.now(IST).date()
-    dates = [d for d in _expiry_candidates(rows, symbol) if d >= current]
-    if not dates:
+    all_dates = _expiry_candidates(rows, symbol)
+    future_dates = [expiry for expiry in all_dates if expiry >= current]
+    if not future_dates:
         raise LookupError(f"no future option expiries listed for {symbol}")
+    # Classify against all dates. Removing expired dates first could wrongly
+    # promote a remaining weekly expiry to monthly for NIFTY.
+    classification = classify_index_expiry_dates(symbol, all_dates)
     if symbol == "NIFTY":
-        return min(dates).isoformat()
-    # Monthly expiries are the last listed expiry date in each calendar month.
-    month_last = {}
-    for expiry in dates:
-        month_last[(expiry.year, expiry.month)] = max(
-            month_last.get((expiry.year, expiry.month), expiry), expiry
-        )
-    monthly = sorted(d for d in month_last.values() if d >= current)
+        weekly = sorted(expiry for expiry in future_dates if classification.get(expiry) == "WEEKLY")
+        if not weekly:
+            raise LookupError("no future NIFTY weekly expiry in listed master")
+        return weekly[0].isoformat()
+    monthly = sorted(expiry for expiry in future_dates if classification.get(expiry) == "MONTHLY")
     if not monthly:
         raise LookupError("no future BANKNIFTY monthly expiry in listed master")
     return monthly[0].isoformat()
