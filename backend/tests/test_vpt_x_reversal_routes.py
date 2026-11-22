@@ -134,3 +134,18 @@ def test_signal_state_expiry_uses_state_age_not_refresh_time():
         # Refresh occurred recently, but the WATCH state itself is 46s old.
         _cleanup(56_000)
         assert _history["test:signal"]["status"] == "EXPIRED"
+
+
+def test_invalidated_signal_requires_watch_observation_before_retrigger(monkeypatch):
+    import app.scanner.vpt_x_reversal_routes as routes
+    clock = [30_000]
+    states = [{"price": 101, "trigger": True}, {"price": 98, "trigger": True}, {"price": 101, "trigger": True}, {"price": 102, "trigger": False}, {"price": 101, "trigger": True}]
+    monkeypatch.setattr(routes, "_now_ms", lambda: clock[0])
+    monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"]))
+    assert client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]["status"] == "TRIGGERED"
+    for expected in ["INVALIDATED", "WATCH", "WATCH", "TRIGGERED"]:
+        states.pop(0)
+        clock[0] += 100
+        monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"]))
+        result = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
+        assert result["status"] == expected
