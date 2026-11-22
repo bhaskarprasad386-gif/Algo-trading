@@ -173,3 +173,26 @@ def test_snapshot_exposes_microstructure_and_multi_window_momentum_metrics():
     assert row["volume_delta_3s"] == 100
     assert row["oi_delta_5s"] is None
     assert row["volume_delta_5s"] is None
+
+
+def test_quote_depth_and_spread_change_windows():
+    state = SharedIndexMarketDataState(max_age_seconds=6)
+    now = time_ns()
+    from app.market_data.contracts import OptionType
+    inst = InstrumentKey("NFO", "NFO", "opt-depth")
+    def tick(ts, bid, ask, bid_qty, ask_qty):
+        return MarketDataRecord(
+            instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION,
+            timestamp_ns=ts, ltp=(bid+ask)/2, bid=bid, ask=ask,
+            bid_qty=bid_qty, ask_qty=ask_qty, underlying="NIFTY", expiry="2026-11-26",
+            strike=25000, option_type=OptionType.CALL, lot_size=25,
+        )
+    assert state.on_record(tick(now-4_200_000_000, 99, 101, 10, 20))
+    assert state.on_record(tick(now-2_200_000_000, 101, 103, 15, 25))
+    assert state.on_record(tick(now-200_000_000, 103, 106, 30, 10))
+    row=state.records_snapshot()[0]
+    assert row["bid_qty_delta_3s"] == 20
+    assert row["ask_qty_delta_3s"] == -10
+    assert row["spread_delta_3s"] == 1
+    assert row["bid_qty_delta_5s"] is None
+    assert row["ask_qty_delta_5s"] is None
