@@ -64,3 +64,19 @@ def _spot(symbol, ltp):
     return MarketDataRecord(instrument=InstrumentKey("NSE", "NSE", symbol),
         symbol=symbol, instrument_type=InstrumentType.INDEX, timestamp_ns=time_ns(),
         ltp=ltp, underlying=symbol)
+
+
+def test_concurrent_same_underlying_ticks_are_serialized_to_single_rotation():
+    from concurrent.futures import ThreadPoolExecutor
+    lifecycle = StubLifecycle()
+    controller = SharedIndexOptionRotationController(lifecycle=lifecycle,
+        instrument_rows=_rows, expiry_for=lambda _: "26NOV2026",
+        thresholds={"NIFTY":50}, cooldown_seconds=0)
+    assert not controller.on_record(_spot("NIFTY", 22000))
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        results = list(pool.map(lambda _i: controller.on_record(_spot("NIFTY", 22050)), range(24)))
+    assert sum(results) == 1
+    assert len(lifecycle.rotations) == 1
+    snap = controller.snapshot()
+    assert snap["rotation_successes"] == 1
+    assert snap["trigger"]["successful_anchor_spot"]["NIFTY"] == 22050
