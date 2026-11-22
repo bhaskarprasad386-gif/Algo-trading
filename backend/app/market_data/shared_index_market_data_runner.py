@@ -1,8 +1,7 @@
 """Isolated live-data runner for the locked NIFTY/BANKNIFTY market universe.
 
 Starts only spot + option subscriptions on the existing shared Angel One feed.
-It publishes latest tick state for future strategy consumers. Application
-startup owns the opt-in live-feed lifecycle; no strategy or order logic is connected.
+It publishes latest tick state for future strategy consumers. Application lifespan starts the live feed; no strategy or order logic is connected.
 """
 from __future__ import annotations
 
@@ -190,7 +189,6 @@ class SharedIndexMarketDataRunner:
 
     def stop(self) -> dict:
         with self._lock:
-            was_running = self._running
             self._running = False
             self._bootstrap_options_done = False
             self._bootstrap_inflight = False
