@@ -42,7 +42,7 @@ function Metric({ title, value, subtitle }: { title: string; value: string; subt
   </div>;
 }
 
-export default function EarlyImpulsePage() {
+export default function EarlyImpulsePage({ pageTitle = "EARLY IMPULSE PRO", pageSubtitle = "Pre-move pressure, location-aware entry and liquidity-trap protection. Existing IV Scanner is not used." }: { pageTitle?: string; pageSubtitle?: string }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
@@ -101,8 +101,8 @@ export default function EarlyImpulsePage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em] theme-accent"><Activity size={15}/> Independent Strategy</div>
-            <h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">EARLY IMPULSE PRO</h1>
-            <p className="mt-1 max-w-3xl text-sm theme-muted">Pre-move pressure, location-aware entry and liquidity-trap protection. Existing IV Scanner is not used.</p>
+            <h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">{pageTitle}</h1>
+            <p className="mt-1 max-w-3xl text-sm theme-muted">{pageSubtitle}</p>
           </div>
           <button onClick={() => void refresh()} disabled={loading} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3 text-xs font-semibold theme-text disabled:opacity-60"><RefreshCw size={15} className={loading ? "animate-spin" : ""}/> Refresh</button>
         </div>
