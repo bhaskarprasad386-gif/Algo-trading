@@ -305,6 +305,7 @@ class SharedIndexMarketDataRunner:
             if self._running:
                 return self.snapshot()
             self._run_generation += 1
+            generation = self._run_generation
             self._master_refresh_inflight = False
             self._master_refresh_generation = None
             self._start_error = None
@@ -319,13 +320,6 @@ class SharedIndexMarketDataRunner:
             if not rows:
                 raise LookupError("Angel One instrument master is empty")
             spots = resolve_locked_index_spot_descriptors(self.instrument_master)
-            with self._lock:
-                self._rows = rows
-            with self._lock:
-                self.lifecycle.start_spot(spots)
-                self._running = True
-                self._started_at = datetime.now(IST).isoformat()
-                self._master_refresh_started_at = __import__("time").monotonic()
             from .common_strategy_feed import CommonStrategyMarketFeed
             futures = []
             future_expiries = {}
@@ -339,11 +333,23 @@ class SharedIndexMarketDataRunner:
                     instrument_type="future", segment="NFO", expiry=selected["expiry"],
                     lot_size=lot_size, underlying=underlying,
                 ))
-            self.lifecycle.start_futures(tuple(futures))
-            self._futures_expiries = future_expiries
+            # Serialize ON activation against OFF. An older blocked start must not
+            # resurrect subscriptions after a later stop advances the run epoch.
+            with self._lock:
+                if generation != self._run_generation:
+                    return self.snapshot()
+                self._rows = rows
+                self._running = True
+                self._started_at = datetime.now(IST).isoformat()
+                self._master_refresh_started_at = __import__("time").monotonic()
+                self.lifecycle.start_spot(spots)
+                self.lifecycle.start_futures(tuple(futures))
+                self._futures_expiries = future_expiries
             return self.snapshot()
         except Exception as exc:
             with self._lock:
+                if generation != self._run_generation:
+                    return self.snapshot()
                 self._running = False
                 self._bootstrap_options_done = False
                 self._bootstrap_inflight = False
@@ -352,7 +358,7 @@ class SharedIndexMarketDataRunner:
                 self._started_at = None
                 self.state.clear()
                 self.derived_iv.clear()
-                self._start_error = f"{type(exc).__name__}: {exc}"[:240]
+                self._start_error = f"{type(exc).__name__}: {exc"[:240]
             try:
                 self.lifecycle.stop()
             except Exception:
