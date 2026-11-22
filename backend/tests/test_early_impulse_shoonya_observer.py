@@ -155,3 +155,46 @@ def test_runner_ignores_old_epoch_disconnect_after_new_epoch_live():
     snap = runner.snapshot()
     assert runner._epoch == 5
     assert runner._authenticated is True
+
+
+def test_cache_tick_failure_does_not_block_runner_tick():
+    class RunnerSpy:
+        def __init__(self):
+            self.ticks = []
+            self.sessions = []
+        def on_tick(self, *args):
+            self.ticks.append(args)
+        def on_session(self, *args):
+            self.sessions.append(args)
+        def snapshot(self):
+            return {}
+
+    cache = EarlyImpulseShoonyaCache()
+    cache.on_tick_observation = lambda *args: (_ for _ in ()).throw(RuntimeError("cache tick failure"))
+    runner = RunnerSpy()
+    observer = EarlyImpulseShoonyaObserver(cache=cache, runner=runner)
+    record = _record()
+    observer.on_tick_observation(record, 4, True, 500)
+    assert len(runner.ticks) == 1
+    assert runner.ticks[0] == (record, 4, True, 500)
+    assert observer.snapshot()["observer_errors"] == 1
+
+
+def test_cache_session_failure_does_not_block_runner_session_reset():
+    class RunnerSpy:
+        def __init__(self):
+            self.sessions = []
+        def on_tick(self, *args):
+            pass
+        def on_session(self, *args):
+            self.sessions.append(args)
+        def snapshot(self):
+            return {}
+
+    cache = EarlyImpulseShoonyaCache()
+    cache.on_session_observation = lambda *args: (_ for _ in ()).throw(RuntimeError("cache session failure"))
+    runner = RunnerSpy()
+    observer = EarlyImpulseShoonyaObserver(cache=cache, runner=runner)
+    observer.on_session_observation("RECONNECTING", "disconnect", 8, False, False, 900)
+    assert runner.sessions == [("RECONNECTING", 8, False, False)]
+    assert observer.snapshot()["observer_errors"] == 1
