@@ -159,14 +159,19 @@ class SharedIndexMarketDataRunner:
                     self._spot_records[underlying] = record
             if not running:
                 return
+            bootstrap_ready = self._bootstrap_options_done
             self._bootstrap_options()
-            rotated = self.rotation.on_record(record)
-            if rotated:
-                self._sync_state_universe()
-            # Flush cooldown-coalesced rotations on subsequent live spot ticks.
-            flushed = self.rotation.flush_due()
-            if flushed:
-                self._sync_state_universe()
+            with self._lock:
+                bootstrap_ready = self._bootstrap_options_done
+            # ATM rotations are enabled only after both initial option chains
+            # are active; before that, the next spot ticks retry bootstrap.
+            if bootstrap_ready:
+                rotated = self.rotation.on_record(record)
+                if rotated:
+                    self._sync_state_universe()
+                flushed = self.rotation.flush_due()
+                if flushed:
+                    self._sync_state_universe()
 
     def start(self, instrument_rows: Iterable[dict] | None = None) -> dict:
         with self._lock:
@@ -249,6 +254,7 @@ class SharedIndexMarketDataRunner:
             "latest_spots": latest_spots,
             "option_universe": {"NIFTY": "weekly ATM +/- 6", "BANKNIFTY": "monthly ATM +/- 5"},
             "state": state,
+            "records": self.state.records_snapshot(),
             "lifecycle": lifecycle,
             "rotation": rotation,
             "live_data_ready": running and bootstrap_done and state["instrument_count"] == 50 and state["fresh_count"] == 50,
