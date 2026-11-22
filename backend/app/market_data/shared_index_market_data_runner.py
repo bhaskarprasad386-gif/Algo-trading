@@ -95,6 +95,35 @@ class SharedIndexMarketDataRunner:
         self._bootstrap_options_done = False
         self._bootstrap_inflight = False
         self._spot_records: dict[str, Any] = {}
+        self._futures_expiries: dict[str, str] = {}
+
+    @staticmethod
+    def choose_nearest_future(rows: Iterable[dict], underlying: str, *, today: date | None = None) -> dict:
+        symbol = str(underlying).strip().upper()
+        if symbol not in LOCKED:
+            raise ValueError("futures selection is restricted to NIFTY/BANKNIFTY")
+        current = today or datetime.now(IST).date()
+        candidates = []
+        for row in rows:
+            if (str(row.get("exch_seg", "")).strip().upper() != "NFO"
+                    or str(row.get("name", "")).strip().upper() != symbol
+                    or str(row.get("instrumenttype", "")).strip().upper() != "FUTIDX"):
+                continue
+            try:
+                expiry = _parse_expiry(row.get("expiry"))
+            except (TypeError, ValueError):
+                continue
+            if expiry < current:
+                continue
+            token = str(row.get("token", "")).strip()
+            trading_symbol = str(row.get("symbol", "")).strip()
+            if token and trading_symbol:
+                candidates.append((expiry, token, trading_symbol, row))
+        if not candidates:
+            raise LookupError(f"no active NFO FUTIDX contract listed for {symbol}")
+        expiry, token, trading_symbol, row = min(candidates, key=lambda item: item[0])
+        return {"underlying": symbol, "expiry": expiry.isoformat(), "token": token,
+                "symbol": trading_symbol, "lot_size": row.get("lotsize")}
 
     def _expiry_for(self, underlying: str) -> str:
         return choose_locked_expiry(self._rows, underlying)
@@ -199,6 +228,21 @@ class SharedIndexMarketDataRunner:
                 self._rows = rows
             with self._lock:
                 self.lifecycle.start_spot(spots)
+                from .common_strategy_feed import CommonStrategyMarketFeed
+                futures = []
+                future_expiries = {}
+                for underlying in LOCKED:
+                    selected = self.choose_nearest_future(rows, underlying)
+                    future_expiries[underlying] = selected["expiry"]
+                    raw_lot = selected["lot_size"]
+                    lot_size = int(float(raw_lot)) if raw_lot else None
+                    futures.append(CommonStrategyMarketFeed.descriptor(
+                        exchange="NFO", token=selected["token"], symbol=selected["symbol"],
+                        instrument_type="future", segment="NFO", expiry=selected["expiry"],
+                        lot_size=lot_size, underlying=underlying,
+                    ))
+                self.lifecycle.start_futures(tuple(futures))
+                self._futures_expiries = future_expiries
                 self._running = True
                 self._started_at = datetime.now(IST).isoformat()
             return self.snapshot()
@@ -309,6 +353,8 @@ class SharedIndexMarketDataRunner:
             "initial_option_bootstrap_done": bootstrap_done,
             "spot_universe": list(LOCKED),
             "latest_spots": latest_spots,
+            "futures_expiries": dict(self._futures_expiries),
+            "future_selection": "nearest listed non-expired NFO FUTIDX per underlying",
             "option_universe": {"NIFTY": "weekly ATM +/- 6", "BANKNIFTY": "monthly ATM +/- 5"},
             "state": state,
             "records": enriched_records,
@@ -316,7 +362,7 @@ class SharedIndexMarketDataRunner:
             "derived_iv_model": {"method": "Black-Scholes", "source": "derived_bsm", "risk_free_rate": 0.065, "risk_free_rate_unit": "annual_decimal", "expiry_time_ist": "15:30", "iv_unit": "percent", "velocity_windows_seconds": [1, 3, 5], "quote_metrics": ["mid_price", "microprice", "spread_pct", "quote_imbalance", "tick_rate_1s"], "option_flow_aggregate_windows_seconds": [1, 3, 5], "volume_source": "broker_day_volume", "volume_delta_window_seconds": 1, "oi_source": "broker_open_interest", "oi_delta_window_seconds": 1},
             "lifecycle": lifecycle,
             "rotation": rotation,
-            "live_data_ready": running and bootstrap_done and state["instrument_count"] == 50 and state["fresh_count"] == 50,
+            "live_data_ready": running and bootstrap_done and state["instrument_count"] == 52 and state["fresh_count"] == 52,
         }
 
 
