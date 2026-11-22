@@ -7,18 +7,23 @@ from typing import Any, Mapping, Sequence
 GROUP_WEIGHTS = {"liquidity": .20, "order_flow": .20, "futures": .20, "options": .12, "structure": .18, "participation": .10}
 CONFLICT_LIMIT = .22
 
+def _finite_float(value: Any) -> float | None:
+    if isinstance(value, bool): return None
+    try: result = float(value)
+    except (TypeError, ValueError, OverflowError): return None
+    return result if isfinite(result) else None
+
 def robust_z(value: float, history: Sequence[float]) -> float | None:
-    clean = [float(x) for x in history if isfinite(float(x))]
-    if len(clean) < 8 or not isfinite(float(value)): return None
+    current = _finite_float(value)
+    clean = [x for raw in history if (x := _finite_float(raw)) is not None]
+    if current is None or len(clean) < 8: return None
     med = median(clean); mad = median([abs(x-med) for x in clean])
     if mad <= 0: return None
-    return (float(value)-med)/(1.4826*mad)
+    return (current-med)/(1.4826*mad)
 
 def _score(value: Any) -> float | None:
-    if isinstance(value, bool): return None
-    try: x = float(value)
-    except (TypeError, ValueError, OverflowError): return None
-    return x if isfinite(x) and -1 <= x <= 1 else None
+    x = _finite_float(value)
+    return x if x is not None and -1 <= x <= 1 else None
 
 def evaluate_signal(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     raw = snapshot.get("groups") if isinstance(snapshot.get("groups"), Mapping) else {}
@@ -38,6 +43,6 @@ def evaluate_signal(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     conf = max(bscore,dscore)
     state = "DATA_INSUFFICIENT" if coverage < .60 else "CONFLICT" if conflict >= 100*CONFLICT_LIMIT else "PRE_IMPULSE" if conf >= 65 else "PRESSURE_BUILDING" if conf >= 45 else "IDLE"
     eligible = state == "PRE_IMPULSE" and all(gates.values()) and side != "NONE"
-    return {"strategy":"SHORT_COVERING_LONG_UNWINDING","side":side,"bullish_score":bscore,"bearish_score":dscore,
+    return {"strategy":"SHORT_COVERING_LONG_UNWIND","side":side,"bullish_score":bscore,"bearish_score":dscore,
       "conflict_score":conflict,"coverage":round(coverage,3),"group_evidence":evidence,
       "state":state,"alert_eligible":eligible,"quality_gates":gates,"order_routing_enabled":False}
