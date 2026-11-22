@@ -165,13 +165,13 @@ class SharedIndexMarketDataState:
                     data[f"{side}_qty_delta_{window}s"] = current_qty - baseline_qty if current_qty is not None and baseline_qty is not None and data["fresh"] else None
                 baseline_spread = (quote_baseline[3] - quote_baseline[2]) if quote_baseline is not None and quote_baseline[2] is not None and quote_baseline[3] is not None else None
                 data[f"spread_delta_{window}s"] = spread - baseline_spread if spread is not None and baseline_spread is not None and data["fresh"] else None
-            data["tick_rate_1s"] = sum(1 for stamp, *_ in ticks if stamp >= record.timestamp_ns - 1_000_000_000)
+            for window in (1, 3, 5):\n                data[f"tick_rate_{window}s"] = sum(1 for stamp, *_ in ticks if stamp >= record.timestamp_ns - window * 1_000_000_000)
             if not data["fresh"]:
                 for window in (1, 3, 5):
                     data[f"ltp_delta_{window}s"] = None
                     data[f"ltp_change_pct_{window}s"] = None
                     data[f"ltp_velocity_{window}s"] = None
-                for metric in ("mid_price", "spread", "spread_pct", "quote_imbalance", "microprice", "tick_rate_1s"):
+                for metric in ("mid_price", "spread", "spread_pct", "quote_imbalance", "microprice", "tick_rate_1s", "tick_rate_3s", "tick_rate_5s"):
                     data[metric] = None
                 for window in (1, 3, 5):
                     for metric in (f"bid_qty_delta_{window}s", f"ask_qty_delta_{window}s", f"spread_delta_{window}s"):
