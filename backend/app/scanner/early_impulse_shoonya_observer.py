@@ -37,8 +37,13 @@ class EarlyImpulseShoonyaObserver:
         except Exception:
             with self._lock:
                 self._observer_errors += 1
+        # Session lifecycle must reach the runner even if cache maintenance fails.
         try:
             self.cache.on_session_observation(state, reason, epoch, authenticated, connected, observed_ns)
+        except Exception:
+            with self._lock:
+                self._observer_errors += 1
+        try:
             self.runner.on_session(state, epoch, authenticated, connected)
         except Exception:
             with self._lock:
@@ -51,8 +56,14 @@ class EarlyImpulseShoonyaObserver:
         except Exception:
             with self._lock:
                 self._observer_errors += 1
+        # Each consumer is independent: a cache failure must not prevent the
+        # live runner from receiving an authenticated tick, and vice versa.
         try:
             self.cache.on_tick_observation(record, epoch, authenticated, received_monotonic_ns)
+        except Exception:
+            with self._lock:
+                self._observer_errors += 1
+        try:
             self.runner.on_tick(record, epoch, authenticated, received_monotonic_ns)
         except Exception:
             with self._lock:
