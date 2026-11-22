@@ -91,3 +91,30 @@ def test_runner_rejects_non_finite_prices_before_history_ingestion():
         record.ltp = invalid_price
         assert runner.on_tick(record, 1, True, monotonic_ns()) is None
     assert runner.snapshot()["history_sizes"] == {}
+
+
+def test_runner_rejects_duplicate_and_out_of_order_ticks_without_volume_corruption():
+    from app.scanner.early_impulse_shoonya_runner import EarlyImpulseLiveRunner
+    runner = EarlyImpulseLiveRunner()
+    roles = {
+        "NSE:NFO:101": "spot",
+        "NSE:NFO:102": "future",
+        "NSE:NFO:103": "cross",
+    }
+    runner.configure_roles(roles)
+    runner.on_session("LIVE", 1, True, True)
+    runner.enable()
+    record = _record()
+    record.volume = 100
+    assert runner.on_tick(record, 1, True, 1_000_000_000) is None
+    record.volume = 150
+    assert runner.on_tick(record, 1, True, 2_000_000_000) is None
+    record.volume = 125
+    assert runner.on_tick(record, 1, True, 1_500_000_000) is None
+    record.volume = 160
+    assert runner.on_tick(record, 1, True, 2_000_000_000) is None
+    record.volume = 180
+    assert runner.on_tick(record, 1, True, 3_000_000_000) is None
+    quotes = list(runner._history["NSE:NFO:101"])
+    assert [q.timestamp_ns for q in quotes] == [1_000_000_000, 2_000_000_000, 3_000_000_000]
+    assert [q.volume_delta for q in quotes] == [None, 50, 30]
