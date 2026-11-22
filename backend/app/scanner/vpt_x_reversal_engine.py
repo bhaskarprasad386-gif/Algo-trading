@@ -5,7 +5,7 @@ paper execution, or order routing.
 """
 from __future__ import annotations
 
-from math import isfinite
+from math import isfinite\nimport time
 from typing import Any, Mapping, Sequence
 
 SUPPORTED_UNDERLYINGS = {"NIFTY", "BANKNIFTY"}
@@ -185,7 +185,7 @@ def evaluate_vptx(snapshot: Mapping[str, Any], *, now_ms: int | None = None) -> 
                 "candidates": [], "scanner_only": True, "order_routing_enabled": False}
     raw_ticks = snapshot.get("ticks")
     ticks = _normalize_ticks(raw_ticks if isinstance(raw_ticks, Sequence) and not isinstance(raw_ticks, (str, bytes)) else [])
-    now = now_ms if now_ms is not None else (ticks[-1]["timestamp_ms"] if ticks else 0)
+    now = now_ms if now_ms is not None else int(time.time() * 1000)
     age = now - ticks[-1]["timestamp_ms"] if ticks else None
     if len(ticks) < MIN_TICKS or age is None or not 0 <= age <= MAX_AGE_MS:
         return {"underlying": underlying, "status": "WAITING_DATA", "tick_count": len(ticks),
