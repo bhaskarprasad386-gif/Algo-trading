@@ -1,4 +1,5 @@
 from datetime import date
+import pytest
 from app.market_data.provider_contracts import CanonicalContractKey, BrokerContractToken, ContractMapping
 from app.market_data.shared_index_quote_parity import SharedIndexQuoteParity, QuoteSourceObservation
 
@@ -22,7 +23,7 @@ def test_parity_ok_when_both_sources_fresh_within_one_tick():
     monitor.observe(obs("ANGELONE", "a1", 100.0, 1_000_000_000))
     status = monitor.observe(obs("SHOONYA", "s1", 100.04, 1_010_000_000))
     assert status.state == "PARITY_OK"
-    assert status.ltp_delta == 0.04
+    assert status.ltp_delta == pytest.approx(0.04)
     assert status.sources_fresh == ("ANGELONE", "SHOONYA")
 
 
