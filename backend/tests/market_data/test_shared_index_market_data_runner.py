@@ -238,3 +238,39 @@ def test_failed_instrument_master_refresh_preserves_last_good_rows():
     assert runner._rows is original
     assert "network unavailable" in runner._master_refresh_error
     runner.stop()
+
+
+def test_refresh_started_before_off_cannot_publish_after_off():
+    from threading import Event
+    import time
+    class BlockingMaster(FakeMaster):
+        def __init__(self, rows):
+            super().__init__(rows)
+            self.started = Event()
+            self.release = Event()
+        def download(self, *, force=False):
+            if force:
+                self.started.set()
+                assert self.release.wait(timeout=2)
+                return self.rows + [{
+                    "exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "FUTIDX",
+                    "expiry": "31DEC2026", "symbol": "NIFTY31DECFUT", "token": "999998",
+                    "lotsize": "25",
+                }]
+            return self.rows
+    rows = _rows()
+    master = BlockingMaster(rows)
+    runner = SharedIndexMarketDataRunner(instrument_master=master, manager=RunnerManager())
+    runner.start(rows)
+    original_rows = runner._rows
+    runner._master_refresh_interval_seconds = 0
+    assert runner._schedule_master_refresh()
+    assert master.started.wait(timeout=2)
+    runner.stop()
+    master.release.set()
+    deadline = time.monotonic() + 2
+    while runner._master_refresh_inflight and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert runner._running is False
+    assert runner._rows is original_rows
+    assert runner.snapshot()["state"]["instrument_count"] == 0
