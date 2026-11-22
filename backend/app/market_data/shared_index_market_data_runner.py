@@ -129,6 +129,7 @@ class SharedIndexMarketDataRunner:
                     lot_size=contract.lot_size, underlying=contract.underlying,
                 ) for contract in selected.contracts)
             self.lifecycle.start_options(tuple(descriptors))
+            self._sync_state_universe()
             with self._lock:
                 self._start_error = None
                 self._bootstrap_options_done = True
@@ -139,6 +140,11 @@ class SharedIndexMarketDataRunner:
                 self._start_error = f"{type(exc).__name__}: {exc}"[:240]
                 self._bootstrap_inflight = False
             return False
+
+    def _sync_state_universe(self) -> None:
+        # Bound tick-state keys to the currently owned contracts after rotations.
+        # Cache entries for retired strikes must not consume the 50-key cap.
+        self.state.retain_instruments(self.lifecycle.active_keys())
 
     def _on_record(self, record) -> None:
         if not self.state.on_record(record):
@@ -154,9 +160,13 @@ class SharedIndexMarketDataRunner:
             if not running:
                 return
             self._bootstrap_options()
-            self.rotation.on_record(record)
+            rotated = self.rotation.on_record(record)
+            if rotated:
+                self._sync_state_universe()
             # Flush cooldown-coalesced rotations on subsequent live spot ticks.
-            self.rotation.flush_due()
+            flushed = self.rotation.flush_due()
+            if flushed:
+                self._sync_state_universe()
 
     def start(self) -> dict:
         with self._lock:
