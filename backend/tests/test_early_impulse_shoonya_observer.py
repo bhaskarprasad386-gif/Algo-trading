@@ -132,3 +132,26 @@ def test_runner_does_not_rewind_global_eval_clock_for_cross_role_tick():
     record = _record()
     assert runner.on_tick(record, 1, True, 1_900_000_000) is None
     assert runner._last_eval_ns == 2_000_000_000
+
+
+def test_runner_rejects_tick_marked_unauthenticated_even_after_live_session():
+    from app.scanner.early_impulse_shoonya_runner import EarlyImpulseLiveRunner
+    runner = EarlyImpulseLiveRunner()
+    runner.configure_roles({
+        "NSE:NFO:101": "spot", "NSE:NFO:102": "future", "NSE:NFO:103": "cross",
+    })
+    runner.on_session("LIVE", 3, True, True)
+    runner.enable()
+    record = _record()
+    assert runner.on_tick(record, 3, False, monotonic_ns()) is None
+    assert runner.snapshot()["history_sizes"] == {}
+
+
+def test_runner_ignores_old_epoch_disconnect_after_new_epoch_live():
+    from app.scanner.early_impulse_shoonya_runner import EarlyImpulseLiveRunner
+    runner = EarlyImpulseLiveRunner()
+    runner.on_session("LIVE", 5, True, True)
+    runner.on_session("RECONNECTING", 4, False, False)
+    snap = runner.snapshot()
+    assert runner._epoch == 5
+    assert runner._authenticated is True
