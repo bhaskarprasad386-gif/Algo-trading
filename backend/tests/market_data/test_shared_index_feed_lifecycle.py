@@ -1,0 +1,79 @@
+from app.market_data.shared_index_feed_lifecycle import SharedIndexFeedLifecycle
+from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
+from app.market_data.contracts import InstrumentKey
+
+
+class StubManager:
+    def __init__(self):
+        self.registry = InstrumentRegistry()
+        self.callbacks = {}
+        self.active = {}
+    def register_normalized_callback(self, consumer, callback):
+        self.callbacks[consumer] = callback
+    def subscribe(self, consumer, keys, mode=1):
+        for key in keys:
+            self.registry.subscribe(consumer, key, mode)
+            self.active.setdefault(consumer, set()).add(key)
+    def unsubscribe(self, consumer, keys=None):
+        keys = list(keys or self.registry.active_keys())
+        for key in keys:
+            self.registry.unsubscribe(consumer, key)
+            self.active.setdefault(consumer, set()).discard(key)
+    def clear_consumer(self, consumer):
+        self.registry.clear_consumer(consumer)
+        self.active.pop(consumer, None)
+        self.callbacks.pop(consumer, None)
+    def snapshot(self):
+        return {"active_subscriptions": len(self.registry.subscriptions())}
+
+
+def _spot_descriptors():
+    return tuple(InstrumentDescriptor(
+        key=InstrumentKey("NSE", "NSE", token), symbol=symbol,
+        instrument_type="index", exchange="NSE", segment="NSE", underlying=symbol,
+    ) for symbol, token in (("NIFTY", "99001"), ("BANKNIFTY", "99002"))
+)
+
+
+def _options(shift=0):
+    descriptors = []
+    for underlying, base, count in (("NIFTY", 22000, 13), ("BANKNIFTY", 48000, 11)):
+        for n in range(count):
+            strike = base + n * 50 + shift
+            for opt in ("CE", "PE"):
+                token = f"{underlying}-{strike}-{opt}-{shift}"
+                descriptors.append(InstrumentDescriptor(
+                    key=InstrumentKey("NFO", "NFO", token), symbol=token,
+                    instrument_type="option", exchange="NFO", segment="NFO",
+                    expiry="TEST", strike=strike, option_type=opt, underlying=underlying,
+                ))
+    return tuple(descriptors)
+
+
+def test_options_rotation_adds_before_removing_and_keeps_spot_owner():
+    manager = StubManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    lifecycle.start_spot(_spot_descriptors())
+    lifecycle.start_options(_options())
+    spot_before = set(manager.active[lifecycle.SPOT_CONSUMER])
+    lifecycle.rotate_options(_options(shift=25))
+    assert manager.active[lifecycle.SPOT_CONSUMER] == spot_before
+    assert len(manager.active[lifecycle.OPTIONS_CONSUMER]) == 48
+    assert len(manager.active[lifecycle.SPOT_CONSUMER]) == 2
+    lifecycle.stop_options()
+    assert len(manager.active[lifecycle.SPOT_CONSUMER]) == 2
+    lifecycle.stop_spot()
+    assert not manager.registry.subscriptions()
+
+
+def test_invalid_locked_option_count_rejected_before_mutation():
+    manager = StubManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    bad = _options()[:-2]
+    try:
+        lifecycle.start_options(bad)
+    except ValueError as exc:
+        assert "exactly 26 NIFTY" in str(exc)
+    else:
+        raise AssertionError("invalid option universe must be rejected")
+    assert not manager.registry.subscriptions()
