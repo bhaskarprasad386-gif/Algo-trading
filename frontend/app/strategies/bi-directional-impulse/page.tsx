@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Activity, ArrowDownRight, ArrowUpRight, BellRing, CheckCircle2, CircleDot,
   Clock3, Layers3, RefreshCw, ShieldAlert, ShieldCheck, Signal, Waves, Zap,
@@ -34,16 +34,16 @@ const fmt = (v?: number | null) => typeof v === "number" && Number.isFinite(v) ?
 const time = (v?: string) => v ? new Date(v).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour:"2-digit",minute:"2-digit",second:"2-digit"})+" IST" : "—";
 const direction = (d?: string) => (d ?? "—").toUpperCase();
 
-function Pill({children,tone="neutral"}:{children:React.ReactNode;tone?: "neutral"|"green"|"red"|"amber"}) {
+function Pill({children,tone="neutral"}:{children:ReactNode;tone?: "neutral"|"green"|"red"|"amber"}) {
   const cls = tone==="green" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" : tone==="red" ? "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-300" : tone==="amber" ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300" : "border theme-border theme-surface-2 theme-muted";
   return <span className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-semibold ${cls}`}>{children}</span>;
 }
 function Stat({label,value,sub}:{label:string;value:string;sub?:string}) {
   return <div className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3"><div className="text-[10px] font-semibold uppercase tracking-wide theme-muted">{label}</div><div className="mt-1 truncate text-lg font-extrabold theme-text">{value}</div>{sub&&<div className="mt-1 text-[10px] theme-muted">{sub}</div>}</div>;
 }
-function DirectionPanel({title,direction,description,signals}:{title:string;direction:"BUY"|" " | "SELL";description:string;signals:Signal[]}) {
+function DirectionPanel({title,direction,description,signals}:{title:string;direction:"BUY" | "SELL";description:string;signals:Signal[]}) {
   const bullish=direction==="BUY";
-  const list=signals.filter(s=>String(s.direction??"").toUpperCase()===(direction===" "?"":direction));
+  const list=signals.filter(s=>String(s.direction??"").toUpperCase()===direction);
   return <section className="rounded-2xl border theme-border theme-surface overflow-hidden">
     <div className={`border-b theme-border p-4 ${bullish?"bg-emerald-500/5":"bg-rose-500/5"}`}>
       <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-sm font-bold"><span className={`rounded-lg p-2 ${bullish?"bg-emerald-500/10 text-emerald-600":"bg-rose-500/10 text-rose-600"}`}>{bullish?<ArrowUpRight size={18}/>:<ArrowDownRight size={18}/>}</span>{title}</div><Pill tone={bullish?"green":"red"}>{bullish?"BULLISH":"BEARISH"}</Pill></div>
@@ -116,12 +116,12 @@ export default function BiDirectionalImpulsePage() {
     </section>
 
     <section className="grid gap-3 sm:grid-cols-2">
-      <DirectionPanel title="Short Covering Engine" direction="BUY" description="Downside liquidity sweep, seller absorption, futures/basis recovery, covering-compatible OI context and upside structure confirmation." signals={signals}/>
-      <DirectionPanel title="Long Unwinding Engine" direction="SELL" description="Upside sweep failure, buyer absorption, futures/basis weakness, unwinding-compatible OI context and downside structure confirmation." signals={signals}/>
+      <DirectionPanel title="BUY Signal History" direction="BUY" description="Existing scanner BUY records only. The dedicated short-covering sequence engine is not yet wired to live feature data." signals={signals}/>
+      <DirectionPanel title="SELL Signal History" direction="SELL" description="Existing scanner SELL records only. The dedicated long-unwinding sequence engine is not yet wired to live feature data." signals={signals}/>
     </section>
 
     <section className="rounded-2xl border theme-border theme-surface p-3 sm:p-4">
-      <div className="flex items-start justify-between gap-3"><div><h2 className="text-base font-bold">Signal pipeline</h2><p className="mt-1 text-xs theme-muted">Stages are defined; live progression appears only when backend emits evidence.</p></div><Layers3 size={18} className="theme-accent"/></div>
+      <div className="flex items-start justify-between gap-3"><div><h2 className="text-base font-bold">Signal pipeline</h2><p className="mt-1 text-xs theme-muted">Conceptual stages only; the current backend does not emit these dedicated event states yet.</p></div><Layers3 size={18} className="theme-accent"/></div>
       <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {[
           ["01","PRECONDITION","Regime + liquidity context",CircleDot],
