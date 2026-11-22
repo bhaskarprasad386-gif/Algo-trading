@@ -20,6 +20,18 @@ def test_supported_indices_evaluate_both_directions_and_three_patterns(index):
     assert not result["subscription_enabled"]
 
 
+def test_discontinuous_tick_history_fails_closed_even_when_last_tick_is_fresh():
+    start = int(time.time() * 1000) - 6_000
+    ticks = _ticks([100 + i * .1 for i in range(30)], start=start)
+    # A 3-second gap is beyond the allowed 2.5-second continuity window,
+    # while the final observation remains fresh.
+    for tick in ticks[15:]:
+        tick["timestamp_ms"] += 3_000
+    result = evaluate_vptx({"underlying": "NIFTY", "ticks": ticks})
+    assert result["status"] == "WAITING_DATA"
+    assert result["reason"] == "DISCONTINUOUS_TICK_HISTORY"
+    assert result["candidates"] == []
+
 def test_stale_tick_data_fails_closed():
     result=evaluate_vptx({"underlying":"NIFTY","ticks":_ticks([100+i*.1 for i in range(25)], start=1_000_000)},now_ms=1_010_000)
     assert result["status"]=="WAITING_DATA" and result["candidates"]==[]
