@@ -72,7 +72,7 @@ def evaluate(payload: SnapshotRequest):
             prior = _history.get(key)
             state = "TRIGGERED" if candidate["trigger_ready"] else "WATCH"
             invalidation = candidate.get("invalidation_price")
-            if prior and prior.get("status") in {"TRIGGERED", "WATCH"}:
+            if prior and prior.get("status") in {"TRIGGERED", "WATCH", "INVALIDATED", "EXPIRED"}:
                 prev_state = prior.get("status")
                 if prev_state == "TRIGGERED":
                     invalid = (latest_price < invalidation) if candidate["direction"] == "BUY" else (latest_price > invalidation)
