@@ -1,5 +1,14 @@
 from fastapi.testclient import TestClient
-from app.scanner.vpt_x_reversal_routes import router
+from app.scanner.vpt_x_reversal_routes import router, _history, _lock
+import pytest
+
+@pytest.fixture(autouse=True)
+def clear_signal_history():
+    with _lock:
+        _history.clear()
+    yield
+    with _lock:
+        _history.clear()
 
 # Exercise route contract with a local test app to avoid importing the full trading app.
 from fastapi import FastAPI
