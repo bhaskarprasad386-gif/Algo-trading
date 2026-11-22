@@ -69,6 +69,7 @@ def test_futures_rotation_preserves_owner_and_replaces_contracts():
     assert len(manager.active[lifecycle.FUTURES_CONSUMER]) == 2
     assert manager.active[lifecycle.FUTURES_CONSUMER] == {d.key for d in new}
     assert manager.active[lifecycle.FUTURES_CONSUMER].isdisjoint(original)
+    assert all(manager.registry.get(key) is None for key in original)
     assert lifecycle.snapshot()["futures_active"] is True
     lifecycle.stop_futures()
     assert not manager.registry.active_keys()
@@ -98,9 +99,11 @@ def test_options_rotation_adds_before_removing_and_keeps_spot_owner():
     lifecycle.start_spot(_spot_descriptors())
     lifecycle.start_options(_options())
     spot_before = set(manager.active[lifecycle.SPOT_CONSUMER])
+    old_option_keys = set(lifecycle._option_keys)
     lifecycle.rotate_options(_options(shift=25))
     assert manager.active[lifecycle.SPOT_CONSUMER] == spot_before
     assert len(manager.active[lifecycle.OPTIONS_CONSUMER]) == 48
+    assert all(manager.registry.get(key) is None for key in old_option_keys)
     assert len(manager.active[lifecycle.SPOT_CONSUMER]) == 2
     lifecycle.stop_options()
     assert len(manager.active[lifecycle.SPOT_CONSUMER]) == 2
