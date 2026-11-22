@@ -50,3 +50,15 @@ def detect_reclaim(*, price: object, level: object, side: Side, timestamp_ms: ob
 def event_is_fresh(event: LiquidityEvent, now_ms: object) -> bool:
     now=_num(now_ms)
     return now is not None and now>=event.timestamp_ms and now-event.timestamp_ms<=event.ttl_ms
+
+def detect_cross_sweep(*, previous_price: object, price: object, level: object, side: Side, timestamp_ms: object, min_sweep: object, ttl_ms: int=15_000) -> LiquidityEvent | None:
+    """Detect a fresh crossing into liquidity beyond a level (not merely an already-beyond quote)."""
+    prev,p,l,t,m=_num(previous_price),_num(price),_num(level),_num(timestamp_ms),_num(min_sweep)
+    if prev is None or p is None or l is None or t is None or m is None or m<=0 or ttl_ms<=0 or t<0:
+        return None
+    crossed=(prev>=l and p<l-m) if side=="BULLISH" else (prev<=l and p>l+m)
+    if not crossed: return None
+    distance=(l-p) if side=="BULLISH" else (p-l)
+    confidence=min(1.0,max(0.0,distance/(m*3)))
+    return LiquidityEvent("LIQUIDITY_SWEEP",side,l,p,distance,int(t),int(ttl_ms),confidence,
+        "Fresh downside liquidity crossing" if side=="BULLISH" else "Fresh upside liquidity crossing")
