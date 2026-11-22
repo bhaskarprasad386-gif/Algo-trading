@@ -212,4 +212,3 @@ def test_tick_rate_reports_one_three_and_five_second_windows():
     assert row["tick_rate_1s"] == 1
     assert row["tick_rate_3s"] == 2
     assert row["tick_rate_5s"] == 3
-\n    state = SharedIndexMarketDataState(max_age_seconds=6)\n    now = time_ns()\n    inst = InstrumentKey("NFO", "NFO", "tick-rate")\n    def tick(ts):\n        return MarketDataRecord(instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION, timestamp_ns=ts, ltp=100, bid=99, ask=101, underlying="NIFTY")\n    assert state.on_record(tick(now-4_200_000_000))\n    assert state.on_record(tick(now-2_200_000_000))\n    assert state.on_record(tick(now-200_000_000))\n    row=state.records_snapshot()[0]\n    assert row["tick_rate_1s"] == 1\n    assert row["tick_rate_3s"] == 2\n    assert row["tick_rate_5s"] == 3\n
