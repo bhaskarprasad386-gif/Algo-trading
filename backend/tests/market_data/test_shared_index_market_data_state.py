@@ -2,7 +2,7 @@ from time import time_ns
 import pytest
 
 from app.market_data.shared_index_market_data_state import SharedIndexMarketDataState
-from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
+from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord, OptionType
 
 
 
