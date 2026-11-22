@@ -29,9 +29,10 @@ def _cleanup(now: int) -> None:
     expire_before = now - _SIGNAL_EXPIRE_SECONDS * 1000
     for key, item in list(_history.items()):
         updated = int(item.get("_updated_ms", 0))
+        state_started = int(item.get("_state_started_ms", updated))
         if updated < cutoff:
             _history.pop(key, None)
-        elif updated < expire_before and item.get("status") in {"WATCH", "TRIGGERED"}:
+        elif state_started < expire_before and item.get("status") in {"WATCH", "TRIGGERED"}:
             item["status"] = "EXPIRED"
             item["_expired_ms"] = now
     while len(_history) > _CAPACITY:
@@ -94,6 +95,9 @@ def evaluate(payload: SnapshotRequest):
                 item["signal_id"] = f"{key}:{now}"
                 item["created_at"] = item["updated_at"]
             item["_updated_ms"] = now
+            item["_state_started_ms"] = (
+                int(prior.get("_state_started_ms", prior.get("_updated_ms", now))))
+                if prior and prior.get("status") == state else now
             _history[key] = item
             _history.move_to_end(key)
             candidates.append({k: v for k, v in item.items() if not k.startswith("_")})
