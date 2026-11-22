@@ -320,32 +320,44 @@ class SharedIndexFeedLifecycle:
 
     def stop_futures(self) -> None:
         with self._lock:
-            self._futures_feed.stop()
-            self._futures_keys = ()
-            self._futures_started = False
+            try:
+                self._futures_feed.stop()
+            finally:
+                # clear_consumer mutates registry before reconcile; local ownership
+                # must reflect that mutation even if transport reconcile raises.
+                self._futures_keys = ()
+                self._futures_started = False
 
 
     def stop_options(self) -> None:
         with self._lock:
-            self._options_feed.stop()
-            self._option_keys = ()
-            self._options_started = False
-
+            try:
+                self._options_feed.stop()
+            finally:
+                self._option_keys = ()
+                self._options_started = False
 
 
     def stop_spot(self) -> None:
         with self._lock:
-            self._spot_feed.stop()
-            self._spot_keys = ()
-            self._spot_started = False
-
+            try:
+                self._spot_feed.stop()
+            finally:
+                self._spot_keys = ()
+                self._spot_started = False
 
 
     def stop(self) -> None:
-        # Independent consumers: stopping one never clears the other's registry refs.
-        self.stop_options()
-        self.stop_futures()
-        self.stop_spot()
+        # Teardown every independent owner even when a preceding reconcile fails.
+        # Keep the first error for the caller, but do not strand other owners.
+        errors = []
+        for stop_owner in (self.stop_options, self.stop_futures, self.stop_spot):
+            try:
+                stop_owner()
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
 
 
