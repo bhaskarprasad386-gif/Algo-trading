@@ -29,6 +29,8 @@ def _expiry_date(value: str | None) -> date:
 
 @dataclass(frozen=True, order=True)
 class SharedIndexContractIdentity:
+    exchange: str
+    segment: str
     underlying: str
     instrument_type: str
     expiry: date | None = None
@@ -36,6 +38,12 @@ class SharedIndexContractIdentity:
     option_type: str | None = None
 
     def __post_init__(self):
+        exchange = str(self.exchange).strip().upper()
+        segment = str(self.segment).strip().upper()
+        if not exchange or not segment:
+            raise ValueError("exchange and segment are required")
+        object.__setattr__(self, "exchange", exchange)
+        object.__setattr__(self, "segment", segment)
         underlying = str(self.underlying).strip().upper()
         kind = str(self.instrument_type).strip().lower()
         if underlying not in _LOCKED:
@@ -66,16 +74,16 @@ def canonical_identity(descriptor: InstrumentDescriptor) -> SharedIndexContractI
     if underlying not in _LOCKED:
         raise ValueError("descriptor underlying is missing or unlocked")
     if kind == "index":
-        return SharedIndexContractIdentity(underlying, kind)
+        return SharedIndexContractIdentity(descriptor.exchange, descriptor.segment, underlying, kind)
     if kind in {"future", "option"}:
         expiry = _expiry_date(descriptor.expiry)
         if kind == "future":
-            return SharedIndexContractIdentity(underlying, kind, expiry=expiry)
+            return SharedIndexContractIdentity(descriptor.exchange, descriptor.segment, underlying, kind, expiry=expiry)
         right = str(descriptor.option_type or "").strip().upper()
         strike = descriptor.strike
         if isinstance(strike, bool) or not isinstance(strike, (int, float)) or strike <= 0:
             raise ValueError("option strike is missing or invalid")
-        return SharedIndexContractIdentity(underlying, kind, expiry=expiry, strike=float(strike), option_type=right)
+        return SharedIndexContractIdentity(descriptor.exchange, descriptor.segment, underlying, kind, expiry=expiry, strike=float(strike), option_type=right)
     raise ValueError("unsupported instrument type")
 
 
