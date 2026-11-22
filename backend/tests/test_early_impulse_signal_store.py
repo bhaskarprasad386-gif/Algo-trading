@@ -73,3 +73,36 @@ def test_publish_rejects_non_finite_timestamp(bad_timestamp):
 def test_publish_rejects_non_finite_score(bad_score):
     with pytest.raises(ValueError):
         EarlyImpulseSignalStore().publish(_signal(score=bad_score), now=1)
+
+
+def test_new_feed_epoch_resets_cooldown_but_preserves_history():
+    store = EarlyImpulseSignalStore(cooldown_seconds=30)
+    assert store.begin_epoch(4)
+    assert store.publish(_signal(feed_epoch=4), now=100)
+    assert not store.publish(_signal(feed_epoch=4, score=90), now=110)
+    assert store.begin_epoch(5)
+    assert store.publish(_signal(feed_epoch=5, score=91), now=111)
+    snapshot = store.snapshot()
+    assert snapshot["feed_epoch"] == 5
+    assert snapshot["signal_count"] == 2
+    assert [signal["feed_epoch"] for signal in snapshot["signals"]] == [5, 4]
+
+
+def test_stale_feed_epoch_signal_rejected_after_reconnect():
+    store = EarlyImpulseSignalStore(cooldown_seconds=0)
+    assert store.begin_epoch(9)
+    assert store.publish(_signal(feed_epoch=9), now=100)
+    assert store.begin_epoch(10)
+    assert not store.publish(_signal(feed_epoch=9, score=90), now=101)
+    assert store.publish(_signal(feed_epoch=10, score=91), now=102)
+    snapshot = store.snapshot()
+    assert snapshot["feed_epoch"] == 10
+    assert snapshot["signals"][0]["feed_epoch"] == 10
+    assert snapshot["suppressed_duplicate_count"] == 1
+
+
+def test_signal_store_rejects_epoch_regression():
+    store = EarlyImpulseSignalStore()
+    assert store.begin_epoch(3)
+    assert not store.begin_epoch(2)
+    assert store.snapshot()["feed_epoch"] == 3
