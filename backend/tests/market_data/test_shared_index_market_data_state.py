@@ -36,3 +36,33 @@ def test_state_rejects_stale_tick():
     state = SharedIndexMarketDataState(max_age_seconds=1)
     assert not state.on_record(_record("spot3", time_ns() - 3_000_000_000))
     assert state.snapshot()["stale_ticks_dropped"] == 1
+
+def test_records_snapshot_exposes_quote_fields_and_one_second_oi_delta():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    option = MarketDataRecord(
+        instrument=InstrumentKey("NFO", "NFO", "opt1"), symbol="NIFTYCE",
+        instrument_type=InstrumentType.OPTION, timestamp_ns=now,
+        ltp=125.5, bid=124.9, ask=126.1, bid_qty=20, ask_qty=30,
+        volume=800, oi=1000, underlying="NIFTY", expiry="2026-11-26",
+        strike=25000, option_type=__import__("app.market_data.contracts", fromlist=["OptionType"]).OptionType.CALL,
+        lot_size=25,
+    )
+    assert state.on_record(option)
+    later = MarketDataRecord(
+        instrument=option.instrument, symbol=option.symbol,
+        instrument_type=option.instrument_type, timestamp_ns=now + 100_000_000,
+        ltp=126.0, bid=125.5, ask=126.5, bid_qty=25, ask_qty=40,
+        volume=820, oi=1060, underlying="NIFTY", expiry="2026-11-26",
+        strike=25000, option_type=option.option_type, lot_size=25,
+    )
+    # Timestamp stays within freshness and monotonic acceptance.
+    assert state.on_record(later)
+    rows = state.records_snapshot()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["ltp"] == 126.0 and row["bid"] == 125.5 and row["ask"] == 126.5
+    assert row["bid_qty"] == 25 and row["ask_qty"] == 40
+    assert row["volume"] == 820 and row["oi"] == 1060
+    assert row["oi_delta_1s"] == 60
+    assert row["fresh"] is True
