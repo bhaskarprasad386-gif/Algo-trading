@@ -404,3 +404,37 @@ def test_stale_master_refresh_failure_cannot_pollute_restarted_runner_epoch():
     assert runner._running is True
     assert runner._master_refresh_error is None
     runner.stop()
+
+
+
+def test_futures_rollover_is_serialized_with_runner_stop():
+    from threading import Event, Thread
+    import time
+
+    rows = _rows()
+    manager = RunnerManager()
+    runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=manager)
+    assert runner.start(rows)["enabled"] is True
+
+    selected_entered, release_selection = Event(), Event()
+    original_select = runner.choose_nearest_future
+    def blocked_selection(rows, underlying, *, today=None):
+        selected_entered.set()
+        assert release_selection.wait(timeout=3)
+        return original_select(rows, underlying, today=today)
+    runner.choose_nearest_future = blocked_selection
+
+    rollover_done, stop_done = Event(), Event()
+    rollover_thread = Thread(target=lambda: (runner._check_futures_rollover(), rollover_done.set()), daemon=True)
+    rollover_thread.start()
+    assert selected_entered.wait(timeout=2)
+    stop_thread = Thread(target=lambda: (runner.stop(), stop_done.set()), daemon=True)
+    stop_thread.start()
+    time.sleep(0.05)
+    assert not stop_done.is_set(), "OFF must wait for in-flight rollover to finish"
+    release_selection.set()
+    rollover_thread.join(timeout=3)
+    stop_thread.join(timeout=3)
+    assert rollover_done.is_set() and stop_done.is_set()
+    assert runner.snapshot()["enabled"] is False
+    assert manager.registry.active_keys() == ()
