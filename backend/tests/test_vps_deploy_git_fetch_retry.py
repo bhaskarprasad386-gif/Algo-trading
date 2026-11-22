@@ -12,15 +12,15 @@ WORKFLOW_PATH = Path(__file__).resolve().parents[2] / ".github" / "workflows" / 
 
 
 def _remote_script(workflow: str) -> str:
-    marker = "cat > /tmp/vps_remote_deploy.sh <<'REMOTE_SCRIPT'\\n"
+    marker = "cat > /tmp/vps_remote_deploy.sh <<'REMOTE_SCRIPT'\n"
     assert marker in workflow, "remote deploy script must be present"
-    return workflow.split(marker, 1)[1].split("\\nREMOTE_SCRIPT", 1)[0]
+    return workflow.split(marker, 1)[1].split("\nREMOTE_SCRIPT", 1)[0]
 
 
 def _fetch_function(workflow: str) -> str:
-    match = re.search(r"git_fetch_with_retry\\(\\)\\s*\\{(.*?)\\n\\s*\\}", _remote_script(workflow), re.S)
+    match = re.search(r"git_fetch_with_retry\(\)\s*\{(.*?)\n\s*\}", _remote_script(workflow), re.S)
     assert match, "remote deploy must define a bounded Git fetch retry function"
-    return "git_fetch_with_retry() {" + match.group(1) + "\\n}"
+    return "git_fetch_with_retry() {" + match.group(1) + "\n}"
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -34,16 +34,16 @@ def _run_fetch_function(function_source: str, git_fails: int, temp: Path) -> sub
     bin_dir.mkdir(exist_ok=True)
     _write_executable(
         bin_dir / "git",
-        "#!/bin/bash\\n"
-        "set -eu\\n"
-        "count=$(cat \"$GIT_FETCH_CALLS_FILE\" 2>/dev/null || echo 0)\\n"
-        "count=$((count + 1))\\n"
-        "printf '%s\\n' \"$count\" > \"$GIT_FETCH_CALLS_FILE\"\\n"
-        "if (( count <= GIT_FAILS )); then exit 56; fi\\n"
-        "exit 0\\n",
+        "#!/bin/bash\n"
+        "set -eu\n"
+        "count=$(cat \"$GIT_FETCH_CALLS_FILE\" 2>/dev/null || echo 0)\n"
+        "count=$((count + 1))\n"
+        "printf '%s\n' \"$count\" > \"$GIT_FETCH_CALLS_FILE\"\n"
+        "if (( count <= GIT_FAILS )); then exit 56; fi\n"
+        "exit 0\n",
     )
-    _write_executable(bin_dir / "timeout", "#!/bin/bash\\nshift\\nexec \"$@\"\\n")
-    _write_executable(bin_dir / "sleep", "#!/bin/sh\\nexit 0\\n")
+    _write_executable(bin_dir / "timeout", "#!/bin/bash\nshift\nexec \"$@\"\n")
+    _write_executable(bin_dir / "sleep", "#!/bin/sh\nexit 0\n")
     env = os.environ.copy()
     env.update(
         PATH=f"{bin_dir}:{env.get('PATH', '')}",
@@ -51,7 +51,7 @@ def _run_fetch_function(function_source: str, git_fails: int, temp: Path) -> sub
         GIT_FETCH_CALLS_FILE=str(calls),
     )
     return subprocess.run(
-        ["bash", "-c", function_source + "\\ngit_fetch_with_retry"],
+        ["bash", "-c", function_source + "\ngit_fetch_with_retry"],
         env=env,
         text=True,
         capture_output=True,
