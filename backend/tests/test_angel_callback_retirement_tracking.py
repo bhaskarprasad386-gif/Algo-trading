@@ -182,12 +182,19 @@ def test_recovery_supervisor_exits_on_shutdown_without_retrying():
     manager = CommonWebSocketManager()
     manager._recovery_interval_seconds = 0.01
     recovery_calls = []
-    manager.recover_disconnected = lambda **kwargs: recovery_calls.append(kwargs) or 0
+    recovery_called = Event()
+
+    def recover_disconnected(**kwargs):
+        recovery_calls.append(kwargs)
+        recovery_called.set()
+        return 0
+
+    manager.recover_disconnected = recover_disconnected
     manager.registry.subscriptions = lambda: [_valid_subscription()]
     manager._ensure_recovery_supervisor()
     thread = manager._recovery_thread
     assert thread is not None and thread.is_alive()
-    time.sleep(0.03)
+    assert recovery_called.wait(timeout=1.0)
     assert recovery_calls
 
 
@@ -216,7 +223,7 @@ def test_recovery_supervisor_uses_bounded_backoff_after_transient_errors():
 
 
     manager.recover_disconnected = failing_then_success
-    manager.registry.subscriptions = lambda: [object()]
+    manager.registry.subscriptions = lambda: [_valid_subscription()]
     manager._ensure_recovery_supervisor()
     assert recovery_succeeded.wait(timeout=1.0)
     state = manager.snapshot()
