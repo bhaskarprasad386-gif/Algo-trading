@@ -73,3 +73,21 @@ def test_runner_evaluation_throttle_resets_on_feed_epoch_and_disable():
     runner._last_eval_ns = 987654321
     runner.disable()
     assert runner._last_eval_ns == 0
+
+
+def test_runner_rejects_non_finite_prices_before_history_ingestion():
+    from app.scanner.early_impulse_shoonya_runner import EarlyImpulseLiveRunner
+    runner = EarlyImpulseLiveRunner()
+    roles = {
+        "NSE:NFO:101": "spot",
+        "NSE:NFO:102": "future",
+        "NSE:NFO:103": "cross",
+    }
+    runner.configure_roles(roles)
+    runner.on_session("LIVE", 1, True, True)
+    runner.enable()
+    for invalid_price in (float("nan"), float("inf"), float("-inf")):
+        record = _record()
+        record.ltp = invalid_price
+        assert runner.on_tick(record, 1, True, monotonic_ns()) is None
+    assert runner.snapshot()["history_sizes"] == {}
