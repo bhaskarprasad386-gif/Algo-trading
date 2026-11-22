@@ -273,6 +273,11 @@ class CommonWebSocketManager:
         self._socket_operation_worker_failures = 0
         self._recovery_attempts = 0
         self._last_recovery_at = None
+        self._recovery_backoff_max_seconds = 60.0
+        self._recovery_backoff_current_seconds = self._recovery_interval_seconds
+        self._recovery_backoff_errors = 0
+        self._recovery_backoff_resets = 0
+        self._recovery_backoff_last_error: str | None = None
 
     def _create_socket(self) -> Any:
         """Create a socket whose reconnect policy is owned by this manager."""
@@ -2231,6 +2236,11 @@ class CommonWebSocketManager:
                 "socket_operation_worker_failures": self._socket_operation_worker_failures,
                 "recovery_attempts": self._recovery_attempts,
                 "last_recovery_at": self._last_recovery_at,
+                "recovery_backoff_current_seconds": self._recovery_backoff_current_seconds,
+                "recovery_backoff_max_seconds": self._recovery_backoff_max_seconds,
+                "recovery_backoff_errors": self._recovery_backoff_errors,
+                "recovery_backoff_resets": self._recovery_backoff_resets,
+                "recovery_backoff_last_error": self._recovery_backoff_last_error,
             }
 
     def close(self) -> None:
