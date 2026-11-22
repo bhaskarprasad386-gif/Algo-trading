@@ -44,6 +44,7 @@ from app.market_data.client import MarketDataClient
 from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
+from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
@@ -62,7 +63,7 @@ from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_L
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
-from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot, configure_shoonya_snapshot, configure_shoonya_supervisor
+from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot, configure_shoonya_snapshot, configure_shoonya_supervisor, configure_shared_index_runner_snapshot
 from app.scanner.routes import router as scanner_router, full_fno_router, configure_live_cash_future_snapshot
 from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop, configure_page_update_callback as configure_weekly_swing_page_push, nifty200_scan_status
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
@@ -115,6 +116,8 @@ install_iv_basket_immutability_guards(engine)
 # Reuse one process-local instrument-master manager for live feed/API resolution.
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
+shared_index_market_data_runner = SharedIndexMarketDataRunner(instrument_master=instrument_master)
+configure_shared_index_runner_snapshot(shared_index_market_data_runner.snapshot)
 shoonya_market_data_supervisor: ShoonyaMarketDataSupervisor | None = None
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
 provider_quote_parity_worker: BoundedQuoteParityWorker | None = None
