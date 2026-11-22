@@ -268,7 +268,7 @@ class SharedIndexMarketDataRunner:
             "option_universe": {"NIFTY": "weekly ATM +/- 6", "BANKNIFTY": "monthly ATM +/- 5"},
             "state": state,
             "records": enriched_records,
-            "derived_iv_model": {"method": "Black-Scholes", "source": "derived_bsm", "risk_free_rate": 0.065, "risk_free_rate_unit": "annual_decimal", "expiry_time_ist": "15:30", "iv_unit": "percent", "velocity_window_seconds": 1},
+            "derived_iv_model": {"method": "Black-Scholes", "source": "derived_bsm", "risk_free_rate": 0.065, "risk_free_rate_unit": "annual_decimal", "expiry_time_ist": "15:30", "iv_unit": "percent", "velocity_window_seconds": 1, "volume_source": "broker_day_volume", "volume_delta_window_seconds": 1, "oi_source": "broker_open_interest", "oi_delta_window_seconds": 1},
             "lifecycle": lifecycle,
             "rotation": rotation,
             "live_data_ready": running and bootstrap_done and state["instrument_count"] == 50 and state["fresh_count"] == 50,
