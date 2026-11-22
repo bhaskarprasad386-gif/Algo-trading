@@ -6,7 +6,7 @@ It publishes latest tick state for future strategy consumers. Application lifesp
 from __future__ import annotations
 
 from datetime import date, datetime
-from threading import RLock
+from threading import RLock, Thread
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
@@ -96,6 +96,11 @@ class SharedIndexMarketDataRunner:
         self._bootstrap_inflight = False
         self._spot_records: dict[str, Any] = {}
         self._futures_expiries: dict[str, str] = {}
+        self._master_refresh_interval_seconds = 15 * 60.0
+        self._master_refresh_started_at = 0.0
+        self._master_refresh_inflight = False
+        self._master_last_refresh_at: str | None = None
+        self._master_refresh_error: str | None = None
 
     @staticmethod
     def choose_nearest_future(rows: Iterable[dict], underlying: str, *, today: date | None = None) -> dict:
@@ -127,6 +132,47 @@ class SharedIndexMarketDataRunner:
 
     def _expiry_for(self, underlying: str) -> str:
         return choose_locked_expiry(self._rows, underlying)
+
+    def _schedule_master_refresh(self) -> bool:
+        """Refresh instrument master off tick callback and publish complete snapshots only."""
+        import time
+        with self._lock:
+            if not self._running or self._master_refresh_inflight:
+                return False
+            if time.monotonic() - self._master_refresh_started_at < self._master_refresh_interval_seconds:
+                return False
+            self._master_refresh_inflight = True
+            self._master_refresh_started_at = time.monotonic()
+
+        def worker():
+            try:
+                refreshed = tuple(self.instrument_master.download(force=True))
+                if not refreshed:
+                    raise LookupError("refreshed instrument master was empty")
+                with self._lock:
+                    if not self._running:
+                        return
+                    self._rows = refreshed
+                    self._master_last_refresh_at = datetime.now(IST).isoformat()
+                    self._master_refresh_error = None
+                    spots = dict(self._spot_records)
+                    options_ready = self._bootstrap_options_done
+                if options_ready:
+                    for underlying in LOCKED:
+                        record = spots.get(underlying)
+                        if record is not None and record.ltp is not None:
+                            self.rotation._rotate(underlying, float(record.ltp))
+                    self._check_futures_rollover()
+                    self._sync_state_universe()
+            except Exception as exc:
+                with self._lock:
+                    self._master_refresh_error = f"{type(exc).__name__}: {exc}"[:200]
+            finally:
+                with self._lock:
+                    self._master_refresh_inflight = False
+
+        Thread(target=worker, name="shared-index-master-refresh", daemon=True).start()
+        return True
 
     def _check_futures_rollover(self) -> tuple[str, ...]:
         """Roll expired index futures without dropping the current subscription first."""
@@ -245,6 +291,7 @@ class SharedIndexMarketDataRunner:
                 if flushed:
                     self._sync_state_universe()
                 self._check_futures_rollover()
+                self._schedule_master_refresh()
 
     def start(self, instrument_rows: Iterable[dict] | None = None) -> dict:
         with self._lock:
@@ -268,6 +315,7 @@ class SharedIndexMarketDataRunner:
                 self.lifecycle.start_spot(spots)
                 self._running = True
                 self._started_at = datetime.now(IST).isoformat()
+                self._master_refresh_started_at = __import__("time").monotonic()
             from .common_strategy_feed import CommonStrategyMarketFeed
             futures = []
             future_expiries = {}
