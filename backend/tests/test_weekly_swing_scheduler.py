@@ -127,9 +127,29 @@ def test_nifty200_batches_start_on_five_minute_slots(monkeypatch):
     monkeypatch.setattr(scanner, "_nse_today", lambda: datetime(2026, 10, 23).date())
 
     monotonic_values = iter([0.0, 120.0, 300.0])
-    monkeypatch.setattr(scanner.time, "monotonic", lambda: next(monotonic_values))
     sleeps = []
-    monkeypatch.setattr(scanner.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    class FakeTime:
+        def __init__(self):
+            self.monotonic_calls = 0
+
+        def monotonic(self):
+            self.monotonic_calls += 1
+            try:
+                return next(monotonic_values)
+            except StopIteration:
+                raise AssertionError("unexpected scanner monotonic call")
+
+        @staticmethod
+        def sleep(seconds):
+            sleeps.append(seconds)
+
+        @staticmethod
+        def time():
+            return 0.0
+
+    fake_time = FakeTime()
+    monkeypatch.setattr(scanner, "time", fake_time)
     monkeypatch.setattr(scanner, "_SCAN_STATE", {})
 
     scanner._run_nifty200_scan()
@@ -137,4 +157,5 @@ def test_nifty200_batches_start_on_five_minute_slots(monkeypatch):
     assert scanner._SCAN_STATE["status"] == "completed"
     assert scanner._SCAN_STATE["scanned"] == 100
     assert scanner._SCAN_STATE["batch_number"] == 2
+    assert fake_time.monotonic_calls == 3
     assert sleeps == [180.0]
