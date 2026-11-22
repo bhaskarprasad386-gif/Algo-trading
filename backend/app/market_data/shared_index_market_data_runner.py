@@ -1,6 +1,6 @@
 """Isolated live-data runner for the locked NIFTY/BANKNIFTY market universe.
 
-Starts only spot + option subscriptions on the existing shared Angel One feed.
+Starts spot + option + futures subscriptions on the existing shared Angel One feed.
 It publishes latest tick state for future strategy consumers. Application lifespan starts the live feed; no strategy or order logic is connected.
 """
 from __future__ import annotations
@@ -228,23 +228,23 @@ class SharedIndexMarketDataRunner:
                 self._rows = rows
             with self._lock:
                 self.lifecycle.start_spot(spots)
-                from .common_strategy_feed import CommonStrategyMarketFeed
-                futures = []
-                future_expiries = {}
-                for underlying in LOCKED:
-                    selected = self.choose_nearest_future(rows, underlying)
-                    future_expiries[underlying] = selected["expiry"]
-                    raw_lot = selected["lot_size"]
-                    lot_size = int(float(raw_lot)) if raw_lot else None
-                    futures.append(CommonStrategyMarketFeed.descriptor(
-                        exchange="NFO", token=selected["token"], symbol=selected["symbol"],
-                        instrument_type="future", segment="NFO", expiry=selected["expiry"],
-                        lot_size=lot_size, underlying=underlying,
-                    ))
-                self.lifecycle.start_futures(tuple(futures))
-                self._futures_expiries = future_expiries
                 self._running = True
                 self._started_at = datetime.now(IST).isoformat()
+            from .common_strategy_feed import CommonStrategyMarketFeed
+            futures = []
+            future_expiries = {}
+            for underlying in LOCKED:
+                selected = self.choose_nearest_future(rows, underlying)
+                future_expiries[underlying] = selected["expiry"]
+                raw_lot = selected["lot_size"]
+                lot_size = int(float(raw_lot)) if raw_lot else None
+                futures.append(CommonStrategyMarketFeed.descriptor(
+                    exchange="NFO", token=selected["token"], symbol=selected["symbol"],
+                    instrument_type="future", segment="NFO", expiry=selected["expiry"],
+                    lot_size=lot_size, underlying=underlying,
+                ))
+            self.lifecycle.start_futures(tuple(futures))
+            self._futures_expiries = future_expiries
             return self.snapshot()
         except Exception as exc:
             with self._lock:
