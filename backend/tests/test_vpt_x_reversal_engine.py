@@ -46,7 +46,7 @@ def test_sweep_invalidation_uses_recent_sweep_extreme_not_window_low_high():
     swept_metrics = engine._metrics(engine._normalize_ticks(swept))
     assert swept_metrics["swept_low"] is True
     assert swept_metrics["reclaimed_low"] is True
-    assert swept_metrics["buy_invalidation"] == pytest.approx(min(p["price"] for p in swept[-5:]))
+    assert swept_metrics["buy_invalidation"] == pytest.approx(min(p["price"] for p in swept[-6:]))
 
 def test_stale_tick_data_fails_closed():
     result=evaluate_vptx({"underlying":"NIFTY","ticks":_ticks([100+i*.1 for i in range(25)], start=1_000_000)},now_ms=1_010_000)
