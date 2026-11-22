@@ -1,8 +1,8 @@
 """Isolated live-data runner for the locked NIFTY/BANKNIFTY market universe.
 
 Starts only spot + option subscriptions on the existing shared Angel One feed.
-It publishes latest tick state for future strategy consumers, but does not
-create strategy signals, orders, paper trades, or alter application startup.
+It publishes latest tick state for future strategy consumers. Application
+startup owns the opt-in live-feed lifecycle; no strategy or order logic is connected.
 """
 from __future__ import annotations
 
@@ -220,6 +220,17 @@ class SharedIndexMarketDataRunner:
         state = self.state.snapshot()
         lifecycle = self.lifecycle.snapshot()
         rotation = self.rotation.snapshot()
+        now_ns = __import__("time").time_ns()
+        with self._lock:
+            spot_records = dict(self._spot_records)
+        latest_spots = {
+            symbol: {
+                "price": record.ltp,
+                "timestamp_ns": record.timestamp_ns,
+                "age_seconds": max(0.0, (now_ns - record.timestamp_ns) / 1e9),
+            }
+            for symbol, record in spot_records.items()
+        }
         return {
             "runner": "shared-index-market-data",
             "enabled": running,
@@ -227,11 +238,12 @@ class SharedIndexMarketDataRunner:
             "last_error": error,
             "initial_option_bootstrap_done": bootstrap_done,
             "spot_universe": list(LOCKED),
+            "latest_spots": latest_spots,
             "option_universe": {"NIFTY": "weekly ATM +/- 6", "BANKNIFTY": "monthly ATM +/- 5"},
             "state": state,
             "lifecycle": lifecycle,
             "rotation": rotation,
-            "live_data_ready": running and state["instrument_count"] == 50 and state["fresh_count"] == 50,
+            "live_data_ready": running and bootstrap_done and state["instrument_count"] == 50 and state["fresh_count"] == 50,
         }
 
 
