@@ -185,39 +185,40 @@ class SharedIndexMarketDataRunner:
 
     def _check_futures_rollover(self) -> tuple[str, ...]:
         """Roll expired index futures without dropping the current subscription first."""
-        try:
-            from .common_strategy_feed import CommonStrategyMarketFeed
-            replacements = []
-            expiry_updates = {}
-            for underlying in LOCKED:
-                selected = self.choose_nearest_future(self._rows, underlying)
-                if self._futures_expiries.get(underlying) == selected["expiry"]:
-                    continue
-                raw_lot = selected["lot_size"]
-                lot_size = int(float(raw_lot)) if raw_lot else None
-                replacements.append(CommonStrategyMarketFeed.descriptor(
-                    exchange="NFO", token=selected["token"], symbol=selected["symbol"],
-                    instrument_type="future", segment="NFO", expiry=selected["expiry"],
-                    lot_size=lot_size, underlying=underlying,
-                ))
-                expiry_updates[underlying] = selected["expiry"]
-            if not replacements:
+        with self._lock:
+            try:
+                from .common_strategy_feed import CommonStrategyMarketFeed
+                replacements = []
+                expiry_updates = {}
+                for underlying in LOCKED:
+                    selected = self.choose_nearest_future(self._rows, underlying)
+                    if self._futures_expiries.get(underlying) == selected["expiry"]:
+                        continue
+                    raw_lot = selected["lot_size"]
+                    lot_size = int(float(raw_lot)) if raw_lot else None
+                    replacements.append(CommonStrategyMarketFeed.descriptor(
+                        exchange="NFO", token=selected["token"], symbol=selected["symbol"],
+                        instrument_type="future", segment="NFO", expiry=selected["expiry"],
+                        lot_size=lot_size, underlying=underlying,
+                    ))
+                    expiry_updates[underlying] = selected["expiry"]
+                if not replacements:
+                    return ()
+                # Keep unchanged underlying's existing future descriptor alongside replacements.
+                futures_manager = self.lifecycle._futures_feed.manager
+                current_futures = [
+                    descriptor for key in self.lifecycle._futures_keys
+                    if (descriptor := futures_manager.registry.get(key)) is not None
+                    and descriptor.underlying not in expiry_updates
+                ]
+                self.lifecycle.rotate_futures(tuple(current_futures + replacements))
+                self._futures_expiries.update(expiry_updates)
+                self._sync_state_universe()
+                return tuple(expiry_updates)
+            except Exception as exc:
+                with self._lock:
+                    self._start_error = f"Futures rollover: {type(exc).__name__}: {exc}"[:240]
                 return ()
-            # Keep unchanged underlying's existing future descriptor alongside replacements.
-            futures_manager = self.lifecycle._futures_feed.manager
-            current_futures = [
-                descriptor for key in self.lifecycle._futures_keys
-                if (descriptor := futures_manager.registry.get(key)) is not None
-                and descriptor.underlying not in expiry_updates
-            ]
-            self.lifecycle.rotate_futures(tuple(current_futures + replacements))
-            self._futures_expiries.update(expiry_updates)
-            self._sync_state_universe()
-            return tuple(expiry_updates)
-        except Exception as exc:
-            with self._lock:
-                self._start_error = f"Futures rollover: {type(exc).__name__}: {exc}"[:240]
-            return ()
 
     def _bootstrap_options(self) -> bool:
         # Bootstrap only after both underlyings have independent fresh spot ticks.
