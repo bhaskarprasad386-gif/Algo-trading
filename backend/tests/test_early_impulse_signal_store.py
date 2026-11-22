@@ -106,3 +106,11 @@ def test_signal_store_rejects_epoch_regression():
     assert store.begin_epoch(3)
     assert not store.begin_epoch(2)
     assert store.snapshot()["feed_epoch"] == 3
+
+
+def test_epochless_signal_rejected_after_epoch_is_active():
+    store = EarlyImpulseSignalStore(cooldown_seconds=0)
+    assert store.begin_epoch(2)
+    assert not store.publish(_signal(), now=1)
+    assert store.publish(_signal(feed_epoch=2), now=2)
+    assert store.snapshot()["suppressed_duplicate_count"] == 1
