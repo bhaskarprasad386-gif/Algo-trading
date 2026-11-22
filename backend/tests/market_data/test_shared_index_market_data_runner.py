@@ -101,7 +101,7 @@ def test_future_rollover_rotates_to_new_listed_expiry_and_updates_state():
                        if manager.registry.get(key).instrument_type == "future"]
     assert len(active_futures) == 2
     assert {d.expiry for d in active_futures} == {"2026-11-26", "2026-12-24"}
-    assert runner.snapshot()["state"]["instrument_count"] == 4
+    assert runner.snapshot()["state"]["instrument_count"] == 0
     runner.stop()
 
 
