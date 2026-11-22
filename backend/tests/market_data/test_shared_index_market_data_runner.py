@@ -423,6 +423,7 @@ def test_futures_rollover_is_serialized_with_runner_stop():
         assert release_selection.wait(timeout=3)
         return original_select(rows, underlying, today=today)
     runner.choose_nearest_future = blocked_selection
+    runner._futures_expiries = {}  # force a replacement-selection path for the race
 
     rollover_done, stop_done = Event(), Event()
     rollover_thread = Thread(target=lambda: (runner._check_futures_rollover(), rollover_done.set()), daemon=True)
