@@ -43,3 +43,15 @@ def test_signal_never_routes_orders_even_with_cross_confirmation():
     result=evaluate_vptx({"underlying":"BANKNIFTY","ticks":_ticks([100+i*.1 for i in range(30)]),"cross_confirmation":.9})
     assert all(c["order_routing_enabled"] is False for c in result["candidates"])
     assert result["subscription_enabled"] is False
+
+
+def test_monotonic_trend_does_not_trigger_reversal_by_itself():
+    result=evaluate_vptx({"underlying":"NIFTY","ticks":_ticks([100+i*.1 for i in range(30)])})
+    assert result["status"]=="EVALUATED"
+    assert all(c["trigger_ready"] is False for c in result["candidates"])
+
+
+def test_missing_tick_array_is_waiting_not_exception():
+    result=evaluate_vptx({"underlying":"BANKNIFTY","ticks":None})
+    assert result["status"]=="WAITING_DATA"
+    assert result["candidates"]==[]
