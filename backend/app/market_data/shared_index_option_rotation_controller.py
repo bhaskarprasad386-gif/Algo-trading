@@ -42,7 +42,9 @@ class SharedIndexOptionRotationController:
             return False
         if not self.trigger.on_spot(underlying, record.ltp):
             return False
-        return self._rotate(underlying, record.ltp)
+        success = self._rotate(underlying, record.ltp)
+        self.trigger.rotation_result(underlying, success=success, spot=record.ltp)
+        return success
 
 
 
@@ -52,7 +54,9 @@ class SharedIndexOptionRotationController:
         for underlying in due:
             with self._lock:
                 spot = self.trigger.snapshot()["last_spot"].get(underlying)
-            if spot is not None and self._rotate(underlying, spot):
+            success = spot is not None and self._rotate(underlying, spot)
+            self.trigger.rotation_result(underlying, success=success, spot=spot)
+            if success:
                 completed.append(underlying)
         return tuple(completed)
 
