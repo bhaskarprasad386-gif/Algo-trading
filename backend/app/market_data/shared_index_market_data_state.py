@@ -24,6 +24,7 @@ class SharedIndexMarketDataState:
         self._accepted = 0
         self._stale_dropped = 0
         self._out_of_order = 0
+        self._capacity_dropped = 0
         self._oi_history: dict[str, deque[tuple[int, int]]] = {}
         self._volume_history: dict[str, deque[tuple[int, int]]] = {}
 
@@ -45,6 +46,7 @@ class SharedIndexMarketDataState:
                 self._out_of_order += 1
                 return False
             if key not in self._latest and len(self._latest) >= self.MAX_INSTRUMENTS:
+                self._capacity_dropped += 1
                 return False
             self._latest[key] = record
             cutoff = ts - 3_000_000_000
@@ -149,6 +151,7 @@ class SharedIndexMarketDataState:
             accepted = self._accepted
             stale = self._stale_dropped
             out_of_order = self._out_of_order
+            capacity_dropped = self._capacity_dropped
         ages = {key: max(0, (now - record.timestamp_ns) / 1e9) for key, record in latest}
         fresh = sum(age <= self.max_age_ns / 1e9 for age in ages.values())
         return {
@@ -161,4 +164,5 @@ class SharedIndexMarketDataState:
             "accepted_ticks": accepted,
             "stale_ticks_dropped": stale,
             "out_of_order_ticks_dropped": out_of_order,
+            "capacity_ticks_dropped": capacity_dropped,
         }
