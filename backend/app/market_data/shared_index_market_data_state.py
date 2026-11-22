@@ -6,7 +6,7 @@ from time import time_ns
 from typing import Any, Callable
 from collections import deque
 
-from .shared_cache import put_market_data_record
+from .shared_cache import put_market_data_record, get_shared_market_data_cache
 
 
 class SharedIndexMarketDataState:
@@ -81,6 +81,8 @@ class SharedIndexMarketDataState:
         """Clear current cached records/history without resetting cumulative counters."""
         with self._lock:
             removed = len(self._latest)
+            for key in tuple(self._latest):
+                get_shared_market_data_cache().delete(key)
             self._latest.clear()
             self._oi_history.clear()
             self._volume_history.clear()
@@ -95,6 +97,8 @@ class SharedIndexMarketDataState:
             removed = [key for key in self._latest if key not in allowed]
             for key in removed:
                 self._latest.pop(key, None)
+                # Retired contracts must not leave replayable quotes in the shared cache.
+                get_shared_market_data_cache().delete(key)
                 self._oi_history.pop(key, None)
                 self._volume_history.pop(key, None)
                 self._tick_history.pop(key, None)
