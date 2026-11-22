@@ -62,3 +62,16 @@ def detect_cross_sweep(*, previous_price: object, price: object, level: object, 
     confidence=min(1.0,max(0.0,distance/(m*3)))
     return LiquidityEvent("LIQUIDITY_SWEEP",side,l,p,distance,int(t),int(ttl_ms),confidence,
         "Fresh downside liquidity crossing" if side=="BULLISH" else "Fresh upside liquidity crossing")
+
+def liquidity_pressure(events: list[LiquidityEvent], now_ms: object) -> dict[str, float | None]:
+    """Return independent bounded pressure scores from fresh sweep/reclaim pairs only."""
+    now=_num(now_ms)
+    if now is None: return {"bullish":None,"bearish":None}
+    fresh=[e for e in events if event_is_fresh(e,now)]
+    bull=[e for e in fresh if e.side=="BULLISH" and e.event_type=="SWEEP_RECLAIM"]
+    bear=[e for e in fresh if e.side=="BEARISH" and e.event_type=="SWEEP_RECLAIM"]
+    def aggregate(items: list[LiquidityEvent]) -> float | None:
+        if not items: return None
+        # Strongest recent reclaim wins; not summed to prevent duplicate-event inflation.
+        return max(0.0,min(1.0,max(e.confidence for e in items)))
+    return {"bullish":aggregate(bull),"bearish":aggregate(bear)}
