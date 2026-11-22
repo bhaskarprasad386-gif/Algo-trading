@@ -314,6 +314,7 @@ class SharedIndexMarketDataRunner:
             self._master_refresh_inflight = False
             self._master_refresh_generation = None
             self._start_error = None
+            self.rotation.trigger.reset()
             self._spot_records.clear()
             self._futures_expiries.clear()
             self.state.clear()
@@ -379,6 +380,7 @@ class SharedIndexMarketDataRunner:
             self._running = False
             self._bootstrap_options_done = False
             self._bootstrap_inflight = False
+            self.rotation.trigger.reset()
             self._spot_records.clear()
             self.state.clear()
             self.derived_iv.clear()
