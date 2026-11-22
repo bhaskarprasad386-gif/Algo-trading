@@ -25,6 +25,14 @@ def test_stale_tick_data_fails_closed():
     assert result["status"]=="WAITING_DATA" and result["candidates"]==[]
 
 
+def test_tick_input_is_bounded_to_latest_500_observations():
+    start = int(time.time() * 1000) - 3_000
+    ticks = _ticks([100 + i * .01 for i in range(600)], start=start)
+    result = evaluate_vptx({"underlying": "NIFTY", "ticks": ticks})
+    assert result["status"] == "EVALUATED"
+    assert result["tick_count"] == 500
+
+
 def test_future_tick_timestamps_fail_closed():
     future_start = int(time.time() * 1000) + 10_000
     result = evaluate_vptx({"underlying": "NIFTY", "ticks": _ticks([100+i*.1 for i in range(30)], start=future_start)})
