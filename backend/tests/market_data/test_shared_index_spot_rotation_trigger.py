@@ -24,6 +24,7 @@ def test_rotation_trigger_fires_on_threshold_then_coalesces_cooldown():
     trigger = SpotRotationTrigger(thresholds={"NIFTY": 50}, cooldown_seconds=2, clock=clock)
     assert not trigger.on_spot("NIFTY", 22000)
     assert trigger.on_spot("NIFTY", 22050)
+    trigger.rotation_result("NIFTY", success=True, spot=22050)
     clock.now += .5
     assert not trigger.on_spot("NIFTY", 22100)
     assert trigger.snapshot()["pending_underlyings"] == ["NIFTY"]
