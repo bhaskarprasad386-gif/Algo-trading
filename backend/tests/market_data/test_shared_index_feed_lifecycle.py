@@ -291,3 +291,29 @@ def test_futures_rotation_unsubscribe_failure_rolls_back_new_keys():
     assert set(lifecycle._futures_keys) == old_keys
     assert manager.active[lifecycle.FUTURES_CONSUMER] == old_keys
     assert set(manager.registry.active_keys()) == old_keys
+
+
+class ReconcileTrackingFailManager(FailAfterMutationManager):
+    def __init__(self):
+        super().__init__()
+        self.reconcile_calls = 0
+    def _reconcile(self):
+        self.reconcile_calls += 1
+
+
+def test_registry_rollback_requests_transport_reconciliation_after_partial_subscribe():
+    manager = ReconcileTrackingFailManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    old = _options()
+    lifecycle.start_options(old)
+    manager.fail_next_subscribe = True
+    try:
+        lifecycle.rotate_options(_options(shift=25))
+    except RuntimeError as exc:
+        assert "forced reconcile failure" in str(exc)
+    else:
+        raise AssertionError("partial subscribe must fail and roll back")
+    old_keys = set(d.key for d in old)
+    assert manager.registry.active_keys() == tuple(sorted(old_keys, key=lambda key: key.value))
+    assert manager.active[lifecycle.OPTIONS_CONSUMER] == old_keys
+    assert manager.reconcile_calls == 1
