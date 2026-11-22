@@ -134,30 +134,30 @@ class SharedIndexMarketDataState:
                 # Only report a true ~1s delta. Falling back to the oldest
                 # sample when it is newer than 1s makes a short-window change
                 # look like a one-second OI delta.
-                baseline = next((oi for ts, oi in history if ts <= now - 1_000_000_000), None)
+                baseline = next((oi for ts, oi in reversed(history) if ts <= now - 1_000_000_000), None)
                 if baseline is not None:
                     delta = record.oi - baseline
             if not data["fresh"]:
                 delta = None
             data["oi_delta_1s"] = delta
             for window in (3, 5):
-                baseline_oi = next((oi for stamp, oi in history if stamp <= now - window * 1_000_000_000), None)
+                baseline_oi = next((oi for stamp, oi in reversed(history) if stamp <= now - window * 1_000_000_000), None)
                 data[f"oi_delta_{window}s"] = (record.oi - baseline_oi) if record.oi is not None and baseline_oi is not None and data["fresh"] else None
             vol_history = volume_history.get(key, ())
             volume_delta = None
             if record.volume is not None and len(vol_history) >= 2:
-                volume_baseline = next((volume for ts, volume in vol_history if ts <= now - 1_000_000_000), None)
+                volume_baseline = next((volume for ts, volume in reversed(vol_history) if ts <= now - 1_000_000_000), None)
                 if volume_baseline is not None and record.volume >= volume_baseline:
                     volume_delta = record.volume - volume_baseline
             if not data["fresh"]:
                 volume_delta = None
             data["volume_delta_1s"] = volume_delta
             for window in (3, 5):
-                baseline_volume = next((volume for stamp, volume in vol_history if stamp <= now - window * 1_000_000_000), None)
+                baseline_volume = next((volume for stamp, volume in reversed(vol_history) if stamp <= now - window * 1_000_000_000), None)
                 data[f"volume_delta_{window}s"] = (record.volume - baseline_volume) if record.volume is not None and baseline_volume is not None and record.volume >= baseline_volume and data["fresh"] else None
             ticks = tick_history.get(key, ())
             for window in (1, 3, 5):
-                baseline = next((price for stamp, price, _bid, _ask, _bq, _aq in ticks if stamp <= record.timestamp_ns - window * 1_000_000_000 and price is not None), None)
+                baseline = next((price for stamp, price, _bid, _ask, _bq, _aq in reversed(ticks) if stamp <= record.timestamp_ns - window * 1_000_000_000 and price is not None), None)
                 change = None if record.ltp is None or baseline is None else record.ltp - baseline
                 data[f"ltp_delta_{window}s"] = change
                 data[f"ltp_change_pct_{window}s"] = (change / baseline * 100.0) if change is not None and baseline else None
@@ -172,7 +172,7 @@ class SharedIndexMarketDataState:
             data["quote_imbalance"] = ((record.bid_qty or 0) - (record.ask_qty or 0)) / total_qty if total_qty > 0 else None
             data["microprice"] = ((record.ask * (record.bid_qty or 0) + record.bid * (record.ask_qty or 0)) / total_qty) if quote_valid and total_qty > 0 else None
             for window in (1, 3, 5):
-                quote_baseline = next((item for item in ticks if item[0] <= record.timestamp_ns - window * 1_000_000_000), None)
+                quote_baseline = next((item for item in reversed(ticks) if item[0] <= record.timestamp_ns - window * 1_000_000_000), None)
                 for side, current_qty, index in (("bid", record.bid_qty, 4), ("ask", record.ask_qty, 5)):
                     baseline_qty = quote_baseline[index] if quote_baseline is not None else None
                     data[f"{side}_qty_delta_{window}s"] = current_qty - baseline_qty if current_qty is not None and baseline_qty is not None and data["fresh"] else None
