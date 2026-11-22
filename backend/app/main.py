@@ -87,6 +87,7 @@ from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_
 from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, configure_depth_provider as configure_live_box_spread_websocket_depth, _page_snapshot as box_opportunity_page_snapshot, set_expiry_types as set_live_box_websocket_expiry_types
 from app.scanner.page_push_websocket import router as page_push_websocket_router, configure_snapshot_provider as configure_page_push_snapshot, publish_page_update
 from app.scanner.early_impulse_routes import router as early_impulse_router
+from app.scanner.vpt_x_reversal_routes import router as vpt_x_reversal_router
 from app.scanner.butterfly_condor_shadow import evaluate_butterfly_condor_snapshot
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
@@ -789,6 +790,7 @@ app.include_router(live_box_spread_websocket_router)
 app.include_router(page_push_websocket_router)
 app.include_router(intelligence_router)
 app.include_router(early_impulse_router)
+app.include_router(vpt_x_reversal_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(monthly_results_router)
     app.include_router(cash_future_strategy_router)
