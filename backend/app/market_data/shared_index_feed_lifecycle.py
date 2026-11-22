@@ -131,7 +131,22 @@ class SharedIndexFeedLifecycle:
                 manager.registry.register_many(fresh)
             # Subscribe first to avoid a deliberate gap; remove obsolete keys only
             # after the new set is active under this independent options owner.
-            manager.subscribe(self.OPTIONS_CONSUMER, list(new_keys), mode=self._options_feed.mode)
+            try:
+                manager.subscribe(self.OPTIONS_CONSUMER, list(new_keys), mode=self._options_feed.mode)
+            except Exception:
+                # subscribe() mutates the registry before reconcile; rollback the
+                # newly added consumer refs even when reconcile raises. Preserve
+                # all prior option keys and independent spot ownership.
+                added_keys = [key for key in new_keys if key not in set(old_keys)]
+                try:
+                    if added_keys:
+                        manager.unsubscribe(self.OPTIONS_CONSUMER, added_keys)
+                except Exception:
+                    # unsubscribe() also mutates registry before reconcile.
+                    for key in added_keys:
+                        manager.registry.unsubscribe(self.OPTIONS_CONSUMER, key)
+                manager.registry.unregister_many(added_keys)
+                raise
             obsolete = [key for key in old_keys if key not in set(new_keys)]
             if obsolete:
                 manager.unsubscribe(self.OPTIONS_CONSUMER, obsolete)
