@@ -196,4 +196,20 @@ def test_quote_depth_and_spread_change_windows():
     assert row["spread_delta_3s"] == 1
     assert row["bid_qty_delta_5s"] is None
     assert row["ask_qty_delta_5s"] is None
-\n\n\ndef test_tick_rate_reports_one_three_and_five_second_windows():\n    state = SharedIndexMarketDataState(max_age_seconds=6)\n    now = time_ns()\n    inst = InstrumentKey("NFO", "NFO", "tick-rate")\n    def tick(ts):\n        return MarketDataRecord(instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION, timestamp_ns=ts, ltp=100, bid=99, ask=101, underlying="NIFTY")\n    assert state.on_record(tick(now-4_200_000_000))\n    assert state.on_record(tick(now-2_200_000_000))\n    assert state.on_record(tick(now-200_000_000))\n    row=state.records_snapshot()[0]\n    assert row["tick_rate_1s"] == 1\n    assert row["tick_rate_3s"] == 2\n    assert row["tick_rate_5s"] == 3\n
+
+
+
+def test_tick_rate_reports_one_three_and_five_second_windows():
+    state = SharedIndexMarketDataState(max_age_seconds=6)
+    now = time_ns()
+    inst = InstrumentKey("NFO", "NFO", "tick-rate")
+    def tick(ts):
+        return MarketDataRecord(instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION, timestamp_ns=ts, ltp=100, bid=99, ask=101, underlying="NIFTY")
+    assert state.on_record(tick(now-4_200_000_000))
+    assert state.on_record(tick(now-2_200_000_000))
+    assert state.on_record(tick(now-200_000_000))
+    row=state.records_snapshot()[0]
+    assert row["tick_rate_1s"] == 1
+    assert row["tick_rate_3s"] == 2
+    assert row["tick_rate_5s"] == 3
+\n    state = SharedIndexMarketDataState(max_age_seconds=6)\n    now = time_ns()\n    inst = InstrumentKey("NFO", "NFO", "tick-rate")\n    def tick(ts):\n        return MarketDataRecord(instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION, timestamp_ns=ts, ltp=100, bid=99, ask=101, underlying="NIFTY")\n    assert state.on_record(tick(now-4_200_000_000))\n    assert state.on_record(tick(now-2_200_000_000))\n    assert state.on_record(tick(now-200_000_000))\n    row=state.records_snapshot()[0]\n    assert row["tick_rate_1s"] == 1\n    assert row["tick_rate_3s"] == 2\n    assert row["tick_rate_5s"] == 3\n
