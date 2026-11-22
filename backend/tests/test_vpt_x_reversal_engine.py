@@ -26,7 +26,7 @@ def test_stale_tick_data_fails_closed():
 
 
 def test_tick_input_is_bounded_to_latest_500_observations():
-    start = int(time.time() * 1000) - 2_500
+    start = int(time.time() * 1000) - 3_500
     ticks = [{"timestamp_ms": start + i * 5, "price": 100 + i * .01,
               "buy_volume": 30, "sell_volume": 20, "bid_qty": 80, "ask_qty": 50}
              for i in range(600)]
