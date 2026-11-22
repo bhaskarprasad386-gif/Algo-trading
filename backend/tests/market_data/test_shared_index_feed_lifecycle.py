@@ -417,3 +417,29 @@ def test_common_feed_start_rejects_duplicate_instruments_before_registration():
         raise AssertionError("duplicate keys must be rejected")
     assert not manager.registry.subscriptions()
     assert manager.callbacks == {}
+
+
+def test_shared_consumer_refs_survive_one_owner_clear_and_duplicate_subscribe():
+    registry = InstrumentRegistry()
+    descriptor = _spot_descriptors()[0]
+    registry.register(descriptor)
+    registry.subscribe("owner-a", descriptor.key, mode=1)
+    registry.subscribe("owner-a", descriptor.key, mode=1)  # idempotent set ref
+    registry.subscribe("owner-b", descriptor.key, mode=3)
+
+    sub = registry.subscriptions()[0]
+    assert sub.consumers == frozenset({"owner-a", "owner-b"})
+    assert sub.ref_count == 2
+    assert sub.mode == 3  # strongest active mode wins
+
+    registry.clear_consumer("owner-a")
+    remaining = registry.subscriptions()[0]
+    assert remaining.consumers == frozenset({"owner-b"})
+    assert remaining.ref_count == 1
+    assert remaining.mode == 3
+    assert registry.active_keys() == (descriptor.key,)
+
+    registry.clear_consumer("owner-b")
+    assert registry.active_keys() == ()
+    assert registry.subscriptions() == ()
+
