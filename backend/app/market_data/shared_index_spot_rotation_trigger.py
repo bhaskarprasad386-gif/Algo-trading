@@ -28,6 +28,7 @@ class SpotRotationTrigger:
         self._clock = clock
         self._lock = RLock()
         self._last_spot: dict[str, float] = {}
+        self._anchor_spot: dict[str, float] = {}
         self._last_request: dict[str, float] = {}
         self._pending: set[str] = set()
         self._rejected = 0
@@ -45,8 +46,10 @@ class SpotRotationTrigger:
             previous = self._last_spot.get(symbol)
             self._last_spot[symbol] = float(price)
             if previous is None:
+                self._anchor_spot[symbol] = float(price)
                 return False
-            if abs(float(price) - previous) < self._thresholds[symbol]:
+            anchor = self._anchor_spot.get(symbol, previous)
+            if abs(float(price) - anchor) < self._thresholds[symbol]:
                 return False
             last = self._last_request.get(symbol)
             if last is not None and now - last < self._cooldown:
@@ -54,6 +57,7 @@ class SpotRotationTrigger:
                 self._rejected += 1
                 return False
             self._last_request[symbol] = now
+            self._anchor_spot[symbol] = float(price)
             self._pending.discard(symbol)
             return True
 
@@ -67,6 +71,7 @@ class SpotRotationTrigger:
                               if now - self._last_request.get(symbol, float("-inf")) >= self._cooldown))
             for symbol in due:
                 self._last_request[symbol] = now
+                self._anchor_spot[symbol] = self._last_spot.get(symbol, self._anchor_spot.get(symbol, 0.0))
                 self._pending.discard(symbol)
             return due
 
