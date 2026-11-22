@@ -489,3 +489,62 @@ def test_stale_option_bootstrap_cannot_subscribe_after_runner_restart(monkeypatc
     assert not old_thread.is_alive()
     assert set(runner.lifecycle._option_keys) == active_new_epoch
     runner.stop()
+
+
+
+def test_concurrent_nifty_bank_option_rotations_are_serialized_and_atomic(monkeypatch):
+    from threading import Event, Thread
+    import time
+    import app.market_data.shared_index_option_rotation_controller as rotation_module
+
+    rows = _rows()
+    manager = RunnerManager()
+    runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=manager)
+    assert runner.start(rows)["enabled"] is True
+    spot_consumer = runner.lifecycle.SPOT_CONSUMER
+    now = time.time_ns()
+    manager.callbacks[spot_consumer](MarketDataRecord(
+        instrument=InstrumentKey("NSE", "NSE", "99001"), symbol="NIFTY",
+        instrument_type=InstrumentType.INDEX, timestamp_ns=now, ltp=22000.0,
+        underlying="NIFTY"))
+    manager.callbacks[spot_consumer](MarketDataRecord(
+        instrument=InstrumentKey("NSE", "NSE", "99002"), symbol="BANKNIFTY",
+        instrument_type=InstrumentType.INDEX, timestamp_ns=time.time_ns(), ltp=48000.0,
+        underlying="BANKNIFTY"))
+    assert len(runner.lifecycle._option_keys) == 48
+
+    original_select = rotation_module.select_locked_index_options
+    first_entered, release_first, second_entered = Event(), Event(), Event()
+    call = {"count": 0}
+    def blocking_select(*args, **kwargs):
+        call["count"] += 1
+        if call["count"] == 1:
+            first_entered.set()
+            assert release_first.wait(timeout=3)
+        else:
+            second_entered.set()
+        return original_select(*args, **kwargs)
+    monkeypatch.setattr(rotation_module, "select_locked_index_options", blocking_select)
+
+    first_done, second_done = Event(), Event()
+    first = Thread(target=lambda: (runner.rotation._rotate("NIFTY", 22075.0), first_done.set()), daemon=True)
+    second = Thread(target=lambda: (runner.rotation._rotate("BANKNIFTY", 48125.0), second_done.set()), daemon=True)
+    first.start()
+    assert first_entered.wait(timeout=2)
+    second.start()
+    time.sleep(0.05)
+    assert not second_entered.is_set(), "second rotation must wait for the controller lock"
+    assert not second_done.is_set(), "rotation cannot interleave lifecycle subscribe/remove"
+    release_first.set()
+    first.join(timeout=3)
+    second.join(timeout=3)
+    assert first_done.is_set() and second_done.is_set()
+    active = tuple(runner.lifecycle._option_keys)
+    descriptors = [manager.registry.get(key) for key in active]
+    assert len(active) == 48
+    assert len({descriptor.key for descriptor in descriptors}) == 48
+    assert {descriptor.underlying for descriptor in descriptors} == {"NIFTY", "BANKNIFTY"}
+    assert len([d for d in descriptors if d.underlying == "NIFTY"]) == 26
+    assert len([d for d in descriptors if d.underlying == "BANKNIFTY"]) == 22
+    assert set(manager.registry.active_keys()) == set(runner.lifecycle.active_keys())
+    runner.stop()
