@@ -368,3 +368,39 @@ def test_new_on_waits_for_previous_off_subscription_teardown():
     assert len(manager.registry.active_keys()) == 4
     assert runner.snapshot()["enabled"] is True
     runner.stop()
+
+
+
+def test_stale_master_refresh_failure_cannot_pollute_restarted_runner_epoch():
+    from threading import Event, Thread, enumerate as enumerate_threads
+    import time
+
+    class OldRefreshFailsAfterRestartMaster(FakeMaster):
+        def __init__(self, rows):
+            super().__init__(rows)
+            self.refresh_started = Event()
+            self.release_refresh = Event()
+        def download(self, *, force=False):
+            if force:
+                self.refresh_started.set()
+                assert self.release_refresh.wait(timeout=3)
+                raise RuntimeError("old refresh failed")
+            return self.rows
+
+    rows = _rows()
+    master = OldRefreshFailsAfterRestartMaster(rows)
+    runner = SharedIndexMarketDataRunner(instrument_master=master, manager=RunnerManager())
+    assert runner.start(rows)["enabled"] is True
+    runner._master_refresh_interval_seconds = 0
+    assert runner._schedule_master_refresh() is True
+    assert master.refresh_started.wait(timeout=2)
+
+    runner.stop()
+    assert runner.start(rows)["enabled"] is True
+    master.release_refresh.set()
+    deadline = time.monotonic() + 2
+    while any(t.name == "shared-index-master-refresh" for t in enumerate_threads()) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert runner._running is True
+    assert runner._master_refresh_error is None
+    runner.stop()
