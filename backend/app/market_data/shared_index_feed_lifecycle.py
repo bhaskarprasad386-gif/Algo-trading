@@ -186,6 +186,12 @@ class SharedIndexFeedLifecycle:
 
 
 
+    def active_keys(self) -> tuple[InstrumentKey, ...]:
+        """Return currently owned spot and option subscription keys."""
+        with self._lock:
+            return tuple(dict.fromkeys(self._spot_keys + self._option_keys))
+
+
     def option_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
         """Return current descriptors owned by the option consumer."""
         with self._lock:
