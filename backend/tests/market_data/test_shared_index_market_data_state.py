@@ -129,3 +129,16 @@ def test_volume_reset_clears_old_session_baseline():
     row = state.records_snapshot()[0]
     assert row["volume_delta_1s"] is None
     assert row["oi_delta_1s"] == 10
+
+
+
+def test_state_cache_capacity_is_bounded_and_reports_dropped_ticks():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    for i in range(state.MAX_INSTRUMENTS):
+        assert state.on_record(_record(f"cap-{i}", now + i))
+    assert not state.on_record(_record("cap-overflow", time_ns()))
+    snap = state.snapshot()
+    assert snap["instrument_count"] == state.MAX_INSTRUMENTS
+    assert snap["capacity_ticks_dropped"] == 1
+    assert len(state.records_snapshot()) == state.MAX_INSTRUMENTS
