@@ -262,6 +262,14 @@ class CommonWebSocketManager:
         # Retired transports remain visible until their close worker actually exits.
         # Store metadata only; never retain broker frames or authentication payloads.
         self._retired_transports: dict[str, dict[str, Any]] = {}
+        # Subscribe/unsubscribe SDK workers may outlive the bounded caller wait.
+        # Track active workers only (bounded by operations in flight), and keep
+        # aggregate counters so late completion remains observable without leaks.
+        self._socket_operation_workers: dict[str, dict[str, Any]] = {}
+        self._socket_operation_worker_sequence = 0
+        self._socket_operation_worker_late_completions = 0
+        self._socket_operation_worker_timeouts = 0
+        self._socket_operation_worker_failures = 0
         self._recovery_attempts = 0
         self._last_recovery_at = None
 
@@ -1111,6 +1119,18 @@ class CommonWebSocketManager:
         """
         completed = Event()
         failure: dict[str, Exception] = {}
+        started_at = time.monotonic()
+        with self._lock:
+            self._socket_operation_worker_sequence += 1
+            operation_id = f"op-{self._socket_operation_worker_sequence}"
+            self._socket_operation_workers[operation_id] = {
+                "operation_id": operation_id,
+                "operation": operation_name,
+                "group": f"{group.mode}:{group.shard}",
+                "started_at": started_at,
+                "timed_out": False,
+                "worker_alive": True,
+            }
 
         def _run() -> None:
             try:
@@ -1118,6 +1138,18 @@ class CommonWebSocketManager:
             except Exception as exc:
                 failure["exception"] = exc
             finally:
+                with self._lock:
+                    tracked = self._socket_operation_workers.pop(operation_id, None)
+                    if tracked is not None:
+                        if tracked.get("timed_out"):
+                            self._socket_operation_worker_late_completions += 1
+                        tracked["worker_alive"] = False
+                        tracked["completed_at"] = time.monotonic()
+                        tracked["outcome"] = (
+                            "error" if "exception" in failure else "late_success"
+                            if tracked.get("timed_out") else
+                            "error" if "exception" in failure else "success"
+                        )
                 completed.set()
 
         worker = Thread(
@@ -1130,6 +1162,15 @@ class CommonWebSocketManager:
         error = failure.get("exception")
         if finished and error is None:
             return
+        if not finished:
+            with self._lock:
+                tracked = self._socket_operation_workers.get(operation_id)
+                if tracked is not None and not tracked.get("timed_out"):
+                    tracked["timed_out"] = True
+                    self._socket_operation_worker_timeouts += 1
+        elif error is not None:
+            with self._lock:
+                self._socket_operation_worker_failures += 1
 
         # Never leave a potentially half-mutated socket as authoritative.
         with self._lock:
@@ -2153,6 +2194,11 @@ class CommonWebSocketManager:
                 }),
                 "retired_callback_worker_count": len(self._retired_callback_workers),
                 "retired_callback_workers": [dict(item) for item in self._retired_callback_workers.values()],
+                "socket_operation_worker_count": len(self._socket_operation_workers),
+                "socket_operation_workers": [dict(item) for item in self._socket_operation_workers.values()],
+                "socket_operation_worker_timeouts": self._socket_operation_worker_timeouts,
+                "socket_operation_worker_late_completions": self._socket_operation_worker_late_completions,
+                "socket_operation_worker_failures": self._socket_operation_worker_failures,
                 "recovery_attempts": self._recovery_attempts,
                 "last_recovery_at": self._last_recovery_at,
             }
