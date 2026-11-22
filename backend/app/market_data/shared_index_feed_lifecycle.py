@@ -242,6 +242,9 @@ class SharedIndexFeedLifecycle:
                     manager.registry.unregister_many(added)
                     self._reconcile_after_rollback(manager)
                     raise
+            if obsolete:
+                # Retire only unconsumed descriptors; registry protects shared refs.
+                manager.registry.unregister_many(obsolete)
             self._futures_keys = new_keys
             return new_keys
 
@@ -297,6 +300,9 @@ class SharedIndexFeedLifecycle:
                     manager.registry.unregister_many(added_keys)
                     self._reconcile_after_rollback(manager)
                     raise
+            if obsolete:
+                # Retire only unconsumed descriptors; registry protects shared refs.
+                manager.registry.unregister_many(obsolete)
             self._option_keys = new_keys
             return new_keys
 
