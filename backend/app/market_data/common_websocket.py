@@ -268,6 +268,7 @@ class CommonWebSocketManager:
         self._socket_operation_workers: dict[str, dict[str, Any]] = {}
         self._socket_operation_worker_sequence = 0
         self._socket_operation_worker_late_completions = 0
+        self._socket_operation_worker_admission_rejections = 0
         self._socket_operation_worker_timeouts = 0
         self._socket_operation_worker_failures = 0
         self._recovery_attempts = 0
@@ -1120,7 +1121,19 @@ class CommonWebSocketManager:
         completed = Event()
         failure: dict[str, Exception] = {}
         started_at = time.monotonic()
+        group_key = f"{group.mode}:{group.shard}"
         with self._lock:
+            # A timed-out SDK call may still be mutating its retired socket.
+            # Do not launch another broker operation for the same shard until
+            # that worker exits; recovery can retry after this barrier clears.
+            if any(
+                item.get("group") == group_key
+                for item in self._socket_operation_workers.values()
+            ):
+                self._socket_operation_worker_admission_rejections += 1
+                raise RuntimeError(
+                    f"WebSocket broker operation still in flight for group {group_key}"
+                )
             self._socket_operation_worker_sequence += 1
             operation_id = f"op-{self._socket_operation_worker_sequence}"
             self._socket_operation_workers[operation_id] = {
@@ -2198,6 +2211,7 @@ class CommonWebSocketManager:
                 "socket_operation_workers": [dict(item) for item in self._socket_operation_workers.values()],
                 "socket_operation_worker_timeouts": self._socket_operation_worker_timeouts,
                 "socket_operation_worker_late_completions": self._socket_operation_worker_late_completions,
+                "socket_operation_worker_admission_rejections": self._socket_operation_worker_admission_rejections,
                 "socket_operation_worker_failures": self._socket_operation_worker_failures,
                 "recovery_attempts": self._recovery_attempts,
                 "last_recovery_at": self._last_recovery_at,
