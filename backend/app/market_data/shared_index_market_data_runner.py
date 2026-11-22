@@ -96,7 +96,7 @@ class SharedIndexMarketDataRunner:
         self._bootstrap_inflight = False
         self._spot_records: dict[str, Any] = {}
         self._futures_expiries: dict[str, str] = {}
-        self._master_refresh_interval_seconds = 15 * 60.0
+        self._master_refresh_interval_seconds = 24 * 60 * 60.0
         self._master_refresh_started_at = 0.0
         self._master_refresh_inflight = False
         self._master_last_refresh_at: str | None = None
@@ -150,7 +150,7 @@ class SharedIndexMarketDataRunner:
 
         def worker():
             try:
-                refreshed = tuple(self.instrument_master.download(force=True))
+                refreshed = tuple(self.instrument_master.download(force=False))
                 if not refreshed:
                     raise LookupError("refreshed instrument master was empty")
                 with self._lock:
