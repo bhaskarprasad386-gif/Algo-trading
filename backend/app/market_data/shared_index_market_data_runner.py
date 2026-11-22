@@ -358,7 +358,7 @@ class SharedIndexMarketDataRunner:
                 self._started_at = None
                 self.state.clear()
                 self.derived_iv.clear()
-                self._start_error = f"{type(exc).__name__}: {exc"[:240]
+                self._start_error = f"{type(exc).__name__}: {exc}"[:240]
             try:
                 self.lifecycle.stop()
             except Exception:
