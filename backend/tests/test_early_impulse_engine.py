@@ -7,6 +7,7 @@ def _valid_snapshot(**overrides):
         "engines": {"absorption": 1, "synthetic_spot": 1, "failed_auction": 1, "market_impact": 1, "cross_instrument": 1},
         "data_valid": True, "spread_ok": True, "entry_not_extended": True,
         "invalidation_defined": True, "no_strong_opposite": True,
+        "engine_evidence": {key: True for key in ("absorption", "synthetic_spot", "failed_auction", "market_impact", "cross_instrument")},
     }
     data.update(overrides)
     return data
@@ -81,3 +82,28 @@ def test_non_finite_engine_input_never_scores():
     result = evaluate_early_impulse(_valid_snapshot(engines={"absorption": float("nan")}))
     assert result["components"]["absorption"] == 0
     assert not result["eligible"]
+
+def test_normalized_score_rejects_when_any_engine_evidence_missing():
+    evidence = {key: True for key in ("absorption", "synthetic_spot", "failed_auction", "market_impact", "cross_instrument")}
+    evidence["failed_auction"] = False
+    result = evaluate_early_impulse(_valid_snapshot(engine_evidence=evidence))
+    assert result["score"] == 100
+    assert result["engine_evidence_complete"] is False
+    assert result["eligible"] is False
+    assert "ENGINE_EVIDENCE_COMPLETE" in result["rejection_reasons"]
+
+
+def test_market_feature_engine_evidence_is_explicit_and_fail_closed():
+    result = evaluate_market_features({
+        "prices": [100, 100.1, 100.2], "current_price": 100.2,
+        "quote_age_seconds": 0.1, "feed_authenticated": True,
+        "bid": 100.19, "ask": 100.2, "bid_qty": 100, "ask_qty": 50,
+    })
+    assert result["engine_evidence"]["absorption"] is True
+    assert result["engine_evidence"]["synthetic_spot"] is False
+    assert result["engine_evidence"]["failed_auction"] is False
+    assert result["engine_evidence"]["market_impact"] is False
+    assert result["engine_evidence"]["cross_instrument"] is False
+    assert result["engine_evidence_complete"] is False
+    assert not result["eligible"]
+    assert "ENGINE_EVIDENCE_COMPLETE" in result["rejection_reasons"]
