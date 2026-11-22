@@ -46,6 +46,8 @@ export default function VptXPage() {
   }, [refresh]);
 
   const evaluate = async () => {
+    if (requestLock.current) return;
+    requestLock.current = true;
     setBusy(true);
     try {
       const parsed = JSON.parse(snapshot);
@@ -61,6 +63,7 @@ export default function VptXPage() {
       setErr(e instanceof Error ? e.message : "Invalid snapshot JSON");
     } finally {
       setBusy(false);
+      requestLock.current = false;
     }
   };
 
