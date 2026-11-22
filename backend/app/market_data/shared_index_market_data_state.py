@@ -49,7 +49,7 @@ class SharedIndexMarketDataState:
             if record.oi is not None:
                 history = self._oi_history.setdefault(key, deque())
                 history.append((ts, record.oi))
-                cutoff = ts - 1_000_000_000
+                cutoff = ts - 3_000_000_000
                 while history and history[0][0] < cutoff:
                     history.popleft()
             self._accepted += 1
