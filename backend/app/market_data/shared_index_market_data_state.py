@@ -158,8 +158,6 @@ class SharedIndexMarketDataState:
             total_qty = (record.bid_qty or 0) + (record.ask_qty or 0)
             data["quote_imbalance"] = ((record.bid_qty or 0) - (record.ask_qty or 0)) / total_qty if total_qty > 0 else None
             data["microprice"] = ((record.ask * (record.bid_qty or 0) + record.bid * (record.ask_qty or 0)) / total_qty) if quote_valid and total_qty > 0 else None
-            spot_for_row = None
-            data["distance_from_spot"] = (record.strike - spot_for_row) if record.strike is not None and spot_for_row is not None else None
             data["tick_rate_1s"] = sum(1 for stamp, _ in ticks if stamp >= record.timestamp_ns - 1_000_000_000)
             if not data["fresh"]:
                 for window in (1, 3, 5):
