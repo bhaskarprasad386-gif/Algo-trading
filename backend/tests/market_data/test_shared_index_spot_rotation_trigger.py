@@ -99,3 +99,21 @@ def test_spot_move_during_inflight_rotation_remains_pending_after_success():
     clock.now += 2
     assert trigger.flush_due() == ("NIFTY",)
     assert trigger.snapshot()["inflight_underlyings"] == ["NIFTY"]
+
+
+
+def test_trigger_reset_clears_old_epoch_anchor_pending_and_inflight():
+    clock = FakeClock()
+    trigger = SpotRotationTrigger(thresholds={"NIFTY": 50}, cooldown_seconds=2, clock=clock)
+    assert not trigger.on_spot("NIFTY", 22000)
+    assert trigger.on_spot("NIFTY", 22060)
+    trigger.on_spot("NIFTY", 22120)  # coalesced while first request is in flight
+    assert trigger.snapshot()["inflight_underlyings"] == ["NIFTY"]
+    trigger.reset()
+    assert trigger.snapshot()["inflight_underlyings"] == []
+    assert trigger.snapshot()["pending_underlyings"] == []
+    assert trigger.snapshot()["last_spot"] == {}
+    assert trigger.snapshot()["successful_anchor_spot"] == {}
+    # New runner epoch must establish a fresh baseline, not rotate against old price.
+    assert not trigger.on_spot("NIFTY", 24000)
+    assert trigger.snapshot()["successful_anchor_spot"] == {}
