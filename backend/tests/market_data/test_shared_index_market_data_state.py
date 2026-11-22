@@ -249,8 +249,10 @@ def test_cache_publication_is_serialized_with_retiring_instrument(monkeypatch):
 
     state = SharedIndexMarketDataState(max_age_seconds=5)
     key = InstrumentKey("NFO", "NFO", "race-retired-cache")
-    record = _record(key.token)
-    record.instrument = key
+    record = MarketDataRecord(instrument=key, symbol=key.token,
+        instrument_type=InstrumentType.OPTION, timestamp_ns=time_ns(),
+        ltp=25000.0, underlying="NIFTY", expiry="2026-11-26",
+        strike=25000, option_type=OptionType.CALL, lot_size=25)
     publication_started, release_publication, retirement_done = Event(), Event(), Event()
     original_put = state_module.put_market_data_record
 
