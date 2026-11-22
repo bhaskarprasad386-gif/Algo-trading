@@ -84,6 +84,12 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
     ))
     assert len(manager.registry.active_keys()) == 50
     assert runner.snapshot()["lifecycle"]["options_active"] is True
+    option_descriptors = [manager.registry.get(key) for key in manager.registry.active_keys()
+                         if manager.registry.get(key).instrument_type == "option"]
+    nifty_strikes = sorted({d.strike for d in option_descriptors if d.underlying == "NIFTY"})
+    bank_strikes = sorted({d.strike for d in option_descriptors if d.underlying == "BANKNIFTY"})
+    assert len(nifty_strikes) == 13 and nifty_strikes[6] == 22000
+    assert len(bank_strikes) == 11 and bank_strikes[5] == 48000
     assert runner.snapshot()["state"]["fresh_count"] == 2
     assert runner.snapshot()["live_data_ready"] is False
     option_consumer = runner.lifecycle.OPTIONS_CONSUMER
