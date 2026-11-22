@@ -29,3 +29,13 @@ def test_cross_sweep_requires_fresh_level_crossing():
     assert detect_cross_sweep(previous_price=99.7,price=99.4,level=100,side="BULLISH",timestamp_ms=500,min_sweep=.2) is None
     assert detect_cross_sweep(previous_price=99.9,price=100.5,level=100,side="BEARISH",timestamp_ms=500,min_sweep=.2) is None
     assert detect_cross_sweep(previous_price=99.9,price=100.3,level=100,side="BEARISH",timestamp_ms=500,min_sweep=.2)
+
+def test_liquidity_pressure_uses_only_fresh_reclaim_and_dedupes():
+    from app.scanner.short_covering_long_unwinding.liquidity import liquidity_pressure, LiquidityEvent
+    bullish=LiquidityEvent("SWEEP_RECLAIM","BULLISH",100,100.2,.4,1000,2000,.5,"reclaim")
+    old=LiquidityEvent("SWEEP_RECLAIM","BULLISH",101,101.2,.6,100,100,.9,"old reclaim")
+    bearish=LiquidityEvent("SWEEP_RECLAIM","BEARISH",105,104.8,.5,1000,2000,.7,"reject")
+    scores=liquidity_pressure([bullish,old,bearish],1500)
+    assert scores=={"bullish":.5,"bearish":.7}
+    assert liquidity_pressure([],1500)=={"bullish":None,"bearish":None}
+    assert liquidity_pressure([bullish],4000)=={"bullish":None,"bearish":None}
