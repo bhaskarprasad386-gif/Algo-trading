@@ -434,9 +434,9 @@ class SharedIndexMarketDataRunner:
             call_volume, put_volume = calls.get("volume", 0), puts.get("volume", 0)
             aggregates[underlying] = {
                 "call": calls, "put": puts,
-                "oi_put_call_ratio": (put_oi / call_oi) if call_oi > 0 else None,
-                "oi_side_imbalance": ((put_oi - call_oi) / (put_oi + call_oi)) if put_oi + call_oi > 0 else None,
-                "volume_side_imbalance": ((put_volume - call_volume) / (put_volume + call_volume)) if put_volume + call_volume > 0 else None,
+                "oi_put_call_ratio": (put_oi / call_oi) if call_oi is not None and put_oi is not None and call_oi > 0 else None,
+                "oi_side_imbalance": ((put_oi - call_oi) / (put_oi + call_oi)) if put_oi is not None and call_oi is not None and put_oi + call_oi > 0 else None,
+                "volume_side_imbalance": ((put_volume - call_volume) / (put_volume + call_volume)) if put_volume is not None and call_volume is not None and put_volume + call_volume > 0 else None,
             }
         for row in enriched_records:
             underlying = str(row.get("underlying") or "").upper()
