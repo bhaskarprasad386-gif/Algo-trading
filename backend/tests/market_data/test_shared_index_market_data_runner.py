@@ -439,3 +439,53 @@ def test_futures_rollover_is_serialized_with_runner_stop():
     assert rollover_done.is_set() and stop_done.is_set()
     assert runner.snapshot()["enabled"] is False
     assert manager.registry.active_keys() == ()
+
+
+
+def test_stale_option_bootstrap_cannot_subscribe_after_runner_restart(monkeypatch):
+    from threading import Event, Thread
+    import time
+    import app.market_data.shared_index_market_data_runner as runner_module
+
+    rows = _rows()
+    manager = RunnerManager()
+    runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=manager)
+    assert runner.start(rows)["enabled"] is True
+    original_select = runner_module.select_locked_index_options
+    old_entered, release_old = Event(), Event()
+    call_count = {"n": 0}
+    def delayed_old_select(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            old_entered.set()
+            assert release_old.wait(timeout=3)
+        return original_select(*args, **kwargs)
+    monkeypatch.setattr(runner_module, "select_locked_index_options", delayed_old_select)
+
+    def set_spots():
+        now_ns = time.time_ns()
+        runner._spot_records = {
+            "NIFTY": MarketDataRecord(instrument=InstrumentKey("NSE", "NSE", "99001"),
+                symbol="NIFTY", instrument_type=InstrumentType.INDEX, timestamp_ns=now_ns,
+                ltp=22000.0, underlying="NIFTY"),
+            "BANKNIFTY": MarketDataRecord(instrument=InstrumentKey("NSE", "NSE", "99002"),
+                symbol="BANKNIFTY", instrument_type=InstrumentType.INDEX, timestamp_ns=now_ns,
+                ltp=48000.0, underlying="BANKNIFTY"),
+        }
+    set_spots()
+    old_thread = Thread(target=runner._bootstrap_options, daemon=True)
+    old_thread.start()
+    assert old_entered.wait(timeout=2)
+
+    runner.stop()
+    assert runner.start(rows)["enabled"] is True
+    set_spots()
+    assert runner._bootstrap_options() is True
+    active_new_epoch = set(runner.lifecycle._option_keys)
+    assert len(active_new_epoch) == 48
+
+    release_old.set()
+    old_thread.join(timeout=3)
+    assert not old_thread.is_alive()
+    assert set(runner.lifecycle._option_keys) == active_new_epoch
+    runner.stop()
