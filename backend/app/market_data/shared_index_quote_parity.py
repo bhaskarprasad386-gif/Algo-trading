@@ -32,6 +32,8 @@ class QuoteParityStatus:
     angel_age_ms: float | None
     shoonya_age_ms: float | None
     ltp_delta: float | None
+    bid_delta: float | None
+    ask_delta: float | None
     tolerance: float | None
     sources_fresh: tuple[str, ...]
 
@@ -98,19 +100,21 @@ class SharedIndexQuoteParity:
             ages[source] = age
             if obs is not None and age is not None and age * 1e6 <= self._stale_ns and obs.authenticated:
                 fresh.append(source)
-                if obs.ltp is not None and obs.ltp > 0:
-                    quotes[source] = obs.ltp
-        delta = abs(quotes["ANGELONE"] - quotes["SHOONYA"]) if len(quotes) == 2 else None
+                quotes[source] = obs
+        ltp_delta = abs(quotes["ANGELONE"].ltp - quotes["SHOONYA"].ltp) if len(quotes) == 2 and quotes["ANGELONE"].ltp is not None and quotes["SHOONYA"].ltp is not None else None
+        bid_delta = abs(quotes["ANGELONE"].bid - quotes["SHOONYA"].bid) if len(quotes) == 2 and quotes["ANGELONE"].bid is not None and quotes["SHOONYA"].bid is not None else None
+        ask_delta = abs(quotes["ANGELONE"].ask - quotes["SHOONYA"].ask) if len(quotes) == 2 and quotes["ANGELONE"].ask is not None and quotes["SHOONYA"].ask is not None else None
+        deltas = [value for value in (ltp_delta, bid_delta, ask_delta) if value is not None]
         tolerance = self._tick_sizes.get(key)
         if len(fresh) < 2:
             state = "SINGLE_SOURCE_FRESH" if fresh else "BOTH_STALE"
-        elif delta is None:
-            state = "BOTH_FRESH_NO_LTP"
-        elif tolerance is not None and delta <= tolerance:
+        elif not deltas:
+            state = "BOTH_FRESH_NO_VALID_PRICES"
+        elif tolerance is not None and all(delta <= tolerance for delta in deltas):
             state = "PARITY_OK"
         else:
             state = "PARITY_MISMATCH"
-        return QuoteParityStatus(key, state, ages["ANGELONE"], ages["SHOONYA"], delta, tolerance, tuple(fresh))
+        return QuoteParityStatus(key, state, ages["ANGELONE"], ages["SHOONYA"], ltp_delta, bid_delta, ask_delta, tolerance, tuple(fresh)
 
     def status(self, key: CanonicalContractKey, *, now_monotonic_ns: int | None = None) -> QuoteParityStatus:
         with self._lock:
