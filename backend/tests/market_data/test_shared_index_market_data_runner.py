@@ -335,21 +335,6 @@ def test_blocked_start_cannot_resurrect_runner_after_off_epoch():
 
 def test_new_on_waits_for_previous_off_subscription_teardown():
     from threading import Event, Thread
-    class BlockingStopManager(RunnerManager):
-        def __init__(self):
-            super().__init__()
-            self.block_unsubscribe = False
-            self.stop_entered = Event()
-            self.release_stop = Event()
-        def unsubscribe(self, consumer, keys=None):
-            if self.block_unsubscribe and consumer == SharedIndexMarketDataRunner(
-                instrument_master=FakeMaster(_rows()), manager=self
-            ).lifecycle.FUTURES_CONSUMER:
-                self.stop_entered.set()
-                assert self.release_stop.wait(timeout=3)
-                self.block_unsubscribe = False
-            return super().unsubscribe(consumer, keys)
-
     rows = _rows()
     manager = RunnerManager()
     runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=manager)
