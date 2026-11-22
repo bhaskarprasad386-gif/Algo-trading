@@ -8,7 +8,7 @@ from app.market_data.contracts import MarketDataRecord, InstrumentKey, Instrumen
 class FakeMaster:
     def __init__(self, rows):
         self.rows = rows
-    def download(self):
+    def download(self, *, force=False):
         return self.rows
     def resolve_index_instrument(self, symbol, exchange="NSE"):
         return {"token": "99001" if symbol == "NIFTY" else "99002", "symbol": symbol}
@@ -178,3 +178,63 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
     assert manager.registry.active_keys() == ()
     assert runner.snapshot()["state"]["instrument_count"] == 0
     assert runner.snapshot()["live_data_ready"] is False
+
+
+def test_instrument_master_refresh_publishes_complete_snapshot_without_tick_blocking():
+    from threading import Event
+    class RefreshMaster(FakeMaster):
+        def __init__(self, rows):
+            super().__init__(rows)
+            self.refresh_done = Event()
+        def download(self, *, force=False):
+            if force:
+                self.rows = self.rows + [{
+                    "exch_seg": "NFO", "name": "NIFTY", "instrumenttype": "FUTIDX",
+                    "expiry": "31DEC2026", "symbol": "NIFTY31DECFUT", "token": "999999",
+                    "lotsize": "25",
+                }]
+                self.refresh_done.set()
+            return self.rows
+    rows = _rows()
+    master = RefreshMaster(rows)
+    runner = SharedIndexMarketDataRunner(instrument_master=master, manager=RunnerManager())
+    runner.start(rows)
+    runner._master_refresh_interval_seconds = 0
+    assert runner._schedule_master_refresh() is True
+    assert master.refresh_done.wait(timeout=2)
+    # Wait for worker to publish its snapshot.
+    import time
+    deadline = time.monotonic() + 2
+    while runner._master_refresh_inflight and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert len(runner._rows) == len(rows) + 1
+    assert runner._master_refresh_error is None
+    runner.stop()
+
+
+def test_failed_instrument_master_refresh_preserves_last_good_rows():
+    from threading import Event
+    class FailingMaster(FakeMaster):
+        def __init__(self, rows):
+            super().__init__(rows)
+            self.done = Event()
+        def download(self, *, force=False):
+            if force:
+                self.done.set()
+                raise RuntimeError("network unavailable")
+            return self.rows
+    rows = _rows()
+    master = FailingMaster(rows)
+    runner = SharedIndexMarketDataRunner(instrument_master=master, manager=RunnerManager())
+    runner.start(rows)
+    original = runner._rows
+    runner._master_refresh_interval_seconds = 0
+    assert runner._schedule_master_refresh() is True
+    assert master.done.wait(timeout=2)
+    import time
+    deadline = time.monotonic() + 2
+    while runner._master_refresh_inflight and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert runner._rows is original
+    assert "network unavailable" in runner._master_refresh_error
+    runner.stop()
