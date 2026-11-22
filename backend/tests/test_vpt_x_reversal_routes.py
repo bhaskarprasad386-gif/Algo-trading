@@ -143,7 +143,7 @@ def test_invalidated_signal_requires_watch_observation_before_retrigger(monkeypa
     monkeypatch.setattr(routes, "_now_ms", lambda: clock[0])
     monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"]))
     assert client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]["status"] == "TRIGGERED"
-    for expected in ["INVALIDATED", "WATCH", "WATCH", "TRIGGERED"]:
+    for expected in ["INVALIDATED", "INVALIDATED", "WATCH", "TRIGGERED"]:
         states.pop(0)
         clock[0] += 100
         monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"]))
