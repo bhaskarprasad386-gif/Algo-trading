@@ -147,3 +147,42 @@ def test_second_broker_operation_for_group_rejected_while_late_worker_is_active(
         time.sleep(0.005)
     assert manager.snapshot()["socket_operation_worker_count"] == 0
     manager.close()
+
+
+
+def test_manager_shutdown_blocks_reconcile_and_recovery_after_close():
+    manager = CommonWebSocketManager()
+    manager.close()
+
+    try:
+        manager._reconcile()
+    except RuntimeError as exc:
+        assert "closed" in str(exc)
+    else:
+        raise AssertionError("reconcile must reject after shutdown")
+
+
+    assert manager.recover_disconnected(min_age_seconds=0.0) == 0
+    manager._ensure_recovery_supervisor()
+    assert manager._recovery_thread is None
+
+
+
+def test_recovery_supervisor_exits_on_shutdown_without_retrying():
+    manager = CommonWebSocketManager()
+    manager._recovery_interval_seconds = 0.01
+    recovery_calls = []
+    manager.recover_disconnected = lambda **kwargs: recovery_calls.append(kwargs) or 0
+    manager.registry.subscriptions = lambda: [object()]
+    manager._ensure_recovery_supervisor()
+    thread = manager._recovery_thread
+    assert thread is not None and thread.is_alive()
+    time.sleep(0.03)
+    assert recovery_calls
+
+
+    manager.close()
+    assert not thread.is_alive()
+    calls_at_close = len(recovery_calls)
+    time.sleep(0.03)
+    assert len(recovery_calls) == calls_at_close
