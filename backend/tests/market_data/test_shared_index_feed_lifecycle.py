@@ -186,3 +186,18 @@ def test_failed_initial_options_start_rolls_back_owner_and_preserves_spot():
     assert lifecycle.snapshot()["options_instruments"] == 0
     assert lifecycle.OPTIONS_CONSUMER not in manager.callbacks
     assert len(manager.registry.active_keys()) == 2
+
+def test_failed_initial_spot_start_rolls_back_owner_and_added_descriptors():
+    manager = FailAfterMutationManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    manager.fail_next_subscribe = True
+    try:
+        lifecycle.start_spot(_spot_descriptors())
+    except RuntimeError as exc:
+        assert "forced reconcile failure" in str(exc)
+    else:
+        raise AssertionError("failed spot startup must propagate")
+    assert not manager.active.get(lifecycle.SPOT_CONSUMER)
+    assert lifecycle.SPOT_CONSUMER not in manager.callbacks
+    assert not manager.registry.active_keys()
+    assert lifecycle.snapshot()["spot_active"] is False
