@@ -35,6 +35,20 @@ def test_tick_input_is_bounded_to_latest_500_observations():
     assert result["tick_count"] == 500
 
 
+def test_unordered_input_keeps_chronologically_latest_500_ticks():
+    start = int(time.time() * 1000) - 4_000
+    ticks = [{"timestamp_ms": start + i * 5, "price": 100 + i * .01,
+              "buy_volume": 30, "sell_volume": 20, "bid_qty": 80, "ask_qty": 50}
+             for i in range(600)]
+    # Put oldest 100 observations last; timestamp-based truncation should still keep latest 500.
+    ticks = ticks[100:] + ticks[:100]
+    result = evaluate_vptx({"underlying": "NIFTY", "ticks": ticks})
+    assert result["status"] == "EVALUATED"
+    assert result["tick_count"] == 500
+    assert result["features"]["price"] == pytest.approx(105.99)
+
+
+
 def test_future_tick_timestamps_fail_closed():
     future_start = int(time.time() * 1000) + 10_000
     result = evaluate_vptx({"underlying": "NIFTY", "ticks": _ticks([100+i*.1 for i in range(30)], start=future_start)})
