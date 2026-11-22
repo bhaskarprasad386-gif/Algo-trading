@@ -97,7 +97,22 @@ class SharedIndexFeedLifecycle:
         with self._lock:
             if self._spot_started:
                 raise RuntimeError("spot subscription owner is already active")
-            keys = self._spot_feed.start(items, self._callback)
+            manager = self._spot_feed.manager
+            registered_keys = [d.key for d in items if manager.registry.get(d.key) is None]
+            try:
+                keys = self._spot_feed.start(items, self._callback)
+            except Exception:
+                # A failed subscribe/reconcile can leave registry state mutated.
+                # Remove only this runner's spot owner and descriptors it added.
+                try:
+                    manager.clear_consumer(self.SPOT_CONSUMER)
+                except Exception:
+                    manager.registry.clear_consumer(self.SPOT_CONSUMER)
+                    manager._callbacks.pop(self.SPOT_CONSUMER, None)
+                    manager._record_callbacks.pop(self.SPOT_CONSUMER, None)
+                    manager._record_observers.pop(self.SPOT_CONSUMER, None)
+                manager.registry.unregister_many(registered_keys)
+                raise
             self._spot_keys = keys
             self._spot_started = True
             return keys
