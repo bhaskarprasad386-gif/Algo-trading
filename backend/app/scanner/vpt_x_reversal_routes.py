@@ -75,6 +75,8 @@ def evaluate(payload: SnapshotRequest):
             if prior and prior.get("status") in {"TRIGGERED", "WATCH", "INVALIDATED", "EXPIRED"}:
                 prev_state = prior.get("status")
                 if prev_state == "TRIGGERED":
+                    # A trigger owns its invalidation level; do not let each new snapshot move the stop.
+                    invalidation = prior.get("invalidation_price", invalidation)
                     invalid = (latest_price < invalidation) if candidate["direction"] == "BUY" else (latest_price > invalidation)
                     state = "INVALIDATED" if invalid else "TRIGGERED"
                 elif prior.get("status") == "INVALIDATED":
