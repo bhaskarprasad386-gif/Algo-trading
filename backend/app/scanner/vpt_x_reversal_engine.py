@@ -208,9 +208,10 @@ def evaluate_vptx(snapshot: Mapping[str, Any], *, now_ms: int | None = None) -> 
                     components["cross_market_confirmation"] = bonus
             gate = "PATTERN_GATE_MISSING" not in evidence
             ready = gate and score >= 65 and _pivot_break(ticks, direction)
+            strength = "STRONG" if score >= 75 else "DEVELOPING" if score >= 55 else "WATCH"
             candidates.append({
                 "pattern": pattern, "direction": direction, "score": score,
-                "strength": "STRONG" if score >= 75 else "DEVELOPING" if score >= 55 else "WATCH",
+                "strength": strength,
                 "components": components, "evidence": evidence, "trigger_ready": bool(ready),
                 "entry_style": "EARLY_CONTROL_SHIFT" if ready else "WATCH",
                 "invalidation_price": metrics["low"] if direction == "BUY" else metrics["high"],
