@@ -129,6 +129,9 @@ def _metrics(ticks: Sequence[Mapping[str, float]]) -> dict[str, float | bool]:
     second_low_fail = first_low - retest_tol <= second_low <= first_low + retest_tol
     second_high_fail = first_high - retest_tol <= second_high <= first_high + retest_tol
 
+    # Invalidation follows the sweep boundary when present; otherwise use full-window extremes.
+    buy_invalidation = recent_low if swept_low else min(prices)
+    sell_invalidation = recent_high if swept_high else max(prices)
     displacement = _ratio(latest["price"] - ticks[-5]["price"], price_range)
     earlier_range = max(ref_high - ref_low, latest["price"] * 0.00005)
     compression_ratio = _ratio(recent_high - recent_low, earlier_range)
@@ -143,6 +146,7 @@ def _metrics(ticks: Sequence[Mapping[str, float]]) -> dict[str, float | bool]:
         "normalized_displacement": displacement, "book_imbalance": book,
         "compression_ratio": compression_ratio, "prior_impulse": prior_impulse,
         "range": price_range, "ref_low": ref_low, "ref_high": ref_high,
+        "buy_invalidation": buy_invalidation, "sell_invalidation": sell_invalidation,
         "low": min(prices), "high": max(prices), "price": latest["price"],
     }
 
@@ -224,7 +228,7 @@ def evaluate_vptx(snapshot: Mapping[str, Any], *, now_ms: int | None = None) -> 
                 "strength": strength,
                 "components": components, "evidence": evidence, "trigger_ready": bool(ready),
                 "entry_style": "EARLY_CONTROL_SHIFT" if ready else "WATCH",
-                "invalidation_price": metrics["low"] if direction == "BUY" else metrics["high"],
+                "invalidation_price": metrics["buy_invalidation"] if direction == "BUY" else metrics["sell_invalidation"],
                 "target_reference": "VWAP_OR_NEXT_LIQUIDITY_ZONE",
                 "scanner_only": True, "order_routing_enabled": False,
             })
