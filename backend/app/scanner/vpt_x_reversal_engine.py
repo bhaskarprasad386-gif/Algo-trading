@@ -160,10 +160,12 @@ def _score(direction: str, metrics: Mapping[str, Any], pattern: str) -> tuple[in
     if pattern == "SWING_EXHAUSTION":
         gate = liquidity_failure and impact and (flow or failed_attack)
     elif pattern == "COMPRESSION_REVERSAL":
-        compression = metrics["compression_ratio"] <= 0.45 and abs(metrics["prior_impulse"]) >= 0.8
+        prior_move_against = metrics["prior_impulse"] <= -0.8 if direction == "BUY" else metrics["prior_impulse"] >= 0.8
+        compression = metrics["compression_ratio"] <= 0.45 and prior_move_against
         gate = compression and flow and pivot and failed_attack
     else:
-        gate = impact and flow and (pivot or displacement) and abs(metrics["normalized_displacement"]) >= 0.04
+        prior_move_against = metrics["prior_impulse"] <= -0.5 if direction == "BUY" else metrics["prior_impulse"] >= 0.5
+        gate = prior_move_against and impact and flow and (pivot or displacement) and abs(metrics["normalized_displacement"]) >= 0.04
     evidence = [name for name, points in components.items() if points]
     if not gate:
         evidence.append("PATTERN_GATE_MISSING")
