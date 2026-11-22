@@ -376,10 +376,16 @@ class SharedIndexMarketDataRunner:
         return self.snapshot()
 
     def flush_rotations(self) -> tuple[str, ...]:
+        # Serialize external pending flushes with live spot callbacks. Successful
+        # rotations must immediately retire old keys from state/cache so late
+        # frames cannot resurrect stale quotes between callback-driven syncs.
         with self._lock:
             if not self._running:
                 return ()
-        return self.rotation.flush_due()
+            completed = self.rotation.flush_due()
+            if completed:
+                self._sync_state_universe()
+            return completed
 
     def latest(self, instrument_key: str):
         return self.state.latest(instrument_key)
