@@ -40,29 +40,37 @@ class SharedIndexOptionRotationController:
         underlying = str(record.underlying or "").strip().upper()
         if underlying not in {"NIFTY", "BANKNIFTY"}:
             return False
-        if not self.trigger.on_spot(underlying, record.ltp):
-            return False
-        success = self._rotate(underlying, record.ltp)
-        self.trigger.rotation_result(underlying, success=success, spot=record.ltp)
-        return success
+        # Serialize trigger bookkeeping with pending rotations and contract replacement.
+        with self._lock:
+            if not self.trigger.on_spot(underlying, record.ltp):
+                return False
+            success = self._rotate(underlying, record.ltp)
+            self.trigger.rotation_result(underlying, success=success, spot=record.ltp)
+            return success
 
 
 
     def flush_due(self) -> tuple[str, ...]:
-        due = self.trigger.flush_due()
-        completed = []
-        for underlying in due:
-            with self._lock:
+        # Lock the pending-drain and rotation sequence against live spot callbacks.
+        with self._lock:
+            due = self.trigger.flush_due()
+            completed = []
+            for underlying in due:
                 spot = self.trigger.snapshot()["last_spot"].get(underlying)
-            success = spot is not None and self._rotate(underlying, spot)
-            self.trigger.rotation_result(underlying, success=success, spot=spot)
-            if success:
-                completed.append(underlying)
-        return tuple(completed)
+                success = spot is not None and self._rotate(underlying, spot)
+                self.trigger.rotation_result(underlying, success=success, spot=spot)
+                if success:
+                    completed.append(underlying)
+            return tuple(completed)
 
 
 
     def _rotate(self, underlying: str, spot: float) -> bool:
+        # Guard direct calls and pending flushes; RLock permits nested entry.
+        with self._lock:
+            return self._rotate_locked(underlying, spot)
+
+    def _rotate_locked(self, underlying: str, spot: float) -> bool:
         try:
             selection = select_locked_index_options(
                 self.instrument_rows(), underlying=underlying,
