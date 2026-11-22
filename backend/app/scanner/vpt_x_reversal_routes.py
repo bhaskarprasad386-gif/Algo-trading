@@ -96,8 +96,8 @@ def evaluate(payload: SnapshotRequest):
                 item["created_at"] = item["updated_at"]
             item["_updated_ms"] = now
             item["_state_started_ms"] = (
-                int(prior.get("_state_started_ms", prior.get("_updated_ms", now))))
-                if prior and prior.get("status") == state else now
+                int(prior.get("_state_started_ms", prior.get("_updated_ms", now)))
+                if prior and prior.get("status") == state else now)
             _history[key] = item
             _history.move_to_end(key)
             candidates.append({k: v for k, v in item.items() if not k.startswith("_")})
