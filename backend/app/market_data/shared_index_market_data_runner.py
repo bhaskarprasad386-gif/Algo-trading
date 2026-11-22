@@ -138,6 +138,9 @@ class SharedIndexMarketDataRunner:
             if running:
                 self._bootstrap_options(record)
                 self.rotation.on_record(record)
+                # Flush cooldown-coalesced rotations from live spot updates;
+                # no external scheduler or strategy runner is required.
+                self.rotation.flush_due()
 
     def start(self) -> dict:
         with self._lock:
