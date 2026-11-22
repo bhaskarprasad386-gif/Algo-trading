@@ -186,6 +186,16 @@ class SharedIndexFeedLifecycle:
 
 
 
+    def option_descriptors(self) -> tuple[InstrumentDescriptor, ...]:
+        """Return current descriptors owned by the option consumer."""
+        with self._lock:
+            manager = self._options_feed.manager
+            return tuple(
+                descriptor for key in self._option_keys
+                if (descriptor := manager.registry.get(key)) is not None
+            )
+
+
     def stop_options(self) -> None:
         with self._lock:
             self._options_feed.stop()
