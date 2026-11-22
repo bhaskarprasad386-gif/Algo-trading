@@ -178,6 +178,7 @@ class SharedIndexMarketDataRunner:
                 return self.snapshot()
             self._start_error = None
             self._spot_records.clear()
+            self.state.clear()
             self._bootstrap_options_done = False
             self._bootstrap_inflight = False
         try:
@@ -207,6 +208,7 @@ class SharedIndexMarketDataRunner:
             self._bootstrap_options_done = False
             self._bootstrap_inflight = False
             self._spot_records.clear()
+            self.state.clear()
         try:
             self.lifecycle.stop()
         finally:
