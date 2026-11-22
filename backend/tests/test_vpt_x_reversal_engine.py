@@ -1,8 +1,10 @@
-import pytest\nimport time
+import pytest
+import time
 from app.scanner.vpt_x_reversal_engine import evaluate_vptx
 
 
-def _ticks(prices, start=None):\n    start = start if start is not None else int(time.time() * 1000) - 3_000
+def _ticks(prices, start=None):
+    start = start if start is not None else int(time.time() * 1000) - 3_000
     return [{"timestamp_ms":start+i*100,"price":p,"buy_volume":30+i*2,"sell_volume":20,
              "bid_qty":120+i*3,"ask_qty":60,"bid":p-.05,"ask":p+.05} for i,p in enumerate(prices)]
 
@@ -55,4 +57,8 @@ def test_missing_tick_array_is_waiting_not_exception():
     result=evaluate_vptx({"underlying":"BANKNIFTY","ticks":None})
     assert result["status"]=="WAITING_DATA"
     assert result["candidates"]==[]
-\n\ndef test_old_ticks_are_stale_against_real_server_clock():\n    result=evaluate_vptx({"underlying":"NIFTY","ticks":_ticks([100+i*.1 for i in range(30)], start=1_000_000)})\n    assert result["status"]=="WAITING_DATA" and result["candidates"]==[]\n
+
+
+def test_old_ticks_are_stale_against_real_server_clock():
+    result=evaluate_vptx({"underlying":"NIFTY","ticks":_ticks([100+i*.1 for i in range(30)], start=1_000_000)})
+    assert result["status"]=="WAITING_DATA" and result["candidates"]==[]
