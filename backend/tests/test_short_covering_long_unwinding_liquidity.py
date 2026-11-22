@@ -39,3 +39,8 @@ def test_liquidity_pressure_uses_only_fresh_reclaim_and_dedupes():
     assert scores=={"bullish":.5,"bearish":.7}
     assert liquidity_pressure([],1500)=={"bullish":None,"bearish":None}
     assert liquidity_pressure([bullish],4000)=={"bullish":None,"bearish":None}
+
+def test_reclaim_must_match_original_sweep_level():
+    sweep=detect_sweep(price=99.5,level=100,side="BULLISH",timestamp_ms=1000,min_sweep=.25)
+    assert sweep
+    assert detect_reclaim(price=101.2,level=101,side="BULLISH",timestamp_ms=1200,sweep=sweep) is None
