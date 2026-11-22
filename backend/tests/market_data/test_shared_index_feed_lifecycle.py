@@ -50,6 +50,48 @@ def _options(shift=0):
     return tuple(descriptors)
 
 
+def _future_descriptors(expiry_tag="old"):
+    return tuple(InstrumentDescriptor(
+        key=InstrumentKey("NFO", "NFO", f"{underlying}-{expiry_tag}"),
+        symbol=f"{underlying}-{expiry_tag}", instrument_type="future",
+        exchange="NFO", segment="NFO", expiry=expiry_tag, underlying=underlying,
+    ) for underlying in ("NIFTY", "BANKNIFTY"))
+
+
+def test_futures_rotation_preserves_owner_and_replaces_contracts():
+    manager = StubManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    old = _future_descriptors("old")
+    lifecycle.start_futures(old)
+    original = set(manager.active[lifecycle.FUTURES_CONSUMER])
+    new = _future_descriptors("new")
+    lifecycle.rotate_futures(new)
+    assert len(manager.active[lifecycle.FUTURES_CONSUMER]) == 2
+    assert manager.active[lifecycle.FUTURES_CONSUMER] == {d.key for d in new}
+    assert manager.active[lifecycle.FUTURES_CONSUMER].isdisjoint(original)
+    assert lifecycle.snapshot()["futures_active"] is True
+    lifecycle.stop_futures()
+    assert not manager.registry.active_keys()
+
+
+def test_failed_futures_rotation_rolls_back_new_refs_and_keeps_old_contracts():
+    manager = FailAfterMutationManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    old = _future_descriptors("old")
+    lifecycle.start_futures(old)
+    old_keys = set(lifecycle._futures_keys)
+    manager.fail_next_subscribe = True
+    try:
+        lifecycle.rotate_futures(_future_descriptors("new"))
+    except RuntimeError as exc:
+        assert "forced reconcile failure" in str(exc)
+    else:
+        raise AssertionError("futures rotation failure must propagate")
+    assert set(lifecycle._futures_keys) == old_keys
+    assert manager.active[lifecycle.FUTURES_CONSUMER] == old_keys
+    assert len(manager.registry.active_keys()) == 2
+
+
 def test_options_rotation_adds_before_removing_and_keeps_spot_owner():
     manager = StubManager()
     lifecycle = SharedIndexFeedLifecycle(manager=manager)
