@@ -186,3 +186,32 @@ def test_recovery_supervisor_exits_on_shutdown_without_retrying():
     calls_at_close = len(recovery_calls)
     time.sleep(0.03)
     assert len(recovery_calls) == calls_at_close
+
+
+
+def test_recovery_supervisor_uses_bounded_backoff_after_transient_errors():
+    manager = CommonWebSocketManager()
+    manager._recovery_interval_seconds = 0.01
+    manager._recovery_backoff_max_seconds = 0.04
+    calls = []
+    recovery_succeeded = Event()
+
+
+    def failing_then_success(**kwargs):
+        calls.append(time.monotonic())
+        if len(calls) <= 2:
+            raise RuntimeError("temporary broker outage")
+        recovery_succeeded.set()
+        return 0
+
+
+    manager.recover_disconnected = failing_then_success
+    manager.registry.subscriptions = lambda: [object()]
+    manager._ensure_recovery_supervisor()
+    assert recovery_succeeded.wait(timeout=1.0)
+    state = manager.snapshot()
+    assert state["recovery_backoff_errors"] == 2
+    assert state["recovery_backoff_current_seconds"] == manager._recovery_interval_seconds
+    assert state["recovery_backoff_resets"] >= 1
+    assert state["recovery_backoff_max_seconds"] == 0.04
+    manager.close()
