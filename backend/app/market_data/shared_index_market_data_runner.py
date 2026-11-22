@@ -234,6 +234,7 @@ class SharedIndexMarketDataRunner:
                    for record in self._spot_records.values()):
                 return False
             self._bootstrap_inflight = True
+            generation = self._run_generation
             rows = self._rows
             spot_prices = {underlying: float(record.ltp) for underlying, record in self._spot_records.items()}
         try:
@@ -252,7 +253,7 @@ class SharedIndexMarketDataRunner:
                     lot_size=contract.lot_size, underlying=contract.underlying,
                 ) for contract in selected.contracts)
             with self._lock:
-                if not self._running or not self._bootstrap_inflight:
+                if not self._running or generation != self._run_generation or not self._bootstrap_inflight:
                     return False
                 self.lifecycle.start_options(tuple(descriptors))
                 self._sync_state_universe()
@@ -262,8 +263,9 @@ class SharedIndexMarketDataRunner:
             return True
         except Exception as exc:
             with self._lock:
-                self._start_error = f"{type(exc).__name__}: {exc}"[:240]
-                self._bootstrap_inflight = False
+                if generation == self._run_generation:
+                    self._start_error = f"{type(exc).__name__}: {exc}"[:240]
+                    self._bootstrap_inflight = False
             return False
 
     def _sync_state_universe(self) -> None:
