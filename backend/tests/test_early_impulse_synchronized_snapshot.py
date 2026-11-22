@@ -53,3 +53,34 @@ def test_snapshot_validates_clock_and_limits():
         assert "now_ns" in str(exc)
     else:
         raise AssertionError("invalid clock must be rejected")
+
+
+def test_snapshot_accepts_exact_age_and_skew_boundaries():
+    result = build_synchronized_snapshot(
+        {"spot": [q("spot", 8_000_000_000)], "future": [q("future", 8_500_000_000)]},
+        now_ns=10_000_000_000, max_age_ns=2_000_000_000,
+        max_skew_ns=500_000_000, required_instruments=["spot", "future"],
+    )
+    assert result["aligned"] is True
+    assert result["observed_skew_ns"] == 500_000_000
+    assert result["quotes"]["spot"]["age_ns"] == 2_000_000_000
+
+
+def test_snapshot_rejects_age_one_nanosecond_over_limit():
+    result = build_synchronized_snapshot(
+        {"spot": [q("spot", 7_999_999_999)]},
+        now_ns=10_000_000_000, max_age_ns=2_000_000_000,
+        required_instruments=["spot"],
+    )
+    assert result["aligned"] is False
+    assert result["stale_instruments"] == ["spot"]
+
+
+def test_snapshot_rejects_skew_one_nanosecond_over_limit():
+    result = build_synchronized_snapshot(
+        {"spot": [q("spot", 9_000_000_000)], "future": [q("future", 9_500_000_001)]},
+        now_ns=10_000_000_000, max_age_ns=2_000_000_000,
+        max_skew_ns=500_000_000, required_instruments=["spot", "future"],
+    )
+    assert result["aligned"] is False
+    assert result["observed_skew_ns"] == 500_000_001
