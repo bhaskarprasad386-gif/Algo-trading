@@ -366,6 +366,9 @@ class SharedIndexMarketDataRunner:
             return self.snapshot()
 
     def stop(self) -> dict:
+        # Keep subscription teardown serialized against a subsequent ON. Merely
+        # advancing the epoch before releasing the lock leaves a window where a
+        # new start can activate and then be torn down by this older OFF.
         with self._lock:
             self._run_generation += 1
             self._running = False
@@ -374,10 +377,9 @@ class SharedIndexMarketDataRunner:
             self._spot_records.clear()
             self.state.clear()
             self.derived_iv.clear()
-        try:
-            self.lifecycle.stop()
-        finally:
-            with self._lock:
+            try:
+                self.lifecycle.stop()
+            finally:
                 self._started_at = None
         return self.snapshot()
 
