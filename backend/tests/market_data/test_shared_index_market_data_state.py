@@ -65,6 +65,7 @@ def test_records_snapshot_exposes_quote_fields_and_one_second_oi_delta():
     assert row["bid_qty"] == 25 and row["ask_qty"] == 40
     assert row["volume"] == 820 and row["oi"] == 1060
     assert row["oi_delta_1s"] == 60
+    assert row["volume_delta_1s"] == 20
     assert row["fresh"] is True
 
 
@@ -74,7 +75,7 @@ def test_oi_delta_is_not_reported_for_subsecond_sample_window():
     option = MarketDataRecord(
         instrument=InstrumentKey("NFO", "NFO", "opt-short"), symbol="NIFTYCE",
         instrument_type=InstrumentType.OPTION, timestamp_ns=now - 300_000_000,
-        ltp=125.5, oi=1000, underlying="NIFTY", expiry="2026-11-26",
+        ltp=125.5, oi=1000, volume=1200, underlying="NIFTY", expiry="2026-11-26",
         strike=25000, option_type=__import__("app.market_data.contracts", fromlist=["OptionType"]).OptionType.CALL,
         lot_size=25,
     )
@@ -82,8 +83,10 @@ def test_oi_delta_is_not_reported_for_subsecond_sample_window():
     later = MarketDataRecord(
         instrument=option.instrument, symbol=option.symbol,
         instrument_type=option.instrument_type, timestamp_ns=time_ns() - 100_000_000,
-        ltp=126.0, oi=1060, underlying="NIFTY", expiry=option.expiry,
+        ltp=126.0, oi=1060, volume=1220, underlying="NIFTY", expiry=option.expiry,
         strike=option.strike, option_type=option.option_type, lot_size=25,
     )
     assert state.on_record(later)
-    assert state.records_snapshot()[0]["oi_delta_1s"] is None
+    row = state.records_snapshot()[0]
+    assert row["oi_delta_1s"] is None
+    assert row["volume_delta_1s"] is None
