@@ -15,6 +15,7 @@ from .instruments import InstrumentMaster
 from .shared_index_feed_lifecycle import SharedIndexFeedLifecycle
 from .shared_index_market_data_state import SharedIndexMarketDataState
 from .shared_index_option_rotation_controller import SharedIndexOptionRotationController
+from .shared_index_option_selection import select_locked_index_options
 from .shared_index_spot_resolver import resolve_locked_index_spot_descriptors
 from .shared_index_option_selection import _parse_expiry
 
@@ -64,13 +65,14 @@ class SharedIndexMarketDataRunner:
     """Explicit ON/OFF lifecycle; isolated from application startup and strategy logic."""
 
     def __init__(self, *, instrument_master: Any | None = None,
+                 manager: Any | None = None,
                  publish: Callable[[Any], None] | None = None,
                  rotation_thresholds: dict[str, float] | None = None,
                  cooldown_seconds: float = 1.0,
                  clock=None):
         self.instrument_master = instrument_master or InstrumentMaster()
         self.state = SharedIndexMarketDataState(publish=publish)
-        self.lifecycle = SharedIndexFeedLifecycle(record_callback=self._on_record)
+        self.lifecycle = SharedIndexFeedLifecycle(manager=manager, record_callback=self._on_record)
         thresholds = rotation_thresholds or {"NIFTY": 20.0, "BANKNIFTY": 50.0}
         controller_kwargs = {
             "lifecycle": self.lifecycle,
