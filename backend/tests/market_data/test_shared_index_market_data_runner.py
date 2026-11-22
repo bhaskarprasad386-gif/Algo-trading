@@ -110,6 +110,12 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
     assert snap["live_data_ready"] is True
     assert len(snap["records"]) == 50
     assert all(row["feed_age_seconds"] >= 0 and row["fresh"] for row in snap["records"])
+    option_rows = [row for row in snap["records"] if row["instrument_type"] == "option"]
+    assert len(option_rows) == 48
+    assert all(row["volume"] == 1000 and row["oi"] == 500 for row in option_rows)
+    assert all("volume_delta_1s" in row and "oi_delta_1s" in row for row in option_rows)
+    assert snap["derived_iv_model"]["volume_source"] == "broker_day_volume"
+    assert snap["derived_iv_model"]["oi_source"] == "broker_open_interest"
     runner.stop()
     assert manager.registry.active_keys() == ()
     assert runner.snapshot()["state"]["instrument_count"] == 0
