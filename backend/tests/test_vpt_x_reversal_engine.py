@@ -45,6 +45,7 @@ def test_unordered_input_keeps_chronologically_latest_500_ticks():
     result = evaluate_vptx({"underlying": "NIFTY", "ticks": ticks})
     assert result["status"] == "EVALUATED"
     assert result["tick_count"] == 500
+    assert result["features"]["low"] == pytest.approx(101.00
     assert result["features"]["price"] == pytest.approx(105.99)
 
 
