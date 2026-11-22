@@ -1,5 +1,5 @@
 "use client";
-import {useCallback,useEffect,useState} from "react";
+import {useCallback,useEffect,useRef,useState} from "react";
 import {Activity,RefreshCw,ShieldAlert,ArrowUpRight,ArrowDownRight,Clock3} from "lucide-react";
 import {appConfig} from "@/lib/config";
 
@@ -8,10 +8,10 @@ type Status={scanner?:string;status?:string;feed_connected?:boolean;scanner_acti
 const patterns=[["SWING_EXHAUSTION","Swing exhaustion"],["COMPRESSION_REVERSAL","Impulse + compression"],["V_REVERSAL","Immediate V reversal"]];
 const fmt=(value?:string)=>value?new Date(value).toLocaleString("en-IN",{timeZone:"Asia/Kolkata"}):"—";
 export default function VptXPage(){
- const [status,setStatus]=useState<Status|null>(null),[signals,setSignals]=useState<Signal[]>([]),[busy,setBusy]=useState(false),[err,setErr]=useState<string|null>(null),[symbol,setSymbol]=useState("NIFTY"),[snapshot,setSnapshot]=useState("");
+ const [status,setStatus]=useState<Status|null>(null),[signals,setSignals]=useState<Signal[]>([]),[busy,setBusy]=useState(false),[err,setErr]=useState<string|null>(null),[symbol,setSymbol]=useState("NIFTY"),[snapshot,setSnapshot]=useState("");\n const requestLock=useRef(false);
  const base=appConfig.apiBaseUrl.replace(/\/$/,"");
  const refresh=useCallback(async()=>{
-   if(busy)return; setBusy(true);
+   if(requestLock.current)return; requestLock.current=true; setBusy(true);
    try{const [s,h]=await Promise.all([fetch(base+"/api/v1/scanner/vpt-x/status",{cache:"no-store"}),fetch(base+"/api/v1/scanner/vpt-x/signals?limit=100",{cache:"no-store"})]);
    if(!s.ok||!h.ok)throw new Error("API HTTP "+(!s.ok?s.status:h.status));
    setStatus(await s.json());setSignals((await h.json()).signals??[]);setErr(null);
