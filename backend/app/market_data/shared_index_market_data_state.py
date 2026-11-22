@@ -11,6 +11,9 @@ from .shared_cache import put_market_data_record, get_shared_market_data_cache
 
 class SharedIndexMarketDataState:
     MAX_INSTRUMENTS = 52  # 48 options + 2 spot + 2 index futures
+    MAX_OI_HISTORY = 128
+    MAX_VOLUME_HISTORY = 128
+    MAX_TICK_HISTORY = 512
 
 
 
@@ -59,16 +62,16 @@ class SharedIndexMarketDataState:
             self._latest[key] = record
             cutoff = ts - 5_000_000_000
             if record.oi is not None:
-                history = self._oi_history.setdefault(key, deque())
+                history = self._oi_history.setdefault(key, deque(maxlen=self.MAX_OI_HISTORY))
                 history.append((ts, record.oi))
                 while history and history[0][0] < cutoff:
                     history.popleft()
-            ticks = self._tick_history.setdefault(key, deque())
+            ticks = self._tick_history.setdefault(key, deque(maxlen=self.MAX_TICK_HISTORY))
             ticks.append((ts, record.ltp, record.bid, record.ask, record.bid_qty, record.ask_qty))
             while ticks and ticks[0][0] < ts - 5_000_000_000:
                 ticks.popleft()
             if record.volume is not None:
-                history = self._volume_history.setdefault(key, deque())
+                history = self._volume_history.setdefault(key, deque(maxlen=self.MAX_VOLUME_HISTORY))
                 # Broker day-volume can reset at a session boundary. Drop the
                 # old baseline instead of interpreting a reset as a negative delta
                 # or a later rebound as a false positive.
