@@ -325,3 +325,40 @@ def test_registry_rollback_requests_transport_reconciliation_after_partial_subsc
     assert manager.registry.active_keys() == tuple(sorted(old_keys, key=lambda key: key.value))
     assert manager.active[lifecycle.OPTIONS_CONSUMER] == old_keys
     assert manager.reconcile_calls == 1
+
+
+class FailAfterConsumerClearManager(StubManager):
+    def __init__(self):
+        super().__init__()
+        self.fail_consumer = None
+    def clear_consumer(self, consumer):
+        super().clear_consumer(consumer)
+        if consumer == self.fail_consumer:
+            self.fail_consumer = None
+            raise RuntimeError("reconcile failed after clear mutation")
+
+
+def test_stop_clears_local_owner_flags_and_continues_after_partial_reconcile_failure():
+    manager = FailAfterConsumerClearManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    lifecycle.start_spot(_spot_descriptors())
+    lifecycle.start_options(_options())
+    lifecycle.start_futures(_future_descriptors())
+    manager.fail_consumer = lifecycle.OPTIONS_CONSUMER
+
+    try:
+        lifecycle.stop()
+    except RuntimeError as exc:
+        assert "reconcile failed after clear mutation" in str(exc)
+    else:
+        raise AssertionError("teardown should surface the reconcile error")
+
+
+    snapshot = lifecycle.snapshot()
+    assert snapshot["options_active"] is False
+    assert snapshot["options_instruments"] == 0
+    assert snapshot["futures_active"] is False
+    assert snapshot["futures_instruments"] == 0
+    assert snapshot["spot_active"] is False
+    assert snapshot["spot_instruments"] == 0
+    assert manager.registry.active_keys() == ()
