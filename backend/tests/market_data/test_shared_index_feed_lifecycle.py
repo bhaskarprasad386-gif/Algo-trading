@@ -111,11 +111,11 @@ def test_options_rotation_adds_before_removing_and_keeps_spot_owner():
 def test_invalid_locked_option_count_rejected_before_mutation():
     manager = StubManager()
     lifecycle = SharedIndexFeedLifecycle(manager=manager)
-    bad = _options()[:-2]
+    bad = _options()[2:]
     try:
         lifecycle.start_options(bad)
     except ValueError as exc:
-        assert "exactly 26 NIFTY" in str(exc)
+        assert "NIFTY must contain exactly 26 options" in str(exc)
     else:
         raise AssertionError("invalid option universe must be rejected")
     assert not manager.registry.subscriptions()
@@ -164,7 +164,7 @@ def test_locked_options_reject_expiry_mismatch_and_asymmetric_strike_window():
     broken_strikes[0] = InstrumentDescriptor(
         key=InstrumentKey("NFO", "NFO", "off-grid"),
         symbol="off-grid", instrument_type="option", exchange="NFO", segment="NFO",
-        expiry=original.expiry, strike=original.strike + 10, option_type=original.option_type,
+        expiry=original.expiry, strike=original.strike + 25, option_type=original.option_type,
         underlying=original.underlying,
     )
     try:
