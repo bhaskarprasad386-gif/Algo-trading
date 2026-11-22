@@ -25,6 +25,7 @@ class SharedIndexMarketDataState:
         self._stale_dropped = 0
         self._out_of_order = 0
         self._oi_history: dict[str, deque[tuple[int, int]]] = {}
+        self._volume_history: dict[str, deque[tuple[int, int]]] = {}
 
 
 
@@ -46,10 +47,15 @@ class SharedIndexMarketDataState:
             if key not in self._latest and len(self._latest) >= self.MAX_INSTRUMENTS:
                 return False
             self._latest[key] = record
+            cutoff = ts - 3_000_000_000
             if record.oi is not None:
                 history = self._oi_history.setdefault(key, deque())
                 history.append((ts, record.oi))
-                cutoff = ts - 3_000_000_000
+                while history and history[0][0] < cutoff:
+                    history.popleft()
+            if record.volume is not None:
+                history = self._volume_history.setdefault(key, deque())
+                history.append((ts, record.volume))
                 while history and history[0][0] < cutoff:
                     history.popleft()
             self._accepted += 1
@@ -65,6 +71,7 @@ class SharedIndexMarketDataState:
             removed = len(self._latest)
             self._latest.clear()
             self._oi_history.clear()
+            self._volume_history.clear()
             return removed
 
 
@@ -76,6 +83,7 @@ class SharedIndexMarketDataState:
             for key in removed:
                 self._latest.pop(key, None)
                 self._oi_history.pop(key, None)
+                self._volume_history.pop(key, None)
             return len(removed)
 
 
@@ -85,6 +93,7 @@ class SharedIndexMarketDataState:
         with self._lock:
             latest = tuple(self._latest.items())
             oi_history = {key: tuple(history) for key, history in self._oi_history.items()}
+            volume_history = {key: tuple(history) for key, history in self._volume_history.items()}
         result = []
         for key, record in latest:
             data = record.as_dict()
@@ -101,6 +110,13 @@ class SharedIndexMarketDataState:
                 if baseline is not None:
                     delta = record.oi - baseline
             data["oi_delta_1s"] = delta
+            vol_history = volume_history.get(key, ())
+            volume_delta = None
+            if record.volume is not None and len(vol_history) >= 2:
+                volume_baseline = next((volume for ts, volume in vol_history if ts <= now - 1_000_000_000), None)
+                if volume_baseline is not None and record.volume >= volume_baseline:
+                    volume_delta = record.volume - volume_baseline
+            data["volume_delta_1s"] = volume_delta
             result.append(data)
         return result
 
