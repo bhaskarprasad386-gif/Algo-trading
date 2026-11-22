@@ -104,6 +104,10 @@ def test_triggered_signal_invalidates_and_does_not_reactivate(monkeypatch):
     monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"], states[0]["invalidation"]))
     triggered = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
     assert triggered["status"] == "TRIGGERED"
+    with routes._lock:
+        prior = routes._history["NIFTY:SWING_EXHAUSTION:BUY"]
+        assert prior["status"] == "TRIGGERED"
+        assert prior["invalidation_price"] == 99.0
     states.pop(0)
     clock[0] += 100
     monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"], states[0]["invalidation"]))
@@ -114,7 +118,8 @@ def test_triggered_signal_invalidates_and_does_not_reactivate(monkeypatch):
     clock[0] += 100
     monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"]))
     recovered = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
-    assert recovered["status"] == "INVALIDATED"
+    assert recovered["status"] == "WATCH"
+    assert recovered["trigger_ready"] is True  # trigger-ready data cannot reactivate before a fresh WATCH
 
 def test_signal_limit_is_clamped_and_symbol_filter_is_normalized():
     # Invalid symbols are rejected; limit=0 is safely clamped to one item.
