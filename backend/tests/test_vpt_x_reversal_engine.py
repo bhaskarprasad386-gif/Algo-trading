@@ -100,3 +100,15 @@ def test_missing_tick_array_is_waiting_not_exception():
 def test_old_ticks_are_stale_against_real_server_clock():
     result=evaluate_vptx({"underlying":"NIFTY","ticks":_ticks([100+i*.1 for i in range(30)], start=1_000_000)})
     assert result["status"]=="WAITING_DATA" and result["candidates"]==[]
+
+
+def test_cross_confirmation_bonus_keeps_score_components_normalized(monkeypatch):
+    import app.scanner.vpt_x_reversal_engine as engine
+    monkeypatch.setattr(engine, "_score", lambda direction, metrics, pattern: (98, {"base": 98}, []))
+    ticks = _ticks([100 + i * .1 for i in range(30)])
+    result = evaluate_vptx({"underlying": "NIFTY", "ticks": ticks, "cross_confirmation": .9})
+    assert result["status"] == "EVALUATED"
+    for candidate in result["candidates"]:
+        assert candidate["score"] == 100
+        assert sum(candidate["components"].values()) == candidate["score"]
+        assert candidate["components"]["cross_market_confirmation"] == 2
