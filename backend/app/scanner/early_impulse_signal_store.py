@@ -19,6 +19,7 @@ class EarlyImpulseSignalStore:
         self._items: deque[dict[str, Any]] = deque(maxlen=max_signals)
         self._last_by_key: dict[tuple[str, str], float] = {}
         self._suppressed = 0
+        self._feed_epoch: int | None = None
 
     @staticmethod
     def _key(signal: Mapping[str, Any]) -> tuple[str, str]:
@@ -28,6 +29,19 @@ class EarlyImpulseSignalStore:
             raise ValueError("signal requires underlying and BUY/SELL direction")
         return underlying, direction
 
+    def begin_epoch(self, epoch: int) -> bool:
+        """Advance feed generation and reset cooldowns; keep bounded signal history."""
+        if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
+            raise ValueError("feed epoch must be a nonnegative integer")
+        with self._lock:
+            if self._feed_epoch is not None and epoch < self._feed_epoch:
+                return False
+            if epoch != self._feed_epoch:
+                self._feed_epoch = epoch
+                self._last_by_key.clear()
+            return True
+
+
     def publish(self, signal: Mapping[str, Any], *, now: float | None = None) -> bool:
         key = self._key(signal)
         score = signal.get("score")
@@ -36,6 +50,19 @@ class EarlyImpulseSignalStore:
         timestamp = monotonic() if now is None else now
         if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)) or not isfinite(timestamp):
             raise ValueError("timestamp must be numeric")
+        feed_epoch = signal.get("feed_epoch")
+        if feed_epoch is not None:
+            if isinstance(feed_epoch, bool) or not isinstance(feed_epoch, int) or feed_epoch < 0:
+                raise ValueError("feed_epoch must be a nonnegative integer")
+            with self._lock:
+                if self._feed_epoch is None:
+                    self._feed_epoch = feed_epoch
+                elif feed_epoch < self._feed_epoch:
+                    self._suppressed += 1
+                    return False
+                elif feed_epoch > self._feed_epoch:
+                    self._feed_epoch = feed_epoch
+                    self._last_by_key.clear()
         payload = dict(signal)
         payload.update({"underlying": key[0], "direction": key[1], "scanner_only": True, "order_routing_enabled": False})
         with self._lock:
@@ -54,6 +81,7 @@ class EarlyImpulseSignalStore:
         with self._lock:
             return {"signals": list(self._items), "signal_count": len(self._items),
                     "suppressed_duplicate_count": self._suppressed, "capacity": self.max_signals,
+                    "feed_epoch": self._feed_epoch,
                     "cooldown_seconds": self.cooldown_seconds, "scanner_only": True,
                     "order_routing_enabled": False}
 
@@ -62,3 +90,4 @@ class EarlyImpulseSignalStore:
             self._items.clear()
             self._last_by_key.clear()
             self._suppressed = 0
+            self._feed_epoch = None
