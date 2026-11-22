@@ -137,7 +137,7 @@ def test_state_cache_capacity_is_bounded_and_reports_dropped_ticks():
     now = time_ns()
     for i in range(state.MAX_INSTRUMENTS):
         assert state.on_record(_record(f"cap-{i}", now + i))
-    assert not state.on_record(_record("cap-overflow", time_ns()))
+    assert not state.on_record(_record("cap-overflow", now + state.MAX_INSTRUMENTS + 1000))
     snap = state.snapshot()
     assert snap["instrument_count"] == state.MAX_INSTRUMENTS
     assert snap["capacity_ticks_dropped"] == 1
