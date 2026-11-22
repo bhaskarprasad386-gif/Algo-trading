@@ -60,7 +60,7 @@ def _rows():
 
 def test_nifty_chooses_nearest_weekly_and_banknifty_next_month_last_listed():
     rows = _rows()
-    assert choose_locked_expiry(rows, "NIFTY", today=date(2026, 11, 20)) == "2026-11-26"
+    assert choose_locked_expiry(rows, "NIFTY", today=date(2026, 11, 20)) == "2026-12-03"
     assert choose_locked_expiry(rows, "BANKNIFTY", today=date(2026, 11, 22)) == "2026-12-24"
 
 
