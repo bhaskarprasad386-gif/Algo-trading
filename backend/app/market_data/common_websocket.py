@@ -1257,17 +1257,22 @@ class CommonWebSocketManager:
         # Subscription changes intentionally remain pending during a shared
         # broker cooldown. Reconcile once when that cooldown expires so the
         # remembered socket-token set catches up without sending broker calls
-        # while Angel is rate-limiting us.
+        # while Angel is rate-limiting us. Transient recovery errors use
+        # bounded exponential backoff to avoid reconnect storms.
         cooldown_was_active = False
-        while not self._recovery_stop.wait(self._recovery_interval_seconds):
+        retry_delay = max(0.1, float(self._recovery_interval_seconds))
+        retry_delay_cap = max(retry_delay, float(self._recovery_backoff_max_seconds))
+        while not self._recovery_stop.wait(retry_delay):
             with self._lock:
+                if self._closed:
+                    return
                 has_intent = bool(self.registry.subscriptions())
             if not has_intent:
+                retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 continue
             try:
                 # Before/after the regular session, tick silence is expected;
                 # don't churn otherwise-connected sockets every 30 seconds.
-                # Explicit close/error callbacks and stuck handshakes still recover.
                 silent_timeout = (
                     self._silent_feed_timeout_seconds
                     if _is_regular_trading_window()
@@ -1283,15 +1288,26 @@ class CommonWebSocketManager:
                 elif cooldown_was_active:
                     self._reconcile()
                     cooldown_was_active = False
+                retry_delay = max(0.1, float(self._recovery_interval_seconds))
+                with self._lock:
+                    self._recovery_backoff_current_seconds = retry_delay
+                    self._recovery_backoff_resets += 1
             except Exception as exc:
+                with self._lock:
+                    if self._closed:
+                        return
+                    self._recovery_backoff_errors += 1
+                    retry_delay = min(retry_delay * 2.0, retry_delay_cap)
+                    self._recovery_backoff_current_seconds = retry_delay
+                    self._recovery_backoff_last_error = f"{type(exc).__name__}: {exc}"[:240]
                 runtime_diagnostics.record(
                     component="Common Market Feed",
                     error_type=type(exc).__name__,
                     message=str(exc),
-                    context={"event": "automatic_recovery"},
+                    context={"event": "automatic_recovery", "retry_delay_seconds": retry_delay},
                 )
                 app_logger.warning(
-                    "Common feed automatic recovery failed; will retry: %s", exc
+                    "Common feed automatic recovery failed; retrying in %.1fs: %s", retry_delay, exc
                 )
 
     def recover_disconnected(
