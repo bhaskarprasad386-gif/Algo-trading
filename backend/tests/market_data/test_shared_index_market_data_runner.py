@@ -340,15 +340,15 @@ def test_new_on_waits_for_previous_off_subscription_teardown():
     runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=manager)
     assert runner.start(rows)["enabled"] is True
 
-    # Replace unsubscribe with a controlled pause during the old OFF teardown.
-    original_unsubscribe = manager.unsubscribe
+    # Pause the actual clear_consumer teardown used by CommonStrategyMarketFeed.stop.
+    original_clear_consumer = manager.clear_consumer
     entered, release = Event(), Event()
-    def blocked_unsubscribe(consumer, keys=None):
+    def blocked_clear_consumer(consumer):
         if consumer == runner.lifecycle.FUTURES_CONSUMER and not release.is_set():
             entered.set()
             assert release.wait(timeout=3)
-        return original_unsubscribe(consumer, keys)
-    manager.unsubscribe = blocked_unsubscribe
+        return original_clear_consumer(consumer)
+    manager.clear_consumer = blocked_clear_consumer
 
     stopped = []
     off_thread = Thread(target=lambda: stopped.append(runner.stop()), daemon=True)
