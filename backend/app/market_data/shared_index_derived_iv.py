@@ -74,6 +74,8 @@ class SharedIndexDerivedIV:
                 row["iv_percent"]=iv
                 row["iv_source"]="derived_bsm" if iv is not None else None
                 row["iv_delta_1s"]=None
+                row["iv_delta_3s"]=None
+                row["iv_delta_5s"]=None
                 if iv is not None:
                     history=self._history.setdefault(key,deque(maxlen=12))
                     ts=row.get("timestamp_ns",now)
@@ -81,6 +83,9 @@ class SharedIndexDerivedIV:
                     while history and now-history[0][0]>5_000_000_000: history.popleft()
                     baseline=next((value for stamp,value in history if stamp<=ts-1_000_000_000),None)
                     if baseline is not None: row["iv_delta_1s"]=round(iv-baseline,4)
+                    for window in (3,5):
+                        baseline_window=next((value for stamp,value in history if stamp<=ts-window*1_000_000_000),None)
+                        if baseline_window is not None: row[f"iv_delta_{window}s"]=round(iv-baseline_window,4)
                 out.append(row)
             for key in tuple(self._history):
                 if key not in active: self._history.pop(key,None)
