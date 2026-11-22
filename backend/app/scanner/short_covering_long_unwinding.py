@@ -1,8 +1,7 @@
 """Short Covering & Long Unwinding: independent directional evidence aggregator."""
 from __future__ import annotations
 from math import isfinite
-from statistics import median
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 from .short_covering_long_unwinding.features import robust_z
 
 GROUP_WEIGHTS = {"liquidity": .20, "order_flow": .20, "futures": .20, "options": .12, "structure": .18, "participation": .10}
@@ -13,14 +12,6 @@ def _finite_float(value: Any) -> float | None:
     try: result = float(value)
     except (TypeError, ValueError, OverflowError): return None
     return result if isfinite(result) else None
-
-def robust_z(value: float, history: Sequence[float]) -> float | None:
-    current = _finite_float(value)
-    clean = [x for raw in history if (x := _finite_float(raw)) is not None]
-    if current is None or len(clean) < 8: return None
-    med = median(clean); mad = median([abs(x-med) for x in clean])
-    if mad <= 0: return None
-    return (current-med)/(1.4826*mad)
 
 def _score(value: Any) -> float | None:
     x = _finite_float(value)
