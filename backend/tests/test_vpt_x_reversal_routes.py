@@ -149,3 +149,22 @@ def test_invalidated_signal_requires_watch_observation_before_retrigger(monkeypa
         monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"]))
         result = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
         assert result["status"] == expected
+
+def test_expired_signal_requires_fresh_watch_before_retrigger(monkeypatch):
+    import app.scanner.vpt_x_reversal_routes as routes
+    clock = [100_000]
+    monkeypatch.setattr(routes, "_now_ms", lambda: clock[0])
+    monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(101, True))
+    first = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
+    assert first["status"] == "TRIGGERED"
+
+    # Expire the prior state (45s state TTL) before the next evaluate call.
+    clock[0] += 46_000
+    expired_rearm = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
+    assert expired_rearm["status"] == "WATCH"
+    assert expired_rearm["signal_id"] != first["signal_id"]
+
+    clock[0] += 100
+    fresh_trigger = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
+    assert fresh_trigger["status"] == "TRIGGERED"
+    assert fresh_trigger["signal_id"] != expired_rearm["signal_id"]
