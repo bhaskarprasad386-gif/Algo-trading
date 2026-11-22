@@ -142,6 +142,10 @@ class CommonStrategyMarketFeed:
         self._last_timestamp_ns: dict[str, int] = {}
         self._timestamp_guard = Lock()
         self._callback_locks: dict[str, Lock] = {}
+        # Each start/stop creates a callback epoch. Retired closures may still
+        # be invoked by a queued transport frame, but must not cross epochs.
+        self._callback_epoch = 0
+        self._callback_epoch_lock = Lock()
 
     @staticmethod
     def descriptor(
@@ -186,6 +190,8 @@ class CommonStrategyMarketFeed:
             raise ValueError("at least one descriptor is required")
         if not callable(callback):
             raise TypeError("callback must be callable")
+        if len({descriptor.key for descriptor in descriptors}) != len(descriptors):
+            raise ValueError("duplicate instruments in feed start")
         # InstrumentKey is the broker-level identity. Multiple strategy
         # consumers may describe the same broker instrument with different
         # strategy metadata (for example an option subscription carrying its
@@ -198,18 +204,27 @@ class CommonStrategyMarketFeed:
                 fresh.append(descriptor)
         if fresh:
             self.manager.registry.register_many(tuple(fresh))
-        self._last_timestamp_ns.clear()
+        with self._callback_epoch_lock:
+            self._callback_epoch += 1
+            callback_epoch = self._callback_epoch
+            self._last_timestamp_ns.clear()
 
         def ordered_callback(record: MarketDataRecord) -> None:
             key = record.instrument.value
             with self._timestamp_guard:
                 callback_lock = self._callback_locks.setdefault(key, Lock())
             with callback_lock:
-                previous = self._last_timestamp_ns.get(key)
-                if previous is not None and record.timestamp_ns < previous:
-                    return
-                self._last_timestamp_ns[key] = record.timestamp_ns
-                callback(record)
+                # The epoch lock spans consumer delivery so stop() is a barrier:
+                # once it returns, an old callback cannot run or leak into a
+                # subsequent start with the same consumer identity.
+                with self._callback_epoch_lock:
+                    if callback_epoch != self._callback_epoch:
+                        return
+                    previous = self._last_timestamp_ns.get(key)
+                    if previous is not None and record.timestamp_ns < previous:
+                        return
+                    self._last_timestamp_ns[key] = record.timestamp_ns
+                    callback(record)
 
         self.manager.register_normalized_callback(self.consumer, ordered_callback)
         if self.warm_start:
@@ -220,10 +235,13 @@ class CommonStrategyMarketFeed:
         return keys
 
     def stop(self) -> None:
-        if not self._started:
-            return
+        with self._callback_epoch_lock:
+            if not self._started:
+                return
+            # Invalidate queued callbacks before mutating shared manager state.
+            self._callback_epoch += 1
+            self._started = False
         self.manager.clear_consumer(self.consumer)
-        self._started = False
 
     def snapshot(self) -> dict[str, Any]:
         return self.manager.snapshot()
