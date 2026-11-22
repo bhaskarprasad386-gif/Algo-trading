@@ -61,6 +61,7 @@ def test_successful_rotation_commits_anchor_and_slow_drift_is_measured_from_it()
     assert not trigger.on_spot("NIFTY", 22000)
     assert trigger.on_spot("NIFTY", 22055)
     trigger.rotation_result("NIFTY", success=True, spot=22055)
+    clock.now += 1.0
     assert not trigger.on_spot("NIFTY", 22080)
     assert trigger.on_spot("NIFTY", 22105)
 
