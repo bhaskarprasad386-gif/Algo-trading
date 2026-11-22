@@ -161,18 +161,26 @@ def test_locked_options_reject_expiry_mismatch_and_asymmetric_strike_window():
 
     broken_strikes = list(_options())
     original = broken_strikes[0]
+    paired_pe = next(i for i, item in enumerate(broken_strikes) if item.underlying == original.underlying and item.strike == original.strike and item.option_type == "PE")
     broken_strikes[0] = InstrumentDescriptor(
-        key=InstrumentKey("NFO", "NFO", "off-grid"),
-        symbol="off-grid", instrument_type="option", exchange="NFO", segment="NFO",
-        expiry=original.expiry, strike=original.strike + 25, option_type=original.option_type,
+        key=InstrumentKey("NFO", "NFO", "off-grid-ce"),
+        symbol="off-grid-ce", instrument_type="option", exchange="NFO", segment="NFO",
+        expiry=original.expiry, strike=original.strike + 25, option_type="CE",
+        underlying=original.underlying,
+    )
+    pe_original = broken_strikes[paired_pe]
+    broken_strikes[paired_pe] = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "NFO", "off-grid-pe"),
+        symbol="off-grid-pe", instrument_type="option", exchange="NFO", segment="NFO",
+        expiry=pe_original.expiry, strike=original.strike + 25, option_type="PE",
         underlying=original.underlying,
     )
     try:
         lifecycle.start_options(broken_strikes)
     except ValueError as exc:
-        assert "strike window must be symmetric" in str(exc) or "uniform spacing" in str(exc)
+        assert "uniform spacing" in str(exc) or "strike window must be symmetric" in str(exc)
     else:
-        raise AssertionError("asymmetric strikes must be rejected")
+        raise AssertionError("off-grid strike pair must be rejected")
     assert not manager.registry.active_keys()
 
 class FailAfterMutationManager(StubManager):
