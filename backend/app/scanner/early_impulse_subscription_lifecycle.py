@@ -154,6 +154,10 @@ class EarlyImpulseSubscriptionLifecycle:
             }
 
 
+class SubscriptionOwnershipConflict(RuntimeError):
+    """Known preflight rejection before any physical adapter mutation."""
+
+
 class ShoonyaConsumerSubscriptionMux:
     """Consumer ownership/ref-count gate for shared physical Shoonya tokens.
 
@@ -218,6 +222,10 @@ class ShoonyaConsumerSubscriptionMux:
                     added = self._physical_subscribe(tuple(physical_add))
                     if added != len(physical_add):
                         raise RuntimeError("physical subscribe returned an incomplete count")
+                except SubscriptionOwnershipConflict:
+                    # A supervisor preflight rejected ownership before adapter
+                    # mutation; physical state is known and needs no quarantine.
+                    raise
                 except Exception as exc:
                     self._uncertain.update(zip(physical_keys, physical_add))
                     self._reconciliation_required = True
