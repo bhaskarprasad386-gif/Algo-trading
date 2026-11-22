@@ -157,7 +157,7 @@ def test_snapshot_exposes_microstructure_and_multi_window_momentum_metrics():
             volume=volume, oi=oi, underlying="NIFTY", expiry="2026-11-26",
             strike=25000, option_type=OptionType.CALL, lot_size=25,
         )
-    assert state.on_record(tick(now-4_200_000_000, 100, 99, 101, 10, 20, 1000, 2000))
+    assert state.on_record(tick(now-5_200_000_000, 100, 99, 101, 10, 20, 1000, 2000))
     assert state.on_record(tick(now-2_200_000_000, 102, 101, 103, 20, 10, 1050, 2030))
     assert state.on_record(tick(now-200_000_000, 104, 103, 105, 30, 10, 1100, 2060))
     row = state.records_snapshot()[0]
