@@ -20,7 +20,6 @@ class SnapshotRequest(BaseModel):
     underlying: str
     ticks: list[dict[str, Any]] = Field(default_factory=list, max_length=500)
     cross_confirmation: float | None = Field(default=None, ge=0, le=1)
-    now_ms: int | None = None
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
