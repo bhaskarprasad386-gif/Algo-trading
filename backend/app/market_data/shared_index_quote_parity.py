@@ -16,6 +16,9 @@ class QuoteSourceObservation:
     ltp: float | None
     bid: float | None
     ask: float | None
+    broker_exchange: str
+    broker_segment: str
+    broker_token: str
     exchange_timestamp_ns: int
     received_monotonic_ns: int
     feed_epoch: int
@@ -62,7 +65,7 @@ class SharedIndexQuoteParity:
             lookup = (key, broker)
             if lookup in self._source_tokens:
                 raise ValueError(f"duplicate source mapping for canonical contract: {key} {broker}")
-            self._source_tokens[lookup] = (item.provider.exchange, item.provider.token)
+            self._source_tokens[lookup] = (item.provider.exchange, item.provider.segment, item.provider.token)
             self._tick_sizes[key] = float(item.tick_size)
 
     def observe(self, observation: QuoteSourceObservation) -> QuoteParityStatus | None:
@@ -72,7 +75,7 @@ class SharedIndexQuoteParity:
         lookup = (observation.canonical_key, broker)
         expected = self._source_tokens.get(lookup)
         # Broker token and exchange must match the published master mapping.
-        if expected is None or expected != (observation.canonical_key.exchange, observation.canonical_key.segment):
+        if expected is None or expected != (observation.broker_exchange.upper(), observation.broker_segment.upper(), observation.broker_token):
             # canonical segment/exchange validation is performed by caller's
             # mapping lookup; fail closed rather than accept unknown instruments.
             return None
