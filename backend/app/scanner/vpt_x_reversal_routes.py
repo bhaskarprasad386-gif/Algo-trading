@@ -14,6 +14,7 @@ _history: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _CAPACITY = 300
 _TTL_SECONDS = 180
 _DUPLICATE_WINDOW_SECONDS = 20
+_SIGNAL_EXPIRE_SECONDS = 45
 
 class SnapshotRequest(BaseModel):
     underlying: str
@@ -26,9 +27,14 @@ def _now_ms() -> int:
 
 def _cleanup(now: int) -> None:
     cutoff = now - _TTL_SECONDS * 1000
+    expire_before = now - _SIGNAL_EXPIRE_SECONDS * 1000
     for key, item in list(_history.items()):
-        if int(item.get("_updated_ms", 0)) < cutoff:
+        updated = int(item.get("_updated_ms", 0))
+        if updated < cutoff:
             _history.pop(key, None)
+        elif updated < expire_before and item.get("status") in {"WATCH", "TRIGGERED"}:
+            item["status"] = "EXPIRED"
+            item["_expired_ms"] = now
     while len(_history) > _CAPACITY:
         _history.popitem(last=False)
 
@@ -54,7 +60,7 @@ def evaluate(payload: SnapshotRequest):
     result = evaluate_vptx(snapshot, now_ms=payload.now_ms)
     if result.get("status") != "EVALUATED":
         return result
-    now = payload.now_ms or _now_ms()
+    now = _now_ms()
     active_keys: set[str] = set()
     candidates = []
     with _lock:
@@ -71,6 +77,10 @@ def evaluate(payload: SnapshotRequest):
                 if prev_state == "TRIGGERED":
                     invalid = (latest_price < invalidation) if candidate["direction"] == "BUY" else (latest_price > invalidation)
                     state = "INVALIDATED" if invalid else "TRIGGERED"
+                elif prior.get("status") == "INVALIDATED":
+                    state = "WATCH" if not candidate["trigger_ready"] else "INVALIDATED"
+                elif prior.get("status") == "EXPIRED":
+                    state = "WATCH" if not candidate["trigger_ready"] else "TRIGGERED"
                 elif state == "TRIGGERED":
                     state = "TRIGGERED"
             item = {**candidate, "underlying": symbol, "status": state,
