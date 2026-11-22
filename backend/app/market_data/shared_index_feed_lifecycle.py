@@ -208,7 +208,19 @@ class SharedIndexFeedLifecycle:
                 raise
             obsolete = [key for key in old_keys if key not in set(new_keys)]
             if obsolete:
-                manager.unsubscribe(self.FUTURES_CONSUMER, obsolete)
+                try:
+                    manager.unsubscribe(self.FUTURES_CONSUMER, obsolete)
+                except Exception:
+                    # Keep the previous owner authoritative if removal of old refs fails.
+                    added = [key for key in new_keys if key not in set(old_keys)]
+                    try:
+                        if added:
+                            manager.unsubscribe(self.FUTURES_CONSUMER, added)
+                    except Exception:
+                        for key in added:
+                            manager.registry.unsubscribe(self.FUTURES_CONSUMER, key)
+                    manager.registry.unregister_many(added)
+                    raise
             self._futures_keys = new_keys
             return new_keys
 
@@ -244,7 +256,19 @@ class SharedIndexFeedLifecycle:
                 raise
             obsolete = [key for key in old_keys if key not in set(new_keys)]
             if obsolete:
-                manager.unsubscribe(self.OPTIONS_CONSUMER, obsolete)
+                try:
+                    manager.unsubscribe(self.OPTIONS_CONSUMER, obsolete)
+                except Exception:
+                    # Removal failure must not leave the owner tracking a mixed set.
+                    added_keys = [key for key in new_keys if key not in set(old_keys)]
+                    try:
+                        if added_keys:
+                            manager.unsubscribe(self.OPTIONS_CONSUMER, added_keys)
+                    except Exception:
+                        for key in added_keys:
+                            manager.registry.unsubscribe(self.OPTIONS_CONSUMER, key)
+                    manager.registry.unregister_many(added_keys)
+                    raise
             self._option_keys = new_keys
             return new_keys
 
