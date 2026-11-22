@@ -231,6 +231,13 @@ class SharedIndexFeedLifecycle:
             )
 
 
+    def stop_futures(self) -> None:
+        with self._lock:
+            self._futures_feed.stop()
+            self._futures_keys = ()
+            self._futures_started = False
+
+
     def stop_options(self) -> None:
         with self._lock:
             self._options_feed.stop()
