@@ -50,3 +50,52 @@ def test_idle_signal_transitions_to_expired():
         _history["test:signal"] = {"status": "WATCH", "_updated_ms": 1, "underlying": "NIFTY"}
         _cleanup(100_000)
         assert _history["test:signal"]["status"] == "EXPIRED"
+
+
+def _stub_eval(price, trigger=False):
+    return {
+        "status": "EVALUATED", "features": {"price": price},
+        "candidates": [{
+            "pattern": "SWING_EXHAUSTION", "direction": "BUY", "score": 70,
+            "strength": "DEVELOPING", "trigger_ready": trigger, "invalidation_price": 99.0,
+            "components": {}, "evidence": [], "scanner_only": True, "order_routing_enabled": False
+        }]
+    }
+
+def test_signal_identity_stable_for_duplicate_state(monkeypatch):
+    import app.scanner.vpt_x_reversal_routes as routes
+    clock = [10_000]
+    monkeypatch.setattr(routes, "_now_ms", lambda: clock[0])
+    monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(100, False))
+    first = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "nifty"}).json()["candidates"][0]
+    clock[0] += 1_000
+    second = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
+    assert first["signal_id"] == second["signal_id"]
+    assert first["created_at"] == second["created_at"]
+    assert second["status"] == "WATCH"
+
+def test_triggered_signal_invalidates_and_does_not_reactivate(monkeypatch):
+    import app.scanner.vpt_x_reversal_routes as routes
+    clock = [20_000]
+    states = [{"price": 101, "trigger": True}, {"price": 98, "trigger": True}, {"price": 101, "trigger": True}]
+    monkeypatch.setattr(routes, "_now_ms", lambda: clock[0])
+    monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"]))
+    triggered = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
+    assert triggered["status"] == "TRIGGERED"
+    states.pop(0)
+    clock[0] += 100
+    monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"]))
+    invalidated = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
+    assert invalidated["status"] == "INVALIDATED"
+    states.pop(0)
+    clock[0] += 100
+    monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"]))
+    recovered = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
+    assert recovered["status"] == "INVALIDATED"
+
+def test_signal_limit_is_clamped_and_symbol_filter_is_normalized():
+    # Invalid symbols are rejected; limit=0 is safely clamped to one item.
+    response = client.get("/api/v1/scanner/vpt-x/signals?underlying=nifty&limit=0")
+    assert response.status_code == 200
+    assert response.json()["count"] <= 1
+    assert client.get("/api/v1/scanner/vpt-x/signals?underlying=FINNIFTY").status_code == 422
