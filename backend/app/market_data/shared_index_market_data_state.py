@@ -94,8 +94,12 @@ class SharedIndexMarketDataState:
             history = oi_history.get(key, ())
             delta = None
             if record.oi is not None and len(history) >= 2:
-                baseline = next((oi for ts, oi in history if ts <= now - 1_000_000_000), history[0][1])
-                delta = record.oi - baseline
+                # Only report a true ~1s delta. Falling back to the oldest
+                # sample when it is newer than 1s makes a short-window change
+                # look like a one-second OI delta.
+                baseline = next((oi for ts, oi in history if ts <= now - 1_000_000_000), None)
+                if baseline is not None:
+                    delta = record.oi - baseline
             data["oi_delta_1s"] = delta
             result.append(data)
         return result
