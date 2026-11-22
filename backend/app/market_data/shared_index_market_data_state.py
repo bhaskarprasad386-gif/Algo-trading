@@ -27,6 +27,7 @@ class SharedIndexMarketDataState:
         self._capacity_dropped = 0
         self._oi_history: dict[str, deque[tuple[int, int]]] = {}
         self._volume_history: dict[str, deque[tuple[int, int]]] = {}
+        self._tick_history: dict[str, deque[tuple[int, float | None]]] = {}
 
 
 
@@ -55,6 +56,10 @@ class SharedIndexMarketDataState:
                 history.append((ts, record.oi))
                 while history and history[0][0] < cutoff:
                     history.popleft()
+            ticks = self._tick_history.setdefault(key, deque())
+            ticks.append((ts, record.ltp))
+            while ticks and ticks[0][0] < ts - 5_000_000_000:
+                ticks.popleft()
             if record.volume is not None:
                 history = self._volume_history.setdefault(key, deque())
                 # Broker day-volume can reset at a session boundary. Drop the
@@ -79,6 +84,7 @@ class SharedIndexMarketDataState:
             self._latest.clear()
             self._oi_history.clear()
             self._volume_history.clear()
+            self._tick_history.clear()
             return removed
 
 
@@ -91,6 +97,7 @@ class SharedIndexMarketDataState:
                 self._latest.pop(key, None)
                 self._oi_history.pop(key, None)
                 self._volume_history.pop(key, None)
+                self._tick_history.pop(key, None)
             return len(removed)
 
 
@@ -101,6 +108,7 @@ class SharedIndexMarketDataState:
             latest = tuple(self._latest.items())
             oi_history = {key: tuple(history) for key, history in self._oi_history.items()}
             volume_history = {key: tuple(history) for key, history in self._volume_history.items()}
+            tick_history = {key: tuple(history) for key, history in self._tick_history.items()}
         result = []
         for key, record in latest:
             data = record.as_dict()
@@ -128,6 +136,30 @@ class SharedIndexMarketDataState:
             if not data["fresh"]:
                 volume_delta = None
             data["volume_delta_1s"] = volume_delta
+            ticks = tick_history.get(key, ())
+            for window in (1, 3, 5):
+                baseline = next((price for stamp, price in ticks if stamp <= record.timestamp_ns - window * 1_000_000_000 and price is not None), None)
+                change = None if record.ltp is None or baseline is None else record.ltp - baseline
+                data[f"ltp_delta_{window}s"] = change
+                data[f"ltp_change_pct_{window}s"] = (change / baseline * 100.0) if change is not None and baseline else None
+                data[f"ltp_velocity_{window}s"] = (change / window) if change is not None else None
+            quote_valid = record.bid is not None and record.ask is not None and record.bid > 0 and record.ask > 0 and record.ask >= record.bid
+            mid = ((record.bid + record.ask) / 2.0) if quote_valid else None
+            spread = (record.ask - record.bid) if quote_valid else None
+            data["mid_price"] = mid
+            data["spread"] = spread
+            data["spread_pct"] = (spread / mid * 100.0) if spread is not None and mid and mid > 0 else None
+            total_qty = (record.bid_qty or 0) + (record.ask_qty or 0)
+            data["quote_imbalance"] = ((record.bid_qty or 0) - (record.ask_qty or 0)) / total_qty if total_qty > 0 else None
+            data["microprice"] = ((record.ask * (record.bid_qty or 0) + record.bid * (record.ask_qty or 0)) / total_qty) if quote_valid and total_qty > 0 else None
+            data["tick_rate_1s"] = sum(1 for stamp, _ in ticks if stamp >= record.timestamp_ns - 1_000_000_000)
+            if not data["fresh"]:
+                for window in (1, 3, 5):
+                    data[f"ltp_delta_{window}s"] = None
+                    data[f"ltp_change_pct_{window}s"] = None
+                    data[f"ltp_velocity_{window}s"] = None
+                for metric in ("mid_price", "spread", "spread_pct", "quote_imbalance", "microprice", "tick_rate_1s"):
+                    data[metric] = None
             result.append(data)
         return result
 
