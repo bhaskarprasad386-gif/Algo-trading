@@ -20,6 +20,10 @@ class SharedIndexMarketDataState:
         self.max_age_ns = int(max_age_seconds * 1_000_000_000)
         self._lock = RLock()
         self._latest: dict[str, Any] = {}
+        # Once the runner publishes its owned universe, late ticks for retired
+        # contracts are rejected instead of repopulating the cache after rotation.
+        self._allowed_keys: set[str] | None = None
+        self._retired_dropped = 0
         self._publish = publish or (lambda _record: None)
         self._accepted = 0
         self._stale_dropped = 0
@@ -42,6 +46,9 @@ class SharedIndexMarketDataState:
                 self._stale_dropped += 1
             return False
         with self._lock:
+            if self._allowed_keys is not None and key not in self._allowed_keys:
+                self._retired_dropped += 1
+                return False
             previous = self._latest.get(key)
             if previous is not None and ts < previous.timestamp_ns:
                 self._out_of_order += 1
@@ -84,6 +91,7 @@ class SharedIndexMarketDataState:
             for key in tuple(self._latest):
                 get_shared_market_data_cache().delete(key)
             self._latest.clear()
+            self._allowed_keys = None
             self._oi_history.clear()
             self._volume_history.clear()
             self._tick_history.clear()
@@ -94,6 +102,7 @@ class SharedIndexMarketDataState:
         """Drop cached runner records for contracts no longer subscribed."""
         allowed = {key.value for key in keys}
         with self._lock:
+            self._allowed_keys = allowed
             removed = [key for key in self._latest if key not in allowed]
             for key in removed:
                 self._latest.pop(key, None)
@@ -205,6 +214,7 @@ class SharedIndexMarketDataState:
             stale = self._stale_dropped
             out_of_order = self._out_of_order
             capacity_dropped = self._capacity_dropped
+            retired_dropped = self._retired_dropped
         ages = {key: max(0, (now - record.timestamp_ns) / 1e9) for key, record in latest}
         fresh = sum(age <= self.max_age_ns / 1e9 for age in ages.values())
         return {
@@ -218,4 +228,5 @@ class SharedIndexMarketDataState:
             "stale_ticks_dropped": stale,
             "out_of_order_ticks_dropped": out_of_order,
             "capacity_ticks_dropped": capacity_dropped,
+            "retired_contract_ticks_dropped": retired_dropped,
         }
