@@ -40,4 +40,11 @@ def test_evaluate_contract_and_bounded_signal_history():
     assert {x["direction"] for x in response["candidates"]}=={"BUY","SELL"}
     assert all(x["scanner_only"] and x["order_routing_enabled"] is False for x in response["candidates"])
     assert client.get("/api/v1/scanner/vpt-x/signals?underlying=BANKNIFTY").json()["count"]==6
-\n\ndef test_idle_signal_transitions_to_expired():\n    from app.scanner.vpt_x_reversal_routes import _cleanup, _history\n    with _lock:\n        _history["test:signal"]={"status":"WATCH","_updated_ms":1,"underlying":"NIFTY"}\n        _cleanup(100_000)\n        assert _history["test:signal"]["status"]=="EXPIRED"\n
+\n\ndef 
+
+def test_idle_signal_transitions_to_expired():
+    from app.scanner.vpt_x_reversal_routes import _cleanup, _history
+    with _lock:
+        _history["test:signal"]={"status":"WATCH","_updated_ms":1,"underlying":"NIFTY"}
+        _cleanup(100_000)
+        assert _history["test:signal"]["status"]=="EXPIRED"
