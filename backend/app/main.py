@@ -55,6 +55,7 @@ from app.market_data.provider_quote_parity_store import SQLiteQuoteParityStore
 from app.market_data.provider_quote_parity_routes import router as provider_quote_parity_router, configure_store as configure_provider_quote_parity_store, configure_worker as configure_provider_quote_parity_worker
 from app.market_data.provider_quote_parity_worker import BoundedQuoteParityWorker
 from app.market_data.provider_readiness_bridge import ProviderReadinessBridge
+from app.scanner.early_impulse_shoonya_observer import early_impulse_observer
 from app.market_data.box_spread_expiry import classify_index_expiry_dates
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
 from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS_ORDERED, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
@@ -85,6 +86,7 @@ from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSp
 from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
 from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, configure_depth_provider as configure_live_box_spread_websocket_depth, _page_snapshot as box_opportunity_page_snapshot, set_expiry_types as set_live_box_websocket_expiry_types
 from app.scanner.page_push_websocket import router as page_push_websocket_router, configure_snapshot_provider as configure_page_push_snapshot, publish_page_update
+from app.scanner.early_impulse_routes import router as early_impulse_router
 from app.scanner.butterfly_condor_shadow import evaluate_butterfly_condor_snapshot
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
@@ -116,6 +118,7 @@ shoonya_market_data_supervisor: ShoonyaMarketDataSupervisor | None = None
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
 provider_quote_parity_worker: BoundedQuoteParityWorker | None = None
 provider_readiness_bridge = ProviderReadinessBridge()
+early_impulse_observer.configure_readiness(provider_readiness_bridge)
 _provider_readiness_observer_lock = threading.Lock()
 _provider_readiness_observer_manager_id: int | None = None
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
@@ -646,8 +649,8 @@ async def lifespan(app: FastAPI):
             reconnect_max_seconds=settings.SHOONYA_MARKET_DATA_RECONNECT_MAX_SECONDS,
             frame_timeout_seconds=settings.SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS,
             auth_timeout_seconds=settings.SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS,
-            on_session_observation=provider_readiness_bridge.shoonya_state,
-            on_tick_observation=provider_readiness_bridge.shoonya_market_event,
+            on_session_observation=early_impulse_observer.on_session_observation,
+            on_tick_observation=early_impulse_observer.on_tick_observation,
         )
         configure_shoonya_snapshot(shoonya_market_data_supervisor.snapshot)
         configure_shoonya_supervisor(lambda: shoonya_market_data_supervisor)
@@ -785,6 +788,7 @@ app.include_router(box_spread_paper_rule_router)
 app.include_router(live_box_spread_websocket_router)
 app.include_router(page_push_websocket_router)
 app.include_router(intelligence_router)
+app.include_router(early_impulse_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(monthly_results_router)
     app.include_router(cash_future_strategy_router)
