@@ -281,3 +281,22 @@ def test_cache_publication_is_serialized_with_retiring_instrument(monkeypatch):
     assert retirement_done.is_set()
     assert state.latest(key.value) is None
     assert get_shared_market_data_cache().get(key.value) is None
+
+
+
+def test_tick_histories_have_hard_caps_even_for_repeated_timestamps():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    from app.market_data.contracts import OptionType
+    inst = InstrumentKey("NFO", "NFO", "opt-history-cap")
+    timestamp = time_ns() - 10_000_000
+    record = MarketDataRecord(
+        instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION,
+        timestamp_ns=timestamp, ltp=125.5, bid=125.0, ask=126.0,
+        bid_qty=5, ask_qty=8, volume=100, oi=200, underlying="NIFTY",
+        expiry="2026-11-26", strike=25000, option_type=OptionType.CALL, lot_size=25,
+    )
+    for _ in range(1000):
+        assert state.on_record(record)
+    assert len(state._tick_history[inst.value]) <= state.MAX_TICK_HISTORY
+    assert len(state._oi_history[inst.value]) <= state.MAX_OI_HISTORY
+    assert len(state._volume_history[inst.value]) <= state.MAX_VOLUME_HISTORY
