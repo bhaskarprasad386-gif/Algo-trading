@@ -171,7 +171,9 @@ class SharedIndexMarketDataRunner:
                         self._sync_state_universe()
             except Exception as exc:
                 with self._lock:
-                    self._master_refresh_error = f"{type(exc).__name__}: {exc}"[:200]
+                    # An obsolete worker must not publish into a later ON epoch.
+                    if self._running and generation == self._run_generation:
+                        self._master_refresh_error = f"{type(exc).__name__}: {exc}"[:200]
             finally:
                 with self._lock:
                     if self._master_refresh_generation == generation:
