@@ -75,6 +75,7 @@ class EarlyImpulseLiveRunner:
             self._enabled = False
             self._history.clear()
             self._last_volume.clear()
+            self._last_received_ns.clear()
             self._last_result = None
             self._last_eval_ns = 0
         return self.snapshot()
