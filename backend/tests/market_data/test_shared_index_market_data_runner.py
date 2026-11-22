@@ -74,6 +74,37 @@ def test_nifty_chooses_nearest_weekly_and_banknifty_next_month_last_listed():
     assert SharedIndexMarketDataRunner.choose_nearest_future(rows, "BANKNIFTY", today=date(2026, 11, 22))["expiry"] == "2026-12-24"
 
 
+def test_partial_start_failure_leaves_runner_stopped_and_cleans_subscriptions():
+    # Instrument rows omit futures; spot registration occurs first and then fails.
+    rows = [row for row in _rows() if row["instrumenttype"] != "FUTIDX"]
+    manager = RunnerManager()
+    runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=manager)
+    status = runner.start()
+    assert status["enabled"] is False
+    assert status["started_at"] is None
+    assert status["last_error"] and "no active NFO FUTIDX contract" in status["last_error"]
+    assert manager.registry.active_keys() == ()
+    assert runner.snapshot()["lifecycle"]["spot_active"] is False
+    assert runner.snapshot()["lifecycle"]["futures_active"] is False
+
+
+def test_future_rollover_rotates_to_new_listed_expiry_and_updates_state():
+    rows = _rows()
+    manager = RunnerManager()
+    runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=manager)
+    runner.start(rows)
+    runner._futures_expiries = {"NIFTY": "2026-11-20", "BANKNIFTY": "2026-12-24"}
+    rolled = runner._check_futures_rollover()
+    assert rolled == ("NIFTY",)
+    assert runner.snapshot()["futures_expiries"]["NIFTY"] == "2026-11-26"
+    active_futures = [manager.registry.get(key) for key in manager.registry.active_keys()
+                       if manager.registry.get(key).instrument_type == "future"]
+    assert len(active_futures) == 2
+    assert {d.expiry for d in active_futures} == {"2026-11-26", "2026-12-24"}
+    assert runner.snapshot()["state"]["instrument_count"] == 4
+    runner.stop()
+
+
 def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
     rows = _rows()
     manager = RunnerManager()
