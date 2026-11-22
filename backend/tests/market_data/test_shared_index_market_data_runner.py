@@ -37,7 +37,7 @@ class RunnerManager:
 def _rows():
     expiries = {
         "NIFTY": ["26NOV2026", "03DEC2026", "10DEC2026"],
-        "BANKNIFTY": ["24DEC2026", "31DEC2026", "07JAN2027"],
+        "BANKNIFTY": ["24DEC2026", "27JAN2027", "24FEB2027"],
     }
     rows = []
     token = 1000
@@ -85,5 +85,6 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
     assert len(manager.registry.active_keys()) == 50
     assert runner.snapshot()["lifecycle"]["options_active"] is True
     assert runner.snapshot()["state"]["fresh_count"] == 2
+    assert runner.snapshot()["live_data_ready"] is False
     runner.stop()
     assert manager.registry.active_keys() == ()
