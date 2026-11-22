@@ -120,7 +120,10 @@ class EarlyImpulseLiveRunner:
                 volume_delta=volume_delta,
             ))
             self._evaluations += 1
-            if received_ns - self._last_eval_ns < 100_000_000:
+            # A tick from another role can be older than the last evaluation even
+            # when its own instrument stream is monotonic. Never rewind the global
+            # throttle clock on such cross-role delivery.
+            if received_ns <= self._last_eval_ns or received_ns - self._last_eval_ns < 100_000_000:
                 return None
             self._last_eval_ns = received_ns
             required = tuple(self._roles.keys())
