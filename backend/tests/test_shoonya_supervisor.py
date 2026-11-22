@@ -456,5 +456,8 @@ def test_consumer_mux_cannot_adopt_direct_supervisor_subscription(monkeypatch):
         assert "cannot adopt" in str(exc)
     else:
         raise AssertionError("consumer mux must not adopt untracked direct ownership")
-    assert supervisor.snapshot()["consumer_subscription_mux"]["physical_tokens"] == 0
+    mux_state = supervisor.snapshot()["consumer_subscription_mux"]
+    assert mux_state["physical_tokens"] == 0
+    assert mux_state["uncertain_tokens"] == []
+    assert mux_state["reconciliation_required"] is False
     assert supervisor.snapshot()["registry_instruments"] == 1
