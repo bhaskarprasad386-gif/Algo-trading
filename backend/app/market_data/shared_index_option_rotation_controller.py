@@ -68,12 +68,17 @@ class SharedIndexOptionRotationController:
                 self.instrument_rows(), underlying=underlying,
                 expiry=self.expiry_for(underlying), spot_price=spot,
             )
-            descriptors = tuple(CommonStrategyMarketFeed.descriptor(
+            selected_descriptors = tuple(CommonStrategyMarketFeed.descriptor(
                 exchange="NFO", token=contract.token, symbol=contract.trading_symbol,
                 instrument_type="option", segment="NFO", expiry=contract.expiry,
                 strike=contract.strike, option_type=contract.option_type,
                 lot_size=contract.lot_size, underlying=contract.underlying,
             ) for contract in selection.contracts)
+            current_descriptors = tuple(
+                descriptor for descriptor in self.lifecycle.option_descriptors()
+                if descriptor.underlying != underlying
+            ) if callable(getattr(self.lifecycle, "option_descriptors", None)) else ()
+            descriptors = current_descriptors + selected_descriptors
             # Lifecycle performs subscribe-new-before-remove. If resolver fails,
             # this call is never made and the previous option owner stays intact.
             self.lifecycle.rotate_options(descriptors)
