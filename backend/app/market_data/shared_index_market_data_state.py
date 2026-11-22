@@ -55,6 +55,11 @@ class SharedIndexMarketDataState:
                     history.popleft()
             if record.volume is not None:
                 history = self._volume_history.setdefault(key, deque())
+                # Broker day-volume can reset at a session boundary. Drop the
+                # old baseline instead of interpreting a reset as a negative delta
+                # or a later rebound as a false positive.
+                if history and record.volume < history[-1][1]:
+                    history.clear()
                 history.append((ts, record.volume))
                 while history and history[0][0] < cutoff:
                     history.popleft()
@@ -109,6 +114,8 @@ class SharedIndexMarketDataState:
                 baseline = next((oi for ts, oi in history if ts <= now - 1_000_000_000), None)
                 if baseline is not None:
                     delta = record.oi - baseline
+            if not data["fresh"]:
+                delta = None
             data["oi_delta_1s"] = delta
             vol_history = volume_history.get(key, ())
             volume_delta = None
@@ -116,6 +123,8 @@ class SharedIndexMarketDataState:
                 volume_baseline = next((volume for ts, volume in vol_history if ts <= now - 1_000_000_000), None)
                 if volume_baseline is not None and record.volume >= volume_baseline:
                     volume_delta = record.volume - volume_baseline
+            if not data["fresh"]:
+                volume_delta = None
             data["volume_delta_1s"] = volume_delta
             result.append(data)
         return result
