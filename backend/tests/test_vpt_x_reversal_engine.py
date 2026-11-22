@@ -115,6 +115,16 @@ def test_old_ticks_are_stale_against_real_server_clock():
     assert result["status"]=="WAITING_DATA" and result["candidates"]==[]
 
 
+def test_zero_baseline_impact_does_not_create_decay_signal(monkeypatch):
+    import app.scanner.vpt_x_reversal_engine as engine
+    monkeypatch.setattr(engine, "_impact", lambda ticks, side: 0.0)
+    ticks = _ticks([100 + i * .01 for i in range(30)])
+    normalized = engine._normalize_ticks(ticks)
+    metrics = engine._metrics(normalized)
+    assert metrics["sell_impact_decay"] == 0.0
+    assert metrics["buy_impact_decay"] == 0.0
+
+
 def test_cross_confirmation_bonus_updates_strength_threshold(monkeypatch):
     import app.scanner.vpt_x_reversal_engine as engine
     monkeypatch.setattr(engine, "_score", lambda direction, metrics, pattern: (70, {"base": 70}, []))
