@@ -5,7 +5,8 @@ paper execution, or order routing.
 """
 from __future__ import annotations
 
-from math import isfinite\nimport time
+from math import isfinite
+import time
 from typing import Any, Mapping, Sequence
 
 SUPPORTED_UNDERLYINGS = {"NIFTY", "BANKNIFTY"}
