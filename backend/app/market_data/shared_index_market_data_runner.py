@@ -18,6 +18,7 @@ from .shared_index_option_selection import select_locked_index_options
 from .shared_index_spot_resolver import resolve_locked_index_spot_descriptors
 from .shared_index_option_selection import _parse_expiry
 from .box_spread_expiry import classify_index_expiry_dates
+from .shared_index_derived_iv import SharedIndexDerivedIV
 
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -73,6 +74,7 @@ class SharedIndexMarketDataRunner:
                  clock=None):
         self.instrument_master = instrument_master or InstrumentMaster()
         self.state = SharedIndexMarketDataState(publish=publish)
+        self.derived_iv = SharedIndexDerivedIV()
         self.lifecycle = SharedIndexFeedLifecycle(manager=manager, record_callback=self._on_record)
         thresholds = rotation_thresholds or {"NIFTY": 20.0, "BANKNIFTY": 50.0}
         controller_kwargs = {
@@ -185,6 +187,7 @@ class SharedIndexMarketDataRunner:
             self._start_error = None
             self._spot_records.clear()
             self.state.clear()
+            self.derived_iv.clear()
             self._bootstrap_options_done = False
             self._bootstrap_inflight = False
         try:
@@ -215,6 +218,7 @@ class SharedIndexMarketDataRunner:
             self._bootstrap_inflight = False
             self._spot_records.clear()
             self.state.clear()
+            self.derived_iv.clear()
         try:
             self.lifecycle.stop()
         finally:
@@ -251,6 +255,8 @@ class SharedIndexMarketDataRunner:
             }
             for symbol, record in spot_records.items()
         }
+        spot_prices = {symbol: record.ltp for symbol, record in spot_records.items() if record.ltp is not None and now_ns - record.timestamp_ns <= self.state.max_age_ns}
+        enriched_records = self.derived_iv.decorate(self.state.records_snapshot(), spot_prices)
         return {
             "runner": "shared-index-market-data",
             "enabled": running,
@@ -261,7 +267,7 @@ class SharedIndexMarketDataRunner:
             "latest_spots": latest_spots,
             "option_universe": {"NIFTY": "weekly ATM +/- 6", "BANKNIFTY": "monthly ATM +/- 5"},
             "state": state,
-            "records": self.state.records_snapshot(),
+            "records": enriched_records,
             "lifecycle": lifecycle,
             "rotation": rotation,
             "live_data_ready": running and bootstrap_done and state["instrument_count"] == 50 and state["fresh_count"] == 50,
