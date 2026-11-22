@@ -35,6 +35,16 @@ def test_client_clock_field_is_not_accepted_to_bypass_freshness():
     assert response.status_code == 200
     assert response.json()["status"] == "WAITING_DATA"
 
+def test_future_timestamp_snapshot_fails_closed():
+    future_start = int(time.time() * 1000) + 10_000
+    response = client.post("/api/v1/scanner/vpt-x/evaluate", json={
+        "underlying": "NIFTY", "ticks": _ticks([100 + i * .1 for i in range(30)], start=future_start)
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "WAITING_DATA"
+    assert response.json()["candidates"] == []
+
+
 def test_invalid_underlying_rejected():
     assert client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "FINNIFTY"}).status_code == 422
 
