@@ -14,7 +14,7 @@ from app.core.logger import app_logger
 from .registry import InstrumentDescriptor, InstrumentRegistry
 from .contracts import MarketDataRecord
 from .shoonya_websocket import ShoonyaWebSocket
-from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux
+from app.scanner.early_impulse_subscription_lifecycle import ShoonyaConsumerSubscriptionMux, SubscriptionOwnershipConflict
 
 
 class ShoonyaMarketDataSupervisor:
@@ -85,7 +85,7 @@ class ShoonyaMarketDataSupervisor:
         for item in descriptors:
             identity = (item.key.exchange.strip().upper(), item.key.token.strip())
             if identity in existing:
-                raise RuntimeError("consumer mux cannot adopt a token owned by direct supervisor subscriptions")
+                raise SubscriptionOwnershipConflict("consumer mux cannot adopt a token owned by direct supervisor subscriptions")
         return self.subscribe(descriptors)
 
     def _unsubscribe_consumer_physical(self, descriptors: tuple[InstrumentDescriptor, ...]) -> int:
