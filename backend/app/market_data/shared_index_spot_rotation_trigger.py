@@ -78,7 +78,13 @@ class SpotRotationTrigger:
                 price = spot if spot is not None else self._last_spot.get(symbol)
                 if price is not None and isinstance(price, (int, float)) and not isinstance(price, bool) and isfinite(float(price)) and price > 0:
                     self._anchor_spot[symbol] = float(price)
-                    self._pending.discard(symbol)
+                    # Keep a coalesced follow-up when spot moved again while
+                    # the current rotation was resolving/subscribing.
+                    latest = self._last_spot.get(symbol)
+                    if latest is not None and abs(float(latest) - float(price)) >= self._thresholds[symbol]:
+                        self._pending.add(symbol)
+                    else:
+                        self._pending.discard(symbol)
             else:
                 self._pending.add(symbol)
                 self._failed += 1
