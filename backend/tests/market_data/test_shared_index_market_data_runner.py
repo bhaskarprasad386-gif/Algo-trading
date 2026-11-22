@@ -55,6 +55,14 @@ def _rows():
                         "lotsize": "25",
                     })
                     token += 1
+    for symbol, expiries in {"NIFTY": ["26NOV2026", "24DEC2026"], "BANKNIFTY": ["24DEC2026", "27JAN2027"]}.items():
+        for expiry in expiries:
+            rows.append({
+                "exch_seg": "NFO", "name": symbol, "instrumenttype": "FUTIDX",
+                "expiry": expiry, "symbol": f"{symbol}{expiry}FUT", "token": str(token),
+                "lotsize": "25",
+            })
+            token += 1
     return rows
 
 
@@ -82,16 +90,29 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
         instrument_type=InstrumentType.INDEX, timestamp_ns=__import__("time").time_ns(),
         ltp=48000.0, underlying="BANKNIFTY",
     ))
-    assert len(manager.registry.active_keys()) == 50
+    assert len(manager.registry.active_keys()) == 52
     assert runner.snapshot()["lifecycle"]["options_active"] is True
+    assert runner.snapshot()["lifecycle"]["futures_active"] is True
+    assert runner.snapshot()["futures_expiries"] == {"NIFTY": "2026-11-26", "BANKNIFTY": "2026-12-24"}
     option_descriptors = [manager.registry.get(key) for key in manager.registry.active_keys()
                          if manager.registry.get(key).instrument_type == "option"]
     nifty_strikes = sorted({d.strike for d in option_descriptors if d.underlying == "NIFTY"})
     bank_strikes = sorted({d.strike for d in option_descriptors if d.underlying == "BANKNIFTY"})
     assert len(nifty_strikes) == 13 and nifty_strikes[6] == 22000
     assert len(bank_strikes) == 11 and bank_strikes[5] == 48000
-    assert runner.snapshot()["state"]["fresh_count"] == 2
+    assert runner.snapshot()["state"]["fresh_count"] == 4
     assert runner.snapshot()["live_data_ready"] is False
+    futures_consumer = runner.lifecycle.FUTURES_CONSUMER
+    for key in manager.registry.active_keys():
+        descriptor = manager.registry.get(key)
+        if descriptor.instrument_type != "future":
+            continue
+        manager.callbacks[futures_consumer](MarketDataRecord(
+            instrument=key, symbol=descriptor.symbol, instrument_type=InstrumentType.FUTURE,
+            timestamp_ns=__import__("time").time_ns(), ltp=22000.0, bid=21999.5, ask=22000.5,
+            bid_qty=10, ask_qty=12, volume=1000, oi=8888,
+            underlying=descriptor.underlying, expiry=descriptor.expiry, lot_size=descriptor.lot_size,
+        ))
     option_consumer = runner.lifecycle.OPTIONS_CONSUMER
     for key in manager.registry.active_keys():
         descriptor = manager.registry.get(key)
@@ -106,9 +127,9 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
             lot_size=descriptor.lot_size,
         ))
     snap = runner.snapshot()
-    assert snap["state"]["instrument_count"] == 50
+    assert snap["state"]["instrument_count"] == 52
     assert snap["live_data_ready"] is True
-    assert len(snap["records"]) == 50
+    assert len(snap["records"]) == 52
     assert all(row["feed_age_seconds"] >= 0 and row["fresh"] for row in snap["records"])
     option_rows = [row for row in snap["records"] if row["instrument_type"] == "option"]
     assert len(option_rows) == 48
