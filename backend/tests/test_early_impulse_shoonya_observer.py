@@ -198,3 +198,19 @@ def test_cache_session_failure_does_not_block_runner_session_reset():
     observer.on_session_observation("RECONNECTING", "disconnect", 8, False, False, 900)
     assert runner.sessions == [("RECONNECTING", 8, False, False)]
     assert observer.snapshot()["observer_errors"] == 1
+
+
+def test_runner_reconnect_resets_signal_cooldown_and_preserves_history():
+    from app.scanner.early_impulse_signal_store import EarlyImpulseSignalStore
+    from app.scanner.early_impulse_shoonya_runner import EarlyImpulseLiveRunner
+    store = EarlyImpulseSignalStore(cooldown_seconds=30)
+    runner = EarlyImpulseLiveRunner(signal_store=store)
+    runner.on_session("LIVE", 1, True, True)
+    assert store.publish({"underlying": "NIFTY", "direction": "BUY", "score": 85, "feed_epoch": 1}, now=100)
+    assert not store.publish({"underlying": "NIFTY", "direction": "BUY", "score": 86, "feed_epoch": 1}, now=110)
+    runner.on_session("RECONNECTING", 2, False, False)
+    runner.on_session("LIVE", 2, True, True)
+    assert store.snapshot()["feed_epoch"] == 2
+    assert store.snapshot()["signal_count"] == 1  # historical signal remains visible
+    assert store.publish({"underlying": "NIFTY", "direction": "BUY", "score": 87, "feed_epoch": 2}, now=111)
+    assert store.snapshot()["signal_count"] == 2
