@@ -90,3 +90,42 @@ def test_oi_delta_is_not_reported_for_subsecond_sample_window():
     row = state.records_snapshot()[0]
     assert row["oi_delta_1s"] is None
     assert row["volume_delta_1s"] is None
+
+
+
+def test_stale_record_does_not_expose_oi_or_volume_delta():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    option = MarketDataRecord(
+        instrument=InstrumentKey("NFO", "NFO", "opt-stale"), symbol="NIFTYCE",
+        instrument_type=InstrumentType.OPTION, timestamp_ns=now - 1_500_000_000,
+        ltp=125.5, oi=1000, volume=1200, underlying="NIFTY", expiry="2026-11-26",
+        strike=25000, option_type=__import__("app.market_data.contracts", fromlist=["OptionType"]).OptionType.CALL,
+        lot_size=25,
+    )
+    assert state.on_record(option)
+    state.max_age_ns = 1_000_000_000  # tighter threshold after acceptance
+    row = state.records_snapshot()[0]
+    assert row["fresh"] is False
+    assert row["oi_delta_1s"] is None
+    assert row["volume_delta_1s"] is None
+
+
+
+def test_volume_reset_clears_old_session_baseline():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    inst = InstrumentKey("NFO", "NFO", "opt-reset")
+    def tick(ts, volume, oi):
+        return MarketDataRecord(
+            instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION,
+            timestamp_ns=ts, ltp=125.5, volume=volume, oi=oi, underlying="NIFTY",
+            expiry="2026-11-26", strike=25000,
+            option_type=__import__("app.market_data.contracts", fromlist=["OptionType"]).OptionType.CALL,
+            lot_size=25,
+        )
+    assert state.on_record(tick(now - 1_300_000_000, 5000, 1000))
+    assert state.on_record(tick(time_ns() - 100_000_000, 20, 1010))
+    row = state.records_snapshot()[0]
+    assert row["volume_delta_1s"] is None
+    assert row["oi_delta_1s"] == 10
