@@ -253,6 +253,7 @@ class FailBeforeObsoleteUnsubscribeManager(StubManager):
         keys = list(keys or self.registry.active_keys())
         if self.fail_unsubscribe and keys:
             self.fail_unsubscribe = False
+            super().unsubscribe(consumer, keys)
             raise RuntimeError("obsolete unsubscribe failed")
         return super().unsubscribe(consumer, keys)
 
