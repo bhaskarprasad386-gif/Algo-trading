@@ -102,7 +102,7 @@ class EarlyImpulseLiveRunner:
             return None
         identity = f"{record.instrument.exchange.strip().upper()}:{record.instrument.segment.strip().upper()}:{record.instrument.token.strip()}"
         with self._lock:
-            if not self._enabled or epoch != self._epoch or not self._authenticated or identity not in self._roles:
+            if not self._enabled or epoch != self._epoch or not authenticated or not self._authenticated or identity not in self._roles:
                 return None
             role = self._roles[identity]
             previous_received_ns = self._last_received_ns.get(identity)
