@@ -42,7 +42,9 @@ function Metric({ title, value, subtitle }: { title: string; value: string; subt
   </div>;
 }
 
-export default function EarlyImpulsePage({ pageTitle = "EARLY IMPULSE PRO", pageSubtitle = "Pre-move pressure, location-aware entry and liquidity-trap protection. Existing IV Scanner is not used." }: { pageTitle?: string; pageSubtitle?: string }) {
+export default function EarlyImpulsePage() {
+  const pageTitle = "EARLY IMPULSE PRO";
+  const pageSubtitle = "Pre-move pressure, location-aware entry and liquidity-trap protection. Existing IV Scanner is not used.";
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
