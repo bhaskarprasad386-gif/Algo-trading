@@ -201,8 +201,10 @@ def evaluate_vptx(snapshot: Mapping[str, Any], *, now_ms: int | None = None) -> 
         for direction in ("BUY", "SELL"):
             score, components, evidence = _score(direction, metrics, pattern)
             if cross_confirmation >= 0.7:
-                score = min(100, score + 5)
-                components["cross_market_confirmation"] = 5
+                bonus = min(5, 100 - score)
+                score += bonus
+                if bonus:
+                    components["cross_market_confirmation"] = bonus
             gate = "PATTERN_GATE_MISSING" not in evidence
             ready = gate and score >= 65 and _pivot_break(ticks, direction)
             candidates.append({
