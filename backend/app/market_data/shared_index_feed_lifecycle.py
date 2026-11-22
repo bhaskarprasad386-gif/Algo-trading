@@ -241,7 +241,7 @@ class SharedIndexFeedLifecycle:
                             manager.registry.unsubscribe(self.FUTURES_CONSUMER, key)
                     manager.registry.unregister_many(added)
                 self._reconcile_after_rollback(manager)
-                    raise
+                raise
             self._futures_keys = new_keys
             return new_keys
 
@@ -296,7 +296,7 @@ class SharedIndexFeedLifecycle:
                             manager.registry.unsubscribe(self.OPTIONS_CONSUMER, key)
                     manager.registry.unregister_many(added_keys)
                 self._reconcile_after_rollback(manager)
-                    raise
+                raise
             self._option_keys = new_keys
             return new_keys
 
