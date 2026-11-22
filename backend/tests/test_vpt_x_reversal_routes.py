@@ -74,12 +74,12 @@ def test_idle_signal_transitions_to_expired():
         assert _history["test:signal"]["status"] == "EXPIRED"
 
 
-def _stub_eval(price, trigger=False):
+def _stub_eval(price, trigger=False, invalidation=99.0):
     return {
         "status": "EVALUATED", "features": {"price": price},
         "candidates": [{
             "pattern": "SWING_EXHAUSTION", "direction": "BUY", "score": 70,
-            "strength": "DEVELOPING", "trigger_ready": trigger, "invalidation_price": 99.0,
+            "strength": "DEVELOPING", "trigger_ready": trigger, "invalidation_price": invalidation,
             "components": {}, "evidence": [], "scanner_only": True, "order_routing_enabled": False
         }]
     }
@@ -101,7 +101,7 @@ def test_triggered_signal_invalidates_and_does_not_reactivate(monkeypatch):
     clock = [20_000]
     states = [{"price": 101, "trigger": True, "invalidation": 99}, {"price": 98, "trigger": True, "invalidation": 90}, {"price": 101, "trigger": True, "invalidation": 90}]
     monkeypatch.setattr(routes, "_now_ms", lambda: clock[0])
-    monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"]))
+    monkeypatch.setattr(routes, "evaluate_vptx", lambda snapshot, now_ms=None: _stub_eval(states[0]["price"], states[0]["trigger"], states[0]["invalidation"]))
     triggered = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY"}).json()["candidates"][0]
     assert triggered["status"] == "TRIGGERED"
     states.pop(0)
