@@ -157,6 +157,7 @@ class SharedIndexMarketDataRunner:
             ]
             self.lifecycle.rotate_futures(tuple(current_futures + replacements))
             self._futures_expiries.update(expiry_updates)
+            self._sync_state_universe()
             return tuple(expiry_updates)
         except Exception as exc:
             with self._lock:
@@ -251,6 +252,7 @@ class SharedIndexMarketDataRunner:
                 return self.snapshot()
             self._start_error = None
             self._spot_records.clear()
+            self._futures_expiries.clear()
             self.state.clear()
             self.derived_iv.clear()
             self._bootstrap_options_done = False
