@@ -1,6 +1,7 @@
 from app.market_data.shared_index_feed_lifecycle import SharedIndexFeedLifecycle
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
-from app.market_data.contracts import InstrumentKey
+from app.market_data.contracts import InstrumentKey, MarketDataRecord, InstrumentType
+from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 
 
 class StubManager:
@@ -365,3 +366,54 @@ def test_stop_clears_local_owner_flags_and_continues_after_partial_reconcile_fai
     assert snapshot["spot_active"] is False
     assert snapshot["spot_instruments"] == 0
     assert manager.registry.active_keys() == ()
+
+
+def _spot_record(key, timestamp_ns=1):
+    return MarketDataRecord(
+        instrument=key, symbol="NIFTY", instrument_type=InstrumentType.INDEX,
+        timestamp_ns=timestamp_ns, ltp=22000.0,
+    )
+
+
+def test_common_feed_old_callback_is_fenced_after_stop_and_restart():
+    manager = StubManager()
+    feed = CommonStrategyMarketFeed("epoch-test", manager=manager)
+    descriptors = _spot_descriptors()
+    key = descriptors[0].key
+    old_received = []
+    new_received = []
+    feed.start(descriptors, old_received.append)
+    old_callback = manager.callbacks[feed.consumer]
+
+
+    feed.stop()
+    feed.start(descriptors, new_received.append)
+    new_callback = manager.callbacks[feed.consumer]
+
+
+    # A delayed callback from the prior transport epoch must not reach the
+    # retired callback, nor be delivered into the new callback's owner.
+    old_callback(_spot_record(key, 100))
+    assert old_received == []
+    assert new_received == []
+
+    # New epoch starts with a clean timestamp baseline and accepts the tick.
+    new_callback(_spot_record(key, 5))
+    assert len(new_received) == 1
+    assert new_received[0].timestamp_ns == 5
+    feed.stop()
+
+
+
+def test_common_feed_start_rejects_duplicate_instruments_before_registration():
+    manager = StubManager()
+    feed = CommonStrategyMarketFeed("duplicate-test", manager=manager)
+    descriptors = _spot_descriptors()
+    try:
+        feed.start((descriptors[0], descriptors[0]), lambda _record: None)
+    except ValueError as exc:
+        assert "duplicate instruments" in str(exc)
+    else:
+        raise AssertionError("duplicate keys must be rejected")
+    assert not manager.registry.subscriptions()
+    assert manager.callbacks == {}
