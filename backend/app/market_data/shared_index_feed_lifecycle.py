@@ -40,6 +40,17 @@ class SharedIndexFeedLifecycle:
 
 
     @staticmethod
+    def _reconcile_after_rollback(manager) -> None:
+        """Best-effort transport reconciliation after restoring registry ownership."""
+        reconcile = getattr(manager, "_reconcile", None)
+        if callable(reconcile):
+            try:
+                reconcile()
+            except Exception:
+                # Preserve the original failure; the manager's supervisor retries.
+                pass
+
+    @staticmethod
     def _validate_locked_options(items: tuple[InstrumentDescriptor, ...]) -> None:
         """Fail closed unless the exact locked symmetric CE/PE strike grids exist."""
         expected = {"NIFTY": 13, "BANKNIFTY": 11}
@@ -116,6 +127,7 @@ class SharedIndexFeedLifecycle:
                     manager._record_callbacks.pop(self.SPOT_CONSUMER, None)
                     manager._record_observers.pop(self.SPOT_CONSUMER, None)
                 manager.registry.unregister_many(registered_keys)
+                self._reconcile_after_rollback(manager)
                 raise
             self._spot_keys = keys
             self._spot_started = True
@@ -145,6 +157,7 @@ class SharedIndexFeedLifecycle:
                     manager._record_callbacks.pop(self.OPTIONS_CONSUMER, None)
                     manager._record_observers.pop(self.OPTIONS_CONSUMER, None)
                 manager.registry.unregister_many(registered_keys)
+                self._reconcile_after_rollback(manager)
                 raise
             self._option_keys = keys
             self._options_started = True
@@ -172,6 +185,7 @@ class SharedIndexFeedLifecycle:
                 except Exception:
                     manager.registry.clear_consumer(self.FUTURES_CONSUMER)
                 manager.registry.unregister_many(registered_keys)
+                self._reconcile_after_rollback(manager)
                 raise
             self._futures_keys = keys
             self._futures_started = True
@@ -205,6 +219,7 @@ class SharedIndexFeedLifecycle:
                     for key in added:
                         manager.registry.unsubscribe(self.FUTURES_CONSUMER, key)
                 manager.registry.unregister_many(added)
+                self._reconcile_after_rollback(manager)
                 raise
             obsolete = [key for key in old_keys if key not in set(new_keys)]
             if obsolete:
@@ -225,6 +240,7 @@ class SharedIndexFeedLifecycle:
                         for key in added:
                             manager.registry.unsubscribe(self.FUTURES_CONSUMER, key)
                     manager.registry.unregister_many(added)
+                self._reconcile_after_rollback(manager)
                     raise
             self._futures_keys = new_keys
             return new_keys
@@ -258,6 +274,7 @@ class SharedIndexFeedLifecycle:
                     for key in added_keys:
                         manager.registry.unsubscribe(self.OPTIONS_CONSUMER, key)
                 manager.registry.unregister_many(added_keys)
+                self._reconcile_after_rollback(manager)
                 raise
             obsolete = [key for key in old_keys if key not in set(new_keys)]
             if obsolete:
@@ -278,6 +295,7 @@ class SharedIndexFeedLifecycle:
                         for key in added_keys:
                             manager.registry.unsubscribe(self.OPTIONS_CONSUMER, key)
                     manager.registry.unregister_many(added_keys)
+                self._reconcile_after_rollback(manager)
                     raise
             self._option_keys = new_keys
             return new_keys
