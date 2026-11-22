@@ -67,7 +67,7 @@ jobs:
           # A [force-restart] commit message explicitly redeploys runtime code after workflow-only fixes.
           FORCE_RESTART="${{ inputs.force_restart || (github.event_name == 'push' && contains(github.event.head_commit.message, '[force-restart]')) }}"
           printf 'SSH_AUTH_PREFLIGHT_START\n'
-          if ! timeout 35s ssh -vvv -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" 'echo SSH_AUTH_PREFLIGHT_OK' 2>&1; then
+          if ! timeout 60s ssh -vvv -T "${KEX_OPTS[@]}" "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" 'echo SSH_AUTH_PREFLIGHT_OK' 2>&1; then
             printf 'SSH_AUTH_PREFLIGHT_FAILED: deployment was not started\n' >&2
             exit 1
           fi
