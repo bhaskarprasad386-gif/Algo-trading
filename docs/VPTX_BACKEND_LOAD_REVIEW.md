@@ -55,3 +55,20 @@ Many live scanners are controlled by individual enable flags; defaults in code a
 
 ## VPT-X status
 Initial heuristic thresholds are research placeholders, not calibrated. The engine is isolated, pure, no broker feed/subscription, no API/UI, no order routing. CI and replay quality gates are still required.
+
+
+## Follow-up audit: candidate overlap and lifecycle semantics
+
+Date: 2026-11-22
+
+### Pattern overlap is candidate multiplicity, not alert fan-out
+
+The three pattern gates are distinct, but the route stores candidates under independent keys of underlying + pattern + direction. When multiple pattern gates pass on the same snapshot and direction, the API can return several records with similar evidence and score. The current UI labels them as pattern candidates; there is no alert-delivery or order-execution consumer in this isolated PR. Therefore do not add suppression or aggregation at this stage: it would discard pattern-specific diagnostics. If a future alert surface is added, define an explicit same-underlying/same-direction signal-cluster contract (primary candidate, retained pattern membership, time window, and state transitions) and test it separately from candidate history.
+
+### Expired-state re-entry is deliberately a lifecycle edge to validate
+
+The route currently transitions an `EXPIRED` record back to `WATCH` when the next candidate is not trigger-ready, but directly to `TRIGGERED` when the next candidate is trigger-ready. This differs from the stricter `INVALIDATED` re-arm sequence, which requires a fresh non-triggered observation. No change was made in this audit: expiry semantics need an explicit product rule before treating expiry as a reset or requiring re-arm. Add a route regression test for both expired -> watch and expired -> triggered before changing this behavior.
+
+### UI transport expectation
+
+The VPT-X page currently refreshes status and history via REST on a 15-second interval and posts snapshots for manual evaluation. This is acceptable for the isolated snapshot-fed research stage; it must not be represented as live market streaming. If live integration is later authorized, design bounded snapshot recovery and push updates as a separate change, without reusing this page's polling as a tick transport.
