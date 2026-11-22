@@ -159,7 +159,6 @@ class SharedIndexMarketDataRunner:
                     self._spot_records[underlying] = record
             if not running:
                 return
-            bootstrap_ready = self._bootstrap_options_done
             self._bootstrap_options()
             with self._lock:
                 bootstrap_ready = self._bootstrap_options_done
