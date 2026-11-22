@@ -42,7 +42,7 @@ def test_master_download_429_suppresses_alternate_and_cools_down(monkeypatch):
     try:
         manager.download()
     except TradingAppException as exc:
-        assert "temporarily throttled" in str(exc).lower() or "recently failed" in str(exc).lower()
+        assert "retry is temporarily throttled" in exc.message.lower()
     else:
         raise AssertionError("second call should be blocked by cooldown")
     assert calls == []
