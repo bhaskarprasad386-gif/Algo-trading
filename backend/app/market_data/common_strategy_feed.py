@@ -5,7 +5,7 @@ values. No strategy opens or owns a broker WebSocket directly.
 """
 from __future__ import annotations
 
-from threading import Lock
+from threading import Lock, RLock
 from time import time_ns
 from typing import Any, Callable, Iterable
 
@@ -145,7 +145,7 @@ class CommonStrategyMarketFeed:
         # Each start/stop creates a callback epoch. Retired closures may still
         # be invoked by a queued transport frame, but must not cross epochs.
         self._callback_epoch = 0
-        self._callback_epoch_lock = Lock()
+        self._callback_epoch_lock = RLock()
 
     @staticmethod
     def descriptor(
