@@ -204,7 +204,7 @@ def test_tick_rate_reports_one_three_and_five_second_windows():
     now = time_ns()
     inst = InstrumentKey("NFO", "NFO", "tick-rate")
     def tick(ts):
-        return MarketDataRecord(instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION, timestamp_ns=ts, ltp=100, bid=99, ask=101, underlying="NIFTY")
+        return MarketDataRecord(instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION, timestamp_ns=ts, ltp=100, bid=99, ask=101, underlying="NIFTY", expiry="2026-11-26", strike=25000, option_type=OptionType.CALL, lot_size=25)
     assert state.on_record(tick(now-4_200_000_000))
     assert state.on_record(tick(now-2_200_000_000))
     assert state.on_record(tick(now-200_000_000))
