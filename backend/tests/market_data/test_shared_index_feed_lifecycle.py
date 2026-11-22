@@ -132,3 +132,38 @@ def test_locked_options_reject_expiry_mismatch_and_asymmetric_strike_window():
     else:
         raise AssertionError("asymmetric strikes must be rejected")
     assert not manager.registry.active_keys()
+
+class FailAfterMutationManager(StubManager):
+    def __init__(self):
+        super().__init__()
+        self.fail_next_subscribe = False
+    def subscribe(self, consumer, keys, mode=1):
+        super().subscribe(consumer, keys, mode)
+        if self.fail_next_subscribe:
+            self.fail_next_subscribe = False
+            raise RuntimeError("forced reconcile failure after registry mutation")
+
+
+def test_failed_rotation_rolls_back_new_option_refs_and_preserves_old_set():
+    manager = FailAfterMutationManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    lifecycle.start_spot(_spot_descriptors())
+    original = _options()
+    lifecycle.start_options(original)
+    original_active = set(manager.active[lifecycle.OPTIONS_CONSUMER])
+    original_keys = lifecycle._option_keys
+
+    replacement = _options(shift=25)
+    manager.fail_next_subscribe = True
+    try:
+        lifecycle.rotate_options(replacement)
+    except RuntimeError as exc:
+        assert "forced reconcile failure" in str(exc)
+    else:
+        raise AssertionError("rotation failure must propagate")
+
+    assert manager.active[lifecycle.OPTIONS_CONSUMER] == original_active
+    assert lifecycle._option_keys == original_keys
+    assert len(manager.registry.active_keys()) == 70
+    assert lifecycle.snapshot()["spot_instruments"] == 2
+    assert manager.registry.get(replacement[0].key) is None
