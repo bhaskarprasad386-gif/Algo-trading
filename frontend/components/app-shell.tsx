@@ -13,6 +13,7 @@ const nav = [
   { href: "/strategies/calendar-spread", label: "Calendar Scanner", icon: Activity },
   { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
   { href: "/strategies/early-impulse", label: "Early Impulse Pro", icon: Activity },
+  { href: "/strategies/short-covering-long-unwinding", label: "Short Covering & Long Unwinding", icon: Activity },
   { href: "/strategies/vpt-x", label: "VPT-X Reversal Scanner", icon: Activity },
   { href: "/strategies/bi-directional-microstructure", label: "Bi-Directional System", icon: Activity },
   { href: "/strategies/iv-skew-flip", label: "IV Skew / IV Flip", icon: Activity },
