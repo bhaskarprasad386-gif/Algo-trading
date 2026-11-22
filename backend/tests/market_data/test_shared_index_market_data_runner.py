@@ -274,3 +274,31 @@ def test_refresh_started_before_off_cannot_publish_after_off():
     assert runner._running is False
     assert runner._rows is original_rows
     assert runner.snapshot()["state"]["instrument_count"] == 0
+\n
+
+
+def test_external_pending_rotation_flush_syncs_state_and_retired_cache():
+    from app.market_data.shared_cache import get_shared_market_data_cache
+    import time
+
+    rows = _rows()
+    runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=RunnerManager())
+    runner.start(rows)
+    old_key = InstrumentKey("NFO", "NFO", "old-contract")
+    new_key = InstrumentKey("NFO", "NFO", "new-contract")
+    runner.state.retain_instruments([old_key])
+    record = MarketDataRecord(
+        instrument=old_key, symbol="OLD", instrument_type=InstrumentType.FUTURE,
+        timestamp_ns=time.time_ns(), ltp=100.0, underlying="NIFTY",
+        expiry="2026-11-26",
+    )
+    assert runner.state.on_record(record)
+    assert get_shared_market_data_cache().get(old_key.value) is not None
+
+    # Simulate a completed rotation from the pending-flush path (not a tick callback).
+    runner.lifecycle.active_keys = lambda: (new_key,)
+    runner.rotation.flush_due = lambda: ("NIFTY",)
+    assert runner.flush_rotations() == ("NIFTY",)
+    assert runner.state.latest(old_key.value) is None
+    assert get_shared_market_data_cache().get(old_key.value) is None
+    runner.stop()
