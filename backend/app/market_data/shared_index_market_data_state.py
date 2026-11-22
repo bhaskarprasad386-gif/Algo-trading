@@ -4,6 +4,7 @@ from __future__ import annotations
 from threading import RLock
 from time import time_ns
 from typing import Any, Callable
+from collections import deque
 
 from .shared_cache import put_market_data_record
 
@@ -23,6 +24,7 @@ class SharedIndexMarketDataState:
         self._accepted = 0
         self._stale_dropped = 0
         self._out_of_order = 0
+        self._oi_history: dict[str, deque[tuple[int, int]]] = {}
 
 
 
@@ -44,6 +46,12 @@ class SharedIndexMarketDataState:
             if key not in self._latest and len(self._latest) >= self.MAX_INSTRUMENTS:
                 return False
             self._latest[key] = record
+            if record.oi is not None:
+                history = self._oi_history.setdefault(key, deque())
+                history.append((ts, record.oi))
+                cutoff = ts - 1_000_000_000
+                while history and history[0][0] < cutoff:
+                    history.popleft()
             self._accepted += 1
         put_market_data_record(record)
         self._publish(record)
@@ -58,7 +66,30 @@ class SharedIndexMarketDataState:
             removed = [key for key in self._latest if key not in allowed]
             for key in removed:
                 self._latest.pop(key, None)
+                self._oi_history.pop(key, None)
             return len(removed)
+
+
+    def records_snapshot(self) -> list[dict[str, Any]]:
+        """Return bounded current records with per-contract OI change over ~1s."""
+        now = time_ns()
+        with self._lock:
+            latest = tuple(self._latest.items())
+            oi_history = {key: tuple(history) for key, history in self._oi_history.items()}
+        result = []
+        for key, record in latest:
+            data = record.as_dict()
+            age_ns = now - record.timestamp_ns
+            data["feed_age_seconds"] = max(0.0, age_ns / 1e9)
+            data["fresh"] = -1_000_000_000 <= age_ns <= self.max_age_ns
+            history = oi_history.get(key, ())
+            delta = None
+            if record.oi is not None and len(history) >= 2:
+                baseline = next((oi for ts, oi in history if ts <= now - 1_000_000_000), history[0][1])
+                delta = record.oi - baseline
+            data["oi_delta_1s"] = delta
+            result.append(data)
+        return result
 
 
     def latest(self, key: str) -> Any | None:
