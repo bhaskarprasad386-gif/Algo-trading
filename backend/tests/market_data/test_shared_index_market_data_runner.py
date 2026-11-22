@@ -301,3 +301,32 @@ def test_external_pending_rotation_flush_syncs_state_and_retired_cache():
     assert runner.state.latest(old_key.value) is None
     assert get_shared_market_data_cache().get(old_key.value) is None
     runner.stop()
+
+
+
+def test_blocked_start_cannot_resurrect_runner_after_off_epoch():
+    from threading import Event, Thread
+    class BlockingMaster(FakeMaster):
+        def __init__(self, rows):
+            super().__init__(rows)
+            self.started = Event()
+            self.release = Event()
+        def download(self, *, force=False):
+            self.started.set()
+            assert self.release.wait(timeout=3)
+            return self.rows
+    rows = _rows()
+    master = BlockingMaster(rows)
+    manager = RunnerManager()
+    runner = SharedIndexMarketDataRunner(instrument_master=master, manager=manager)
+    start_result = []
+    thread = Thread(target=lambda: start_result.append(runner.start()), daemon=True)
+    thread.start()
+    assert master.started.wait(timeout=2)
+    runner.stop()
+    master.release.set()
+    thread.join(timeout=3)
+    assert not thread.is_alive()
+    assert runner._running is False
+    assert manager.registry.active_keys() == ()
+    assert runner.snapshot()["enabled"] is False
