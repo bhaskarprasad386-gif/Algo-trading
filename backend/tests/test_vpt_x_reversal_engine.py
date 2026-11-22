@@ -32,6 +32,22 @@ def test_discontinuous_tick_history_fails_closed_even_when_last_tick_is_fresh():
     assert result["reason"] == "DISCONTINUOUS_TICK_HISTORY"
     assert result["candidates"] == []
 
+def test_sweep_invalidation_uses_recent_sweep_extreme_not_window_low_high():
+    import app.scanner.vpt_x_reversal_engine as engine
+    ticks = _ticks([100 + i * .1 for i in range(30)])
+    metrics = engine._metrics(engine._normalize_ticks(ticks))
+    assert metrics["buy_invalidation"] == pytest.approx(metrics["low"])
+    assert metrics["sell_invalidation"] == pytest.approx(metrics["high"])
+
+    # Recent terminal segment sweeps prior low, then reclaims it.
+    start = int(time.time() * 1000) - 3_000
+    prices = [100 + i * .05 for i in range(20)] + [101, 100, 99.5, 99, 98.5, 99, 100, 100.5, 101, 101.2]
+    swept = _ticks(prices, start=start)
+    swept_metrics = engine._metrics(engine._normalize_ticks(swept))
+    assert swept_metrics["swept_low"] is True
+    assert swept_metrics["reclaimed_low"] is True
+    assert swept_metrics["buy_invalidation"] == pytest.approx(min(p["price"] for p in swept[-5:]))
+
 def test_stale_tick_data_fails_closed():
     result=evaluate_vptx({"underlying":"NIFTY","ticks":_ticks([100+i*.1 for i in range(25)], start=1_000_000)},now_ms=1_010_000)
     assert result["status"]=="WAITING_DATA" and result["candidates"]==[]
