@@ -11,6 +11,7 @@ type Status = {
   feed_connected?: boolean;
   scanner_active?: boolean;
   signal_count?: number;
+  feed_epoch?: number;
   latest_signal?: unknown;
   market_regime?: string;
   order_routing_enabled?: boolean;
@@ -20,7 +21,7 @@ type Status = {
   signal_history_capacity?: number;
   suppressed_duplicate_count?: number;
 };
-type Signal = { underlying?: string; direction?: string; score?: number; grade?: string; timestamp?: string; entry?: number; invalidation?: number; target_1?: number; reason?: string; scanner_only?: boolean; };
+type Signal = { underlying?: string; direction?: string; feed_epoch?: number; score?: number; grade?: string; timestamp?: string; entry?: number; invalidation?: number; target_1?: number; reason?: string; scanner_only?: boolean; };
 type SignalHistory = { signals?: Signal[]; signal_count?: number; capacity?: number; suppressed_duplicate_count?: number; cooldown_seconds?: number; scanner_only?: boolean; order_routing_enabled?: boolean; };
 
 const engineDetails: Engine[] = [
@@ -109,7 +110,7 @@ export default function EarlyImpulsePage() {
           <Metric title="Feed" value={feedReady ? "CONNECTED" : "WAITING"} subtitle={feedReady ? "Market stream available" : "Feed runner not wired yet"}/>
           <Metric title="Scanner" value={status?.scanner_active ? "ACTIVE" : "INACTIVE"} subtitle="No signals fabricated"/>
           <Metric title="Signals" value={String(liveSignals)} subtitle="Live confirmed signals"/>
-          <Metric title="Market Regime" value={status?.market_regime ?? "UNKNOWN"} subtitle="Trend / range detection"/>
+          <Metric title="Market Regime" value={status?.market_regime ?? "UNKNOWN"} subtitle="Trend / range detection"/><Metric title="Feed epoch" value={status?.feed_epoch == null ? "—" : String(status.feed_epoch)} subtitle="Reconnect generation"/>
         </div>
       </div>
       {backendUnavailable && <div className="m-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300"><strong>Status unavailable:</strong> {error}. The page will not display simulated live signals.</div>}
@@ -165,7 +166,7 @@ export default function EarlyImpulsePage() {
           <Metric title="Cooldown" value={`${signalHistory?.cooldown_seconds ?? 30}s`} subtitle="Per underlying/direction"/>
           <Metric title="Routing" value={signalHistory?.order_routing_enabled === false ? "OFF" : "OFF"} subtitle="Scanner only"/>
         </div>
-        {recentSignals.length ? <div className="overflow-x-auto"><table className="w-full min-w-[650px] text-left text-xs"><thead className="theme-muted"><tr><th className="p-2">Time</th><th className="p-2">Underlying</th><th className="p-2">Direction</th><th className="p-2">Score</th><th className="p-2">Grade</th><th className="p-2">Entry</th><th className="p-2">Invalidation</th><th className="p-2">Target</th></tr></thead><tbody className="divide-y theme-border">{recentSignals.map((signal, i) => <tr key={`${signal.underlying}-${signal.direction}-${signal.timestamp ?? i}`}><td className="p-2">{fmtTime(signal.timestamp)}</td><td className="p-2 font-semibold theme-text">{signal.underlying ?? "—"}</td><td className="p-2 font-bold">{signal.direction ?? "—"}</td><td className="p-2">{signal.score ?? "—"}</td><td className="p-2">{signal.grade ?? "—"}</td><td className="p-2">{signal.entry ?? "—"}</td><td className="p-2">{signal.invalidation ?? "—"}</td><td className="p-2">{signal.target_1 ?? "—"}</td></tr>)}</tbody></table></div> : <div className="p-8 text-center"><Activity size={28} className="mx-auto theme-muted"/><div className="mt-2 text-sm font-semibold theme-text">No live signals</div><p className="mt-1 text-xs theme-muted">Live feed/scanner is not active; history is empty by design. No demo signals.</p></div>}
+        {recentSignals.length ? <div className="overflow-x-auto"><table className="w-full min-w-[650px] text-left text-xs"><thead className="theme-muted"><tr><th className="p-2">Time</th><th className="p-2">Epoch</th><th className="p-2">Underlying</th><th className="p-2">Direction</th><th className="p-2">Score</th><th className="p-2">Grade</th><th className="p-2">Entry</th><th className="p-2">Invalidation</th><th className="p-2">Target</th></tr></thead><tbody className="divide-y theme-border">{recentSignals.map((signal, i) => <tr key={`${signal.underlying}-${signal.direction}-${signal.timestamp ?? i}`}><td className="p-2">{fmtTime(signal.timestamp)}</td><td className="p-2"><span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${signal.feed_epoch != null && signal.feed_epoch === status?.feed_epoch && feedReady ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>{signal.feed_epoch == null ? "Epoch ?" : `E${signal.feed_epoch}${signal.feed_epoch === status?.feed_epoch && feedReady ? " · current" : " · historical"}`}</span></td><td className="p-2 font-semibold theme-text">{signal.underlying ?? "—"}</td><td className="p-2 font-bold">{signal.direction ?? "—"}</td><td className="p-2">{signal.score ?? "—"}</td><td className="p-2">{signal.grade ?? "—"}</td><td className="p-2">{signal.entry ?? "—"}</td><td className="p-2">{signal.invalidation ?? "—"}</td><td className="p-2">{signal.target_1 ?? "—"}</td></tr>)}</tbody></table></div> : <div className="p-8 text-center"><Activity size={28} className="mx-auto theme-muted"/><div className="mt-2 text-sm font-semibold theme-text">No live signals</div><p className="mt-1 text-xs theme-muted">Live feed/scanner is not active; history is empty by design. No demo signals.</p></div>}
       </div>
     </section>
 
