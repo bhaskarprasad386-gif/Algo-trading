@@ -105,7 +105,12 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
             strike=descriptor.strike, option_type=OptionType(descriptor.option_type),
             lot_size=descriptor.lot_size,
         ))
-    assert runner.snapshot()["state"]["instrument_count"] == 50
-    assert runner.snapshot()["live_data_ready"] is True
+    snap = runner.snapshot()
+    assert snap["state"]["instrument_count"] == 50
+    assert snap["live_data_ready"] is True
+    assert len(snap["records"]) == 50
+    assert all(row["feed_age_seconds"] >= 0 and row["fresh"] for row in snap["records"])
     runner.stop()
     assert manager.registry.active_keys() == ()
+    assert runner.snapshot()["state"]["instrument_count"] == 0
+    assert runner.snapshot()["live_data_ready"] is False
