@@ -259,6 +259,10 @@ class CommonWebSocketManager:
         # remains the fallback, but duplicate SDK callbacks must not spawn a
         # burst of close/recovery workers for the same failed generation.
         self._failure_recovery_groups: set[SocketGroup] = set()
+        # Globally admit at most one callback-triggered recovery worker; other shard failures are coalesced for the supervisor.
+        self._failure_recovery_worker_active = False
+        self._failure_recovery_pending_groups: set[SocketGroup] = set()
+        self._failure_recovery_admission_rejections = 0
         # Retired transports remain visible until their close worker actually exits.
         # Store metadata only; never retain broker frames or authentication payloads.
         self._retired_transports: dict[str, dict[str, Any]] = {}
@@ -1108,7 +1112,28 @@ class CommonWebSocketManager:
                 with self._lock:
                     self._failure_recovery_groups.discard(group)
 
-        Thread(target=_recover, name=f"common-ws-failure-recovery-{group.mode}-{group.shard}", daemon=True).start()
+        # A simultaneous shard outage must not spawn one recovery thread per
+        # callback. Keep per-group invalidation, coalesce the rest, and let the
+        # shared supervisor reconcile the full desired registry.
+        with self._lock:
+            if self._failure_recovery_worker_active:
+                self._failure_recovery_pending_groups.add(group)
+                self._failure_recovery_admission_rejections += 1
+                return
+            self._failure_recovery_worker_active = True
+
+        def _recover_with_admission() -> None:
+            try:
+                _recover()
+            finally:
+                with self._lock:
+                    self._failure_recovery_worker_active = False
+
+        Thread(
+            target=_recover_with_admission,
+            name=f"common-ws-failure-recovery-{group.mode}-{group.shard}",
+            daemon=True,
+        ).start()
     def _run_socket_operation_bounded(
         self,
         *,
@@ -2221,6 +2246,11 @@ class CommonWebSocketManager:
                 "failure_recovery_groups": sorted(
                     f"{group.mode}:{group.shard}" for group in self._failure_recovery_groups
                 ),
+                "failure_recovery_worker_active": self._failure_recovery_worker_active,
+                "failure_recovery_pending_groups": sorted(
+                    f"{group.mode}:{group.shard}" for group in self._failure_recovery_pending_groups
+                ),
+                "failure_recovery_admission_rejections": self._failure_recovery_admission_rejections,
                 "retired_transport_count": len(self._retired_transports),
                 "retired_transports": [dict(item) for item in self._retired_transports.values()],
                 "retired_transport_groups": sorted({
