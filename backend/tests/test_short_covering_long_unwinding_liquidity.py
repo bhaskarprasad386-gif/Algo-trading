@@ -27,7 +27,8 @@ def test_cross_sweep_requires_fresh_level_crossing():
     from app.scanner.short_covering_long_unwinding.liquidity import detect_cross_sweep
     assert detect_cross_sweep(previous_price=100.1,price=99.6,level=100,side="BULLISH",timestamp_ms=500,min_sweep=.2)
     assert detect_cross_sweep(previous_price=99.7,price=99.4,level=100,side="BULLISH",timestamp_ms=500,min_sweep=.2) is None
-    assert detect_cross_sweep(previous_price=99.9,price=100.5,level=100,side="BEARISH",timestamp_ms=500,min_sweep=.2) is None
+    # Price was already above the level; this is not a fresh bearish crossing.
+    assert detect_cross_sweep(previous_price=100.1,price=100.5,level=100,side="BEARISH",timestamp_ms=500,min_sweep=.2) is None
     assert detect_cross_sweep(previous_price=99.9,price=100.3,level=100,side="BEARISH",timestamp_ms=500,min_sweep=.2)
 
 def test_liquidity_pressure_uses_only_fresh_reclaim_and_dedupes():
