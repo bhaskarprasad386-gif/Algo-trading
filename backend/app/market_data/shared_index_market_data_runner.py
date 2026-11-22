@@ -92,18 +92,28 @@ class SharedIndexMarketDataRunner:
         self._start_error: str | None = None
         self._started_at: str | None = None
         self._bootstrap_options_done = False
+        self._bootstrap_inflight = False
+        self._spot_records: dict[str, Any] = {}
 
     def _expiry_for(self, underlying: str) -> str:
         return choose_locked_expiry(self._rows, underlying)
 
-    def _bootstrap_options(self, record) -> bool:
-        # First usable spot tick bootstraps the initial ATM window immediately;
-        # later ticks are handled by the movement-based rotation controller.
+    def _bootstrap_options(self) -> bool:
+        # Bootstrap only after both underlyings have independent fresh spot ticks.
+        # This avoids using NIFTY spot as the BANKNIFTY ATM reference.
         with self._lock:
-            if self._bootstrap_options_done:
+            if self._bootstrap_options_done or self._bootstrap_inflight:
                 return False
-            self._bootstrap_options_done = True
+            if set(self._spot_records) != set(LOCKED):
+                return False
+            now_ns = __import__("time").time_ns()
+            if any(now_ns - record.timestamp_ns > self.state.max_age_ns
+                   or record.timestamp_ns - now_ns > 1_000_000_000
+                   for record in self._spot_records.values()):
+                return False
+            self._bootstrap_inflight = True
             rows = self._rows
+            spot_prices = {underlying: float(record.ltp) for underlying, record in self._spot_records.items()}
         try:
             from .common_strategy_feed import CommonStrategyMarketFeed
             descriptors = []
@@ -111,7 +121,7 @@ class SharedIndexMarketDataRunner:
                 expiry = choose_locked_expiry(rows, underlying)
                 selected = select_locked_index_options(
                     rows, underlying=underlying, expiry=expiry,
-                    spot_price=float(record.ltp),
+                    spot_price=spot_prices[underlying],
                 )
                 descriptors.extend(CommonStrategyMarketFeed.descriptor(
                     exchange="NFO", token=contract.token, symbol=contract.trading_symbol,
@@ -122,33 +132,41 @@ class SharedIndexMarketDataRunner:
             self.lifecycle.start_options(tuple(descriptors))
             with self._lock:
                 self._start_error = None
+                self._bootstrap_options_done = True
+                self._bootstrap_inflight = False
             return True
         except Exception as exc:
             with self._lock:
                 self._start_error = f"{type(exc).__name__}: {exc}"[:240]
-            # Startup selection is retryable on the next live spot update.
-            with self._lock:
-                self._bootstrap_options_done = False
+                self._bootstrap_inflight = False
             return False
 
     def _on_record(self, record) -> None:
         if not self.state.on_record(record):
             return
         if getattr(record, "instrument_type", None) is not None and getattr(record.instrument_type, "value", "") == "index":
+            underlying = str(getattr(record, "underlying", "") or "").strip().upper()
+            if underlying not in LOCKED or record.ltp is None:
+                return
             with self._lock:
                 running = self._running
-            if running:
-                self._bootstrap_options(record)
-                self.rotation.on_record(record)
-                # Flush cooldown-coalesced rotations from live spot updates;
-                # no external scheduler or strategy runner is required.
-                self.rotation.flush_due()
+                if running:
+                    self._spot_records[underlying] = record
+            if not running:
+                return
+            self._bootstrap_options()
+            self.rotation.on_record(record)
+            # Flush cooldown-coalesced rotations on subsequent live spot ticks.
+            self.rotation.flush_due()
 
     def start(self) -> dict:
         with self._lock:
             if self._running:
                 return self.snapshot()
             self._start_error = None
+            self._spot_records.clear()
+            self._bootstrap_options_done = False
+            self._bootstrap_inflight = False
         try:
             rows = tuple(self.instrument_master.download())
             if not rows:
@@ -175,6 +193,8 @@ class SharedIndexMarketDataRunner:
             was_running = self._running
             self._running = False
             self._bootstrap_options_done = False
+            self._bootstrap_inflight = False
+            self._spot_records.clear()
         try:
             self.lifecycle.stop()
         finally:
