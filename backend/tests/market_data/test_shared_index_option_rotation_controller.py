@@ -20,7 +20,7 @@ class FakeClock:
 
 def _rows(expiry="26NOV2026"):
     rows = []
-    for underlying, base, step, count in (("NIFTY", 22000, 50, 13), ("BANKNIFTY", 48000, 100, 11)):
+    for underlying, base, step, count in (("NIFTY", 21750, 50, 13), ("BANKNIFTY", 48000, 100, 11)):
         for index in range(count):
             strike = base + index * step
             for side in ("CE", "PE"):
