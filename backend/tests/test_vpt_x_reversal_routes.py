@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 from app.scanner.vpt_x_reversal_routes import router, _history, _lock
-import pytest
+import pytest\nimport time
 
 @pytest.fixture(autouse=True)
 def clear_signal_history():
@@ -16,7 +16,7 @@ app = FastAPI()
 app.include_router(router)
 client = TestClient(app)
 
-def _ticks(prices, start=2_000_000):
+def _ticks(prices, start=None):\n    start = start if start is not None else int(time.time() * 1000) - 3_000
     return [
         {"timestamp_ms": start + i * 100, "price": p, "buy_volume": 35, "sell_volume": 18,
          "bid_qty": 100, "ask_qty": 45, "bid": p - .05, "ask": p + .05}
@@ -28,7 +28,7 @@ def test_status_is_isolated_and_off():
     assert body["feed_connected"] is False and body["scanner_active"] is False
     assert body["order_routing_enabled"] is False
 
-def test_invalid_underlying_rejected():
+def test_client_clock_field_is_not_accepted_to_bypass_freshness():\n    response = client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "NIFTY", "ticks": _ticks([100 + i * .1 for i in range(30)], start=1_000_000), "now_ms": 1_010_000})\n    assert response.status_code == 422\n\ndef test_invalid_underlying_rejected():
     assert client.post("/api/v1/scanner/vpt-x/evaluate", json={"underlying": "FINNIFTY"}).status_code == 422
 
 def test_waiting_data_does_not_create_history():
