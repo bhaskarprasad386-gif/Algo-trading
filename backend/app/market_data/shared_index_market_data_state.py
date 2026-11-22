@@ -50,7 +50,7 @@ class SharedIndexMarketDataState:
                 self._capacity_dropped += 1
                 return False
             self._latest[key] = record
-            cutoff = ts - 3_000_000_000
+            cutoff = ts - 5_000_000_000
             if record.oi is not None:
                 history = self._oi_history.setdefault(key, deque())
                 history.append((ts, record.oi))
@@ -127,6 +127,9 @@ class SharedIndexMarketDataState:
             if not data["fresh"]:
                 delta = None
             data["oi_delta_1s"] = delta
+            for window in (3, 5):
+                baseline_oi = next((oi for stamp, oi in history if stamp <= now - window * 1_000_000_000), None)
+                data[f"oi_delta_{window}s"] = (record.oi - baseline_oi) if record.oi is not None and baseline_oi is not None and data["fresh"] else None
             vol_history = volume_history.get(key, ())
             volume_delta = None
             if record.volume is not None and len(vol_history) >= 2:
@@ -136,6 +139,9 @@ class SharedIndexMarketDataState:
             if not data["fresh"]:
                 volume_delta = None
             data["volume_delta_1s"] = volume_delta
+            for window in (3, 5):
+                baseline_volume = next((volume for stamp, volume in vol_history if stamp <= now - window * 1_000_000_000), None)
+                data[f"volume_delta_{window}s"] = (record.volume - baseline_volume) if record.volume is not None and baseline_volume is not None and record.volume >= baseline_volume and data["fresh"] else None
             ticks = tick_history.get(key, ())
             for window in (1, 3, 5):
                 baseline = next((price for stamp, price in ticks if stamp <= record.timestamp_ns - window * 1_000_000_000 and price is not None), None)
@@ -152,6 +158,8 @@ class SharedIndexMarketDataState:
             total_qty = (record.bid_qty or 0) + (record.ask_qty or 0)
             data["quote_imbalance"] = ((record.bid_qty or 0) - (record.ask_qty or 0)) / total_qty if total_qty > 0 else None
             data["microprice"] = ((record.ask * (record.bid_qty or 0) + record.bid * (record.ask_qty or 0)) / total_qty) if quote_valid and total_qty > 0 else None
+            spot_for_row = None
+            data["distance_from_spot"] = (record.strike - spot_for_row) if record.strike is not None and spot_for_row is not None else None
             data["tick_rate_1s"] = sum(1 for stamp, _ in ticks if stamp >= record.timestamp_ns - 1_000_000_000)
             if not data["fresh"]:
                 for window in (1, 3, 5):
