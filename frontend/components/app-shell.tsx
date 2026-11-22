@@ -12,7 +12,7 @@ const nav = [
   { href: "/scanner", label: "Cash Future", icon: Activity },
   { href: "/strategies/calendar-spread", label: "Calendar Scanner", icon: Activity },
   { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
-  { href: "/strategies/early-impulse", label: "Early Impulse Pro", icon: Activity },
+  { href: "/strategies/early-impulse", label: "Early Impulse Pro", icon: Activity },\n  { href: "/strategies/bi-directional-impulse", label: "Bi-Directional Impulse", icon: Activity },
   { href: "/strategies/iv-skew-flip", label: "IV Skew / IV Flip", icon: Activity },
   { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
   { href: "/strategies/credit-butterfly-condor/monthly", label: "Monthly Credit Butterfly / Condor", icon: Activity },
