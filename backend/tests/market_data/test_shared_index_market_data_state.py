@@ -212,3 +212,28 @@ def test_tick_rate_reports_one_three_and_five_second_windows():
     assert row["tick_rate_1s"] == 1
     assert row["tick_rate_3s"] == 2
     assert row["tick_rate_5s"] == 3
+
+
+def test_retaining_active_keys_invalidates_retired_cache_and_baselines():
+    from app.market_data.shared_cache import get_shared_market_data_cache
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    old_key = InstrumentKey("NFO", "NFO", "retired-option")
+    new_key = InstrumentKey("NFO", "NFO", "replacement-option")
+    def tick(key, ts, volume, oi):
+        return MarketDataRecord(instrument=key, symbol="OPT", instrument_type=InstrumentType.OPTION,
+            timestamp_ns=ts, ltp=125, volume=volume, oi=oi, underlying="NIFTY",
+            expiry="2026-11-26", strike=25000, option_type=OptionType.CALL, lot_size=25)
+    assert state.on_record(tick(old_key, now-1_300_000_000, 900, 1000))
+    assert state.on_record(tick(old_key, time_ns()-100_000_000, 950, 1010))
+    assert get_shared_market_data_cache().get(old_key.value) is not None
+    assert state.retain_instruments([new_key]) == 1
+    assert state.latest(old_key.value) is None
+    assert get_shared_market_data_cache().get(old_key.value) is None
+    assert old_key.value not in state._oi_history
+    assert old_key.value not in state._volume_history
+    assert old_key.value not in state._tick_history
+    assert state.on_record(tick(new_key, time_ns(), 10, 5))
+    new_rows = state.records_snapshot()
+    assert len(new_rows) == 1 and new_rows[0]["volume_delta_1s"] is None
+    assert new_rows[0]["oi_delta_1s"] is None
