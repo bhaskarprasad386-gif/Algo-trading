@@ -47,12 +47,13 @@ def _normalize_ticks(raw: Sequence[Any]) -> list[dict[str, float]]:
         for field in ("buy_volume", "sell_volume", "bid_qty", "ask_qty", "bid", "ask"):
             tick[field] = max(0.0, _finite(item.get(field)) or 0.0)
         ticks.append(tick)
-    ticks.sort(key=lambda row: row["timestamp_ms"])
-    ticks = ticks[-MAX_TICKS:]
     deduplicated: dict[float, dict[str, float]] = {}
     for tick in ticks:
         deduplicated[tick["timestamp_ms"]] = tick
-    return list(deduplicated.values())
+    # Bound only after timestamp deduplication so duplicate bursts cannot evict
+    # valid older observations from the effective 500-tick history.
+    unique_ticks = sorted(deduplicated.values(), key=lambda row: row["timestamp_ms"])
+    return unique_ticks[-MAX_TICKS:]
 
 
 def _flow(ticks: Sequence[Mapping[str, float]]) -> tuple[float, float, float, float]:
