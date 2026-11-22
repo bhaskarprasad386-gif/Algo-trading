@@ -8,7 +8,8 @@ type Status={scanner?:string;status?:string;feed_connected?:boolean;scanner_acti
 const patterns=[["SWING_EXHAUSTION","Swing exhaustion"],["COMPRESSION_REVERSAL","Impulse + compression"],["V_REVERSAL","Immediate V reversal"]];
 const fmt=(value?:string)=>value?new Date(value).toLocaleString("en-IN",{timeZone:"Asia/Kolkata"}):"—";
 export default function VptXPage(){
- const [status,setStatus]=useState<Status|null>(null),[signals,setSignals]=useState<Signal[]>([]),[busy,setBusy]=useState(false),[err,setErr]=useState<string|null>(null),[symbol,setSymbol]=useState("NIFTY"),[snapshot,setSnapshot]=useState("");\n const requestLock=useRef(false);
+ const [status,setStatus]=useState<Status|null>(null),[signals,setSignals]=useState<Signal[]>([]),[busy,setBusy]=useState(false),[err,setErr]=useState<string|null>(null),[symbol,setSymbol]=useState("NIFTY"),[snapshot,setSnapshot]=useState("");
+ const requestLock=useRef(false);
  const base=appConfig.apiBaseUrl.replace(/\/$/,"");
  const refresh=useCallback(async()=>{
    if(requestLock.current)return; requestLock.current=true; setBusy(true);
@@ -16,7 +17,7 @@ export default function VptXPage(){
    if(!s.ok||!h.ok)throw new Error("API HTTP "+(!s.ok?s.status:h.status));
    setStatus(await s.json());setSignals((await h.json()).signals??[]);setErr(null);
    }catch(e){setErr(e instanceof Error?e.message:"API request failed");}finally{setBusy(false)}
- },[base,busy]);
+ },[base]);
  useEffect(()=>{void refresh();const id=window.setInterval(()=>void refresh(),15000);return()=>window.clearInterval(id)},[refresh]);
  const evaluate=async()=>{
    setBusy(true);try{const parsed=JSON.parse(snapshot);const res=await fetch(base+"/api/v1/scanner/vpt-x/evaluate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...parsed,underlying:symbol})});if(!res.ok)throw new Error("Evaluate HTTP "+res.status);const result=await res.json();if(result.status==="EVALUATED")setSignals(result.candidates??[]);else setErr(result.reason??result.status);setErr(result.status==="EVALUATED"?null:(result.reason??result.status));}catch(e){setErr(e instanceof Error?e.message:"Invalid snapshot JSON");}finally{setBusy(false)}
