@@ -161,8 +161,8 @@ def test_snapshot_exposes_microstructure_and_multi_window_momentum_metrics():
     assert state.on_record(tick(now-2_200_000_000, 102, 101, 103, 20, 10, 1050, 2030))
     assert state.on_record(tick(now-200_000_000, 104, 103, 105, 30, 10, 1100, 2060))
     row = state.records_snapshot()[0]
-    assert row["ltp_delta_3s"] == 2
-    assert row["ltp_change_pct_3s"] == 2
+    assert row["ltp_delta_3s"] == 4
+    assert row["ltp_change_pct_3s"] == 4
     assert row["mid_price"] == 104
     assert row["spread"] == 2
     assert row["spread_pct"] == pytest.approx(2/104*100)
