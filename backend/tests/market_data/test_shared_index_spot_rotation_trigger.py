@@ -78,3 +78,24 @@ def test_rotation_trigger_rejects_non_finite_values():
     trigger = SpotRotationTrigger(thresholds={"NIFTY": 50})
     assert not trigger.on_spot("NIFTY", math.nan)
     assert not trigger.on_spot("NIFTY", math.inf)
+
+
+
+def test_spot_move_during_inflight_rotation_remains_pending_after_success():
+    clock = FakeClock()
+    trigger = SpotRotationTrigger(thresholds={"NIFTY": 50}, cooldown_seconds=2, clock=clock)
+    assert not trigger.on_spot("NIFTY", 22000)
+    assert trigger.on_spot("NIFTY", 22060)
+    # Additional movement arrives while the first rotation is still in-flight.
+    assert not trigger.on_spot("NIFTY", 22125)
+    assert trigger.snapshot()["pending_underlyings"] == ["NIFTY"]
+
+    # First rotation was selected using 22060; newer movement must not be lost.
+    trigger.rotation_result("NIFTY", success=True, spot=22060)
+    state = trigger.snapshot()
+    assert state["successful_anchor_spot"]["NIFTY"] == 22060
+    assert state["last_spot"]["NIFTY"] == 22125
+    assert state["pending_underlyings"] == ["NIFTY"]
+    clock.now += 2
+    assert trigger.flush_due() == ("NIFTY",)
+    assert trigger.snapshot()["inflight_underlyings"] == ["NIFTY"]
