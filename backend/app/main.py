@@ -571,7 +571,7 @@ async def _shared_index_market_data_recovery_loop() -> None:
                 )
                 if not rows:
                     raise RuntimeError("Angel One instrument master returned no rows")
-                snapshot = shared_index_market_data_runner.start()
+                snapshot = shared_index_market_data_runner.start(instrument_rows=rows)
                 if snapshot.get("enabled"):
                     retry_delay = 10.0
                     await asyncio.sleep(15.0)
