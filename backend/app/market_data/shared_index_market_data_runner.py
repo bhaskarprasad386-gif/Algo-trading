@@ -260,6 +260,8 @@ class SharedIndexMarketDataRunner:
         aggregates = {}
         for underlying in LOCKED:
             side = {"CE": {}, "PE": {}}
+            aggregate_fields = ("oi", "volume", "oi_delta_1s", "oi_delta_3s", "oi_delta_5s", "volume_delta_1s", "volume_delta_3s", "volume_delta_5s")
+            valid_counts = {"CE": {}, "PE": {}}
             for record in enriched_records:
                 if record.get("underlying") != underlying or record.get("instrument_type") != "option" or not record.get("fresh"):
                     continue
@@ -267,8 +269,17 @@ class SharedIndexMarketDataRunner:
                 if option_side not in side:
                     continue
                 bucket = side[option_side]
-                for field in ("oi", "volume", "oi_delta_1s", "oi_delta_3s", "oi_delta_5s", "volume_delta_1s", "volume_delta_3s", "volume_delta_5s"):
-                    bucket[field] = (bucket.get(field) or 0) + (record.get(field) or 0)
+                for field in aggregate_fields:
+                    value = record.get(field)
+                    if value is None:
+                        continue
+                    bucket[field] = bucket.get(field, 0) + value
+                    valid_counts[option_side][field] = valid_counts[option_side].get(field, 0) + 1
+            # Missing short-window deltas stay None instead of being disguised as zero.
+            for option_side, bucket in side.items():
+                for field in aggregate_fields:
+                    if valid_counts[option_side].get(field, 0) == 0:
+                        bucket[field] = None
             calls, puts = side["CE"], side["PE"]
             call_oi, put_oi = calls.get("oi", 0), puts.get("oi", 0)
             call_volume, put_volume = calls.get("volume", 0), puts.get("volume", 0)
