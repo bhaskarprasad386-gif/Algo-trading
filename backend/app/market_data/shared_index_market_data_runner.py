@@ -168,7 +168,7 @@ class SharedIndexMarketDataRunner:
             if flushed:
                 self._sync_state_universe()
 
-    def start(self) -> dict:
+    def start(self, instrument_rows: Iterable[dict] | None = None) -> dict:
         with self._lock:
             if self._running:
                 return self.snapshot()
@@ -177,7 +177,7 @@ class SharedIndexMarketDataRunner:
             self._bootstrap_options_done = False
             self._bootstrap_inflight = False
         try:
-            rows = tuple(self.instrument_master.download())
+            rows = tuple(instrument_rows) if instrument_rows is not None else tuple(self.instrument_master.download())
             if not rows:
                 raise LookupError("Angel One instrument master is empty")
             spots = resolve_locked_index_spot_descriptors(self.instrument_master)
