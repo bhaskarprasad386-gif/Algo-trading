@@ -114,7 +114,7 @@ class SharedIndexQuoteParity:
             state = "PARITY_OK"
         else:
             state = "PARITY_MISMATCH"
-        return QuoteParityStatus(key, state, ages["ANGELONE"], ages["SHOONYA"], ltp_delta, bid_delta, ask_delta, tolerance, tuple(fresh)
+        return QuoteParityStatus(key, state, ages["ANGELONE"], ages["SHOONYA"], ltp_delta, bid_delta, ask_delta, tolerance, tuple(fresh))
 
     def status(self, key: CanonicalContractKey, *, now_monotonic_ns: int | None = None) -> QuoteParityStatus:
         with self._lock:
