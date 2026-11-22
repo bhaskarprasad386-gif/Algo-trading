@@ -211,7 +211,12 @@ class SharedIndexFeedLifecycle:
                 try:
                     manager.unsubscribe(self.FUTURES_CONSUMER, obsolete)
                 except Exception:
-                    # Keep the previous owner authoritative if removal of old refs fails.
+                    # Reconcile the old owner first; unsubscribe may fail after partial mutation.
+                    try:
+                        manager.subscribe(self.FUTURES_CONSUMER, list(old_keys), mode=self._futures_feed.mode)
+                    except Exception:
+                        for key in old_keys:
+                            manager.registry.subscribe(self.FUTURES_CONSUMER, key, self._futures_feed.mode)
                     added = [key for key in new_keys if key not in set(old_keys)]
                     try:
                         if added:
@@ -259,7 +264,12 @@ class SharedIndexFeedLifecycle:
                 try:
                     manager.unsubscribe(self.OPTIONS_CONSUMER, obsolete)
                 except Exception:
-                    # Removal failure must not leave the owner tracking a mixed set.
+                    # Reconcile old owner first; unsubscribe can fail after partial mutation.
+                    try:
+                        manager.subscribe(self.OPTIONS_CONSUMER, list(old_keys), mode=self._options_feed.mode)
+                    except Exception:
+                        for key in old_keys:
+                            manager.registry.subscribe(self.OPTIONS_CONSUMER, key, self._options_feed.mode)
                     added_keys = [key for key in new_keys if key not in set(old_keys)]
                     try:
                         if added_keys:
