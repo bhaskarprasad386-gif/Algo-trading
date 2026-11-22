@@ -51,25 +51,24 @@ class EarlyImpulseSignalStore:
         if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)) or not isfinite(timestamp):
             raise ValueError("timestamp must be numeric")
         feed_epoch = signal.get("feed_epoch")
-        with self._lock:
-            if feed_epoch is None and self._feed_epoch is not None:
-                self._suppressed += 1
-                return False
-        if feed_epoch is not None:
-            if isinstance(feed_epoch, bool) or not isinstance(feed_epoch, int) or feed_epoch < 0:
-                raise ValueError("feed_epoch must be a nonnegative integer")
-            with self._lock:
-                if self._feed_epoch is None:
-                    self._feed_epoch = feed_epoch
-                elif feed_epoch < self._feed_epoch:
-                    self._suppressed += 1
-                    return False
-                elif feed_epoch > self._feed_epoch:
-                    self._feed_epoch = feed_epoch
-                    self._last_by_key.clear()
+        if feed_epoch is not None and (isinstance(feed_epoch, bool) or not isinstance(feed_epoch, int) or feed_epoch < 0):
+            raise ValueError("feed_epoch must be a nonnegative integer")
         payload = dict(signal)
         payload.update({"underlying": key[0], "direction": key[1], "scanner_only": True, "order_routing_enabled": False})
         with self._lock:
+            # Epoch validation and publication are atomic with begin_epoch().
+            if feed_epoch is None:
+                if self._feed_epoch is not None:
+                    self._suppressed += 1
+                    return False
+            elif self._feed_epoch is None:
+                self._feed_epoch = feed_epoch
+            elif feed_epoch < self._feed_epoch:
+                self._suppressed += 1
+                return False
+            elif feed_epoch > self._feed_epoch:
+                self._feed_epoch = feed_epoch
+                self._last_by_key.clear()
             previous = self._last_by_key.get(key)
             if previous is not None and (timestamp < previous or timestamp - previous < self.cooldown_seconds):
                 self._suppressed += 1
