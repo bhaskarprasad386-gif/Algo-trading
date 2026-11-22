@@ -107,11 +107,10 @@ class SharedIndexMarketDataRunner:
             descriptors = []
             for underlying in LOCKED:
                 expiry = choose_locked_expiry(rows, underlying)
-                selected = __import__(
-                    "app.market_data.shared_index_option_selection",
-                    fromlist=["select_locked_index_options"],
-            ).select_locked_index_options(rows, underlying=underlying,
-                                         expiry=expiry, spot_price=float(record.ltp))
+                selected = select_locked_index_options(
+                    rows, underlying=underlying, expiry=expiry,
+                    spot_price=float(record.ltp),
+                )
                 descriptors.extend(CommonStrategyMarketFeed.descriptor(
                     exchange="NFO", token=contract.token, symbol=contract.trading_symbol,
                     instrument_type="option", segment="NFO", expiry=contract.expiry,
