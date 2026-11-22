@@ -114,3 +114,36 @@ def test_socket_operation_worker_tracking_clears_on_success_and_failure():
     assert manager.snapshot()["socket_operation_worker_count"] == 0
     assert manager.snapshot()["socket_operation_worker_failures"] == 1
     manager.close()
+
+
+def test_second_broker_operation_for_group_rejected_while_late_worker_is_active():
+    release = Event()
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    manager._socket_call_wait_seconds = 0.01
+    socket = BlockingSocket()
+    manager._sockets[group] = socket
+    manager._close_socket_tracked = lambda *args, **kwargs: Thread()
+    try:
+        manager._run_socket_operation_bounded(
+            socket=socket, group=group, operation=lambda: release.wait(timeout=2.0), operation_name="subscribe"
+        )
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("first blocking operation should time out")
+    try:
+        manager._run_socket_operation_bounded(
+            socket=BlockingSocket(), group=group, operation=lambda: None, operation_name="unsubscribe"
+        )
+    except RuntimeError as exc:
+        assert "still in flight" in str(exc)
+    else:
+        raise AssertionError("duplicate group operation must be rejected")
+    assert manager.snapshot()["socket_operation_worker_admission_rejections"] == 1
+    release.set()
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["socket_operation_worker_count"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert manager.snapshot()["socket_operation_worker_count"] == 0
+    manager.close()
