@@ -41,7 +41,7 @@ def detect_sweep(*, price: object, level: object, side: Side, timestamp_ms: obje
 def detect_reclaim(*, price: object, level: object, side: Side, timestamp_ms: object, sweep: LiquidityEvent, ttl_ms: int=12_000) -> LiquidityEvent | None:
     p,l,t=_num(price),_num(level),_num(timestamp_ms)
     if p is None or l is None or t is None or ttl_ms<=0 or t<sweep.timestamp_ms: return None
-    if sweep.side!=side or sweep.event_type!="LIQUIDITY_SWEEP": return None
+    if sweep.side!=side or sweep.event_type!="LIQUIDITY_SWEEP" or l!=sweep.level: return None
     reclaimed=(p>l) if side=="BULLISH" else (p<l)
     if not reclaimed or t-sweep.timestamp_ms>sweep.ttl_ms: return None
     return LiquidityEvent("SWEEP_RECLAIM",side,l,p,sweep.sweep_distance,int(t),int(ttl_ms),sweep.confidence,
