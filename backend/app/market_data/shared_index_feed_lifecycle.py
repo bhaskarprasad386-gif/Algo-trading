@@ -47,8 +47,14 @@ class SharedIndexFeedLifecycle:
             try:
                 reconcile()
             except Exception:
-                # Preserve the original failure; the manager's supervisor retries.
-                pass
+                # Rollback restored registry ownership, but transport may still
+                # be out of sync. Explicitly ask the manager to retry reconcile.
+                request_retry = getattr(manager, "_request_reconcile_retry", None)
+                if callable(request_retry):
+                    try:
+                        request_retry()
+                    except Exception:
+                        pass
 
     @staticmethod
     def _force_clear_consumer(manager, consumer: str) -> None:
@@ -59,7 +65,7 @@ class SharedIndexFeedLifecycle:
         reconciliation is requested separately by the caller.
         """
         manager.registry.clear_consumer(consumer)
-        for attribute in ("_callbacks", "_record_callbacks", "_record_observers", "_transport_observers", "callbacks"):
+        for attribute in ("_callbacks", "_record_callbacks", "_record_observers", "_transport_observers", "callbacks", "active"):
             routes = getattr(manager, attribute, None)
             if isinstance(routes, dict):
                 routes.pop(consumer, None)
@@ -326,13 +332,27 @@ class SharedIndexFeedLifecycle:
             )
 
 
+    def _stop_owner(self, feed, consumer: str, keys: tuple[InstrumentKey, ...]) -> None:
+        manager = feed.manager
+        try:
+            feed.stop()
+        except Exception:
+            # If transport clear failed before mutation, force registry/routes
+            # back to OFF and retire only descriptors with no other owner.
+            try:
+                self._force_clear_consumer(manager, consumer)
+                manager.registry.unregister_many(keys)
+            except Exception:
+                pass
+            raise
+        manager.registry.unregister_many(keys)
+
+
     def stop_futures(self) -> None:
         with self._lock:
             try:
-                self._futures_feed.stop()
+                self._stop_owner(self._futures_feed, self.FUTURES_CONSUMER, self._futures_keys)
             finally:
-                # clear_consumer mutates registry before reconcile; local ownership
-                # must reflect that mutation even if transport reconcile raises.
                 self._futures_keys = ()
                 self._futures_started = False
 
@@ -340,7 +360,7 @@ class SharedIndexFeedLifecycle:
     def stop_options(self) -> None:
         with self._lock:
             try:
-                self._options_feed.stop()
+                self._stop_owner(self._options_feed, self.OPTIONS_CONSUMER, self._option_keys)
             finally:
                 self._option_keys = ()
                 self._options_started = False
@@ -349,7 +369,7 @@ class SharedIndexFeedLifecycle:
     def stop_spot(self) -> None:
         with self._lock:
             try:
-                self._spot_feed.stop()
+                self._stop_owner(self._spot_feed, self.SPOT_CONSUMER, self._spot_keys)
             finally:
                 self._spot_keys = ()
                 self._spot_started = False
