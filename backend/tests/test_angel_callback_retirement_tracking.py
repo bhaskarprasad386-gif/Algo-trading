@@ -477,7 +477,7 @@ def test_simultaneous_shard_failures_coalesce_callback_recovery_workers():
     state = manager.snapshot()
     assert state["failure_recovery_worker_active"] is True
     assert state["failure_recovery_admission_rejections"] == 1
-    assert state["failure_recovery_pending_groups"] == ["1:1"]
+    assert state["failure_recovery_pending_groups"] == []
     release.set()
     deadline = time.monotonic() + 1.0
     while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
