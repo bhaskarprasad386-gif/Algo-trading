@@ -385,3 +385,45 @@ def test_coalesced_callback_reconcile_failure_keeps_pending_group_for_supervisor
         "coalesced group must remain pending when its reconciliation fails"
     )
     manager.close()
+
+
+class _StopAfterRecovery:
+    def __init__(self):
+        self.calls = 0
+    def wait(self, _timeout):
+        self.calls += 1
+        return self.calls > 1
+
+
+def _run_one_recovery_supervisor_iteration(manager):
+    manager._recovery_stop = _StopAfterRecovery()
+    manager._recovery_interval_seconds = 0.01
+    manager._recovery_backoff_max_seconds = 0.05
+    manager.registry.subscriptions = lambda: [object()]
+    manager.recover_disconnected = lambda **_kwargs: 0
+    manager._broker_cooldown_remaining = lambda: 0.0
+    manager._recovery_loop()
+
+
+def test_supervisor_reconciles_pending_coalesced_failures_before_clearing():
+    manager = CommonWebSocketManager()
+    group = SocketGroup(mode=1, shard=2)
+    manager._failure_recovery_pending_groups.add(group)
+    reconciles = []
+    manager._reconcile = lambda: reconciles.append("full-registry")
+    _run_one_recovery_supervisor_iteration(manager)
+    assert reconciles == ["full-registry"]
+    assert manager.snapshot()["failure_recovery_pending_groups"] == []
+    manager.close()
+
+
+def test_supervisor_keeps_pending_failures_when_reconcile_raises():
+    manager = CommonWebSocketManager()
+    group = SocketGroup(mode=1, shard=3)
+    manager._failure_recovery_pending_groups.add(group)
+    manager._reconcile = lambda: (_ for _ in ()).throw(RuntimeError("reconcile failed"))
+    _run_one_recovery_supervisor_iteration(manager)
+    state = manager.snapshot()
+    assert state["failure_recovery_pending_groups"] == ["1:3"]
+    assert state["recovery_backoff_errors"] == 1
+    manager.close()
