@@ -66,3 +66,42 @@ def test_callback_failure_is_counted_and_does_not_claim_forwarding():
     assert snap["forwarded_ticks"] == 0
     assert snap["callback_errors"] == 1
     assert snap["suppressed_ticks"] == 0
+
+
+def test_provider_evaluation_waits_for_inflight_selected_callback():
+    from threading import Event, Thread
+
+
+    entered = Event()
+    release = Event()
+    forwarded = []
+
+    def callback(provider, record):
+        entered.set()
+        assert release.wait(timeout=2)
+        forwarded.append((provider, record["timestamp_ns"]))
+
+
+    c = MarketDataFailoverCoordinator(policy=policy(), on_record=callback)
+    observer = Thread(target=lambda: c.observe("angel_one", tick("NIFTY", 300, 300)))
+    observer.start()
+    assert entered.wait(timeout=2)
+    evaluated = Event()
+
+    def evaluate_backup():
+        c.evaluate(
+            failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+            shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=100.0,
+        )
+        evaluated.set()
+
+    evaluator = Thread(target=evaluate_backup)
+    evaluator.start()
+    assert not evaluated.wait(timeout=0.05)
+    release.set()
+    observer.join(timeout=2)
+    evaluator.join(timeout=2)
+    assert not observer.is_alive()
+    assert not evaluator.is_alive()
+    assert forwarded == [("angel_one", 300)]
+    assert c.snapshot()["active_provider"] == "shoonya"
