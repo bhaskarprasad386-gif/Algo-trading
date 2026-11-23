@@ -177,3 +177,74 @@ def test_non_finite_failover_timing_is_rejected():
             pass
         else:
             raise AssertionError("non-finite timing values must be rejected")
+
+
+def test_backup_does_not_oscillate_on_intermittent_angel_recovery():
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    # Tick freshness returns briefly, then interrupts before stability completes.
+    p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=11)
+    p.update(failed_angel_sockets=2, angel_tick_age_seconds=4.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=14)
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=15)
+    assert s.active_provider == "shoonya"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=19)
+    assert s.active_provider == "shoonya"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=20)
+    assert s.active_provider == "angel_one"
+
+
+def test_all_three_sockets_recover_but_failback_requires_stability_and_dwell():
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=30)
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=31)
+    assert s.active_provider == "shoonya"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=34)
+    assert s.active_provider == "shoonya"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=36)
+    assert s.active_provider == "angel_one"
+
+
+def test_out_of_order_health_event_is_rejected_without_mutating_state():
+    p = policy()
+    initial = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                      shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=50)
+    try:
+        p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=49)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("out-of-order update must be rejected")
+    assert p.snapshot().active_provider == initial.active_provider
+    assert p.snapshot().mode == initial.mode
+
+
+def test_concurrent_same_timestamp_health_updates_preserve_consistent_state():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    p = policy()
+    count = 12
+    barrier = Barrier(count)
+
+    def update_once():
+        barrier.wait()
+        return p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                       shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=60)
+
+    with ThreadPoolExecutor(max_workers=count) as pool:
+        results = list(pool.map(lambda _: update_once(), range(count)))
+    assert all(result.active_provider == "angel_one" for result in results)
+    snap = p.snapshot()
+    assert snap.active_provider == "angel_one"
+    assert snap.mode == "PRIMARY"

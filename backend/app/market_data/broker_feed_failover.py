@@ -67,6 +67,7 @@ class MarketDataFailoverPolicy:
         self._reason = "startup_primary"
         self._switched_at: float | None = None
         self._angel_healthy_since: float | None = None
+        self._last_update_at: float | None = None
 
     def update(
         self,
@@ -79,6 +80,8 @@ class MarketDataFailoverPolicy:
     ) -> FailoverSnapshot:
         """Return a provider selection decision using locally measured tick ages."""
         now = monotonic() if now is None else now
+        if not isfinite(now):
+            raise ValueError("update timestamp must be finite")
         if not 0 <= failed_angel_sockets <= 3:
             raise ValueError("failed_angel_sockets must be between 0 and 3")
         angel_fresh = (
@@ -99,6 +102,9 @@ class MarketDataFailoverPolicy:
         )
 
         with self._lock:
+            if self._last_update_at is not None and now < self._last_update_at:
+                raise ValueError("out-of-order health update timestamp")
+            self._last_update_at = now
             if angel_stable:
                 if self._angel_healthy_since is None:
                     self._angel_healthy_since = now
