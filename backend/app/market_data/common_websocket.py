@@ -2058,9 +2058,16 @@ class CommonWebSocketManager:
             # must never be used as the health denominator.
             pairs_by_mode: dict[int, set[tuple[int, str]]] = defaultdict(set)
             for sub in self.registry.subscriptions():
-                pairs_by_mode[sub.mode].add(
-                    (self._resolve_exchange_type(sub.key), sub.key.token.strip())
-                )
+                mode = getattr(sub, "mode", None)
+                key = getattr(sub, "key", None)
+                token = str(getattr(key, "token", "") or "").strip()
+                if mode is None or key is None or not token:
+                    continue
+                try:
+                    exchange_type = self._resolve_exchange_type(key)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                pairs_by_mode[mode].add((exchange_type, token))
             required_groups: set[SocketGroup] = set()
             required_assignments = self._build_shard_assignments(pairs_by_mode)
             for mode, assignments in required_assignments.items():
