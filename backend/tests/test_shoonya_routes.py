@@ -433,3 +433,41 @@ def test_remove_if_current_does_not_remove_replacement_adapter():
     assert broker_sessions.get(owner_id, "shoonya") is new
     assert broker_sessions.remove_if_current(owner_id, "shoonya", new) is True
     assert broker_sessions.get(owner_id, "shoonya") is None
+
+def test_verify_metadata_failure_removes_only_its_owned_session(monkeypatch, db_session):
+    cleanup()
+    store = Mock()
+    store.consume.return_value = Mock(uid="SH12345", account_id="SH12345")
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setenv("SHOONYA_REDIRECT_URI", "https://example.com/shoonya/callback")
+    monkeypatch.setattr(
+        shoonya_routes.ShoonyaOAuthAuthenticator,
+        "exchange_auth_code",
+        lambda self, **kwargs: ShoonyaAuthenticatedSession("SH12345", "SH12345", "token"),
+    )
+    client = FakeClient(uid="SH12345", account_id="SH12345", access_token="token")
+    monkeypatch.setattr(shoonya_routes, "ShoonyaRESTClient", lambda **kwargs: client)
+    monkeypatch.setattr(shoonya_routes, "ShoonyaAdapter", FakeAdapter)
+    monkeypatch.setattr(shoonya_routes.trading_safety, "disable", lambda user_id: None)
+    monkeypatch.setattr(
+        shoonya_routes.broker_connections,
+        "connect",
+        Mock(side_effect=RuntimeError("metadata write failed")),
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        shoonya_routes.shoonya_verify(
+            shoonya_routes.ShoonyaVerifyRequest(
+                client_id="client-100",
+                secret_code="secret",
+                auth_code="auth-code",
+                flow_id="flow-id-1234567890",
+            ),
+            db=db_session,
+            user_id=0,
+        )
+
+    assert raised.value.status_code == 503
+    assert broker_sessions.get(0, "shoonya") is None
+    assert broker_connections.get(0, "shoonya") is None
+    assert client.disconnected is True
