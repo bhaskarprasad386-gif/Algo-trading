@@ -678,3 +678,34 @@ def test_incomplete_option_bootstrap_uses_short_master_refresh_cadence():
     assert runner._master_refresh_error is None
     assert runner._master_last_refresh_at is not None
     runner.stop()
+
+
+def test_partial_master_refresh_is_rejected_and_last_good_rows_preserved():
+    from threading import Event
+    import time
+
+    class PartialMaster(FakeMaster):
+        def __init__(self, rows):
+            super().__init__(rows)
+            self.refresh_event = Event()
+        def download(self, *, force=False):
+            if force:
+                self.refresh_event.set()
+                return [row for row in self.rows if row.get("instrumenttype") != "FUTIDX"]
+            return self.rows
+
+    rows = _rows()
+    master = PartialMaster(rows)
+    runner = SharedIndexMarketDataRunner(instrument_master=master, manager=RunnerManager())
+    assert runner.start(rows)["enabled"] is True
+    original_rows = runner._rows
+    runner._master_refresh_started_at = time.monotonic() - runner._master_refresh_interval_seconds - 1
+    assert runner._schedule_master_refresh() is True
+    assert master.refresh_event.wait(timeout=2)
+    deadline = time.monotonic() + 2
+    while runner._master_refresh_inflight and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert runner._rows is original_rows
+    assert runner._master_refresh_error is not None
+    assert "FUTIDX" in runner._master_refresh_error or "LookupError" in runner._master_refresh_error
+    runner.stop()
