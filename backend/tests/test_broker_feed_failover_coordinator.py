@@ -105,3 +105,27 @@ def test_provider_evaluation_waits_for_inflight_selected_callback():
     assert not evaluator.is_alive()
     assert forwarded == [("angel_one", 300)]
     assert c.snapshot()["active_provider"] == "shoonya"
+
+
+
+def test_callback_failure_does_not_block_later_successful_delivery():
+    received = []
+    calls = 0
+
+
+    def callback(provider, record):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("temporary consumer failure")
+        received.append((provider, record["timestamp_ns"]))
+
+
+    c = MarketDataFailoverCoordinator(on_record=callback)
+    assert c.observe("angel_one", tick("NIFTY", 400, 400)) is False
+    assert c.observe("angel_one", tick("NIFTY", 401, 401)) is True
+    snap = c.snapshot()
+    assert received == [("angel_one", 401)]
+    assert snap["callback_errors"] == 1
+    assert snap["forwarded_ticks"] == 1
+    assert snap["suppressed_ticks"] == 0
