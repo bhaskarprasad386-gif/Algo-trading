@@ -1137,6 +1137,11 @@ class CommonWebSocketManager:
             # outside _sockets/_retired_transports and can leak broker sessions.
             def _resume_coalesced_recovery(failed_group=group):
                 try:
+                    with self._lock:
+                        if self._closed:
+                            self._failure_recovery_groups.discard(failed_group)
+                            self._failure_recovery_pending_groups.discard(failed_group)
+                            return
                     with self._reconcile_lock:
                         with self._lock:
                             self._failure_recovery_groups.discard(failed_group)
