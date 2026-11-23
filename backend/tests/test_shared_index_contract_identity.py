@@ -58,3 +58,17 @@ def test_index_identity_does_not_require_expiry():
     i1 = desc("angel", "111", kind="index", expiry=None)
     i2 = desc("shoonya", "222", kind="index", expiry=None)
     assert match_contracts([i1], [i2]) == {canonical_identity(i1): (i1, i2)}
+
+
+def test_matching_rejects_duplicate_identity_on_secondary_side():
+    primary = [desc("angel", "10")]
+    secondary = [desc("shoonya", "20"), desc("shoonya", "21")]
+    with pytest.raises(ValueError, match="duplicate canonical"):
+        match_contracts(primary, secondary)
+
+
+def test_contract_pairing_order_is_deterministic():
+    primary = [desc("angel", "1", strike=25100), desc("angel", "2", strike=25000)]
+    secondary = [desc("shoonya", "3", strike=25000), desc("shoonya", "4", strike=25100)]
+    matched = match_contracts(primary, secondary)
+    assert list(matched) == sorted(matched)
