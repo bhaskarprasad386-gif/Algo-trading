@@ -287,9 +287,8 @@ def test_coalesced_failure_close_callbacks_reconcile_each_group_and_release_work
     _install_current(manager, second, second_socket, generation=32)
 
     close_callbacks = []
-    close_registered = Event()
     reconciles = []
-    manager._close_socket_tracked = lambda _socket, **kwargs: close_callbacks.append(kwargs["on_finished"]
+    manager._close_socket_tracked = lambda _socket, **kwargs: close_callbacks.append(kwargs["on_finished"])
     manager._reconcile = lambda: reconciles.append("full-registry")
     manager.recover_disconnected = lambda **_kwargs: 0
 
