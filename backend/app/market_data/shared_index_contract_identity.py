@@ -98,4 +98,4 @@ def match_contracts(primary: Iterable[InstrumentDescriptor], secondary: Iterable
             out[identity] = descriptor
         return out
     left, right = indexed(primary), indexed(secondary)
-    return {identity: (left[identity], right[identity]) for identity in left.keys() & right.keys()}
+    return {identity: (left[identity], right[identity]) for identity in sorted(left.keys() & right.keys())}
