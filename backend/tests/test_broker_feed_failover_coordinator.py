@@ -336,3 +336,51 @@ def test_instrument_key_whitespace_only_record_is_rejected():
     snap = c.snapshot()
     assert snap["invalid_records"] == 1
     assert snap["latest_record_count"] == 0
+
+
+def test_policy_failover_threshold_boundary_is_inclusive():
+    p = policy()
+    grace = p.update(failed_angel_sockets=0, angel_tick_age_seconds=2.99,
+                     shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1)
+    assert grace.active_provider == "none"
+    assert grace.mode == "DEGRADED_WAIT"
+    switch = p.update(failed_angel_sockets=0, angel_tick_age_seconds=3.0,
+                     shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=2)
+    assert switch.active_provider == "shoonya"
+    assert switch.reason == "angel_feed_stale"
+
+
+def test_policy_failback_stability_timer_resets_after_health_interruption():
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    # Angel's recovery begins but is interrupted before stability threshold.
+    p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=11)
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=14)
+    # A new stability window starts only after uninterrupted recovery.
+    p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=15)
+    still_backup = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=19.9)
+    assert still_backup.active_provider == "shoonya"
+    failback = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=20)
+    assert failback.active_provider == "angel_one"
+    assert failback.reason == "angel_stable_failback"
+
+
+def test_policy_rejects_out_of_order_health_update_without_state_change():
+    p = policy()
+    first = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                     shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=30)
+    try:
+        p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=29)
+    except ValueError as exc:
+        assert "out-of-order" in str(exc)
+    else:
+        raise AssertionError("out-of-order health update must be rejected")
+    assert p.snapshot().active_provider == first.active_provider
+    assert p.snapshot().mode == first.mode
