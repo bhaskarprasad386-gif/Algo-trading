@@ -2058,12 +2058,15 @@ class CommonWebSocketManager:
         # Bounded close may finish between the caller's first liveness check
         # and watcher registration. Own completion in this helper and guard it
         # exactly once so fast-close and watcher paths cannot double-reconcile.
-        completion_claimed = Event()
+        completion_lock = Lock()
+        completion_claimed = False
 
         def _finish_once() -> None:
-            if completion_claimed.is_set():
-                return
-            completion_claimed.set()
+            nonlocal completion_claimed
+            with completion_lock:
+                if completion_claimed:
+                    return
+                completion_claimed = True
             if on_finished is not None:
                 try:
                     on_finished()
