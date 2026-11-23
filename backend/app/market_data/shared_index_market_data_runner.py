@@ -471,6 +471,44 @@ class SharedIndexMarketDataRunner:
                 row["distance_from_spot"] = None
                 row["distance_from_spot_pct"] = None
                 row["moneyness"] = None
+        # Readiness is structural, not just a total-count check: all locked
+        # underlyings must have their spot + future and complete CE/PE grids.
+        type_counts = {"index": 0, "future": 0, "option": 0}
+        per_underlying = {
+            underlying: {"index": 0, "future": 0, "option": 0, "CE": 0, "PE": 0}
+            for underlying in LOCKED
+        }
+        for record in enriched_records:
+            kind = str(record.get("instrument_type") or "").strip().lower()
+            underlying = str(record.get("underlying") or "").strip().upper()
+            if kind in type_counts:
+                type_counts[kind] += 1
+            if underlying not in per_underlying or kind not in per_underlying[underlying]:
+                continue
+            per_underlying[underlying][kind] += 1
+            if kind == "option":
+                side = str(record.get("option_type") or "").strip().upper()
+                if side in {"CE", "PE"}:
+                    per_underlying[underlying][side] += 1
+        expected_by_underlying = {
+            "NIFTY": {"index": 1, "future": 1, "option": 26, "CE": 13, "PE": 13},
+            "BANKNIFTY": {"index": 1, "future": 1, "option": 22, "CE": 11, "PE": 11},
+        }
+        universe_complete = type_counts == {"index": 2, "future": 2, "option": 48}
+        universe_complete = universe_complete and all(
+            per_underlying[underlying] == expected_by_underlying[underlying]
+            for underlying in LOCKED
+        )
+        all_records_fresh = len(enriched_records) == 52 and all(
+            record.get("fresh") for record in enriched_records
+        )
+        live_data_ready = running and bootstrap_done and universe_complete and all_records_fresh
+        master_refresh = {
+            "inflight": self._master_refresh_inflight,
+            "last_success_at": self._master_last_refresh_at,
+            "last_error": self._master_refresh_error,
+            "interval_seconds": self._master_refresh_interval_seconds,
+        }
         return {
             "runner": "shared-index-market-data",
             "enabled": running,
@@ -484,11 +522,14 @@ class SharedIndexMarketDataRunner:
             "option_universe": {"NIFTY": "weekly ATM +/- 6", "BANKNIFTY": "monthly ATM +/- 5"},
             "state": state,
             "records": enriched_records,
+            "universe_coverage": {"counts": type_counts, "per_underlying": per_underlying, "complete": universe_complete},
+            "all_records_fresh": all_records_fresh,
+            "master_refresh": master_refresh,
             "option_flow_aggregates": aggregates,
             "derived_iv_model": {"method": "Black-Scholes", "source": "derived_bsm", "risk_free_rate": 0.065, "risk_free_rate_unit": "annual_decimal", "expiry_time_ist": "15:30", "iv_unit": "percent", "velocity_windows_seconds": [1, 3, 5], "quote_metrics": ["mid_price", "microprice", "spread_pct", "quote_imbalance", "tick_rate_1s"], "option_flow_aggregate_windows_seconds": [1, 3, 5], "volume_source": "broker_day_volume", "volume_delta_window_seconds": 1, "oi_source": "broker_open_interest", "oi_delta_window_seconds": 1},
             "lifecycle": lifecycle,
             "rotation": rotation,
-            "live_data_ready": running and bootstrap_done and state["instrument_count"] == 52 and state["fresh_count"] == 52,
+            "live_data_ready": live_data_ready,
         }
 
 
