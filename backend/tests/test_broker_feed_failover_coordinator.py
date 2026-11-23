@@ -143,6 +143,7 @@ def test_consumer_mutations_do_not_change_input_or_cached_tick_payload():
     c = MarketDataFailoverCoordinator(on_record=callback)
     assert c.observe("angel_one", original) is True
     assert original["metadata"]["source"] == "feed"
+    assert c._latest[("angel_one", "NIFTY")]["metadata"]["source"] == "feed"
     assert c.snapshot()["latest_record_count"] == 1
 
 
