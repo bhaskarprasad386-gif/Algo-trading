@@ -86,5 +86,5 @@ def test_negative_tick_age_is_not_accepted_as_fresh():
     s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=-0.1,
                  shoonya_connected=True, shoonya_tick_age_seconds=0.1, now=1)
     assert s.angel_healthy is False
-    assert s.active_provider == "angel_one"
+    assert s.active_provider == "none"
     assert s.mode == "DEGRADED_WAIT"
