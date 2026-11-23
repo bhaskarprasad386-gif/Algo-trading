@@ -401,10 +401,10 @@ def test_failed_late_close_recovery_releases_admission_and_keeps_coalesced_group
         time.sleep(0.005)
     state = manager.snapshot()
     assert state["failure_recovery_worker_active"] is False
-    # The second transport completed its close and successfully reconciled the
-    # full desired registry, so its pending marker must be drained.
-    assert state["failure_recovery_pending_groups"] == []
-    assert reconciled == [True]
+    # The primary recovery failed transiently; the coalesced marker must
+    # remain queued for the supervisor instead of being falsely drained.
+    assert state["failure_recovery_pending_groups"] == ["1:1"]
+    assert reconciled == []
     manager.close()
 
 
