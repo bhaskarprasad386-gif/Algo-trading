@@ -73,6 +73,7 @@ class MarketDataFailoverCoordinator:
         identity = (provider, key)
         try:
             payload = deepcopy(record)
+            cached_payload = deepcopy(payload)
         except Exception:
             # Canonical feed records must be safely copyable before caching or
             # consumer delivery. Treat hostile/unsupported payload objects as an
@@ -86,7 +87,7 @@ class MarketDataFailoverCoordinator:
                 self._suppressed += 1
                 return False
             # Cache an independent copy: consumer callbacks may mutate their payload.
-            self._latest[identity] = deepcopy(payload)
+            self._latest[identity] = cached_payload
             active = self._decision.active_provider if self._decision else "angel_one"
             if provider != active:
                 self._last_timestamp[identity] = stamp
