@@ -628,7 +628,10 @@ class CommonWebSocketManager:
                     # The failed generation is still being closed. Do not admit
                     # its replacement until the bounded close attempt completes.
                     with self._lock:
-                        if group in self._failure_recovery_groups:
+                        if (
+                            group in self._failure_recovery_groups
+                            or self._has_pending_socket_operation_locked(group)
+                        ):
                             continue
                 if socket is not None:
                     # A transport can become unusable before its SDK wrapper
@@ -1145,6 +1148,20 @@ class CommonWebSocketManager:
             name=f"common-ws-failure-recovery-{group.mode}-{group.shard}",
             daemon=True,
         ).start()
+    def _has_pending_socket_operation_locked(self, group: SocketGroup) -> bool:
+        """Return whether a broker SDK operation still owns this shard.
+
+        Caller must hold the manager lock. Late SDK workers can outlive the
+        caller timeout and transport close; replacement admission must wait for
+        completion to avoid overlapping mutations on the same shard.
+        """
+        group_key = f"{group.mode}:{group.shard}"
+        return any(
+            item.get("group") == group_key
+            for item in self._socket_operation_workers.values()
+        )
+
+
     def _run_socket_operation_bounded(
         self,
         *,
@@ -1169,10 +1186,7 @@ class CommonWebSocketManager:
             # A timed-out SDK call may still be mutating its retired socket.
             # Do not launch another broker operation for the same shard until
             # that worker exits; recovery can retry after this barrier clears.
-            if any(
-                item.get("group") == group_key
-                for item in self._socket_operation_workers.values()
-            ):
+            if self._has_pending_socket_operation_locked(group):
                 self._socket_operation_worker_admission_rejections += 1
                 raise RuntimeError(
                     f"WebSocket broker operation still in flight for group {group_key}"
