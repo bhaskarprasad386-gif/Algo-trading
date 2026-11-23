@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any
 from urllib.parse import urlencode
 
@@ -18,6 +19,7 @@ class ShoonyaAuthenticatedSession:
     uid: str
     account_id: str
     access_token: str
+    expires_at_monotonic: float | None = None
 
 
 class ShoonyaOAuthAuthenticator:
@@ -107,6 +109,7 @@ class ShoonyaOAuthAuthenticator:
                 uid=authenticated_uid,
                 account_id=authenticated_account,
                 access_token=access_token,
+                expires_at_monotonic=monotonic() + 24 * 60 * 60,
             )
         except ShoonyaAuthenticationError:
             raise
