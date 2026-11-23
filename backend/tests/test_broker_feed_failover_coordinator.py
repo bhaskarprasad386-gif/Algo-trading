@@ -466,3 +466,24 @@ def test_backup_dropout_and_angel_recovery_then_backup_recovery_are_deterministi
                           shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=13)
     assert next_backup.active_provider == "shoonya"
     assert next_backup.reason == "shoonya_validated_recovery"
+
+
+def test_stale_tick_replay_is_suppressed_after_backup_to_primary_handoff():
+    delivered = []
+    c = MarketDataFailoverCoordinator(policy=policy(),
+        on_record=lambda provider, record: delivered.append((provider, record["timestamp_ns"])))
+    assert c.observe("angel_one", tick("NIFTY", 10, 100)) is True
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+               shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    assert c.observe("shoonya", tick("NIFTY", 20, 200)) is True
+    # Angel recovers continuously; dwell and stability complete together at t=20.
+    c.evaluate(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+               shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=11)
+    recovered = c.evaluate(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+               shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=20)
+    assert recovered.active_provider == "angel_one"
+    # Older Angel replay is rejected by the cross-provider forwarding watermark.
+    assert c.observe("angel_one", tick("NIFTY", 19, 190)) is False
+    assert c.observe("angel_one", tick("NIFTY", 21, 210)) is True
+    assert delivered == [("angel_one", 10), ("shoonya", 20), ("angel_one", 21)]
+    assert c.snapshot()["suppressed_ticks"] == 1
