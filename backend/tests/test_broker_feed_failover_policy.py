@@ -561,3 +561,23 @@ def test_update_timestamp_rejects_bool_and_string_types_without_mutation():
         assert after.active_provider == baseline.active_provider
         assert after.mode == baseline.mode
         assert after.reason == baseline.reason
+
+
+def test_failback_stability_timer_resets_after_angel_feed_flaps():
+    p = policy()
+    p.update(failed_angel_sockets=2, angel_tick_age_seconds=4.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=12)
+    p.update(failed_angel_sockets=0, angel_tick_age_seconds=3.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=16)
+    p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=17)
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=21)
+    assert s.active_provider == "shoonya"
+    assert s.reason == "shoonya_active_waiting_for_angel_stability"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=22)
+    assert s.active_provider == "angel_one"
+    assert s.reason == "angel_stable_failback"
