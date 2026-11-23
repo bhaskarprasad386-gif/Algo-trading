@@ -2068,6 +2068,23 @@ class CommonWebSocketManager:
                     SocketGroup(mode=mode, shard=shard_index)
                     for shard_index in assignments.values()
                 )
+            # Audit desired registry token pairs against each socket's acknowledged
+            # local token set. A mismatch is diagnostic evidence of partial broker
+            # mutation/rollback; it never rewrites registry or transport state.
+            expected_tokens_by_group: dict[SocketGroup, set[tuple[int, str]]] = defaultdict(set)
+            for mode, assignments in required_assignments.items():
+                for pair, shard_index in assignments.items():
+                    expected_tokens_by_group[SocketGroup(mode=mode, shard=shard_index)].add(pair)
+            token_set_mismatches = []
+            for group in sorted(set(expected_tokens_by_group) | set(self._socket_tokens), key=lambda item: (item.mode, item.shard)):
+                expected_pairs = expected_tokens_by_group.get(group, set())
+                actual_pairs = self._socket_tokens.get(group, set())
+                if expected_pairs != actual_pairs:
+                    token_set_mismatches.append({
+                        "group": f"{group.mode}:{group.shard}",
+                        "missing_from_socket": sorted(expected_pairs - actual_pairs),
+                        "unexpected_on_socket": sorted(actual_pairs - expected_pairs),
+                    })
             socket_health_by_group: dict[str, dict[str, Any]] = {}
             for group, socket in sockets.items():
                 try:
@@ -2140,6 +2157,7 @@ class CommonWebSocketManager:
                 "missing_socket_groups": sorted(
                     f"{group.mode}:{group.shard}" for group in required_groups if group not in sockets
                 ),
+                "socket_token_set_mismatches": token_set_mismatches,
                 "unconnected_required_groups": sorted(
                     f"{group.mode}:{group.shard}" for group in required_groups
                     if group not in sockets or not bool(getattr(sockets.get(group), "connected", False))
