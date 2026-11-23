@@ -591,3 +591,39 @@ def test_successful_futures_rollover_clears_only_rollover_error():
     assert runner.snapshot()["last_error"] is None
     assert runner.snapshot()["futures_expiries"]["NIFTY"] == "2026-11-26"
     runner.stop()
+
+
+def test_failed_master_refresh_uses_short_retry_backoff_not_daily_interval():
+    from threading import Event
+    import time
+
+
+    class FailingRefreshMaster(FakeMaster):
+        def __init__(self, rows):
+            super().__init__(rows)
+            self.failed = Event()
+        def download(self, *, force=False):
+            if force:
+                self.failed.set()
+                raise RuntimeError("temporary master outage")
+            return self.rows
+
+
+    rows = _rows()
+    master = FailingRefreshMaster(rows)
+    runner = SharedIndexMarketDataRunner(instrument_master=master, manager=RunnerManager())
+    assert runner.start(rows)["enabled"] is True
+    runner._master_refresh_interval_seconds = 24 * 60 * 60.0
+    runner._master_refresh_retry_delay_seconds = 60.0
+    runner._master_refresh_started_at = 0.0
+    assert runner._schedule_master_refresh() is True
+    assert master.failed.wait(timeout=2)
+    deadline = time.monotonic() + 2
+    while runner._master_refresh_inflight and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert runner._master_refresh_inflight is False
+    assert "temporary master outage" in runner._master_refresh_error
+    # A failed attempt must not be throttled for the normal 24-hour cadence,
+    # but must also avoid retrying on every live spot tick.
+    assert runner._schedule_master_refresh() is False
+    runner.stop()
