@@ -347,6 +347,8 @@ def test_failed_late_close_recovery_releases_admission_and_keeps_coalesced_group
     close_started = Event()
     recovery_called = Event()
     manager = CommonWebSocketManager()
+    # Prevent a supervisor pass racing this callback-recovery assertion.
+    manager._recovery_interval_seconds = 10.0
     group = SocketGroup(1, 0)
     pending = SocketGroup(1, 1)
     socket = BlockingSocket()
