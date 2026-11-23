@@ -151,11 +151,7 @@ class MarketDataFailoverPolicy:
                     else:
                         self._active = self.NONE
                         self._mode = "NO_VALID_FEED"
-                        self._none_reason = (
-                            "two_or_more_angel_sockets_failed_and_feed_unhealthy"
-                            if failed_angel_sockets >= 2 and not angel_fresh
-                            else "angel_feed_stale"
-                        )
+                        self._none_reason = "no_provider_feed_is_fresh"
                         self._reason = self._none_reason
                         self._grace_wait = False
                 elif angel_fresh:
