@@ -173,6 +173,7 @@ class MarketDataFailoverPolicy:
                     self._reason = "angel_recovered"
                     self._switched_at = now
                 else:
+                    self._mode = "NO_VALID_FEED"
                     self._reason = "no_provider_feed_is_fresh"
 
             return FailoverSnapshot(
