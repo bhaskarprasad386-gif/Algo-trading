@@ -2347,3 +2347,48 @@ def test_clear_higher_mode_consumer_downgrades_shared_subscription_without_losin
         assert socket.connect_calls[-1]["mode"] == 1
     finally:
         manager.close()
+
+
+def test_clear_normalized_consumer_during_tick_keeps_shared_owner_delivery():
+    registry = InstrumentRegistry()
+    item = descriptor("shared-normalized-race-1")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    entered = Event()
+    release = Event()
+    removed_received = []
+    survivor_received = []
+
+    def removed_callback(record):
+        removed_received.append(record.instrument.token)
+        entered.set()
+        release.wait(timeout=2.0)
+
+    manager.register_normalized_callback("removed-normalized", removed_callback)
+    manager.register_normalized_callback(
+        "surviving-normalized", lambda record: survivor_received.append(record.instrument.token)
+    )
+    manager.subscribe("removed-normalized", [item.key])
+    manager.subscribe("surviving-normalized", [item.key])
+    group = SocketGroup(1, 0)
+    payload = {"token": item.key.token, "exchange_type": 1, "ltp": 10000}
+    try:
+        delivery = Thread(target=lambda: manager._on_data(group, payload), daemon=True)
+        delivery.start()
+        assert entered.wait(timeout=1.0), "normalized callback should start"
+
+        manager.clear_consumer("removed-normalized")
+        assert group in manager._sockets
+        assert registry.subscriptions()[0].consumers == frozenset({"surviving-normalized"})
+        release.set()
+        delivery.join(timeout=1.0)
+        assert not delivery.is_alive()
+        assert removed_received == [item.key.token]
+        assert survivor_received == [item.key.token]
+
+        manager._on_data(group, payload)
+        assert removed_received == [item.key.token]
+        assert survivor_received == [item.key.token, item.key.token]
+    finally:
+        release.set()
+        manager.close()
