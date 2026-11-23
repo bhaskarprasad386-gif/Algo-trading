@@ -426,3 +426,68 @@ def test_none_provider_validates_shoonya_recovery_timestamp_and_mode():
     assert s.mode == "BACKUP"
     assert s.reason == "shoonya_validated_recovery"
     assert s.switched_at == 801
+
+
+
+def test_angel_stability_clock_resets_after_intermittent_health_during_backup():
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=900)
+    p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=901)
+    p.update(failed_angel_sockets=2, angel_tick_age_seconds=4.0,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=904)
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=905)
+    assert s.active_provider == "shoonya"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=910)
+    assert s.active_provider == "shoonya"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=914)
+    assert s.active_provider == "angel_one"
+
+
+def test_invalid_health_event_does_not_mutate_policy_snapshot():
+    import pytest
+    p = policy()
+    before = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                      shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1000)
+    with pytest.raises(ValueError):
+        p.update(failed_angel_sockets=4, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1001)
+    after = p.snapshot()
+    assert after.active_provider == before.active_provider
+    assert after.mode == before.mode
+    assert after.reason == before.reason
+    assert after.switched_at == before.switched_at
+
+
+def test_snapshot_reads_are_repeatable_and_do_not_change_failover_state():
+    p = policy()
+    expected = p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+                      shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1100)
+    reads = [p.snapshot() for _ in range(5)]
+    assert all(s.active_provider == expected.active_provider for s in reads)
+    assert all(s.mode == expected.mode and s.reason == expected.reason for s in reads)
+    assert all(s.switched_at == expected.switched_at for s in reads)
+
+def test_snapshot_provider_mode_pairs_never_conflict_across_transitions():
+    p = policy()
+    events = [
+        (3, 4.0, False, None, 1200),
+        (3, 4.0, True, 0.2, 1201),
+        (0, 0.2, True, 0.2, 1202),
+        (0, 0.2, True, 0.2, 1207),
+        (0, 0.2, True, 0.2, 1210),
+        (3, 4.0, False, None, 1211),
+    ]
+    for failed, angel_age, connected, shoonya_age, ts in events:
+        s = p.update(failed_angel_sockets=failed, angel_tick_age_seconds=angel_age,
+                     shoonya_connected=connected, shoonya_tick_age_seconds=shoonya_age, now=ts)
+        if s.active_provider == "angel_one":
+            assert s.mode == "PRIMARY"
+        elif s.active_provider == "shoonya":
+            assert s.mode == "BACKUP"
+        else:
+            assert s.mode in ("NO_VALID_FEED", "DEGRADED_WAIT")
