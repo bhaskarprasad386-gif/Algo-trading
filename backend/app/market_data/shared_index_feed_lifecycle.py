@@ -354,16 +354,17 @@ class SharedIndexFeedLifecycle:
 
 
     def stop(self) -> None:
-        # Teardown every independent owner even when a preceding reconcile fails.
-        # Keep the first error for the caller, but do not strand other owners.
-        errors = []
-        for stop_owner in (self.stop_options, self.stop_futures, self.stop_spot):
-            try:
-                stop_owner()
-            except Exception as exc:
-                errors.append(exc)
-        if errors:
-            raise errors[0]
+        # Hold the lifecycle lock across the full OFF barrier so concurrent ON
+        # cannot interleave between independent owner teardowns.
+        with self._lock:
+            errors = []
+            for stop_owner in (self.stop_options, self.stop_futures, self.stop_spot):
+                try:
+                    stop_owner()
+                except Exception as exc:
+                    errors.append(exc)
+            if errors:
+                raise errors[0]
 
 
 
