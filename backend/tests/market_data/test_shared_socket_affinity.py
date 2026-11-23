@@ -104,3 +104,10 @@ def test_plan_rejects_owner_names_that_collide_after_normalization():
     with pytest.raises(ValueError, match="duplicate normalized affinity owner"):
         planner.plan({"owner": AffinitySlot(3, 0), " owner ": AffinitySlot(3, 1)},
             {"owner": tokens(1, 1), " owner ": tokens(2, 1)})
+
+@pytest.mark.parametrize("exchange", [True, False, 0, -2, "2"])
+def test_plan_rejects_non_integer_or_non_positive_exchange_type(exchange):
+    planner = ConsumerSocketAffinity()
+    with pytest.raises(ValueError, match="positive integer exchange type"):
+        planner.plan({NIFTY: AffinitySlot(3, 0)}, {NIFTY: {(exchange, "tok")}})
+    assert planner.snapshot()["owners"] == {}
