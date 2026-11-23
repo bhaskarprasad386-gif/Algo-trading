@@ -51,6 +51,9 @@ def test_late_broker_operation_completion_triggers_registry_reconcile():
     assert operation_entered.is_set()
     assert group not in manager._sockets
     assert manager.snapshot()["socket_operation_worker_count"] == 1
+    with manager._lock:
+        assert manager._has_pending_socket_operation_locked(group)
+        assert not manager._has_pending_socket_operation_locked(SocketGroup(mode=1, shard=1))
 
     release_operation.set()
     assert reconciled.wait(1.0), "late worker completion should promptly trigger reconciliation"
@@ -58,5 +61,7 @@ def test_late_broker_operation_completion_triggers_registry_reconcile():
     while manager.snapshot()["socket_operation_worker_count"] and monotonic() < deadline:
         sleep(0.01)
     assert manager.snapshot()["socket_operation_worker_count"] == 0
+    with manager._lock:
+        assert not manager._has_pending_socket_operation_locked(group)
     assert calls
     manager.close()
