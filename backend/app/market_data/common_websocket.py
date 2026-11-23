@@ -270,6 +270,7 @@ class CommonWebSocketManager:
         # Track active workers only (bounded by operations in flight), and keep
         # aggregate counters so late completion remains observable without leaks.
         self._socket_operation_workers: dict[str, dict[str, Any]] = {}
+        self._socket_operation_events: dict[str, Event] = {}
         self._socket_operation_worker_sequence = 0
         self._socket_operation_worker_late_completions = 0
         self._socket_operation_worker_late_failures = 0
@@ -1175,6 +1176,8 @@ class CommonWebSocketManager:
                 "timed_out": False,
                 "worker_alive": True,
             }
+            self._socket_operation_events[operation_id] = completed
+
 
         def _run() -> None:
             try:
@@ -1184,6 +1187,7 @@ class CommonWebSocketManager:
             finally:
                 with self._lock:
                     tracked = self._socket_operation_workers.pop(operation_id, None)
+                    self._socket_operation_events.pop(operation_id, None)
                     if tracked is not None:
                         if tracked.get("timed_out"):
                             self._socket_operation_worker_late_completions += 1
@@ -2347,6 +2351,24 @@ class CommonWebSocketManager:
         # a callback may legitimately request subscription changes during shutdown.
         for group, (generation, adapter) in callback_adapters:
             self._stop_retired_callback_adapter(adapter, group, generation)
+        # Wait briefly for in-flight SDK subscription mutations before closing
+        # their sockets. Avoid racing close() against subscribe/unsubscribe calls.
+        shutdown_operation_wait_seconds = 1.0
+        for group, socket in socket_items:
+            with self._lock:
+                pending_events = [
+                    event for operation_id, event in self._socket_operation_events.items()
+                    if self._socket_operation_workers.get(operation_id, {}).get("group")
+                    == f"{group.mode}:{group.shard}"
+                ]
+            deadline = time.monotonic() + shutdown_operation_wait_seconds
+            for event in pending_events:
+                event.wait(timeout=max(0.0, deadline - time.monotonic()))
+            if any(not event.is_set() for event in pending_events):
+                app_logger.warning(
+                    "Common feed shutdown closing socket with broker operation still in flight group=%s:%s",
+                    group.mode, group.shard,
+                )
         for group, socket in socket_items:
             # Shutdown must retain visibility of close calls that outlive the
             # bounded wait. Otherwise the manager can return while an orphaned
