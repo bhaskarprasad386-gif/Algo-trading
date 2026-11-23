@@ -324,4 +324,4 @@ def test_publish_callback_error_does_not_drop_tick_or_break_state():
     assert snap["accepted_ticks"] == 1
     assert snap["instrument_count"] == 1
     assert snap["publish_callback_errors"] == 1
-    assert state.latest("NSE|NSE|publish-error") is not None
+    assert state.latest("NSE:NSE:publish-error") is not None
