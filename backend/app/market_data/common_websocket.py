@@ -1063,6 +1063,10 @@ class CommonWebSocketManager:
 
         def _recover_after_close() -> None:
             try:
+                with self._lock:
+                    if self._closed:
+                        self._failure_recovery_groups.discard(group)
+                        return
                 # Admission remains blocked through close completion and recovery,
                 # preventing a late close callback from overlapping a new worker.
                 self.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=None)
