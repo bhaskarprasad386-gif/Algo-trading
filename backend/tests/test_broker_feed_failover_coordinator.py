@@ -318,3 +318,21 @@ def test_reentrant_snapshot_inside_callback_reports_pre_delivery_counter():
     assert snapshots[0]["forwarded_ticks"] == 0
     assert c.snapshot()["forwarded_ticks"] == 1
     assert snapshots[0]["latest_record_count"] == 1
+
+
+def test_normalized_instrument_key_aliases_share_ordering_watermarks():
+    received = []
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: received.append(r["timestamp_ns"]))
+    assert c.observe("angel_one", {"key": " NIFTY ", "timestamp_ns": 900}) is True
+    assert c.observe("angel_one", {"instrument_key": "NIFTY", "timestamp_ns": 899}) is False
+    assert c.observe("angel_one", {"instrument_key": "NIFTY", "timestamp_ns": 901}) is True
+    assert received == [900, 901]
+    assert c.snapshot()["forwarded_ticks"] == 2
+
+
+def test_instrument_key_whitespace_only_record_is_rejected():
+    c = MarketDataFailoverCoordinator()
+    assert c.observe("angel_one", {"instrument_key": "   ", "timestamp_ns": 1000}) is False
+    snap = c.snapshot()
+    assert snap["invalid_records"] == 1
+    assert snap["latest_record_count"] == 0
