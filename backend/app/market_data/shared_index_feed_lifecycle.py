@@ -59,7 +59,7 @@ class SharedIndexFeedLifecycle:
         reconciliation is requested separately by the caller.
         """
         manager.registry.clear_consumer(consumer)
-        for attribute in ("_callbacks", "_record_callbacks", "_record_observers", "_transport_observers"):
+        for attribute in ("_callbacks", "_record_callbacks", "_record_observers", "_transport_observers", "callbacks"):
             routes = getattr(manager, attribute, None)
             if isinstance(routes, dict):
                 routes.pop(consumer, None)
