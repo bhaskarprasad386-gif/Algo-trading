@@ -316,3 +316,38 @@ def test_coalesced_failure_close_callbacks_reconcile_each_group_and_release_work
     assert state["failure_recovery_pending_groups"] == []
     assert state["failure_recovery_groups"] == []
     manager.close()
+
+
+def test_primary_recovery_failure_keeps_coalesced_group_pending_for_supervisor():
+    manager = CommonWebSocketManager(socket_factory=lambda: _Socket())
+    first, second = SocketGroup(mode=1, shard=0), SocketGroup(mode=1, shard=1)
+    first_socket, second_socket = _Socket(), _Socket()
+    _install_current(manager, first, first_socket, generation=41)
+    _install_current(manager, second, second_socket, generation=42)
+    close_callbacks = []
+    manager._close_socket_tracked = lambda _socket, **kwargs: close_callbacks.append(kwargs["on_finished"])
+    manager._reconcile = lambda: None
+    manager.recover_disconnected = lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("recovery failed"))
+
+
+    manager._schedule_socket_failure_recovery(first, first_socket, 41, "primary-failure")
+    deadline = monotonic() + 1.0
+    while len(close_callbacks) < 1 and monotonic() < deadline:
+        sleep(0.01)
+    assert len(close_callbacks) == 1
+    manager._schedule_socket_failure_recovery(second, second_socket, 42, "coalesced-failure")
+    assert len(close_callbacks) == 2
+    assert "1:1" in manager.snapshot()["failure_recovery_pending_groups"]
+
+
+    close_callbacks[0]()
+    state = manager.snapshot()
+    assert state["failure_recovery_worker_active"] is False
+    assert "1:1" in state["failure_recovery_pending_groups"], (
+        "failed primary recovery must not discard the coalesced shard before supervisor recovery"
+    )
+    close_callbacks[1]()
+    state = manager.snapshot()
+    assert state["failure_recovery_worker_active"] is False
+    assert state["failure_recovery_pending_groups"] == []
+    manager.close()
