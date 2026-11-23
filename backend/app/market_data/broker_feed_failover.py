@@ -156,7 +156,7 @@ class MarketDataFailoverPolicy:
                             if failed_angel_sockets >= 2 and not angel_fresh
                             else "angel_feed_stale"
                         )
-                        self._reason = "angel_unhealthy_shoonya_not_ready"
+                        self._reason = self._none_reason
                         self._grace_wait = False
                 elif angel_fresh:
                     self._active = self.ANGEL_ONE
@@ -200,7 +200,11 @@ class MarketDataFailoverPolicy:
                 elif failover_needed and shoonya_fresh:
                     self._active = self.SHOONYA
                     self._mode = "BACKUP"
-                    self._reason = self._none_reason
+                    self._reason = (
+                        self._none_reason
+                        if self._grace_wait
+                        else "shoonya_validated_recovery"
+                    )
                     self._switched_at = now
                     self._grace_wait = False
                 elif angel_fresh:
