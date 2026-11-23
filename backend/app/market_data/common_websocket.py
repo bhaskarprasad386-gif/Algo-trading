@@ -2158,6 +2158,7 @@ class CommonWebSocketManager:
                     f"{group.mode}:{group.shard}" for group in required_groups if group not in sockets
                 ),
                 "socket_token_set_mismatches": token_set_mismatches,
+                "socket_token_set_mismatch_basis": "registry_vs_local_tracking_only_not_broker_ack",
                 "unconnected_required_groups": sorted(
                     f"{group.mode}:{group.shard}" for group in required_groups
                     if group not in sockets or not bool(getattr(sockets.get(group), "connected", False))
