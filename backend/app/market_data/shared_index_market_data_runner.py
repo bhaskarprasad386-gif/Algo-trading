@@ -302,6 +302,9 @@ class SharedIndexMarketDataRunner:
                     self._spot_records[underlying] = record
             if not running:
                 return
+            # Instrument-master recovery must not depend on option bootstrap:
+            # missing/stale contracts can otherwise prevent refresh indefinitely.
+            self._schedule_master_refresh()
             self._bootstrap_options()
             with self._lock:
                 # Stop and rotate are serialized; no subscription can be added
@@ -315,7 +318,6 @@ class SharedIndexMarketDataRunner:
                 if flushed:
                     self._sync_state_universe()
                 self._check_futures_rollover()
-                self._schedule_master_refresh()
 
     def start(self, instrument_rows: Iterable[dict] | None = None) -> dict:
         with self._lock:
