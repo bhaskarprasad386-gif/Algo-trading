@@ -363,15 +363,16 @@ def test_new_on_waits_for_previous_off_subscription_teardown():
     runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=manager)
     assert runner.start(rows)["enabled"] is True
 
-    # Replace unsubscribe with a controlled pause during the old OFF teardown.
-    original_unsubscribe = manager.unsubscribe
+    # Replace clear_consumer (the runner's teardown path) with a controlled
+    # pause during the old OFF barrier.
+    original_clear_consumer = manager.clear_consumer
     entered, release = Event(), Event()
-    def blocked_unsubscribe(consumer, keys=None):
+    def blocked_clear_consumer(consumer):
         if consumer == runner.lifecycle.FUTURES_CONSUMER and not release.is_set():
             entered.set()
             assert release.wait(timeout=3)
-        return original_unsubscribe(consumer, keys)
-    manager.unsubscribe = blocked_unsubscribe
+        return original_clear_consumer(consumer)
+    manager.clear_consumer = blocked_clear_consumer
 
     stopped = []
     off_thread = Thread(target=lambda: stopped.append(runner.stop()), daemon=True)
@@ -619,6 +620,7 @@ def test_failed_master_refresh_uses_short_retry_backoff_not_daily_interval():
     assert runner.start(rows)["enabled"] is True
     runner._master_refresh_interval_seconds = 24 * 60 * 60.0
     runner._master_refresh_retry_delay_seconds = 60.0
+    runner._bootstrap_options_done = True
     runner._master_refresh_started_at = 0.0
     assert runner._schedule_master_refresh() is True
     assert master.failed.wait(timeout=2)
