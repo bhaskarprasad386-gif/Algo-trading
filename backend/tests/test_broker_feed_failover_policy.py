@@ -316,7 +316,6 @@ def test_backup_socket_degradation_with_fresh_angel_tick_does_not_bypass_failbac
     assert s.active_provider == "shoonya"
     s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
                  shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=207)
-    # Failback is allowed once both minimum dwell and stability are met.
     assert s.active_provider == "angel_one"
     assert s.reason == "angel_stable_failback"
 
@@ -372,3 +371,32 @@ def test_recovery_events_with_identical_timestamp_are_serialized_consistently():
     assert snap.active_provider in ("shoonya","none")
     assert snap.mode in ("BACKUP","NO_VALID_FEED")
     assert all(r.active_provider in ("shoonya","none") for r in results)
+
+
+
+def test_latest_timestamp_wins_concurrent_health_updates_or_older_is_rejected():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    import pytest
+
+
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=5.0,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=600)
+    barrier = Barrier(2)
+    def newer():
+        barrier.wait()
+        return p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                       shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=602)
+    def older():
+        barrier.wait()
+        try:
+            return p.update(failed_angel_sockets=3, angel_tick_age_seconds=5.0,
+                           shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=601)
+        except ValueError:
+            return None
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        newer_result, older_result = list(pool.map(lambda fn: fn(), (newer, older)))
+    assert newer_result.active_provider in ("angel_one", "shoonya")
+    assert older_result is None or older_result.active_provider in ("shoonya", "none")
+    assert p.snapshot().active_provider in ("angel_one", "shoonya")
