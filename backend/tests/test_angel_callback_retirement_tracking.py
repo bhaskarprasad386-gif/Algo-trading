@@ -512,7 +512,8 @@ def test_three_simultaneous_shard_failures_coalesce_and_drain_all_pending_groups
         return 0
 
     manager.recover_disconnected = wait_recovery
-    manager._reconcile = lambda: None
+    reconciled = []
+    manager._reconcile = lambda: reconciled.append(True)
     manager._schedule_socket_failure_recovery(groups[0], sockets[0], 1, "first failure")
     assert started.wait(timeout=1.0)
     manager._schedule_socket_failure_recovery(groups[1], sockets[1], 1, "second failure")
@@ -527,7 +528,10 @@ def test_three_simultaneous_shard_failures_coalesce_and_drain_all_pending_groups
     state = manager.snapshot()
     assert state["failure_recovery_worker_active"] is False
     assert state["failure_recovery_pending_groups"] == []
-    assert len(recovered_groups) == 3
+    # Only the admitted primary performs recover_disconnected; coalesced closes
+    # trigger full-registry reconciliation, not duplicate recovery workers.
+    assert len(recovered_groups) == 1
+    assert len(reconciled) == 2
     manager.close()
 
 
