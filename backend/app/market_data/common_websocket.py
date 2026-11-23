@@ -2097,26 +2097,34 @@ class CommonWebSocketManager:
                 }
             subscription_roster = []
             for sub in self.registry.subscriptions():
-                descriptor = self.registry.get(sub.key)
-                exchange_type = self._resolve_exchange_type(sub.key)
-                pair = (exchange_type, sub.key.token.strip())
-                shard_index = required_assignments.get(sub.mode, {}).get(pair)
+                mode = getattr(sub, "mode", None)
+                key = getattr(sub, "key", None)
+                token = str(getattr(key, "token", "") or "").strip()
+                if mode is None or key is None or not token:
+                    continue
+                try:
+                    exchange_type = self._resolve_exchange_type(key)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                descriptor = self.registry.get(key)
+                pair = (exchange_type, token)
+                shard_index = required_assignments.get(mode, {}).get(pair)
                 subscription_roster.append({
                     "consumer": sorted(sub.consumers),
-                    "mode": sub.mode,
-                    "exchange": sub.key.exchange,
-                    "segment": sub.key.segment,
+                    "mode": mode,
+                    "exchange": key.exchange,
+                    "segment": key.segment,
                     "exchange_type": exchange_type,
-                    "token": sub.key.token,
+                    "token": token,
                     "symbol": descriptor.symbol if descriptor else None,
                     "instrument_type": descriptor.instrument_type if descriptor else None,
                     "underlying": descriptor.underlying if descriptor else None,
                     "expiry": descriptor.expiry if descriptor else None,
                     "strike": descriptor.strike if descriptor else None,
                     "option_type": descriptor.option_type if descriptor else None,
-                    "socket_group": f"{sub.mode}:{shard_index}" if shard_index is not None else None,
+                    "socket_group": f"{mode}:{shard_index}" if shard_index is not None else None,
                     "raw_frames": self._raw_frames_by_instrument.get(
-                        f"{sub.mode}:{exchange_type}:{sub.key.token.strip()}", 0
+                        f"{mode}:{exchange_type}:{token}", 0
                     ),
                 })
             return {
