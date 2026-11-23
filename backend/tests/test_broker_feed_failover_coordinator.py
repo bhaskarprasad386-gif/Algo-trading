@@ -768,3 +768,19 @@ def test_reentrant_provider_switch_suppresses_backup_replay_of_inflight_primary_
     assert snap["forwarded_ticks"] == 1
     assert snap["suppressed_ticks"] == 1
     assert snap["callback_errors"] == 0
+
+
+def test_uncloneable_canonical_payload_is_counted_invalid_without_crashing():
+    class BrokenCopy:
+        def __deepcopy__(self, _memo):
+            raise RuntimeError("cannot clone payload")
+
+    c = MarketDataFailoverCoordinator(on_record=lambda _p, _r: None)
+    record = tick("NIFTY", 9999, 100)
+    record["metadata"] = BrokenCopy()
+    assert c.observe("angel_one", record) is False
+    snap = c.snapshot()
+    assert snap["invalid_records"] == 1
+    assert snap["latest_record_count"] == 0
+    assert snap["forwarded_ticks"] == 0
+    assert snap["callback_errors"] == 0
