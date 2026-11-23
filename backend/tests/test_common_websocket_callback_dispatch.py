@@ -390,9 +390,14 @@ def test_coalesced_callback_reconcile_failure_keeps_pending_group_for_supervisor
 class _StopAfterRecovery:
     def __init__(self):
         self.calls = 0
+        self.stopped = False
+    def set(self):
+        self.stopped = True
+    def is_set(self):
+        return self.stopped
     def wait(self, _timeout):
         self.calls += 1
-        return self.calls > 1
+        return self.stopped or self.calls > 1
 
 
 def _run_one_recovery_supervisor_iteration(manager):
