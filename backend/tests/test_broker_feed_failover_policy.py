@@ -110,3 +110,31 @@ def test_failback_stability_timer_resets_after_angel_feed_interrupt():
                  shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=21)
     assert s.active_provider == "angel_one"
     assert s.reason == "angel_stable_failback"
+
+def test_failback_does_not_trigger_before_exact_stability_and_dwell_boundary():
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=100)
+    p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=101)
+    # Dwell elapsed at 104, but Angel stability has only elapsed 3 seconds.
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=104)
+    assert s.active_provider == "shoonya"
+    # Both thresholds become satisfied exactly at 106.
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=106)
+    assert s.active_provider == "angel_one"
+
+
+def test_backup_switch_time_restarts_after_no_valid_feed_recovery():
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    s = p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.2,
+                 shoonya_connected=False, shoonya_tick_age_seconds=None, now=12)
+    assert s.active_provider == "none"
+    s = p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=30)
+    assert s.active_provider == "shoonya"
+    assert s.switched_at == 30
