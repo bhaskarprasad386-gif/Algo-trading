@@ -262,6 +262,10 @@ class CommonWebSocketManager:
         # Globally admit at most one callback-triggered recovery worker; other shard failures are coalesced for the supervisor.
         self._failure_recovery_worker_active = False
         self._failure_recovery_pending_groups: set[SocketGroup] = set()
+        # Per-group generations distinguish a newly coalesced failure from an
+        # older pending marker captured by an in-flight successful reconcile.
+        self._failure_recovery_pending_generations: dict[SocketGroup, int] = {}
+        self._failure_recovery_pending_generation_counter = 0
         self._failure_recovery_admission_rejections = 0
         # Retired transports remain visible until their close worker actually exits.
         # Store metadata only; never retain broker frames or authentication payloads.
@@ -1129,9 +1133,10 @@ class CommonWebSocketManager:
         # callback. Keep per-group invalidation, coalesce the rest, and let the
         # shared supervisor reconcile the full desired registry.
         coalesced = False
+        pending_generation: int | None = None
         with self._lock:
             if self._failure_recovery_worker_active:
-                self._failure_recovery_pending_groups.add(group)
+                pending_generation = self._mark_failure_recovery_pending_locked(group)
                 self._failure_recovery_admission_rejections += 1
                 coalesced = True
             else:
@@ -1156,7 +1161,9 @@ class CommonWebSocketManager:
                             self._failure_recovery_groups.discard(failed_group)
                         self._reconcile()
                         with self._lock:
-                            self._failure_recovery_pending_groups.discard(failed_group)
+                            if self._failure_recovery_pending_generations.get(failed_group, 0) == pending_generation:
+                                self._failure_recovery_pending_groups.discard(failed_group)
+                                self._failure_recovery_pending_generations.pop(failed_group, None)
                 except Exception as exc:
                     app_logger.warning(
                         "Common feed coalesced recovery close completion failed group=%s: %s",
@@ -1365,6 +1372,15 @@ class CommonWebSocketManager:
         )
         raise error
 
+    def _mark_failure_recovery_pending_locked(self, group: SocketGroup) -> int:
+        """Mark a coalesced group failure with a unique generation (lock held)."""
+        self._failure_recovery_pending_generation_counter += 1
+        generation = self._failure_recovery_pending_generation_counter
+        self._failure_recovery_pending_groups.add(group)
+        self._failure_recovery_pending_generations[group] = generation
+        return generation
+
+
     def _request_reconcile_retry(self) -> bool:
         """Persist a full desired-state reconcile request for the supervisor."""
         with self._lock:
@@ -1424,7 +1440,10 @@ class CommonWebSocketManager:
                 )
                 cooldown_remaining = self._broker_cooldown_remaining()
                 with self._lock:
-                    pending_failures_to_ack = set(self._failure_recovery_pending_groups)
+                    pending_failures_to_ack = {
+                        group: self._failure_recovery_pending_generations.get(group, 0)
+                        for group in self._failure_recovery_pending_groups
+                    }
                     has_pending_failures = bool(pending_failures_to_ack)
                     reconcile_retry_pending = self._reconcile_retry_pending
                     reconcile_retry_generation = self._reconcile_retry_generation
@@ -1437,7 +1456,10 @@ class CommonWebSocketManager:
                     self._reconcile()
                     cooldown_was_active = False
                     with self._lock:
-                        self._failure_recovery_pending_groups.difference_update(pending_failures_to_ack)
+                        for pending_group, pending_generation in pending_failures_to_ack.items():
+                            if self._failure_recovery_pending_generations.get(pending_group, 0) == pending_generation:
+                                self._failure_recovery_pending_groups.discard(pending_group)
+                                self._failure_recovery_pending_generations.pop(pending_group, None)
                         if (
                             reconcile_retry_pending
                             and self._reconcile_retry_generation == reconcile_retry_generation
@@ -2489,6 +2511,7 @@ class CommonWebSocketManager:
                 self._socket_generation.clear()
                 self._failure_recovery_groups.clear()
                 self._failure_recovery_pending_groups.clear()
+                self._failure_recovery_pending_generations.clear()
                 self._reconcile_retry_pending = False
         # Do not hold either manager lock while waiting for consumer callbacks:
         # a callback may legitimately request subscription changes during shutdown.
