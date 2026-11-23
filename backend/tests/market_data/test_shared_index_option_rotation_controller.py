@@ -5,8 +5,13 @@ from app.market_data.shared_index_option_rotation_controller import SharedIndexO
 class StubLifecycle:
     def __init__(self):
         self.rotations = []
+        self.current_options = ()
     def rotate_options(self, descriptors):
-        self.rotations.append(tuple(descriptors))
+        selected = tuple(descriptors)
+        self.rotations.append(selected)
+        self.current_options = selected
+    def option_descriptors(self):
+        return self.current_options
 
 
 
@@ -20,7 +25,7 @@ class FakeClock:
 
 def _rows(expiry="26NOV2026"):
     rows = []
-    for underlying, base, step, count in (("NIFTY", 21750, 50, 13), ("BANKNIFTY", 48000, 100, 11)):
+    for underlying, base, step, count in (("NIFTY", 21750, 50, 13), ("BANKNIFTY", 47600, 100, 11)):
         for index in range(count):
             strike = base + index * step
             for side in ("CE", "PE"):
@@ -104,7 +109,15 @@ def test_concurrent_rotations_for_both_locked_underlyings_are_consistent():
 
     assert results == [True, True]
     assert len(lifecycle.rotations) == 2
-    assert all(len(rotation) == 48 for rotation in lifecycle.rotations)
+    # The first request selects one underlying; the serialized second request
+    # must preserve the first set and add the other underlying's contracts.
+    rotation_counts = sorted(len(rotation) for rotation in lifecycle.rotations)
+    assert rotation_counts in ([22, 48], [26, 48])
+    final_options = lifecycle.option_descriptors()
+    assert len(final_options) == 48
+    assert len({descriptor.key for descriptor in final_options}) == 48
+    assert sum(descriptor.underlying == "NIFTY" for descriptor in final_options) == 26
+    assert sum(descriptor.underlying == "BANKNIFTY" for descriptor in final_options) == 22
     snapshot = controller.snapshot()
     assert snapshot["rotation_successes"] == 2
     assert snapshot["rotation_failures"] == 0
