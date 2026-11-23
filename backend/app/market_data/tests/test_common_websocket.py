@@ -577,8 +577,17 @@ def test_blocking_subscription_call_is_bounded_and_socket_is_recovered():
         assert original.closed is True
         assert manager.snapshot()["socket_groups"] == 0
 
-        manager.recover_disconnected(min_age_seconds=0.0)
+        # A timed-out SDK worker must finish before recovery admission. Release
+        # the blocked broker call and let its late-completion reconciliation
+        # rebuild the authoritative subscription set.
+        BlockingSubscribeSocket.release_first_subscribe.set()
+        deadline = time.monotonic() + 2.0
         snapshot = manager.snapshot()
+        while time.monotonic() < deadline:
+            snapshot = manager.snapshot()
+            if snapshot["connected_groups"] == ["1:0"]:
+                break
+            time.sleep(0.01)
         assert snapshot["socket_groups"] == 1
         assert snapshot["connected_groups"] == ["1:0"]
         assert len(BlockingSubscribeSocket.instances) == 2
