@@ -90,7 +90,7 @@ jobs:
           LIVE_MARKET_DATA_PERSISTENCE_ENABLED: "false"
           LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED: "false"
         run: >-
-          python -m pytest backend/tests -q --tb=short -r fE -n 4 --durations=15
+          python -m pytest backend/tests -q --tb=short -r fE -n 6 --durations=15
           -k "not test_commodity_selection_is_dynamic_current_near_and_actual_strikes"
           --timeout=60 --timeout-method=thread --maxfail=100
           --ignore=backend/tests/test_angelone_cash_future_batch_runner_integration.py
