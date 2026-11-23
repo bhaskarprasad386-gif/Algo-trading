@@ -145,7 +145,7 @@ def shoonya_verify(
     db: Session = Depends(get_db),
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
-    client_id = str(payload.client_id or settings.SHOONYA_OAUTH_CLIENT_ID or "").strip()
+    client_id = str(settings.SHOONYA_OAUTH_CLIENT_ID or payload.client_id or "").strip()
     secret_code = str(settings.SHOONYA_OAUTH_SECRET_CODE or payload.secret_code or "")
     if not client_id or not secret_code:
         raise HTTPException(status_code=503, detail="Shoonya OAuth client ID and secret code are not configured")
