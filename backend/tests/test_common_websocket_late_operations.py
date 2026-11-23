@@ -199,3 +199,24 @@ def test_late_operation_failure_after_shutdown_is_diagnostic_only():
     assert snapshot["socket_operation_worker_late_completions"] >= 1
     assert snapshot["socket_operation_worker_late_failures"] >= 1
     assert not reconciled.is_set(), "late failure after shutdown must not trigger recovery"
+
+
+def test_closed_manager_rejects_new_broker_operation_without_worker_admission():
+    manager = CommonWebSocketManager(socket_factory=lambda: _Socket())
+    group = SocketGroup(mode=1, shard=0)
+    socket = _Socket()
+    operation_called = Event()
+    manager.close()
+
+    with pytest.raises(RuntimeError, match="manager is closed"):
+        manager._run_socket_operation_bounded(
+            socket=socket,
+            group=group,
+            operation=operation_called.set,
+            operation_name="subscribe",
+        )
+
+    assert not operation_called.is_set()
+    assert manager.snapshot()["socket_operation_worker_count"] == 0
+    assert manager.snapshot()["socket_operation_worker_admission_rejections"] == 0
+    manager.close()
