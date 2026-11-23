@@ -156,3 +156,46 @@ def test_late_operation_completion_after_shutdown_does_not_reconcile():
         sleep(0.01)
     assert manager.snapshot()["socket_operation_worker_count"] == 0
     assert not reconciled.is_set(), "shutdown is terminal; late SDK completion must not restart reconcile"
+
+
+def test_late_operation_failure_after_shutdown_is_diagnostic_only():
+    manager = CommonWebSocketManager(socket_factory=lambda: _Socket())
+    group = SocketGroup(mode=1, shard=1)
+    socket = _Socket()
+    with manager._lock:
+        manager._sockets[group] = socket
+        manager._socket_tokens[group] = {(1, "456")}
+        manager._socket_generation[group] = 5
+        manager._socket_generation_counter[group] = 5
+
+    entered = Event()
+    release = Event()
+    reconciled = Event()
+
+
+    def late_failure():
+        entered.set()
+        assert release.wait(2.0)
+        raise RuntimeError("late broker failure")
+
+
+    manager._reconcile = reconciled.set
+    manager._socket_call_wait_seconds = 0.1
+    with pytest.raises(TimeoutError, match="exceeded"):
+        manager._run_socket_operation_bounded(
+            socket=socket,
+            group=group,
+            operation=late_failure,
+            operation_name="subscribe",
+        )
+    assert entered.is_set()
+    manager.close()
+    release.set()
+    deadline = monotonic() + 1.0
+    while manager.snapshot()["socket_operation_worker_count"] and monotonic() < deadline:
+        sleep(0.01)
+    snapshot = manager.snapshot()
+    assert snapshot["socket_operation_worker_count"] == 0
+    assert snapshot["socket_operation_worker_late_completions"] >= 1
+    assert snapshot["socket_operation_worker_late_failures"] >= 1
+    assert not reconciled.is_set(), "late failure after shutdown must not trigger recovery"
