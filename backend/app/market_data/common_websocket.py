@@ -259,11 +259,31 @@ class CommonWebSocketManager:
         # remains the fallback, but duplicate SDK callbacks must not spawn a
         # burst of close/recovery workers for the same failed generation.
         self._failure_recovery_groups: set[SocketGroup] = set()
+        # Globally admit at most one callback-triggered recovery worker; other shard failures are coalesced for the supervisor.
+        self._failure_recovery_worker_active = False
+        self._failure_recovery_pending_groups: set[SocketGroup] = set()
+        self._failure_recovery_admission_rejections = 0
         # Retired transports remain visible until their close worker actually exits.
         # Store metadata only; never retain broker frames or authentication payloads.
         self._retired_transports: dict[str, dict[str, Any]] = {}
+        # Subscribe/unsubscribe SDK workers may outlive the bounded caller wait.
+        # Track active workers only (bounded by operations in flight), and keep
+        # aggregate counters so late completion remains observable without leaks.
+        self._socket_operation_workers: dict[str, dict[str, Any]] = {}
+        self._socket_operation_events: dict[str, Event] = {}
+        self._socket_operation_worker_sequence = 0
+        self._socket_operation_worker_late_completions = 0
+        self._socket_operation_worker_late_failures = 0
+        self._socket_operation_worker_admission_rejections = 0
+        self._socket_operation_worker_timeouts = 0
+        self._socket_operation_worker_failures = 0
         self._recovery_attempts = 0
         self._last_recovery_at = None
+        self._recovery_backoff_max_seconds = 60.0
+        self._recovery_backoff_current_seconds = self._recovery_interval_seconds
+        self._recovery_backoff_errors = 0
+        self._recovery_backoff_resets = 0
+        self._recovery_backoff_last_error: str | None = None
 
     def _create_socket(self) -> Any:
         """Create a socket whose reconnect policy is owned by this manager."""
@@ -465,6 +485,7 @@ class CommonWebSocketManager:
             self._callbacks.pop(consumer, None)
             self._record_callbacks.pop(consumer, None)
             self._record_observers.pop(consumer, None)
+            self._transport_observers.pop(consumer, None)
             total = len(self.registry.subscriptions())
             if removed:
                 app_logger.info(
@@ -607,7 +628,10 @@ class CommonWebSocketManager:
                     # The failed generation is still being closed. Do not admit
                     # its replacement until the bounded close attempt completes.
                     with self._lock:
-                        if group in self._failure_recovery_groups:
+                        if (
+                            group in self._failure_recovery_groups
+                            or self._has_pending_socket_operation_locked(group)
+                        ):
                             continue
                 if socket is not None:
                     # A transport can become unusable before its SDK wrapper
@@ -906,8 +930,6 @@ class CommonWebSocketManager:
                             reason="late_connect_success",
                             on_finished=lambda: self._reconcile_after_retirement(group),
                         )
-                        if not close_worker.is_alive():
-                            self._reconcile_after_retirement(group)
                         return
             except Exception as exc:
                 failure["exception"] = exc
@@ -970,8 +992,6 @@ class CommonWebSocketManager:
                         socket, group=group, generation=generation, reason="connect_failure",
                         on_finished=_resume_after_connect_failure, timeout=0.1,
                     )
-                    if not close_worker.is_alive():
-                        _resume_after_connect_failure()
                 # Return the connect exception after state and close gating are set,
                 # without waiting for any later supervisor reconciliation.
                 completed.set()
@@ -1043,10 +1063,12 @@ class CommonWebSocketManager:
 
         def _recover_after_close() -> None:
             try:
-                # Keep admission blocked while the supervisor processes the
-                # failure. Clear the marker only immediately before serialized
-                # reconciliation, so concurrent reconcile calls cannot race
-                # ahead and admit a replacement from stale state.
+                with self._lock:
+                    if self._closed:
+                        self._failure_recovery_groups.discard(group)
+                        return
+                # Admission remains blocked through close completion and recovery,
+                # preventing a late close callback from overlapping a new worker.
                 self.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=None)
                 with self._reconcile_lock:
                     with self._lock:
@@ -1069,6 +1091,9 @@ class CommonWebSocketManager:
                     with self._lock:
                         if group not in self._sockets:
                             self._failure_recovery_groups.discard(group)
+            finally:
+                with self._lock:
+                    self._failure_recovery_worker_active = False
 
         def _recover() -> None:
             try:
@@ -1076,10 +1101,9 @@ class CommonWebSocketManager:
                     socket, group=group, generation=generation, reason="failure_callback",
                     on_finished=_recover_after_close,
                 )
-                if close_worker.is_alive():
-                    # The tracked close watcher resumes recovery when the transport exits.
-                    return
-                _recover_after_close()
+                # The tracked retirement completion resumes recovery, including
+                # when close completed inside the bounded wait.
+                return
             except Exception as exc:
                 runtime_diagnostics.record(
                     component="Common Market Feed",
@@ -1093,8 +1117,80 @@ class CommonWebSocketManager:
                 )
                 with self._lock:
                     self._failure_recovery_groups.discard(group)
+                    self._failure_recovery_worker_active = False
 
-        Thread(target=_recover, name=f"common-ws-failure-recovery-{group.mode}-{group.shard}", daemon=True).start()
+        # A simultaneous shard outage must not spawn one recovery thread per
+        # callback. Keep per-group invalidation, coalesce the rest, and let the
+        # shared supervisor reconcile the full desired registry.
+        coalesced = False
+        with self._lock:
+            if self._failure_recovery_worker_active:
+                self._failure_recovery_pending_groups.add(group)
+                self._failure_recovery_admission_rejections += 1
+                coalesced = True
+            else:
+                self._failure_recovery_worker_active = True
+
+        if coalesced:
+            # Recovery work is coalesced, but every failed transport still
+            # needs its own tracked close. Otherwise its socket is orphaned
+            # outside _sockets/_retired_transports and can leak broker sessions.
+            def _resume_coalesced_recovery(failed_group=group):
+                try:
+                    with self._lock:
+                        if self._closed:
+                            self._failure_recovery_groups.discard(failed_group)
+                            self._failure_recovery_pending_groups.discard(failed_group)
+                            return
+                    with self._reconcile_lock:
+                        # Keep coalesced failure visible until a full registry
+                        # reconcile succeeds; the supervisor clears pending groups
+                        # after its own successful recovery pass.
+                        with self._lock:
+                            self._failure_recovery_groups.discard(failed_group)
+                        self._reconcile()
+                        with self._lock:
+                            self._failure_recovery_pending_groups.discard(failed_group)
+                except Exception as exc:
+                    app_logger.warning(
+                        "Common feed coalesced recovery close completion failed group=%s: %s",
+                        f"{failed_group.mode}:{failed_group.shard}", exc,
+                    )
+            close_worker = self._close_socket_tracked(
+                socket, group=group, generation=generation,
+                reason="coalesced_failure_callback",
+                on_finished=_resume_coalesced_recovery,
+            )
+            return
+
+        def _recover_with_admission() -> None:
+            try:
+                _recover()
+            except Exception:
+                # If close scheduling fails before the completion callback is
+                # registered, release admission so the supervisor can retry.
+                with self._lock:
+                    self._failure_recovery_worker_active = False
+
+        Thread(
+            target=_recover_with_admission,
+            name=f"common-ws-failure-recovery-{group.mode}-{group.shard}",
+            daemon=True,
+        ).start()
+    def _has_pending_socket_operation_locked(self, group: SocketGroup) -> bool:
+        """Return whether a broker SDK operation still owns this shard.
+
+        Caller must hold the manager lock. Late SDK workers can outlive the
+        caller timeout and transport close; replacement admission must wait for
+        completion to avoid overlapping mutations on the same shard.
+        """
+        group_key = f"{group.mode}:{group.shard}"
+        return any(
+            item.get("group") == group_key
+            for item in self._socket_operation_workers.values()
+        )
+
+
     def _run_socket_operation_bounded(
         self,
         *,
@@ -1111,6 +1207,31 @@ class CommonWebSocketManager:
         """
         completed = Event()
         failure: dict[str, Exception] = {}
+        started_at = time.monotonic()
+        group_key = f"{group.mode}:{group.shard}"
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("WebSocket manager is closed; broker operation rejected")
+            # A timed-out SDK call may still be mutating its retired socket.
+            # Do not launch another broker operation for the same shard until
+            # that worker exits; recovery can retry after this barrier clears.
+            if self._has_pending_socket_operation_locked(group):
+                self._socket_operation_worker_admission_rejections += 1
+                raise RuntimeError(
+                    f"WebSocket broker operation still in flight for group {group_key}"
+                )
+            self._socket_operation_worker_sequence += 1
+            operation_id = f"op-{self._socket_operation_worker_sequence}"
+            self._socket_operation_workers[operation_id] = {
+                "operation_id": operation_id,
+                "operation": operation_name,
+                "group": f"{group.mode}:{group.shard}",
+                "started_at": started_at,
+                "timed_out": False,
+                "worker_alive": True,
+            }
+            self._socket_operation_events[operation_id] = completed
+
 
         def _run() -> None:
             try:
@@ -1118,7 +1239,34 @@ class CommonWebSocketManager:
             except Exception as exc:
                 failure["exception"] = exc
             finally:
+                with self._lock:
+                    tracked = self._socket_operation_workers.pop(operation_id, None)
+                    self._socket_operation_events.pop(operation_id, None)
+                    if tracked is not None:
+                        if tracked.get("timed_out"):
+                            self._socket_operation_worker_late_completions += 1
+                            if "exception" in failure:
+                                self._socket_operation_worker_late_failures += 1
+                            tracked["outcome"] = "late_error" if "exception" in failure else "late_success"
+                        else:
+                            tracked["outcome"] = "error" if "exception" in failure else "success"
+                        tracked["worker_alive"] = False
+                        tracked["completed_at"] = time.monotonic()
                 completed.set()
+                if tracked is not None and tracked.get("timed_out"):
+                    # Late completion can mutate the retired broker socket after
+                    # the caller's timeout invalidated it. Reconcile only while
+                    # the manager remains live; shutdown must be terminal.
+                    with self._lock:
+                        manager_closed = self._closed
+                    if not manager_closed:
+                        try:
+                            self._reconcile()
+                        except Exception as reconcile_exc:
+                            app_logger.warning(
+                                "Common feed reconcile after late broker operation completion failed group=%s error=%s: %s",
+                                group_key, type(reconcile_exc).__name__, reconcile_exc,
+                            )
 
         worker = Thread(
             target=_run,
@@ -1130,6 +1278,36 @@ class CommonWebSocketManager:
         error = failure.get("exception")
         if finished and error is None:
             return
+        late_completion_race = False
+        if not finished:
+            with self._lock:
+                tracked = self._socket_operation_workers.get(operation_id)
+                if tracked is not None and not tracked.get("timed_out"):
+                    tracked["timed_out"] = True
+                    self._socket_operation_worker_timeouts += 1
+                # The worker may finish after wait() returns False but before
+                # the timeout flag is set. In that window it removes its record
+                # and misses the late-completion reconcile. Recover that edge
+                # here, from the timeout caller, exactly once.
+                late_completion_race = tracked is None and completed.is_set()
+        elif error is not None:
+            with self._lock:
+                self._socket_operation_worker_failures += 1
+
+        if late_completion_race:
+            # The worker's timeout flag can be missed if it exits between
+            # wait(timeout=False) and the caller's lock acquisition. Shutdown
+            # may win that race too; never resurrect reconciliation then.
+            with self._lock:
+                manager_closed = self._closed
+            if not manager_closed:
+                try:
+                    self._reconcile()
+                except Exception as reconcile_exc:
+                    app_logger.warning(
+                        "Common feed reconcile after timeout/completion race failed group=%s error=%s: %s",
+                        group_key, type(reconcile_exc).__name__, reconcile_exc,
+                    )
 
         # Never leave a potentially half-mutated socket as authoritative.
         with self._lock:
@@ -1159,9 +1337,6 @@ class CommonWebSocketManager:
                 reason=f"socket_{operation_name}_failure",
                 on_finished=_resume_after_operation_close,
             )
-            if not close_worker.is_alive():
-                _resume_after_operation_close()
-
         if not finished:
             error = TimeoutError(
                 f"WebSocket {operation_name} call exceeded "
@@ -1203,17 +1378,22 @@ class CommonWebSocketManager:
         # Subscription changes intentionally remain pending during a shared
         # broker cooldown. Reconcile once when that cooldown expires so the
         # remembered socket-token set catches up without sending broker calls
-        # while Angel is rate-limiting us.
+        # while Angel is rate-limiting us. Transient recovery errors use
+        # bounded exponential backoff to avoid reconnect storms.
         cooldown_was_active = False
-        while not self._recovery_stop.wait(self._recovery_interval_seconds):
+        retry_delay = max(0.1, float(self._recovery_interval_seconds))
+        retry_delay_cap = max(retry_delay, float(self._recovery_backoff_max_seconds))
+        while not self._recovery_stop.wait(retry_delay):
             with self._lock:
+                if self._closed:
+                    return
                 has_intent = bool(self.registry.subscriptions())
             if not has_intent:
+                retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 continue
             try:
                 # Before/after the regular session, tick silence is expected;
                 # don't churn otherwise-connected sockets every 30 seconds.
-                # Explicit close/error callbacks and stuck handshakes still recover.
                 silent_timeout = (
                     self._silent_feed_timeout_seconds
                     if _is_regular_trading_window()
@@ -1224,20 +1404,41 @@ class CommonWebSocketManager:
                     silent_age_seconds=silent_timeout,
                 )
                 cooldown_remaining = self._broker_cooldown_remaining()
+                with self._lock:
+                    pending_failures_to_ack = set(self._failure_recovery_pending_groups)
+                    has_pending_failures = bool(pending_failures_to_ack)
                 if cooldown_remaining > 0.0:
                     cooldown_was_active = True
-                elif cooldown_was_active:
+                elif cooldown_was_active or has_pending_failures:
+                    # A disconnected-socket pass alone is not a full desired-state
+                    # reconcile. Pending coalesced failures must survive until the
+                    # registry reconcile actually succeeds (or cooldown permits it).
+                    # A callback may add new failures while reconcile is running;
+                    # acknowledge only the groups included in this pass's snapshot.
                     self._reconcile()
                     cooldown_was_active = False
+                    with self._lock:
+                        self._failure_recovery_pending_groups.difference_update(pending_failures_to_ack)
+                retry_delay = max(0.1, float(self._recovery_interval_seconds))
+                with self._lock:
+                    self._recovery_backoff_current_seconds = retry_delay
+                    self._recovery_backoff_resets += 1
             except Exception as exc:
+                with self._lock:
+                    if self._closed:
+                        return
+                    self._recovery_backoff_errors += 1
+                    retry_delay = min(retry_delay * 2.0, retry_delay_cap)
+                    self._recovery_backoff_current_seconds = retry_delay
+                    self._recovery_backoff_last_error = f"{type(exc).__name__}: {exc}"[:240]
                 runtime_diagnostics.record(
                     component="Common Market Feed",
                     error_type=type(exc).__name__,
                     message=str(exc),
-                    context={"event": "automatic_recovery"},
+                    context={"event": "automatic_recovery", "retry_delay_seconds": retry_delay},
                 )
                 app_logger.warning(
-                    "Common feed automatic recovery failed; will retry: %s", exc
+                    "Common feed automatic recovery failed; retrying in %.1fs: %s", retry_delay, exc
                 )
 
     def recover_disconnected(
@@ -1321,9 +1522,19 @@ class CommonWebSocketManager:
             # after exchange/token pairs are globally sorted for that mode.
             pairs_by_mode: dict[int, set[tuple[int, str]]] = defaultdict(set)
             for sub in self.registry.subscriptions():
-                pairs_by_mode[sub.mode].add(
-                    (self._resolve_exchange_type(sub.key), sub.key.token.strip())
-                )
+                # Registry snapshots may be observed while reconciliation is
+                # recovering from a partial mutation. Ignore malformed entries
+                # rather than letting diagnostics crash the recovery supervisor.
+                mode = getattr(sub, "mode", None)
+                key = getattr(sub, "key", None)
+                token = str(getattr(key, "token", "") or "").strip()
+                if mode is None or key is None or not token:
+                    continue
+                try:
+                    exchange_type = self._resolve_exchange_type(key)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                pairs_by_mode[mode].add((exchange_type, token))
             expected_socket_groups: set[SocketGroup] = set()
             expected_assignments = self._build_shard_assignments(pairs_by_mode)
             for mode, assignments in expected_assignments.items():
@@ -1869,14 +2080,34 @@ class CommonWebSocketManager:
         worker = self._close_socket_bounded(
             socket, timeout=timeout, group=group, generation=generation, reason=reason
         )
-        if worker.is_alive():
-            self._watch_retired_transport(
-                worker, group=group, generation=generation, reason=reason,
-                on_finished=on_finished, retirement_key=key,
-            )
-        else:
-            with self._lock:
-                self._retired_transports.pop(key, None)
+        # Bounded close may finish between the caller's first liveness check
+        # and watcher registration. Own completion in this helper and guard it
+        # exactly once so fast-close and watcher paths cannot double-reconcile.
+        completion_lock = Lock()
+        completion_claimed = False
+
+        def _finish_once() -> None:
+            nonlocal completion_claimed
+            with completion_lock:
+                if completion_claimed:
+                    return
+                completion_claimed = True
+            if on_finished is not None:
+                try:
+                    on_finished()
+                except Exception as exc:
+                    app_logger.warning(
+                        "Common feed retirement completion handler failed group=%s reason=%s: %s",
+                        f"{group.mode}:{group.shard}", reason, exc,
+                    )
+
+        # Always use the watcher, even for an already-finished close. It
+        # invokes completion on its own thread, avoiding reentrant reconcile
+        # when this helper is called from inside _reconcile().
+        self._watch_retired_transport(
+            worker, group=group, generation=generation, reason=reason,
+            on_finished=_finish_once, retirement_key=key,
+        )
         return worker
 
     @staticmethod
@@ -1945,9 +2176,16 @@ class CommonWebSocketManager:
             # must never be used as the health denominator.
             pairs_by_mode: dict[int, set[tuple[int, str]]] = defaultdict(set)
             for sub in self.registry.subscriptions():
-                pairs_by_mode[sub.mode].add(
-                    (self._resolve_exchange_type(sub.key), sub.key.token.strip())
-                )
+                mode = getattr(sub, "mode", None)
+                key = getattr(sub, "key", None)
+                token = str(getattr(key, "token", "") or "").strip()
+                if mode is None or key is None or not token:
+                    continue
+                try:
+                    exchange_type = self._resolve_exchange_type(key)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                pairs_by_mode[mode].add((exchange_type, token))
             required_groups: set[SocketGroup] = set()
             required_assignments = self._build_shard_assignments(pairs_by_mode)
             for mode, assignments in required_assignments.items():
@@ -1955,6 +2193,23 @@ class CommonWebSocketManager:
                     SocketGroup(mode=mode, shard=shard_index)
                     for shard_index in assignments.values()
                 )
+            # Audit desired registry token pairs against each socket's acknowledged
+            # local token set. A mismatch is diagnostic evidence of partial broker
+            # mutation/rollback; it never rewrites registry or transport state.
+            expected_tokens_by_group: dict[SocketGroup, set[tuple[int, str]]] = defaultdict(set)
+            for mode, assignments in required_assignments.items():
+                for pair, shard_index in assignments.items():
+                    expected_tokens_by_group[SocketGroup(mode=mode, shard=shard_index)].add(pair)
+            token_set_mismatches = []
+            for group in sorted(set(expected_tokens_by_group) | set(self._socket_tokens), key=lambda item: (item.mode, item.shard)):
+                expected_pairs = expected_tokens_by_group.get(group, set())
+                actual_pairs = self._socket_tokens.get(group, set())
+                if expected_pairs != actual_pairs:
+                    token_set_mismatches.append({
+                        "group": f"{group.mode}:{group.shard}",
+                        "missing_from_socket": sorted(expected_pairs - actual_pairs),
+                        "unexpected_on_socket": sorted(actual_pairs - expected_pairs),
+                    })
             socket_health_by_group: dict[str, dict[str, Any]] = {}
             for group, socket in sockets.items():
                 try:
@@ -1984,26 +2239,34 @@ class CommonWebSocketManager:
                 }
             subscription_roster = []
             for sub in self.registry.subscriptions():
-                descriptor = self.registry.get(sub.key)
-                exchange_type = self._resolve_exchange_type(sub.key)
-                pair = (exchange_type, sub.key.token.strip())
-                shard_index = required_assignments.get(sub.mode, {}).get(pair)
+                mode = getattr(sub, "mode", None)
+                key = getattr(sub, "key", None)
+                token = str(getattr(key, "token", "") or "").strip()
+                if mode is None or key is None or not token:
+                    continue
+                try:
+                    exchange_type = self._resolve_exchange_type(key)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                descriptor = self.registry.get(key)
+                pair = (exchange_type, token)
+                shard_index = required_assignments.get(mode, {}).get(pair)
                 subscription_roster.append({
                     "consumer": sorted(sub.consumers),
-                    "mode": sub.mode,
-                    "exchange": sub.key.exchange,
-                    "segment": sub.key.segment,
+                    "mode": mode,
+                    "exchange": key.exchange,
+                    "segment": key.segment,
                     "exchange_type": exchange_type,
-                    "token": sub.key.token,
+                    "token": token,
                     "symbol": descriptor.symbol if descriptor else None,
                     "instrument_type": descriptor.instrument_type if descriptor else None,
                     "underlying": descriptor.underlying if descriptor else None,
                     "expiry": descriptor.expiry if descriptor else None,
                     "strike": descriptor.strike if descriptor else None,
                     "option_type": descriptor.option_type if descriptor else None,
-                    "socket_group": f"{sub.mode}:{shard_index}" if shard_index is not None else None,
+                    "socket_group": f"{mode}:{shard_index}" if shard_index is not None else None,
                     "raw_frames": self._raw_frames_by_instrument.get(
-                        f"{sub.mode}:{exchange_type}:{sub.key.token.strip()}", 0
+                        f"{mode}:{exchange_type}:{token}", 0
                     ),
                 })
             return {
@@ -2019,6 +2282,8 @@ class CommonWebSocketManager:
                 "missing_socket_groups": sorted(
                     f"{group.mode}:{group.shard}" for group in required_groups if group not in sockets
                 ),
+                "socket_token_set_mismatches": token_set_mismatches,
+                "socket_token_set_mismatch_basis": "registry_vs_local_tracking_only_not_broker_ack",
                 "unconnected_required_groups": sorted(
                     f"{group.mode}:{group.shard}" for group in required_groups
                     if group not in sockets or not bool(getattr(sockets.get(group), "connected", False))
@@ -2146,6 +2411,11 @@ class CommonWebSocketManager:
                 "failure_recovery_groups": sorted(
                     f"{group.mode}:{group.shard}" for group in self._failure_recovery_groups
                 ),
+                "failure_recovery_worker_active": self._failure_recovery_worker_active,
+                "failure_recovery_pending_groups": sorted(
+                    f"{group.mode}:{group.shard}" for group in self._failure_recovery_pending_groups
+                ),
+                "failure_recovery_admission_rejections": self._failure_recovery_admission_rejections,
                 "retired_transport_count": len(self._retired_transports),
                 "retired_transports": [dict(item) for item in self._retired_transports.values()],
                 "retired_transport_groups": sorted({
@@ -2153,8 +2423,20 @@ class CommonWebSocketManager:
                 }),
                 "retired_callback_worker_count": len(self._retired_callback_workers),
                 "retired_callback_workers": [dict(item) for item in self._retired_callback_workers.values()],
+                "socket_operation_worker_count": len(self._socket_operation_workers),
+                "socket_operation_workers": [dict(item) for item in self._socket_operation_workers.values()],
+                "socket_operation_worker_timeouts": self._socket_operation_worker_timeouts,
+                "socket_operation_worker_late_completions": self._socket_operation_worker_late_completions,
+                "socket_operation_worker_late_failures": self._socket_operation_worker_late_failures,
+                "socket_operation_worker_admission_rejections": self._socket_operation_worker_admission_rejections,
+                "socket_operation_worker_failures": self._socket_operation_worker_failures,
                 "recovery_attempts": self._recovery_attempts,
                 "last_recovery_at": self._last_recovery_at,
+                "recovery_backoff_current_seconds": self._recovery_backoff_current_seconds,
+                "recovery_backoff_max_seconds": self._recovery_backoff_max_seconds,
+                "recovery_backoff_errors": self._recovery_backoff_errors,
+                "recovery_backoff_resets": self._recovery_backoff_resets,
+                "recovery_backoff_last_error": self._recovery_backoff_last_error,
             }
 
     def close(self) -> None:
@@ -2178,10 +2460,29 @@ class CommonWebSocketManager:
                 self._last_successful_delivery_at.clear()
                 self._socket_generation.clear()
                 self._failure_recovery_groups.clear()
+                self._failure_recovery_pending_groups.clear()
         # Do not hold either manager lock while waiting for consumer callbacks:
         # a callback may legitimately request subscription changes during shutdown.
         for group, (generation, adapter) in callback_adapters:
             self._stop_retired_callback_adapter(adapter, group, generation)
+        # Wait briefly for in-flight SDK subscription mutations before closing
+        # their sockets. Avoid racing close() against subscribe/unsubscribe calls.
+        shutdown_operation_wait_seconds = 1.0
+        for group, socket in socket_items:
+            with self._lock:
+                pending_events = [
+                    event for operation_id, event in self._socket_operation_events.items()
+                    if self._socket_operation_workers.get(operation_id, {}).get("group")
+                    == f"{group.mode}:{group.shard}"
+                ]
+            deadline = time.monotonic() + shutdown_operation_wait_seconds
+            for event in pending_events:
+                event.wait(timeout=max(0.0, deadline - time.monotonic()))
+            if any(not event.is_set() for event in pending_events):
+                app_logger.warning(
+                    "Common feed shutdown closing socket with broker operation still in flight group=%s:%s",
+                    group.mode, group.shard,
+                )
         for group, socket in socket_items:
             # Shutdown must retain visibility of close calls that outlive the
             # bounded wait. Otherwise the manager can return while an orphaned

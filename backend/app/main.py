@@ -44,6 +44,7 @@ from app.market_data.client import MarketDataClient
 from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
+from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
@@ -62,7 +63,7 @@ from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_L
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
-from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot, configure_shoonya_snapshot, configure_shoonya_supervisor
+from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot, configure_shoonya_snapshot, configure_shoonya_supervisor, configure_shared_index_runner_snapshot
 from app.scanner.routes import router as scanner_router, full_fno_router, configure_live_cash_future_snapshot
 from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop, configure_page_update_callback as configure_weekly_swing_page_push, nifty200_scan_status
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
@@ -115,6 +116,8 @@ install_iv_basket_immutability_guards(engine)
 # Reuse one process-local instrument-master manager for live feed/API resolution.
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
+shared_index_market_data_runner = SharedIndexMarketDataRunner(instrument_master=instrument_master)
+configure_shared_index_runner_snapshot(shared_index_market_data_runner.snapshot)
 shoonya_market_data_supervisor: ShoonyaMarketDataSupervisor | None = None
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
 provider_quote_parity_worker: BoundedQuoteParityWorker | None = None
@@ -555,6 +558,43 @@ configure_page_push_snapshot("synthetic-arbitrage", _synthetic_page_push_recover
 configure_paper_private_ws_snapshot(build_paper_private_snapshot)
 configure_paper_market_ws_snapshot(build_paper_market_snapshot)
 
+async def _shared_index_market_data_recovery_loop() -> None:
+    """Start the data-only shared index runner and retry transient master/feed failures."""
+    retry_delay = 5.0
+    max_retry_delay = 60.0
+    try:
+        while True:
+            # Do not redownload the Angel One master while the runner is
+            # already active; only retry after a failed start.
+            if shared_index_market_data_runner.snapshot().get("enabled"):
+                await asyncio.sleep(15.0)
+                continue
+            try:
+                rows = await run_blocking_daemon(
+                    shared_index_market_data_runner.instrument_master.download,
+                    thread_name="shared-index-instrument-master-fetch",
+                )
+                if not rows:
+                    raise RuntimeError("Angel One instrument master returned no rows")
+                snapshot = shared_index_market_data_runner.start(instrument_rows=rows)
+                if snapshot.get("enabled"):
+                    retry_delay = 10.0
+                    await asyncio.sleep(15.0)
+                    continue
+                app_logger.warning("Shared index data runner did not start: {}", snapshot.get("last_error"))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                app_logger.warning("Shared index data runner startup/recovery failed: {}", exc)
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(max_retry_delay, max(5.0, retry_delay * 2.0))
+    finally:
+        try:
+            shared_index_market_data_runner.stop()
+        except Exception:
+            app_logger.exception("Shared index data runner shutdown failed")
+
+
 async def _iv_scanner_recovery_loop() -> None:
     """Retry a persisted IV Scanner ON state after transient startup failures.
 
@@ -598,7 +638,7 @@ async def _iv_scanner_recovery_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, shoonya_market_data_supervisor
+    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, shoonya_market_data_supervisor, _shared_index_runner_task
     global provider_quote_parity_store, provider_quote_parity_worker
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     if settings.PROVIDER_QUOTE_PARITY_ENABLED:
@@ -663,6 +703,9 @@ async def lifespan(app: FastAPI):
     # is timing out; the recovery task below owns retries and cache validation.
     if _iv_scanner_recovery_task is None:
         _iv_scanner_recovery_task = asyncio.create_task(_iv_scanner_recovery_loop())
+    # Shared Index Market Data is data-only and isolated: no strategy signals or orders.
+    if _shared_index_runner_task is None:
+        _shared_index_runner_task = asyncio.create_task(_shared_index_market_data_recovery_loop())
     if _weekly_swing_refresh_task is None:
         _weekly_swing_refresh_task = asyncio.create_task(weekly_swing_daily_refresh_loop())
     if _iv_option_snapshot_task is None:
@@ -697,7 +740,7 @@ async def lifespan(app: FastAPI):
         # This makes to_thread(run_forever) unwind promptly during service stop.
         _signal_live_runner_shutdown()
         paper_rule_task.cancel()
-        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task):
+        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
             if task is not None:
                 task.cancel()
         shutdown_tasks = tuple(
@@ -712,6 +755,7 @@ async def lifespan(app: FastAPI):
                 _weekly_swing_refresh_task,
                 _iv_option_snapshot_task,
                 _iv_scanner_recovery_task,
+                _shared_index_runner_task,
                 paper_rule_task,
             )
             if task is not None
@@ -738,6 +782,7 @@ async def lifespan(app: FastAPI):
         _weekly_swing_refresh_task = None
         _iv_option_snapshot_task = None
         _iv_scanner_recovery_task = None
+        _shared_index_runner_task = None
         parity_worker_stopped = True
         if provider_quote_parity_worker is not None:
             parity_worker_stopped = provider_quote_parity_worker.stop(drain=True, timeout_seconds=2.0)
@@ -947,6 +992,7 @@ async def dashboard_websocket(websocket: WebSocket):
 
 _history_collector_task: asyncio.Task | None = None
 _iv_scanner_recovery_task: asyncio.Task | None = None
+_shared_index_runner_task: asyncio.Task | None = None
 _iv_option_snapshot_task: asyncio.Task | None = None
 _weekly_swing_refresh_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None

@@ -407,6 +407,60 @@ def test_stale_socket_callback_is_ignored_after_recovery_replaces_socket():
         manager.close()
 
 
+def test_late_old_generation_connect_failure_cannot_invalidate_replacement():
+    class LateFailFirstConnectSocket(FakeSocket):
+        attempts = 0
+        release_first_connect = Event()
+
+        def connect(self, **kwargs):
+            type(self).attempts += 1
+            if type(self).attempts == 1:
+                self.connect_calls.append(kwargs)
+                self.connecting = True
+                type(self).release_first_connect.wait(timeout=3.0)
+                raise RuntimeError("late old generation handshake failure")
+            super().connect(**kwargs)
+
+    registry = InstrumentRegistry()
+    item = descriptor("late-connect-failure-777")
+    registry.register(item)
+    LateFailFirstConnectSocket.instances.clear()
+    LateFailFirstConnectSocket.attempts = 0
+    LateFailFirstConnectSocket.release_first_connect.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=LateFailFirstConnectSocket)
+    manager._connect_call_wait_seconds = 0.05
+    manager._connect_timeout_seconds = 1.0
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("late-connect-failure", [item.key])
+        old_socket = LateFailFirstConnectSocket.instances[0]
+        group = SocketGroup(1, 0)
+        with manager._lock:
+            manager._socket_created_at[group] -= 2.0
+
+        assert manager.recover_disconnected(min_age_seconds=0.0) == 1
+        replacement = LateFailFirstConnectSocket.instances[1]
+        assert replacement.connect_calls == []
+
+        LateFailFirstConnectSocket.release_first_connect.set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            with manager._lock:
+                if manager._sockets.get(group) is replacement and replacement.connected:
+                    break
+            time.sleep(0.01)
+
+        with manager._lock:
+            assert manager._sockets.get(group) is replacement
+            assert manager._socket_generation.get(group) != 1
+        assert old_socket.closed is True
+        assert replacement.connected is True
+        assert manager.snapshot()["socket_groups"] == 1
+    finally:
+        LateFailFirstConnectSocket.release_first_connect.set()
+        manager.close()
+
+
 def test_recovery_replaces_socket_stuck_in_connecting_state_after_timeout():
     registry = InstrumentRegistry()
     d = descriptor("101")
@@ -523,8 +577,17 @@ def test_blocking_subscription_call_is_bounded_and_socket_is_recovered():
         assert original.closed is True
         assert manager.snapshot()["socket_groups"] == 0
 
-        manager.recover_disconnected(min_age_seconds=0.0)
+        # A timed-out SDK worker must finish before recovery admission. Release
+        # the blocked broker call and let its late-completion reconciliation
+        # rebuild the authoritative subscription set.
+        BlockingSubscribeSocket.release_first_subscribe.set()
+        deadline = time.monotonic() + 2.0
         snapshot = manager.snapshot()
+        while time.monotonic() < deadline:
+            snapshot = manager.snapshot()
+            if snapshot["connected_groups"] == ["1:0"]:
+                break
+            time.sleep(0.01)
         assert snapshot["socket_groups"] == 1
         assert snapshot["connected_groups"] == ["1:0"]
         assert len(BlockingSubscribeSocket.instances) == 2
@@ -2128,4 +2191,204 @@ def test_retired_slot_waits_for_actual_transport_thread_after_close_returns():
         assert manager.snapshot()["connected_groups"] == ["1:0"]
     finally:
         LingeringTransportSocket.release_transport.set()
+        manager.close()
+
+def test_clear_consumer_removes_transport_observer_route_with_subscription_owner():
+    registry = InstrumentRegistry()
+    d = descriptor("102")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    events = []
+    manager.register_transport_observer("owner", lambda *args: events.append(args))
+    manager.subscribe("owner", [d.key])
+
+    assert "owner" in manager._transport_observers
+    manager.clear_consumer("owner")
+
+    assert "owner" not in manager._transport_observers
+    assert registry.active_keys() == ()
+    assert manager.snapshot()["active_instruments"] == 0
+    manager.close()
+
+
+
+
+def test_coalesced_failure_callback_still_retires_its_socket():
+    registry = InstrumentRegistry()
+    item = descriptor("777")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key])
+        group = SocketGroup(1, 0)
+        socket = manager._sockets[group]
+        generation = manager._socket_generation[group]
+        with manager._lock:
+            manager._failure_recovery_worker_active = True
+        manager._schedule_socket_failure_recovery(
+            group, socket, generation, "coalesced test failure"
+        )
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            with manager._lock:
+                cleared = (
+                    group not in manager._failure_recovery_groups
+                    and group not in manager._failure_recovery_pending_groups
+                )
+            if socket.closed and cleared:
+                break
+            time.sleep(0.01)
+        assert socket.closed is True
+        with manager._lock:
+            assert group not in manager._failure_recovery_groups
+            assert group not in manager._failure_recovery_pending_groups
+    finally:
+        with manager._lock:
+            manager._failure_recovery_worker_active = False
+        manager.close()
+
+
+def test_tracked_socket_retirement_completion_callback_runs_once_on_fast_close():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    socket = FakeSocket()
+    callbacks = []
+    callback_done = Event()
+    try:
+        worker = manager._close_socket_tracked(
+            socket,
+            group=SocketGroup(1, 0),
+            generation=1,
+            reason="fast_close_callback_once",
+            on_finished=lambda: (callbacks.append("finished"), callback_done.set()),
+            timeout=0.2,
+        )
+        if worker.is_alive():
+            worker.join(timeout=1.0)
+        assert socket.closed is True
+        assert callback_done.wait(timeout=1.0)
+        assert callbacks == ["finished"]
+    finally:
+        manager.close()
+
+
+def test_clear_consumer_during_inflight_tick_allows_admitted_callback_but_blocks_next_tick():
+    registry = InstrumentRegistry()
+    item = descriptor("consumer-race-777")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    entered = Event()
+    release = Event()
+    removed_consumer_received = []
+    surviving_consumer_received = []
+
+    def removed_callback(message):
+        removed_consumer_received.append(message["token"])
+        entered.set()
+        release.wait(timeout=2.0)
+
+    manager.register_callback("race-consumer", removed_callback)
+    manager.register_callback(
+        "surviving-consumer", lambda message: surviving_consumer_received.append(message["token"])
+    )
+    manager.subscribe("race-consumer", [item.key])
+    manager.subscribe("surviving-consumer", [item.key])
+    group = SocketGroup(1, 0)
+    try:
+        delivery = Thread(
+            target=lambda: manager._on_data(group, {"token": item.key.token, "exchange_type": 1}),
+            daemon=True,
+        )
+        delivery.start()
+        assert entered.wait(timeout=1.0), "first tick should enter admitted callback"
+
+        # Clearing one owner must leave the shared socket and the other owner
+        # intact. In-flight delivery may complete, but subsequent frames
+        # must route only to the surviving consumer.
+        manager.clear_consumer("race-consumer")
+        assert group in manager._sockets
+        assert registry.active_keys() == (item.key,)
+        release.set()
+        delivery.join(timeout=1.0)
+        assert not delivery.is_alive()
+        assert removed_consumer_received == [item.key.token]
+        assert surviving_consumer_received == [item.key.token]
+
+        manager._on_data(group, {"token": item.key.token, "exchange_type": 1})
+        assert removed_consumer_received == [item.key.token]
+        assert surviving_consumer_received == [item.key.token, item.key.token]
+    finally:
+        release.set()
+        manager.close()
+
+
+def test_clear_higher_mode_consumer_downgrades_shared_subscription_without_losing_owner():
+    registry = InstrumentRegistry()
+    item = descriptor("shared-mode-downgrade-1")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("low-mode-owner", [item.key], mode=1)
+        manager.subscribe("high-mode-owner", [item.key], mode=3)
+        assert registry.subscriptions()[0].mode == 3
+
+        manager.clear_consumer("high-mode-owner")
+
+        remaining = registry.subscriptions()
+        assert len(remaining) == 1
+        assert remaining[0].consumers == frozenset({"low-mode-owner"})
+        assert remaining[0].mode == 1
+        snapshot = manager.snapshot()
+        assert snapshot["socket_token_set_mismatches"] == []
+        assert snapshot["missing_socket_groups"] == []
+        assert snapshot["connected_groups"] == ["1:0"]
+        socket = manager._sockets[SocketGroup(1, 0)]
+        assert socket.connect_calls[-1]["mode"] == 1
+    finally:
+        manager.close()
+
+
+def test_clear_normalized_consumer_during_tick_keeps_shared_owner_delivery():
+    registry = InstrumentRegistry()
+    item = descriptor("shared-normalized-race-1")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    entered = Event()
+    release = Event()
+    removed_received = []
+    survivor_received = []
+
+    def removed_callback(record):
+        removed_received.append(record.instrument.token)
+        entered.set()
+        release.wait(timeout=2.0)
+
+    manager.register_normalized_callback("removed-normalized", removed_callback)
+    manager.register_normalized_callback(
+        "surviving-normalized", lambda record: survivor_received.append(record.instrument.token)
+    )
+    manager.subscribe("removed-normalized", [item.key])
+    manager.subscribe("surviving-normalized", [item.key])
+    group = SocketGroup(1, 0)
+    payload = {"token": item.key.token, "exchange_type": 1, "ltp": 10000}
+    try:
+        delivery = Thread(target=lambda: manager._on_data(group, payload), daemon=True)
+        delivery.start()
+        assert entered.wait(timeout=1.0), "normalized callback should start"
+
+        manager.clear_consumer("removed-normalized")
+        assert group in manager._sockets
+        assert registry.subscriptions()[0].consumers == frozenset({"surviving-normalized"})
+        release.set()
+        delivery.join(timeout=1.0)
+        assert not delivery.is_alive()
+        assert removed_received == [item.key.token]
+        assert survivor_received == [item.key.token]
+
+        manager._on_data(group, payload)
+        assert removed_received == [item.key.token]
+        assert survivor_received == [item.key.token, item.key.token]
+    finally:
+        release.set()
         manager.close()

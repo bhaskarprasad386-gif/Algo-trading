@@ -199,6 +199,7 @@ class InstrumentMaster:
             try:
                 source_errors = []
                 data = None
+                rate_limited = False
                 request_timeout = (
                     timeout if isinstance(timeout, tuple) and len(timeout) == 2
                     else (8, float(timeout) if isinstance(timeout, (int, float)) else 90)
@@ -216,6 +217,17 @@ class InstrumentMaster:
                         source_errors.append(
                             f"{source_url}: {type(source_error).__name__}: {source_error}"
                         )
+                        response = getattr(source_error, "response", None)
+                        if getattr(response, "status_code", None) == 429:
+                            rate_limited = True
+                            headers = getattr(response, "headers", {}) or {}
+                            try:
+                                retry_after = float(headers.get("Retry-After", 0))
+                            except (TypeError, ValueError):
+                                retry_after = 0.0
+                            cls._retry_after_seconds = max(60.0, min(retry_after, 900.0))
+                            app_logger.warning("Instrument master HTTP 429; alternate host suppressed and cooldown set")
+                            break
                         app_logger.warning(
                             "Instrument master source failed; trying official alternate host: {}",
                             source_errors[-1],
@@ -250,6 +262,8 @@ class InstrumentMaster:
                 raise
             except Exception as exc:
                 cls._last_download_error = f"{type(exc).__name__}: {exc}"
+                if rate_limited:
+                    cls._last_download_attempt_at = now
                 if disk_snapshot is not None:
                     rows, fetched_at = disk_snapshot
                     with cls._cache_lock:

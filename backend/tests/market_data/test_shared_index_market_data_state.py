@@ -1,0 +1,337 @@
+from time import time_ns
+import pytest
+
+from app.market_data.shared_index_market_data_state import SharedIndexMarketDataState
+from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord, OptionType
+
+
+
+def _record(token, ts=None):
+    return MarketDataRecord(
+        instrument=InstrumentKey("NSE", "NSE", token), symbol=token,
+        instrument_type=InstrumentType.INDEX, timestamp_ns=ts or time_ns(),
+        ltp=25000.0,
+    )
+
+
+def test_state_accepts_fresh_ticks_and_reports_freshness():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    assert state.on_record(_record("spot1"))
+    snap = state.snapshot()
+    assert snap["instrument_count"] == 1
+    assert snap["fresh_count"] == 1
+    assert snap["feed_fresh"] is True
+
+
+
+def test_state_rejects_out_of_order_ticks():
+    state = SharedIndexMarketDataState()
+    now = time_ns()
+    assert state.on_record(_record("spot2", now))
+    assert not state.on_record(_record("spot2", now - 100))
+    assert state.snapshot()["out_of_order_ticks_dropped"] == 1
+
+
+
+def test_state_rejects_stale_tick():
+    state = SharedIndexMarketDataState(max_age_seconds=1)
+    assert not state.on_record(_record("spot3", time_ns() - 3_000_000_000))
+    assert state.snapshot()["stale_ticks_dropped"] == 1
+
+def test_records_snapshot_exposes_quote_fields_and_one_second_oi_delta():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    option = MarketDataRecord(
+        instrument=InstrumentKey("NFO", "NFO", "opt1"), symbol="NIFTYCE",
+        instrument_type=InstrumentType.OPTION, timestamp_ns=now - 1_300_000_000,
+        ltp=125.5, bid=124.9, ask=126.1, bid_qty=20, ask_qty=30,
+        volume=800, oi=1000, underlying="NIFTY", expiry="2026-11-26",
+        strike=25000, option_type=__import__("app.market_data.contracts", fromlist=["OptionType"]).OptionType.CALL,
+        lot_size=25,
+    )
+    assert state.on_record(option)
+    later = MarketDataRecord(
+        instrument=option.instrument, symbol=option.symbol,
+        instrument_type=option.instrument_type, timestamp_ns=time_ns() - 100_000_000,
+        ltp=126.0, bid=125.5, ask=126.5, bid_qty=25, ask_qty=40,
+        volume=820, oi=1060, underlying="NIFTY", expiry="2026-11-26",
+        strike=25000, option_type=option.option_type, lot_size=25,
+    )
+    # Timestamp stays within freshness and monotonic acceptance.
+    assert state.on_record(later)
+    rows = state.records_snapshot()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["ltp"] == 126.0 and row["bid"] == 125.5 and row["ask"] == 126.5
+    assert row["bid_qty"] == 25 and row["ask_qty"] == 40
+    assert row["volume"] == 820 and row["oi"] == 1060
+    assert row["oi_delta_1s"] == 60
+    assert row["volume_delta_1s"] == 20
+    assert row["fresh"] is True
+
+
+def test_oi_delta_is_not_reported_for_subsecond_sample_window():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    option = MarketDataRecord(
+        instrument=InstrumentKey("NFO", "NFO", "opt-short"), symbol="NIFTYCE",
+        instrument_type=InstrumentType.OPTION, timestamp_ns=now - 300_000_000,
+        ltp=125.5, oi=1000, volume=1200, underlying="NIFTY", expiry="2026-11-26",
+        strike=25000, option_type=__import__("app.market_data.contracts", fromlist=["OptionType"]).OptionType.CALL,
+        lot_size=25,
+    )
+    assert state.on_record(option)
+    later = MarketDataRecord(
+        instrument=option.instrument, symbol=option.symbol,
+        instrument_type=option.instrument_type, timestamp_ns=time_ns() - 100_000_000,
+        ltp=126.0, oi=1060, volume=1220, underlying="NIFTY", expiry=option.expiry,
+        strike=option.strike, option_type=option.option_type, lot_size=25,
+    )
+    assert state.on_record(later)
+    row = state.records_snapshot()[0]
+    assert row["oi_delta_1s"] is None
+    assert row["volume_delta_1s"] is None
+
+
+
+def test_stale_record_does_not_expose_oi_or_volume_delta():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    option = MarketDataRecord(
+        instrument=InstrumentKey("NFO", "NFO", "opt-stale"), symbol="NIFTYCE",
+        instrument_type=InstrumentType.OPTION, timestamp_ns=now - 1_500_000_000,
+        ltp=125.5, oi=1000, volume=1200, underlying="NIFTY", expiry="2026-11-26",
+        strike=25000, option_type=__import__("app.market_data.contracts", fromlist=["OptionType"]).OptionType.CALL,
+        lot_size=25,
+    )
+    assert state.on_record(option)
+    state.max_age_ns = 1_000_000_000  # tighter threshold after acceptance
+    row = state.records_snapshot()[0]
+    assert row["fresh"] is False
+    assert row["oi_delta_1s"] is None
+    assert row["volume_delta_1s"] is None
+
+
+
+def test_volume_reset_clears_old_session_baseline():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    inst = InstrumentKey("NFO", "NFO", "opt-reset")
+    def tick(ts, volume, oi):
+        return MarketDataRecord(
+            instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION,
+            timestamp_ns=ts, ltp=125.5, volume=volume, oi=oi, underlying="NIFTY",
+            expiry="2026-11-26", strike=25000,
+            option_type=__import__("app.market_data.contracts", fromlist=["OptionType"]).OptionType.CALL,
+            lot_size=25,
+        )
+    assert state.on_record(tick(now - 1_300_000_000, 5000, 1000))
+    assert state.on_record(tick(time_ns() - 100_000_000, 20, 1010))
+    row = state.records_snapshot()[0]
+    assert row["volume_delta_1s"] is None
+    assert row["oi_delta_1s"] == 10
+
+
+
+def test_state_cache_capacity_is_bounded_and_reports_dropped_ticks():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    for i in range(state.MAX_INSTRUMENTS):
+        assert state.on_record(_record(f"cap-{i}", now + i))
+    assert not state.on_record(_record("cap-overflow", now + state.MAX_INSTRUMENTS + 1000))
+    snap = state.snapshot()
+    assert snap["instrument_count"] == state.MAX_INSTRUMENTS
+    assert snap["capacity_ticks_dropped"] == 1
+    assert len(state.records_snapshot()) == state.MAX_INSTRUMENTS
+
+
+def test_snapshot_exposes_microstructure_and_multi_window_momentum_metrics():
+    state = SharedIndexMarketDataState(max_age_seconds=6)
+    now = time_ns()
+    inst = InstrumentKey("NFO", "NFO", "opt-micro")
+    from app.market_data.contracts import OptionType
+    def tick(ts, price, bid, ask, bq, aq, volume, oi):
+        return MarketDataRecord(
+            instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION,
+            timestamp_ns=ts, ltp=price, bid=bid, ask=ask, bid_qty=bq, ask_qty=aq,
+            volume=volume, oi=oi, underlying="NIFTY", expiry="2026-11-26",
+            strike=25000, option_type=OptionType.CALL, lot_size=25,
+        )
+    assert state.on_record(tick(now-4_200_000_000, 100, 99, 101, 10, 20, 1000, 2000))
+    assert state.on_record(tick(now-2_200_000_000, 102, 101, 103, 20, 10, 1050, 2030))
+    assert state.on_record(tick(now-200_000_000, 104, 103, 105, 30, 10, 1100, 2060))
+    row = state.records_snapshot()[0]
+    assert row["ltp_delta_3s"] == 4
+    assert row["ltp_change_pct_3s"] == 4
+    assert row["mid_price"] == 104
+    assert row["spread"] == 2
+    assert row["spread_pct"] == pytest.approx(2/104*100)
+    assert row["quote_imbalance"] == pytest.approx(20/40)
+    assert row["microprice"] == pytest.approx((105*30 + 103*10)/40)
+    assert row["tick_rate_1s"] == 1
+    assert row["oi_delta_3s"] == 60
+    assert row["volume_delta_3s"] == 100
+    assert row["oi_delta_5s"] is None  # no observation spans the full 5-second window
+    assert row["volume_delta_5s"] is None  # no observation spans the full 5-second window
+
+
+def test_quote_depth_and_spread_change_windows():
+    state = SharedIndexMarketDataState(max_age_seconds=6)
+    now = time_ns()
+    from app.market_data.contracts import OptionType
+    inst = InstrumentKey("NFO", "NFO", "opt-depth")
+    def tick(ts, bid, ask, bid_qty, ask_qty):
+        return MarketDataRecord(
+            instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION,
+            timestamp_ns=ts, ltp=(bid+ask)/2, bid=bid, ask=ask,
+            bid_qty=bid_qty, ask_qty=ask_qty, underlying="NIFTY", expiry="2026-11-26",
+            strike=25000, option_type=OptionType.CALL, lot_size=25,
+        )
+    assert state.on_record(tick(now-5_200_000_000, 99, 101, 10, 20))
+    assert state.on_record(tick(now-2_200_000_000, 101, 103, 15, 25))
+    assert state.on_record(tick(now-200_000_000, 103, 106, 30, 10))
+    row=state.records_snapshot()[0]
+    assert row["bid_qty_delta_3s"] == 20
+    assert row["ask_qty_delta_3s"] == -10
+    assert row["spread_delta_3s"] == 1
+    assert row["bid_qty_delta_5s"] == 20
+    assert row["ask_qty_delta_5s"] == -10
+
+
+
+def test_tick_rate_reports_one_three_and_five_second_windows():
+    state = SharedIndexMarketDataState(max_age_seconds=6)
+    now = time_ns()
+    inst = InstrumentKey("NFO", "NFO", "tick-rate")
+    def tick(ts):
+        return MarketDataRecord(instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION, timestamp_ns=ts, ltp=100, bid=99, ask=101, underlying="NIFTY", expiry="2026-11-26", strike=25000, option_type=OptionType.CALL, lot_size=25)
+    assert state.on_record(tick(now-4_200_000_000))
+    assert state.on_record(tick(now-2_200_000_000))
+    assert state.on_record(tick(now-200_000_000))
+    row=state.records_snapshot()[0]
+    assert row["tick_rate_1s"] == 1
+    assert row["tick_rate_3s"] == 2
+    assert row["tick_rate_5s"] == 3
+
+
+def test_retaining_active_keys_invalidates_retired_cache_and_baselines():
+    from app.market_data.shared_cache import get_shared_market_data_cache
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    old_key = InstrumentKey("NFO", "NFO", "retired-option")
+    new_key = InstrumentKey("NFO", "NFO", "replacement-option")
+    def tick(key, ts, volume, oi):
+        return MarketDataRecord(instrument=key, symbol="OPT", instrument_type=InstrumentType.OPTION,
+            timestamp_ns=ts, ltp=125, volume=volume, oi=oi, underlying="NIFTY",
+            expiry="2026-11-26", strike=25000, option_type=OptionType.CALL, lot_size=25)
+    assert state.on_record(tick(old_key, now-1_300_000_000, 900, 1000))
+    assert state.on_record(tick(old_key, time_ns()-100_000_000, 950, 1010))
+    assert get_shared_market_data_cache().get(old_key.value) is not None
+    assert state.retain_instruments([new_key]) == 1
+    assert state.latest(old_key.value) is None
+    assert get_shared_market_data_cache().get(old_key.value) is None
+    # Late frames from an old subscription cannot restore retired quote state.
+    assert not state.on_record(tick(old_key, time_ns(), 999, 999))
+    assert state.snapshot()["retired_contract_ticks_dropped"] == 1
+    assert old_key.value not in state._oi_history
+    assert old_key.value not in state._volume_history
+    assert old_key.value not in state._tick_history
+    assert state.on_record(tick(new_key, time_ns(), 10, 5))
+    new_rows = state.records_snapshot()
+    assert len(new_rows) == 1 and new_rows[0]["volume_delta_1s"] is None
+    assert new_rows[0]["oi_delta_1s"] is None
+
+
+def test_cache_publication_is_serialized_with_retiring_instrument(monkeypatch):
+    from threading import Event, Thread
+    from app.market_data import shared_index_market_data_state as state_module
+    from app.market_data.shared_cache import get_shared_market_data_cache
+
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    key = InstrumentKey("NFO", "NFO", "race-retired-cache")
+    record = MarketDataRecord(instrument=key, symbol=key.token,
+        instrument_type=InstrumentType.OPTION, timestamp_ns=time_ns(),
+        ltp=25000.0, underlying="NIFTY", expiry="2026-11-26",
+        strike=25000, option_type=OptionType.CALL, lot_size=25)
+    publication_started, release_publication, retirement_done = Event(), Event(), Event()
+    original_put = state_module.put_market_data_record
+
+    def blocked_put(item):
+        publication_started.set()
+        assert release_publication.wait(timeout=3)
+        return original_put(item)
+
+
+    monkeypatch.setattr(state_module, "put_market_data_record", blocked_put)
+    accepted = []
+    tick_thread = Thread(target=lambda: accepted.append(state.on_record(record)), daemon=True)
+    tick_thread.start()
+    assert publication_started.wait(timeout=2)
+
+    retire_thread = Thread(target=lambda: (state.retain_instruments([]), retirement_done.set()), daemon=True)
+    retire_thread.start()
+    # Retirement cannot delete the cache and then be overtaken by a late write.
+    assert not retirement_done.wait(timeout=0.05)
+    release_publication.set()
+    tick_thread.join(timeout=3)
+    retire_thread.join(timeout=3)
+
+    assert not tick_thread.is_alive() and not retire_thread.is_alive()
+    assert accepted == [True]
+    assert retirement_done.is_set()
+    assert state.latest(key.value) is None
+    assert get_shared_market_data_cache().get(key.value) is None
+
+
+
+def test_tick_histories_have_hard_caps_even_for_repeated_timestamps():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    from app.market_data.contracts import OptionType
+    inst = InstrumentKey("NFO", "NFO", "opt-history-cap")
+    timestamp = time_ns() - 10_000_000
+    record = MarketDataRecord(
+        instrument=inst, symbol="NIFTYCE", instrument_type=InstrumentType.OPTION,
+        timestamp_ns=timestamp, ltp=125.5, bid=125.0, ask=126.0,
+        bid_qty=5, ask_qty=8, volume=100, oi=200, underlying="NIFTY",
+        expiry="2026-11-26", strike=25000, option_type=OptionType.CALL, lot_size=25,
+    )
+    for i in range(1000):
+        # Unique, increasing timestamps exercise history bounds without violating
+        # the state's duplicate/out-of-order tick rejection contract.
+        tick = MarketDataRecord(
+            instrument=record.instrument, symbol=record.symbol,
+            instrument_type=record.instrument_type, timestamp_ns=timestamp + i * 1_000_000,
+            ltp=record.ltp, bid=record.bid, ask=record.ask, bid_qty=record.bid_qty,
+            ask_qty=record.ask_qty, volume=record.volume + i, oi=record.oi + i,
+            underlying=record.underlying, expiry=record.expiry, strike=record.strike,
+            option_type=record.option_type, lot_size=record.lot_size,
+        )
+        assert state.on_record(tick)
+    assert len(state._tick_history[inst.value]) <= state.MAX_TICK_HISTORY
+    assert len(state._oi_history[inst.value]) <= state.MAX_OI_HISTORY
+    assert len(state._volume_history[inst.value]) <= state.MAX_VOLUME_HISTORY
+
+
+def test_state_rejects_duplicate_timestamp_frames():
+    state = SharedIndexMarketDataState()
+    stamp = time_ns()
+    first = _record("duplicate-ts", stamp)
+    second = _record("duplicate-ts", stamp)
+    assert state.on_record(first)
+    assert not state.on_record(second)
+    snapshot = state.snapshot()
+    assert snapshot["accepted_ticks"] == 1
+    assert snapshot["out_of_order_ticks_dropped"] == 1
+
+
+def test_publish_callback_error_does_not_drop_tick_or_break_state():
+    def broken_publish(_record):
+        raise RuntimeError("publish unavailable")
+
+    state = SharedIndexMarketDataState(publish=broken_publish)
+    assert state.on_record(_record("publish-error"))
+    snap = state.snapshot()
+    assert snap["accepted_ticks"] == 1
+    assert snap["instrument_count"] == 1
+    assert snap["publish_callback_errors"] == 1
+    assert state.latest("NSE:NSE:publish-error") is not None
