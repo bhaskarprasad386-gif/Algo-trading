@@ -284,6 +284,12 @@ class CommonWebSocketManager:
         self._recovery_backoff_errors = 0
         self._recovery_backoff_resets = 0
         self._recovery_backoff_last_error: str | None = None
+        # Explicit rollback/teardown reconcile requests survive transient
+        # failures even when no failed socket generation remains to signal it.
+        self._reconcile_retry_pending = False
+        self._reconcile_retry_generation = 0
+        self._reconcile_retry_requests = 0
+        self._reconcile_retry_successes = 0
 
     def _create_socket(self) -> Any:
         """Create a socket whose reconnect policy is owned by this manager."""
@@ -1359,6 +1365,17 @@ class CommonWebSocketManager:
         )
         raise error
 
+    def _request_reconcile_retry(self) -> bool:
+        """Persist a full desired-state reconcile request for the supervisor."""
+        with self._lock:
+            if self._closed:
+                return False
+            self._reconcile_retry_pending = True
+            self._reconcile_retry_generation += 1
+            self._reconcile_retry_requests += 1
+        self._ensure_recovery_supervisor()
+        return True
+
     def _ensure_recovery_supervisor(self) -> None:
         """Start one process-local self-healing loop for the shared broker feed."""
         with self._lock:
@@ -1388,7 +1405,9 @@ class CommonWebSocketManager:
                 if self._closed:
                     return
                 has_intent = bool(self.registry.subscriptions())
-            if not has_intent:
+                reconcile_retry_pending = self._reconcile_retry_pending
+                reconcile_retry_generation = self._reconcile_retry_generation
+            if not has_intent and not reconcile_retry_pending:
                 retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 continue
             try:
@@ -1407,18 +1426,24 @@ class CommonWebSocketManager:
                 with self._lock:
                     pending_failures_to_ack = set(self._failure_recovery_pending_groups)
                     has_pending_failures = bool(pending_failures_to_ack)
+                    reconcile_retry_pending = self._reconcile_retry_pending
+                    reconcile_retry_generation = self._reconcile_retry_generation
                 if cooldown_remaining > 0.0:
                     cooldown_was_active = True
-                elif cooldown_was_active or has_pending_failures:
+                elif cooldown_was_active or has_pending_failures or reconcile_retry_pending:
                     # A disconnected-socket pass alone is not a full desired-state
-                    # reconcile. Pending coalesced failures must survive until the
-                    # registry reconcile actually succeeds (or cooldown permits it).
-                    # A callback may add new failures while reconcile is running;
-                    # acknowledge only the groups included in this pass's snapshot.
+                    # reconcile. Coalesced failures and explicit rollback requests
+                    # remain pending until the complete reconcile succeeds.
                     self._reconcile()
                     cooldown_was_active = False
                     with self._lock:
                         self._failure_recovery_pending_groups.difference_update(pending_failures_to_ack)
+                        if (
+                            reconcile_retry_pending
+                            and self._reconcile_retry_generation == reconcile_retry_generation
+                        ):
+                            self._reconcile_retry_pending = False
+                            self._reconcile_retry_successes += 1
                 retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 with self._lock:
                     self._recovery_backoff_current_seconds = retry_delay
@@ -2437,6 +2462,9 @@ class CommonWebSocketManager:
                 "recovery_backoff_errors": self._recovery_backoff_errors,
                 "recovery_backoff_resets": self._recovery_backoff_resets,
                 "recovery_backoff_last_error": self._recovery_backoff_last_error,
+                "reconcile_retry_pending": self._reconcile_retry_pending,
+                "reconcile_retry_requests": self._reconcile_retry_requests,
+                "reconcile_retry_successes": self._reconcile_retry_successes,
             }
 
     def close(self) -> None:
@@ -2461,6 +2489,7 @@ class CommonWebSocketManager:
                 self._socket_generation.clear()
                 self._failure_recovery_groups.clear()
                 self._failure_recovery_pending_groups.clear()
+                self._reconcile_retry_pending = False
         # Do not hold either manager lock while waiting for consumer callbacks:
         # a callback may legitimately request subscription changes during shutdown.
         for group, (generation, adapter) in callback_adapters:
