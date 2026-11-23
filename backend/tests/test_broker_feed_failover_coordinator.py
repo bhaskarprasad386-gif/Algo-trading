@@ -443,3 +443,26 @@ def test_backup_dropout_fails_closed_until_primary_stability_and_dwell_allow_fai
                        shoonya_connected=False, shoonya_tick_age_seconds=None, now=102)
     assert recovered.active_provider == "angel_one"
     assert recovered.reason == "angel_recovered"
+
+
+def test_backup_dropout_and_angel_recovery_then_backup_recovery_are_deterministic():
+    p = policy()
+    # Switch to Shoonya when Angel becomes stale.
+    backup = p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+                      shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    assert backup.active_provider == "shoonya"
+    # Shoonya drops, Angel is fresh: fail closed immediately, not on stale backup.
+    outage = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                     shoonya_connected=False, shoonya_tick_age_seconds=None, now=11)
+    assert outage.active_provider == "none"
+    assert outage.reason == "shoonya_feed_stale"
+    # On the following evaluation, fresh Angel can recover authority.
+    primary = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                      shoonya_connected=False, shoonya_tick_age_seconds=None, now=12)
+    assert primary.active_provider == "angel_one"
+    assert primary.reason == "angel_recovered"
+    # If Angel then degrades again, fresh Shoonya is selected without stale history.
+    next_backup = p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+                          shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=13)
+    assert next_backup.active_provider == "shoonya"
+    assert next_backup.reason == "shoonya_validated_recovery"
