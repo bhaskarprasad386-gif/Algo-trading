@@ -312,3 +312,16 @@ def test_state_rejects_duplicate_timestamp_frames():
     snapshot = state.snapshot()
     assert snapshot["accepted_ticks"] == 1
     assert snapshot["out_of_order_ticks_dropped"] == 1
+
+
+def test_publish_callback_error_does_not_drop_tick_or_break_state():
+    def broken_publish(_record):
+        raise RuntimeError("publish unavailable")
+
+    state = SharedIndexMarketDataState(publish=broken_publish)
+    assert state.on_record(_record("publish-error"))
+    snap = state.snapshot()
+    assert snap["accepted_ticks"] == 1
+    assert snap["instrument_count"] == 1
+    assert snap["publish_callback_errors"] == 1
+    assert state.latest("NSE|NSE|publish-error") is not None
