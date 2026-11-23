@@ -85,3 +85,22 @@ def test_plan_rejects_shard_index_outside_configured_socket_range():
     with pytest.raises(ValueError, match="shard is outside configured socket range"):
         planner.plan({NIFTY: AffinitySlot(3, 3)}, {NIFTY: tokens(1, 1)})
     assert planner.snapshot()["owners"] == {}
+
+
+def test_commit_revalidates_mutated_plan_before_registry_update():
+    planner = ConsumerSocketAffinity(max_sockets=3)
+    good = planner.plan({NIFTY: AffinitySlot(3, 0)}, {NIFTY: tokens(1, 1)})
+    planner.commit(good)
+    forged = planner.plan({BANK: AffinitySlot(3, 1)}, {BANK: tokens(2, 1)})
+    forged.owner_slots[BANK] = AffinitySlot(3, 9)
+    with pytest.raises(ValueError, match="shard is outside configured socket range"):
+        planner.commit(forged)
+    assert planner.resolve(NIFTY) == AffinitySlot(3, 0)
+    assert planner.resolve(BANK) is None
+
+
+def test_plan_rejects_owner_names_that_collide_after_normalization():
+    planner = ConsumerSocketAffinity()
+    with pytest.raises(ValueError, match="duplicate normalized affinity owner"):
+        planner.plan({"owner": AffinitySlot(3, 0), " owner ": AffinitySlot(3, 1)},
+            {"owner": tokens(1, 1), " owner ": tokens(2, 1)})
