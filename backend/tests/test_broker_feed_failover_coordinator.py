@@ -424,3 +424,22 @@ def test_invalid_health_arguments_leave_policy_state_unchanged():
         assert after.mode == before.mode
         assert after.reason == before.reason
         assert after.switched_at == before.switched_at
+
+
+def test_backup_dropout_fails_closed_until_primary_stability_and_dwell_allow_failback():
+    p = policy()
+    # Start on backup after Angel's feed becomes stale.
+    switched = p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+                       shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=100)
+    assert switched.active_provider == "shoonya"
+    # Primary has recovered, but backup drops before hysteresis is satisfied.
+    dropout = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                      shoonya_connected=False, shoonya_tick_age_seconds=None, now=101)
+    assert dropout.active_provider == "none"
+    assert dropout.mode == "NO_VALID_FEED"
+    assert dropout.reason == "shoonya_feed_stale"
+    # The next health evaluation may select Angel once it is fresh; no stale backup is selected.
+    recovered = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                       shoonya_connected=False, shoonya_tick_age_seconds=None, now=102)
+    assert recovered.active_provider == "angel_one"
+    assert recovered.reason == "angel_recovered"
