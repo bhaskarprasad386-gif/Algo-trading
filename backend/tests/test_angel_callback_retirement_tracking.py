@@ -279,7 +279,7 @@ def test_snapshot_reports_registry_socket_token_mismatch_and_clears_when_aligned
     mismatch = manager.snapshot()["socket_token_set_mismatches"]
     assert len(mismatch) == 1
     assert mismatch[0]["missing_from_socket"] == []
-    assert mismatch[0]["unexpected_on_socket"] == [[expected[0], "OLD-999"]]
+    assert mismatch[0]["unexpected_on_socket"] == [(expected[0], "OLD-999")]
 
     manager._socket_tokens[group] = {expected}
     assert manager.snapshot()["socket_token_set_mismatches"] == []
