@@ -117,3 +117,26 @@ def test_trigger_reset_clears_old_epoch_anchor_pending_and_inflight():
     # New runner epoch must establish a fresh baseline, not rotate against old price.
     assert not trigger.on_spot("NIFTY", 24000)
     assert trigger.snapshot()["successful_anchor_spot"] == {}
+
+
+def test_late_rotation_completion_from_prior_epoch_cannot_commit_new_anchor():
+    clock = FakeClock()
+    trigger = SpotRotationTrigger(thresholds={"NIFTY": 50}, cooldown_seconds=2, clock=clock)
+    assert not trigger.on_spot("NIFTY", 22000)
+    assert trigger.on_spot("NIFTY", 22060)
+    old_epoch = trigger.current_epoch()
+
+    trigger.reset()
+    assert not trigger.on_spot("NIFTY", 24000)
+    assert trigger.on_spot("NIFTY", 24060)
+    new_epoch = trigger.current_epoch()
+    assert new_epoch != old_epoch
+    assert trigger.snapshot()["inflight_underlyings"] == ["NIFTY"]
+
+    trigger.rotation_result("NIFTY", success=True, spot=22060, epoch=old_epoch)
+    state = trigger.snapshot()
+    assert state["inflight_underlyings"] == ["NIFTY"]
+    assert state["successful_anchor_spot"] == {}
+
+    trigger.rotation_result("NIFTY", success=True, spot=24060, epoch=new_epoch)
+    assert trigger.snapshot()["successful_anchor_spot"]["NIFTY"] == 24060
