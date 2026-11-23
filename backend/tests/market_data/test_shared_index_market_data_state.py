@@ -300,3 +300,15 @@ def test_tick_histories_have_hard_caps_even_for_repeated_timestamps():
     assert len(state._tick_history[inst.value]) <= state.MAX_TICK_HISTORY
     assert len(state._oi_history[inst.value]) <= state.MAX_OI_HISTORY
     assert len(state._volume_history[inst.value]) <= state.MAX_VOLUME_HISTORY
+
+
+def test_state_rejects_duplicate_timestamp_frames():
+    state = SharedIndexMarketDataState()
+    stamp = time_ns()
+    first = _record("duplicate-ts", stamp)
+    second = _record("duplicate-ts", stamp)
+    assert state.on_record(first)
+    assert not state.on_record(second)
+    snapshot = state.snapshot()
+    assert snapshot["accepted_ticks"] == 1
+    assert snapshot["out_of_order_ticks_dropped"] == 1
