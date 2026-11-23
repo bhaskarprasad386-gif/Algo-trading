@@ -77,11 +77,11 @@ class MarketDataFailoverCoordinator:
             if previous is not None and stamp <= previous:
                 self._suppressed += 1
                 return False
-            self._last_timestamp[identity] = stamp
             # Cache an independent copy: consumer callbacks may mutate their payload.
             self._latest[identity] = deepcopy(payload)
             active = self._decision.active_provider if self._decision else "angel_one"
             if provider != active:
+                self._last_timestamp[identity] = stamp
                 self._suppressed += 1
                 return False
             # Serialize selection and forwarding so a provider switch cannot
@@ -98,9 +98,27 @@ class MarketDataFailoverCoordinator:
             except Exception:
                 self._callback_errors += 1
                 return False
+            self._last_timestamp[identity] = stamp
             self._last_forwarded_timestamp[key] = stamp
             self._forwarded += 1
             return True
+
+    def forget_instrument(self, instrument_key: str) -> bool:
+        """Remove cached ticks and timestamp watermarks for a retired instrument.
+
+        Call when the subscription universe drops an instrument; safe to call
+        repeatedly. Normalized aliases share the same canonical key.
+        """
+        if not isinstance(instrument_key, str) or not instrument_key.strip():
+            raise ValueError("instrument_key must be a non-empty string")
+        key = instrument_key.strip()
+        with self._lock:
+            identities = [identity for identity in self._latest if identity[1] == key]
+            for identity in identities:
+                self._latest.pop(identity, None)
+                self._last_timestamp.pop(identity, None)
+            removed_forward = self._last_forwarded_timestamp.pop(key, None) is not None
+            return bool(identities or removed_forward)
 
     def evaluate(
         self,
