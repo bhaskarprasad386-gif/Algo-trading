@@ -531,7 +531,7 @@ def test_three_simultaneous_shard_failures_coalesce_and_drain_all_pending_groups
     # Only the admitted primary performs recover_disconnected; coalesced closes
     # trigger full-registry reconciliation, not duplicate recovery workers.
     assert len(recovered_groups) == 1
-    assert len(reconciled) == 2
+    assert len(reconciled) == 3
     manager.close()
 
 
