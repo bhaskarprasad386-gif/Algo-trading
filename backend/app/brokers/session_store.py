@@ -55,6 +55,17 @@ class BrokerSessionStore:
             return exc
         return None
 
+    def commit_if_current(
+        self, owner_id: int, broker: str, adapter: BrokerAdapter, operation
+    ) -> bool:
+        """Run a metadata commit only while this adapter remains the current session."""
+        key = self._key(owner_id, broker)
+        with self._lock:
+            if self._sessions.get(key) is not adapter:
+                return False
+            operation()
+            return True
+
     def remove_if_current(
         self, owner_id: int, broker: str, adapter: BrokerAdapter
     ) -> bool:
