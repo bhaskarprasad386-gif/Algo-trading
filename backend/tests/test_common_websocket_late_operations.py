@@ -220,3 +220,52 @@ def test_closed_manager_rejects_new_broker_operation_without_worker_admission():
     assert manager.snapshot()["socket_operation_worker_count"] == 0
     assert manager.snapshot()["socket_operation_worker_admission_rejections"] == 0
     manager.close()
+
+
+def test_timeout_completion_race_does_not_reconcile_if_shutdown_wins(monkeypatch):
+    manager = CommonWebSocketManager(socket_factory=lambda: _Socket())
+    group = SocketGroup(mode=1, shard=0)
+    socket = _Socket()
+    with manager._lock:
+        manager._sockets[group] = socket
+        manager._socket_tokens[group] = {(1, "123")}
+        manager._socket_generation[group] = 6
+        manager._socket_generation_counter[group] = 6
+
+
+    reconcile_calls = []
+    manager._reconcile = lambda: reconcile_calls.append("reconcile")
+    release_operation = Event()
+    original_event = Event
+    shutdown_triggered = {"value": False}
+
+
+    class _CompletionEvent:
+        def __init__(self):
+            self._event = original_event()
+        def set(self):
+            self._event.set()
+        def is_set(self):
+            return self._event.is_set()
+        def wait(self, timeout=None):
+            result = self._event.wait(timeout)
+            if not shutdown_triggered["value"]:
+                shutdown_triggered["value"] = True
+                manager.close()
+                # Mimic wait returning false even though completion raced in.
+                return False
+            return result
+
+
+    monkeypatch.setattr(common_websocket_module, "Event", _CompletionEvent)
+    with pytest.raises(TimeoutError, match="exceeded"):
+        manager._run_socket_operation_bounded(
+            socket=socket,
+            group=group,
+            operation=release_operation.set,
+            operation_name="subscribe",
+        )
+    assert manager._closed
+    assert reconcile_calls == [], "shutdown winning the completion race must not trigger reconcile"
+    assert manager.snapshot()["socket_operation_worker_count"] == 0
+    manager.close()
