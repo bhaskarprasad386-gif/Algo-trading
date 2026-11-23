@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from typing import Any
+from time import monotonic
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -43,15 +44,19 @@ class ShoonyaRESTClient:
 
     base_url = "https://api.shoonya.com/NorenWClientAPI"
 
-    def __init__(self, *, uid: str, account_id: str, access_token: str, http: Any | None = None):
+    def __init__(self, *, uid: str, account_id: str, access_token: str, expires_at_monotonic: float | None = None, http: Any | None = None):
         self.uid = uid
         self.account_id = account_id
         self.access_token = access_token
+        self.expires_at_monotonic = expires_at_monotonic
         self.http = http or requests.Session()
 
     def _post(self, endpoint: str, payload: dict[str, Any]) -> Any:
         if not self.access_token:
             raise RuntimeError("Shoonya session is disconnected")
+        if self.expires_at_monotonic is not None and monotonic() >= self.expires_at_monotonic:
+            self.disconnect()
+            raise RuntimeError("Shoonya OAuth token expired; reconnect required")
         response = self.http.post(
             f"{self.base_url}/{endpoint}",
             headers={
@@ -82,6 +87,7 @@ class ShoonyaRESTClient:
     def disconnect(self) -> None:
         token = self.access_token
         self.access_token = ""
+        self.expires_at_monotonic = None
         if token:
             try:
                 response = self.http.post(
@@ -174,6 +180,7 @@ def shoonya_verify(
             uid=authenticated.uid,
             account_id=authenticated.account_id,
             access_token=authenticated.access_token,
+            expires_at_monotonic=authenticated.expires_at_monotonic,
         )
         adapter = ShoonyaAdapter(client)
         adapter.connect(uid=authenticated.uid, account_id=authenticated.account_id)
