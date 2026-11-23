@@ -618,7 +618,8 @@ def test_concurrent_option_rotations_are_serialized_and_final_owner_is_atomic():
     lifecycle = SharedIndexFeedLifecycle(manager=manager)
     initial = _options()
     lifecycle.start_options(initial)
-    first = _options(shift=25)
+    manager.rotation_subscribe_calls.clear()  # Ignore initial owner registration; count rotations only.
+    first = _options(shift=25
     second = _options(shift=50)
     manager.block_once = True
     first_errors = []
@@ -697,7 +698,10 @@ def test_stop_waits_for_inflight_option_rotation_then_clears_all_owner_keys():
     assert stop_started.wait(timeout=1.0)
     # The stop thread is launched while rotation holds the lifecycle lock;
     # teardown must not reach consumer clearing until rotation releases it.
-    assert lifecycle._lock.locked()
+    lock_was_held = not lifecycle._lock.acquire(blocking=False)
+    if not lock_was_held:
+        lifecycle._lock.release()
+    assert lock_was_held
     assert not manager.stop_clear_entered.is_set()
     manager.release.set()
     rotation_thread.join(timeout=2.0)
