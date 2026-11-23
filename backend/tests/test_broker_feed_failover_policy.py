@@ -138,3 +138,42 @@ def test_backup_switch_time_restarts_after_no_valid_feed_recovery():
                  shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=30)
     assert s.active_provider == "shoonya"
     assert s.switched_at == 30
+
+
+def test_failback_is_blocked_when_two_sockets_degrade_even_with_fresh_tick():
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    # Healthy-tick stability begins at 11, but two failed sockets reset it.
+    p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=11)
+    s = p.update(failed_angel_sockets=2, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=20)
+    assert s.active_provider == "shoonya"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=21)
+    assert s.active_provider == "shoonya"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=26)
+    assert s.active_provider == "angel_one"
+
+
+def test_socket_failure_count_above_three_is_rejected():
+    p = policy()
+    try:
+        p.update(failed_angel_sockets=4, angel_tick_age_seconds=0.1,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.1, now=1)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("socket failure count above the 3-socket maximum must be rejected")
+
+
+def test_non_finite_failover_timing_is_rejected():
+    for invalid in (float("nan"), float("inf"), float("-inf")):
+        try:
+            MarketDataFailoverPolicy(angel_tick_fresh_seconds=invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("non-finite timing values must be rejected")

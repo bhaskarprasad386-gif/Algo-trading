@@ -6,6 +6,7 @@ be authoritative, but it does not open sockets or route ticks/orders.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from threading import RLock
 from time import monotonic
 from typing import Literal
@@ -53,8 +54,8 @@ class MarketDataFailoverPolicy:
             angel_failback_stability_seconds,
             minimum_shoonya_dwell_seconds,
         )
-        if any(value <= 0 for value in values):
-            raise ValueError("failover timing values must be positive")
+        if any(not isfinite(value) or value <= 0 for value in values):
+            raise ValueError("failover timing values must be finite and positive")
         self.angel_tick_fresh_seconds = angel_tick_fresh_seconds
         self.shoonya_tick_fresh_seconds = shoonya_tick_fresh_seconds
         self.angel_failover_stale_seconds = angel_failover_stale_seconds
@@ -78,8 +79,8 @@ class MarketDataFailoverPolicy:
     ) -> FailoverSnapshot:
         """Return a provider selection decision using locally measured tick ages."""
         now = monotonic() if now is None else now
-        if failed_angel_sockets < 0:
-            raise ValueError("failed_angel_sockets cannot be negative")
+        if not 0 <= failed_angel_sockets <= 3:
+            raise ValueError("failed_angel_sockets must be between 0 and 3")
         angel_fresh = (
             angel_tick_age_seconds is not None
             and 0 <= angel_tick_age_seconds <= self.angel_tick_fresh_seconds
