@@ -648,3 +648,31 @@ def test_concurrent_failback_and_backup_tick_handoff_delivers_timestamp_once():
     # failback or rejected after the switch; the timestamp is never duplicated.
     assert delivered in ([("shoonya", 1000)], [("angel_one", 1000)], [])
     assert c.snapshot()["forwarded_ticks"] == len(delivered)
+
+def test_callback_failure_allows_same_provider_same_timestamp_retry():
+    attempts = []
+    def callback(provider, record):
+        attempts.append(record["timestamp_ns"])
+        if len(attempts) == 1:
+            raise RuntimeError("transient failure")
+    c = MarketDataFailoverCoordinator(on_record=callback)
+    same_tick = tick("NIFTY", 1234, 100)
+    assert c.observe("angel_one", same_tick) is False
+    assert c.observe("angel_one", same_tick) is True
+    assert attempts == [1234, 1234]
+    snap = c.snapshot()
+    assert snap["callback_errors"] == 1
+    assert snap["forwarded_ticks"] == 1
+
+
+def test_forget_instrument_clears_all_provider_cache_and_watermarks():
+    received = []
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: received.append((p, r["timestamp_ns"])))
+    assert c.observe("angel_one", tick(" NIFTY ", 100, 100)) is True
+    assert c.observe("shoonya", tick("NIFTY", 101, 101)) is False
+    assert c.forget_instrument("NIFTY") is True
+    assert c.snapshot()["latest_record_count"] == 0
+    assert c.forget_instrument("NIFTY") is False
+    # After universe re-add, older timestamps may be accepted as a fresh epoch.
+    assert c.observe("angel_one", tick("NIFTY", 1, 99)) is True
+    assert received == [("angel_one", 100), ("angel_one", 99)]
