@@ -70,6 +70,8 @@ class ConsumerSocketAffinity:
                 raise ValueError("token pairs require positive exchange type and nonempty token")
             if len(tokens) > self.max_tokens_per_socket:
                 raise ValueError(f"owner {name} exceeds socket token capacity")
+            if slot.shard >= self.max_sockets:
+                raise ValueError(f"owner {name} shard is outside configured socket range")
             normalized_slots[name] = slot
             normalized_tokens[name] = tokens
         groups = set(normalized_slots.values())
