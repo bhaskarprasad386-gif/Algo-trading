@@ -170,6 +170,28 @@ def test_manager_shutdown_blocks_reconcile_and_recovery_after_close():
 
 
 
+def test_supervisor_drains_coalesced_failure_groups_after_successful_recovery():
+    manager = CommonWebSocketManager()
+    manager._recovery_interval_seconds = 0.01
+    pending = {SocketGroup(1, 1), SocketGroup(1, 2)}
+    manager._failure_recovery_pending_groups.update(pending)
+    recovery_succeeded = Event()
+    manager.registry.subscriptions = lambda: [object()]
+
+    def recover(**kwargs):
+        recovery_succeeded.set()
+        return 0
+
+    manager.recover_disconnected = recover
+    manager._ensure_recovery_supervisor()
+    assert recovery_succeeded.wait(timeout=1.0)
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["failure_recovery_pending_groups"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert manager.snapshot()["failure_recovery_pending_groups"] == []
+    manager.close()
+
+
 def test_recovery_supervisor_exits_on_shutdown_without_retrying():
     manager = CommonWebSocketManager()
     manager._recovery_interval_seconds = 0.01
