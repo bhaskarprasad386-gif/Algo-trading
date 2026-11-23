@@ -432,3 +432,28 @@ def test_supervisor_keeps_pending_failures_when_reconcile_raises():
     assert state["failure_recovery_pending_groups"] == ["1:3"]
     assert state["recovery_backoff_errors"] == 1
     manager.close()
+
+
+def test_supervisor_does_not_ack_new_same_group_failure_during_reconcile():
+    manager = CommonWebSocketManager()
+    group = SocketGroup(mode=1, shard=5)
+    with manager._lock:
+        first_generation = manager._mark_failure_recovery_pending_locked(group)
+    observed_generations = []
+
+    def reconcile_with_new_same_group_failure():
+        with manager._lock:
+            observed_generations.append(manager._failure_recovery_pending_generations[group])
+            manager._mark_failure_recovery_pending_locked(group)
+
+    manager._reconcile = reconcile_with_new_same_group_failure
+    _run_one_recovery_supervisor_iteration(manager)
+    state = manager.snapshot()
+    assert first_generation == 1
+    assert observed_generations == [1]
+    assert state["failure_recovery_pending_groups"] == ["1:5"], (
+        "the supervisor must leave a same-group failure arriving after its snapshot pending"
+    )
+    with manager._lock:
+        assert manager._failure_recovery_pending_generations[group] == 2
+    manager.close()
