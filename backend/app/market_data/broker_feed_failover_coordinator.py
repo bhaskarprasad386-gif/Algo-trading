@@ -6,6 +6,7 @@ forwarded to the consumer. It does not start sockets or subscribe instruments.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from threading import RLock
 from typing import Any, Callable, Literal
 
@@ -69,7 +70,7 @@ class MarketDataFailoverCoordinator:
                 self._invalid_records += 1
             return False
         identity = (provider, key)
-        payload = dict(record)
+        payload = deepcopy(record)
         with self._lock:
             previous = self._last_timestamp.get(identity)
             if previous is not None and stamp <= previous:
