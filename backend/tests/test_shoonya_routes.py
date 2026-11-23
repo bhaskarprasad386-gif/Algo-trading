@@ -487,3 +487,50 @@ def test_connection_metadata_commit_rejects_superseded_adapter():
     ) is True
     assert committed == ["current"]
     broker_sessions.remove(owner_id, "shoonya")
+
+
+def test_metadata_commit_lock_blocks_concurrent_session_replacement():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+
+    owner_id = 99177
+    old = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="old"))
+    new = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="new"))
+    broker_sessions.replace(owner_id, "shoonya", old)
+    operation_entered = Event()
+    release_operation = Event()
+    replacement_entered = Event()
+    committed = []
+
+    def commit_operation():
+        operation_entered.set()
+        assert release_operation.wait(timeout=2)
+        committed.append("old-session-metadata")
+
+
+    def replace_session():
+        replacement_entered.set()
+        return broker_sessions.replace(owner_id, "shoonya", new)
+
+
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            commit_future = pool.submit(
+                broker_sessions.commit_if_current, owner_id, "shoonya", old, commit_operation
+            )
+            assert operation_entered.wait(timeout=2)
+            replacement_future = pool.submit(replace_session)
+            assert replacement_entered.wait(timeout=2)
+            # The callback holds the registry lock, so replacement cannot finish
+            # until metadata commit has completed.
+            assert replacement_future.done() is False
+            release_operation.set()
+            assert commit_future.result(timeout=2) is True
+            replacement_future.result(timeout=2)
+        assert committed == ["old-session-metadata"]
+        assert broker_sessions.get(owner_id, "shoonya") is new
+    finally:
+        release_operation.set()
+        broker_sessions.remove(owner_id, "shoonya")
