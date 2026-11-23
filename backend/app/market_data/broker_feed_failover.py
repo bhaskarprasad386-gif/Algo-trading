@@ -27,9 +27,10 @@ class FailoverSnapshot:
 class MarketDataFailoverPolicy:
     """Hysteretic Angel One -> Shoonya -> Angel One health-based policy.
 
-    Angel One is not abandoned for a single socket failure. Failover is requested
-    only when >=2 Angel sockets are down or its quote feed is stale. Shoonya
-    must be connected and have a fresh tick before it can be selected.
+    Socket-count degradation alone never switches providers. Angel One remains
+    primary while its remaining socket(s) deliver fresh ticks. Failover is
+    allowed only after feed freshness fails past the configured grace interval,
+    and Shoonya must be connected with a fresh tick before selection.
     """
 
     ANGEL_ONE: Provider = "angel_one"
@@ -88,16 +89,16 @@ class MarketDataFailoverPolicy:
             and shoonya_tick_age_seconds is not None
             and 0 <= shoonya_tick_age_seconds <= self.shoonya_tick_fresh_seconds
         )
-        angel_healthy = failed_angel_sockets < 2 and angel_fresh
+        angel_healthy = angel_fresh
+        angel_stable = failed_angel_sockets < 2 and angel_fresh
         failover_needed = (
-            failed_angel_sockets >= 2
-            or angel_tick_age_seconds is None
+            angel_tick_age_seconds is None
             or angel_tick_age_seconds >= self.angel_failover_stale_seconds
-            or angel_tick_age_seconds < 0
+            or (failed_angel_sockets >= 2 and not angel_fresh)
         )
 
         with self._lock:
-            if angel_healthy:
+            if angel_stable:
                 if self._angel_healthy_since is None:
                     self._angel_healthy_since = now
             else:
@@ -109,8 +110,8 @@ class MarketDataFailoverPolicy:
                         self._active = self.SHOONYA
                         self._mode = "BACKUP"
                         self._reason = (
-                            "two_or_more_angel_sockets_failed"
-                            if failed_angel_sockets >= 2
+                            "two_or_more_angel_sockets_failed_and_feed_unhealthy"
+                            if failed_angel_sockets >= 2 and not angel_fresh
                             else "angel_feed_stale"
                         )
                         self._switched_at = now
@@ -118,10 +119,14 @@ class MarketDataFailoverPolicy:
                         self._active = self.NONE
                         self._mode = "NO_VALID_FEED"
                         self._reason = "angel_unhealthy_shoonya_not_ready"
-                else:
+                elif angel_fresh:
                     self._active = self.ANGEL_ONE
                     self._mode = "PRIMARY"
                     self._reason = "angel_healthy"
+                else:
+                    self._active = self.NONE
+                    self._mode = "DEGRADED_WAIT"
+                    self._reason = "angel_tick_stale_within_failover_grace"
             elif self._active == self.SHOONYA:
                 dwell_elapsed = (
                     self._switched_at is not None
@@ -149,7 +154,7 @@ class MarketDataFailoverPolicy:
                     self._mode = "BACKUP"
                     self._reason = "shoonya_validated_recovery"
                     self._switched_at = now
-                elif angel_healthy:
+                elif angel_fresh:
                     self._active = self.ANGEL_ONE
                     self._mode = "PRIMARY"
                     self._reason = "angel_recovered"

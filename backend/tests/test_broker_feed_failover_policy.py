@@ -19,18 +19,18 @@ def test_single_angel_socket_failure_keeps_primary():
     assert s.mode == "PRIMARY"
 
 
-def test_two_angel_sockets_failed_switch_only_to_fresh_shoonya():
+def test_two_angel_sockets_failed_but_remaining_socket_is_fresh_keeps_angel():
     p = policy()
     s = p.update(failed_angel_sockets=2, angel_tick_age_seconds=0.4,
                  shoonya_connected=True, shoonya_tick_age_seconds=0.4, now=10)
-    assert s.active_provider == "shoonya"
-    assert s.mode == "BACKUP"
-    assert s.reason == "two_or_more_angel_sockets_failed"
+    assert s.active_provider == "angel_one"
+    assert s.mode == "PRIMARY"
+    assert s.reason == "angel_healthy"
 
 
-def test_two_failures_with_unready_shoonya_disable_feed_not_fake_live():
+def test_two_failures_with_unready_shoonya_do_not_use_stale_feed():
     p = policy()
-    s = p.update(failed_angel_sockets=2, angel_tick_age_seconds=0.2,
+    s = p.update(failed_angel_sockets=2, angel_tick_age_seconds=4.2,
                  shoonya_connected=True, shoonya_tick_age_seconds=5.0, now=10)
     assert s.active_provider == "none"
     assert s.mode == "NO_VALID_FEED"
@@ -46,7 +46,7 @@ def test_stale_angel_feed_triggers_backup_even_if_socket_count_is_one():
 
 def test_failback_waits_for_stability_and_minimum_backup_dwell():
     p = policy()
-    p.update(failed_angel_sockets=2, angel_tick_age_seconds=0.2,
+    p.update(failed_angel_sockets=2, angel_tick_age_seconds=4.2,
              shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
     s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
                  shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=12)
@@ -62,7 +62,7 @@ def test_failback_waits_for_stability_and_minimum_backup_dwell():
 
 def test_stale_shoonya_during_backup_does_not_claim_live_provider():
     p = policy()
-    p.update(failed_angel_sockets=2, angel_tick_age_seconds=0.2,
+    p.update(failed_angel_sockets=2, angel_tick_age_seconds=4.2,
              shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
     s = p.update(failed_angel_sockets=2, angel_tick_age_seconds=4.0,
                  shoonya_connected=False, shoonya_tick_age_seconds=None, now=11)
@@ -70,7 +70,7 @@ def test_stale_shoonya_during_backup_does_not_claim_live_provider():
     assert s.mode == "NO_VALID_FEED"
 
 
-def test_negative_tick_age_and_negative_failure_count_rejected():
+def test_negative_socket_count_rejected():
     p = policy()
     try:
         p.update(failed_angel_sockets=-1, angel_tick_age_seconds=0.1,
@@ -79,3 +79,12 @@ def test_negative_tick_age_and_negative_failure_count_rejected():
         pass
     else:
         raise AssertionError("negative socket failure count must be rejected")
+
+
+def test_negative_tick_age_is_not_accepted_as_fresh():
+    p = policy()
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=-0.1,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.1, now=1)
+    assert s.angel_healthy is False
+    assert s.active_provider == "angel_one"
+    assert s.mode == "DEGRADED_WAIT"
