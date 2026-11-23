@@ -1001,18 +1001,6 @@ class CommonWebSocketManager:
                     if self._connect_pending_generation.get(group) == generation:
                         self._connect_pending_generation.pop(group, None)
                 completed.set()
-                if tracked is not None and tracked.get("timed_out"):
-                    # A late broker mutation may finish after the socket has
-                    # already been retired. Reconcile immediately after the worker
-                    # exits so registry intent is replayed on a fresh transport,
-                    # rather than waiting for the periodic recovery interval.
-                    try:
-                        self._reconcile()
-                    except Exception as reconcile_exc:
-                        app_logger.warning(
-                            "Common feed reconcile after late broker operation completion failed group=%s error=%s: %s",
-                            group_key, type(reconcile_exc).__name__, reconcile_exc,
-                        )
 
         worker = Thread(
             target=_connect,
