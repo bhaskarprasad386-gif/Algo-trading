@@ -691,6 +691,58 @@ def test_socket_operation_is_rejected_after_manager_shutdown():
     assert manager.snapshot()["socket_operation_worker_count"] == 0
 
 
+def test_coalesced_callback_ack_preserves_new_same_group_failure_generation():
+    manager = CommonWebSocketManager()
+    manager._recovery_interval_seconds = 5.0
+    primary = SocketGroup(1, 0)
+    coalesced = SocketGroup(1, 1)
+    primary_socket, coalesced_socket = BlockingSocket(), BlockingSocket()
+    for group, socket in ((primary, primary_socket), (coalesced, coalesced_socket)):
+        manager._sockets[group] = socket
+        manager._socket_generation[group] = 1
+        manager._socket_generation_counter[group] = 1
+        manager._socket_tokens[group] = {(1, str(group.shard))}
+
+    primary_close_started = Event()
+    coalesced_reconciled = Event()
+    primary_callback = []
+
+    def controlled_close(socket, **kwargs):
+        callback = kwargs.get("on_finished")
+        if kwargs.get("reason") == "failure_callback":
+            primary_callback.append(callback)
+            primary_close_started.set()
+            return Thread()
+        if kwargs.get("reason") == "coalesced_failure_callback":
+            if callback:
+                callback()
+            return Thread()
+        return Thread()
+
+    manager._close_socket_tracked = controlled_close
+    manager.recover_disconnected = lambda **kwargs: 0
+
+    def reconcile_with_new_failure():
+        with manager._lock:
+            manager._mark_failure_recovery_pending_locked(coalesced)
+        coalesced_reconciled.set()
+
+    manager._reconcile = reconcile_with_new_failure
+    manager._schedule_socket_failure_recovery(primary, primary_socket, 1, "primary")
+    assert primary_close_started.wait(timeout=1.0)
+    manager._schedule_socket_failure_recovery(coalesced, coalesced_socket, 1, "coalesced")
+    assert coalesced_reconciled.wait(timeout=1.0)
+    state = manager.snapshot()
+    assert state["failure_recovery_pending_groups"] == ["1:1"]
+    assert manager._failure_recovery_pending_generations[coalesced] == 2
+
+    # Release the admitted primary worker with a normal reconcile, then shut down.
+    manager._reconcile = lambda: None
+    assert primary_callback and callable(primary_callback[0])
+    primary_callback[0]()
+    manager.close()
+
+
 def test_coalesced_failure_close_callback_after_shutdown_does_not_reconcile():
     callbacks = []
     manager = CommonWebSocketManager()
