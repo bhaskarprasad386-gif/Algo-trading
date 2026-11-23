@@ -484,6 +484,53 @@ def test_simultaneous_shard_failures_coalesce_callback_recovery_workers():
     manager.close()
 
 
+def test_three_simultaneous_shard_failures_coalesce_and_drain_all_pending_groups():
+    release = Event()
+    started = Event()
+    manager = CommonWebSocketManager()
+    groups = [SocketGroup(1, shard) for shard in range(3)]
+    sockets = [BlockingSocket() for _ in groups]
+    for group, socket in zip(groups, sockets):
+        manager._sockets[group] = socket
+        manager._socket_generation[group] = 1
+        manager._socket_generation_counter[group] = 1
+        manager._socket_tokens[group] = {(1, str(group.shard))}
+
+    def completed_close(*args, **kwargs):
+        callback = kwargs.get("on_finished")
+        if callback:
+            callback()
+        return Thread()
+
+    manager._close_socket_tracked = completed_close
+    recovered_groups = []
+
+    def wait_recovery(**kwargs):
+        started.set()
+        release.wait(timeout=1.5)
+        recovered_groups.append(kwargs.get("group"))
+        return 0
+
+    manager.recover_disconnected = wait_recovery
+    manager._reconcile = lambda: None
+    manager._schedule_socket_failure_recovery(groups[0], sockets[0], 1, "first failure")
+    assert started.wait(timeout=1.0)
+    manager._schedule_socket_failure_recovery(groups[1], sockets[1], 1, "second failure")
+    manager._schedule_socket_failure_recovery(groups[2], sockets[2], 1, "third failure")
+    state = manager.snapshot()
+    assert state["failure_recovery_worker_active"] is True
+    assert state["failure_recovery_pending_groups"] == ["1:1", "1:2"]
+    release.set()
+    deadline = time.monotonic() + 2.0
+    while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    state = manager.snapshot()
+    assert state["failure_recovery_worker_active"] is False
+    assert state["failure_recovery_pending_groups"] == []
+    assert len(recovered_groups) == 3
+    manager.close()
+
+
 def test_shutdown_clears_coalesced_failure_recovery_queue():
     manager = CommonWebSocketManager()
     manager._failure_recovery_pending_groups.add(SocketGroup(1, 2))
