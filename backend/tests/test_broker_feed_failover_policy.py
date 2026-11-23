@@ -442,7 +442,8 @@ def test_angel_stability_clock_resets_after_intermittent_health_during_backup():
     assert s.active_provider == "shoonya"
     s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
                  shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=910)
-    assert s.active_provider == "shoonya"
+    assert s.active_provider == "angel_one"
+    assert s.reason == "angel_stable_failback"
     s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
                  shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=914)
     assert s.active_provider == "angel_one"
