@@ -82,8 +82,14 @@ class MarketDataFailoverPolicy:
         now = monotonic() if now is None else now
         if not isfinite(now):
             raise ValueError("update timestamp must be finite")
-        if not 0 <= failed_angel_sockets <= 3:
-            raise ValueError("failed_angel_sockets must be between 0 and 3")
+        if (
+            isinstance(failed_angel_sockets, bool)
+            or not isinstance(failed_angel_sockets, int)
+            or not 0 <= failed_angel_sockets <= 3
+        ):
+            raise ValueError("failed_angel_sockets must be an integer between 0 and 3")
+        if not isinstance(shoonya_connected, bool):
+            raise ValueError("shoonya_connected must be a boolean")
         for name, age in (
             ("angel_tick_age_seconds", angel_tick_age_seconds),
             ("shoonya_tick_age_seconds", shoonya_tick_age_seconds),
