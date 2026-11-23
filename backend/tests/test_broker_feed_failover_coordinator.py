@@ -676,3 +676,23 @@ def test_forget_instrument_clears_all_provider_cache_and_watermarks():
     # After universe re-add, older timestamps may be accepted as a fresh epoch.
     assert c.observe("angel_one", tick("NIFTY", 1, 99)) is True
     assert received == [("angel_one", 100), ("angel_one", 99)]
+
+def test_prune_instruments_removes_retired_provider_state_and_is_idempotent():
+    delivered = []
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: delivered.append((p, r["instrument_key"])))
+    assert c.observe("angel_one", tick("NIFTY", 10, 100)) is True
+    assert c.observe("angel_one", tick("BANKNIFTY", 20, 200)) is True
+    assert c.observe("shoonya", tick("BANKNIFTY", 21, 201)) is False
+    assert c.prune_instruments({"NIFTY"}) == 1
+    assert c.snapshot()["latest_record_count"] == 1
+    assert c.prune_instruments({"NIFTY"}) == 0
+    # Retired instrument may reappear with a new timestamp epoch.
+    assert c.observe("angel_one", tick("BANKNIFTY", 1, 199)) is True
+    assert delivered[-1] == ("angel_one", "BANKNIFTY")
+
+
+def test_prune_instruments_rejects_string_argument():
+    import pytest
+    c = MarketDataFailoverCoordinator()
+    with pytest.raises(TypeError, match="not a string"):
+        c.prune_instruments("NIFTY")
