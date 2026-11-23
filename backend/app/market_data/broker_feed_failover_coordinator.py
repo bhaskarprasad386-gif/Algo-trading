@@ -78,7 +78,8 @@ class MarketDataFailoverCoordinator:
                 self._suppressed += 1
                 return False
             self._last_timestamp[identity] = stamp
-            self._latest[identity] = payload
+            # Cache an independent copy: consumer callbacks may mutate their payload.
+            self._latest[identity] = deepcopy(payload)
             active = self._decision.active_provider if self._decision else "angel_one"
             if provider != active:
                 self._suppressed += 1
