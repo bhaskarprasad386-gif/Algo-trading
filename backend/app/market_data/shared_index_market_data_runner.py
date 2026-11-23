@@ -410,7 +410,10 @@ class SharedIndexMarketDataRunner:
                 self.lifecycle.stop()
             finally:
                 self._started_at = None
-        return self.snapshot()
+            # Capture OFF status before releasing the lifecycle lock. Otherwise a
+            # concurrent ON can complete first and make this stop() return the
+            # newer enabled snapshot rather than the state it just established.
+            return self.snapshot()
 
     def flush_rotations(self) -> tuple[str, ...]:
         # Serialize external pending flushes with live spot callbacks. Successful
