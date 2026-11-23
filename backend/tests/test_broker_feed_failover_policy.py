@@ -626,3 +626,20 @@ def test_angel_stale_grace_period_waits_until_failover_boundary_without_claiming
     assert s.active_provider == "shoonya"
     assert s.mode == "BACKUP"
     assert s.reason == "angel_feed_stale"
+
+
+def test_two_socket_failures_trigger_failover_at_tick_freshness_boundary():
+    p = policy()
+    # Two failed sockets make a stale remaining feed failover-eligible as soon
+    # as freshness expires (even before the broader stale-grace threshold).
+    s = p.update(
+        failed_angel_sockets=2,
+        angel_tick_age_seconds=1.01,
+        shoonya_connected=True,
+        shoonya_tick_age_seconds=0.2,
+        now=50,
+    )
+    assert s.active_provider == "shoonya"
+    assert s.mode == "BACKUP"
+    assert s.reason == "two_or_more_angel_sockets_failed_and_feed_unhealthy"
+    assert s.switched_at == 50
