@@ -592,3 +592,37 @@ def test_socket_operation_is_rejected_after_manager_shutdown():
         raise AssertionError("closed manager must reject broker mutations")
     assert called == []
     assert manager.snapshot()["socket_operation_worker_count"] == 0
+
+
+def test_coalesced_failure_close_callback_after_shutdown_does_not_reconcile():
+    callbacks = []
+    manager = CommonWebSocketManager()
+    groups = [SocketGroup(1, 0), SocketGroup(1, 1)]
+    sockets = [BlockingSocket(), BlockingSocket()]
+    for group, socket in zip(groups, sockets):
+        manager._sockets[group] = socket
+        manager._socket_generation[group] = 1
+        manager._socket_generation_counter[group] = 1
+        manager._socket_tokens[group] = {(1, str(group.shard))}
+
+    manager._close_socket_tracked = lambda *args, **kwargs: (callbacks.append(kwargs.get("on_finished")) or Thread())
+    reconciles = []
+    manager.recover_disconnected = lambda **kwargs: 0
+    manager._reconcile = lambda: reconciles.append(True)
+    manager._schedule_socket_failure_recovery(groups[0], sockets[0], 1, "primary")
+    deadline = time.monotonic() + 1.0
+    while len(callbacks) < 1 and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert len(callbacks) == 1
+    manager._schedule_socket_failure_recovery(groups[1], sockets[1], 1, "coalesced")
+    deadline = time.monotonic() + 1.0
+    while len(callbacks) < 2 and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert len(callbacks) == 2
+
+    manager.close()
+    callbacks[0]()
+    callbacks[1]()
+    assert reconciles == []
+    assert manager.snapshot()["failure_recovery_worker_active"] is False
+    assert manager.snapshot()["failure_recovery_pending_groups"] == []
