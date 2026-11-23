@@ -243,3 +243,45 @@ def test_shoonya_rest_client_uses_bearer_and_jdata_for_read_only_books():
     assert calls[0].kwargs["data"] == 'jData={"uid":"SH12345"}'
     assert calls[1].kwargs["data"] == 'jData={"uid":"SH12345"}'
     assert calls[2].kwargs["data"] == 'jData={"uid":"SH12345","actid":"SH12345"}'
+
+
+def test_auth_url_uses_server_configured_client_id_when_request_blank(monkeypatch):
+    store = Mock()
+    store.create.return_value = "flow-id-server-config"
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "configured-client")
+    monkeypatch.setenv("SHOONYA_REDIRECT_URI", "https://example.com/shoonya/callback")
+
+    result = shoonya_routes.shoonya_auth_url(
+        shoonya_routes.ShoonyaAuthUrlRequest(
+            uid="SH12345",
+            account_id="SH12345",
+        ),
+        user_id=0,
+    )
+
+    assert "client_id=configured-client" in result["authorization_url"]
+    store.create.assert_called_once_with(
+        client_id="configured-client",
+        redirect_uri="https://example.com/shoonya/callback",
+        uid="SH12345",
+        account_id="SH12345",
+    )
+
+
+def test_verify_requires_server_credentials_when_request_credentials_blank(monkeypatch, db_session):
+    store = Mock()
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "")
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_SECRET_CODE", "")
+    with pytest.raises(HTTPException) as raised:
+        shoonya_routes.shoonya_verify(
+            shoonya_routes.ShoonyaVerifyRequest(
+                auth_code="auth-code",
+                flow_id="flow-id-1234567890",
+            ),
+            db=db_session,
+            user_id=0,
+        )
+    assert raised.value.status_code == 503
+    store.consume.assert_not_called()
