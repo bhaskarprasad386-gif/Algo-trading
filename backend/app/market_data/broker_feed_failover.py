@@ -84,6 +84,12 @@ class MarketDataFailoverPolicy:
             raise ValueError("update timestamp must be finite")
         if not 0 <= failed_angel_sockets <= 3:
             raise ValueError("failed_angel_sockets must be between 0 and 3")
+        for name, age in (
+            ("angel_tick_age_seconds", angel_tick_age_seconds),
+            ("shoonya_tick_age_seconds", shoonya_tick_age_seconds),
+        ):
+            if age is not None and (not isfinite(age) or age < 0):
+                raise ValueError(f"{name} must be finite and non-negative when provided")
         angel_fresh = (
             angel_tick_age_seconds is not None
             and 0 <= angel_tick_age_seconds <= self.angel_tick_fresh_seconds
