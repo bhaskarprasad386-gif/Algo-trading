@@ -241,7 +241,38 @@ class CommonStrategyMarketFeed:
             # Invalidate queued callbacks before mutating shared manager state.
             self._callback_epoch += 1
             self._started = False
-        self.manager.clear_consumer(self.consumer)
+        try:
+            self.manager.clear_consumer(self.consumer)
+        except Exception:
+            # clear_consumer may fail before it removes the registry owner.
+            # Force the local desired state and callback routes back to OFF,
+            # then request a transport reconciliation if that retry also fails.
+            try:
+                self.manager.registry.clear_consumer(self.consumer)
+                for attribute in (
+                    "_callbacks", "_record_callbacks", "_record_observers",
+                    "_transport_observers", "callbacks",
+                ):
+                    routes = getattr(self.manager, attribute, None)
+                    if isinstance(routes, dict):
+                        routes.pop(self.consumer, None)
+                active = getattr(self.manager, "active", None)
+                if isinstance(active, dict):
+                    active.pop(self.consumer, None)
+            except Exception:
+                pass
+            reconcile = getattr(self.manager, "_reconcile", None)
+            if callable(reconcile):
+                try:
+                    reconcile()
+                except Exception:
+                    request_retry = getattr(self.manager, "_request_reconcile_retry", None)
+                    if callable(request_retry):
+                        try:
+                            request_retry()
+                        except Exception:
+                            pass
+            raise
 
     def snapshot(self) -> dict[str, Any]:
         return self.manager.snapshot()
