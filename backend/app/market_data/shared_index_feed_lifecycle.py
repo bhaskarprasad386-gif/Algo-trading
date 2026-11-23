@@ -101,6 +101,11 @@ class SharedIndexFeedLifecycle:
             raise ValueError("subscription descriptor set must not be empty")
         if len({d.key for d in items}) != len(items):
             raise ValueError("duplicate instruments in descriptor set")
+        tokens = [str(d.key.token).strip() for d in items]
+        if any(not token for token in tokens):
+            raise ValueError("subscription token must not be empty")
+        if len(set(tokens)) != len(tokens):
+            raise ValueError("duplicate subscription tokens in descriptor set")
         return items
 
 
