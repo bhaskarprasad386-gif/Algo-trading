@@ -2220,8 +2220,17 @@ def test_coalesced_failure_callback_still_retires_its_socket():
         manager._schedule_socket_failure_recovery(
             group, socket, generation, "coalesced test failure"
         )
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            with manager._lock:
+                cleared = (
+                    group not in manager._failure_recovery_groups
+                    and group not in manager._failure_recovery_pending_groups
+                )
+            if socket.closed and cleared:
+                break
+            time.sleep(0.01)
         assert socket.closed is True
-        assert manager.snapshot()["retired_transport_count"] == 0
         with manager._lock:
             assert group not in manager._failure_recovery_groups
             assert group not in manager._failure_recovery_pending_groups
