@@ -81,10 +81,15 @@ class MarketDataFailoverCoordinator:
             if provider != active:
                 self._suppressed += 1
                 return False
-            self._forwarded += 1
             # Serialize selection and forwarding so a provider switch cannot
-            # overtake a tick already accepted by the active provider.
-            self._on_record(provider, payload)
+            # overtake a tick already accepted by the active provider. Count
+            # successful delivery only after the consumer callback returns.
+            try:
+                self._on_record(provider, payload)
+            except Exception:
+                self._callback_errors += 1
+                return False
+            self._forwarded += 1
             return True
 
     def evaluate(
