@@ -262,6 +262,9 @@ class CommonWebSocketManager:
         # Globally admit at most one callback-triggered recovery worker; other shard failures are coalesced for the supervisor.
         self._failure_recovery_worker_active = False
         self._failure_recovery_pending_groups: set[SocketGroup] = set()
+        # Version pending failures so an older reconcile cannot acknowledge a newer
+        # failure event for the same SocketGroup.
+        self._failure_recovery_pending_versions: dict[SocketGroup, int] = {}
         self._failure_recovery_admission_rejections = 0
         # Retired transports remain visible until their close worker actually exits.
         # Store metadata only; never retain broker frames or authentication payloads.
@@ -1125,22 +1128,28 @@ class CommonWebSocketManager:
         coalesced = False
         with self._lock:
             if self._failure_recovery_worker_active:
-                self._failure_recovery_pending_groups.add(group)
+                self._mark_failure_recovery_pending_locked(group)
+                pending_version = self._failure_recovery_pending_versions[group]
                 self._failure_recovery_admission_rejections += 1
                 coalesced = True
             else:
+                pending_version = None
                 self._failure_recovery_worker_active = True
 
         if coalesced:
             # Recovery work is coalesced, but every failed transport still
             # needs its own tracked close. Otherwise its socket is orphaned
             # outside _sockets/_retired_transports and can leak broker sessions.
-            def _resume_coalesced_recovery(failed_group=group):
+            def _resume_coalesced_recovery(
+                failed_group=group, failed_version=pending_version,
+            ):
                 try:
                     with self._lock:
                         if self._closed:
                             self._failure_recovery_groups.discard(failed_group)
-                            self._failure_recovery_pending_groups.discard(failed_group)
+                            if self._failure_recovery_pending_versions.get(failed_group) == failed_version:
+                                self._failure_recovery_pending_groups.discard(failed_group)
+                                self._failure_recovery_pending_versions.pop(failed_group, None)
                             return
                     with self._reconcile_lock:
                         # Keep coalesced failure visible until a full registry
@@ -1150,7 +1159,9 @@ class CommonWebSocketManager:
                             self._failure_recovery_groups.discard(failed_group)
                         self._reconcile()
                         with self._lock:
-                            self._failure_recovery_pending_groups.discard(failed_group)
+                            if self._failure_recovery_pending_versions.get(failed_group) == failed_version:
+                                self._failure_recovery_pending_groups.discard(failed_group)
+                                self._failure_recovery_pending_versions.pop(failed_group, None)
                 except Exception as exc:
                     app_logger.warning(
                         "Common feed coalesced recovery close completion failed group=%s: %s",
@@ -1359,6 +1370,14 @@ class CommonWebSocketManager:
         )
         raise error
 
+    def _mark_failure_recovery_pending_locked(self, group: SocketGroup) -> int:
+        """Advance a pending failure version; caller holds self._lock."""
+        version = self._failure_recovery_pending_versions.get(group, 0) + 1
+        self._failure_recovery_pending_versions[group] = version
+        self._failure_recovery_pending_groups.add(group)
+        return version
+
+
     def _ensure_recovery_supervisor(self) -> None:
         """Start one process-local self-healing loop for the shared broker feed."""
         with self._lock:
@@ -1405,7 +1424,7 @@ class CommonWebSocketManager:
                 )
                 cooldown_remaining = self._broker_cooldown_remaining()
                 with self._lock:
-                    pending_failures_to_ack = set(self._failure_recovery_pending_groups)
+                    pending_failures_to_ack = dict(self._failure_recovery_pending_versions)
                     has_pending_failures = bool(pending_failures_to_ack)
                 if cooldown_remaining > 0.0:
                     cooldown_was_active = True
@@ -1418,7 +1437,10 @@ class CommonWebSocketManager:
                     self._reconcile()
                     cooldown_was_active = False
                     with self._lock:
-                        self._failure_recovery_pending_groups.difference_update(pending_failures_to_ack)
+                        for pending_group, pending_version in pending_failures_to_ack.items():
+                            if self._failure_recovery_pending_versions.get(pending_group) == pending_version:
+                                self._failure_recovery_pending_groups.discard(pending_group)
+                                self._failure_recovery_pending_versions.pop(pending_group, None)
                 retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 with self._lock:
                     self._recovery_backoff_current_seconds = retry_delay
