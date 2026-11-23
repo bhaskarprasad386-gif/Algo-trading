@@ -285,3 +285,29 @@ def test_verify_requires_server_credentials_when_request_credentials_blank(monke
         )
     assert raised.value.status_code == 503
     store.consume.assert_not_called()
+
+
+def test_auth_url_prefers_server_client_id_over_request_value(monkeypatch):
+    store = Mock()
+    store.create.return_value = "flow-id-env-priority"
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "server-client")
+    monkeypatch.setenv("SHOONYA_REDIRECT_URI", "https://example.com/shoonya/callback")
+
+    result = shoonya_routes.shoonya_auth_url(
+        shoonya_routes.ShoonyaAuthUrlRequest(
+            client_id="untrusted-request-client",
+            uid="SH12345",
+            account_id="SH12345",
+        ),
+        user_id=0,
+    )
+
+    assert "client_id=server-client" in result["authorization_url"]
+    assert "untrusted-request-client" not in result["authorization_url"]
+    store.create.assert_called_once_with(
+        client_id="server-client",
+        redirect_uri="https://example.com/shoonya/callback",
+        uid="SH12345",
+        account_id="SH12345",
+    )
