@@ -38,7 +38,7 @@ def test_late_broker_operation_completion_triggers_registry_reconcile():
         reconciled.set()
 
     manager._reconcile = reconcile
-    manager._socket_call_wait_seconds = 0.02
+    manager._socket_call_wait_seconds = 0.15
 
     with pytest.raises(TimeoutError, match="exceeded"):
         manager._run_socket_operation_bounded(
