@@ -209,6 +209,8 @@ def test_supervisor_drains_coalesced_failure_groups_after_successful_recovery():
     manager._failure_recovery_pending_groups.update(pending)
     recovery_succeeded = Event()
     manager.registry.subscriptions = lambda: [object()]
+    # Exercise successful supervisor acknowledgement without fixture-dependent reconciliation.
+    manager._reconcile = lambda: None
 
     def recover(**kwargs):
         recovery_succeeded.set()
@@ -332,15 +334,19 @@ def test_late_close_completion_keeps_recovery_admission_owned():
     state = manager.snapshot()
     assert state["failure_recovery_worker_active"] is True
     assert state["failure_recovery_admission_rejections"] == 1
-    # The coalesced close callback completes synchronously in this test helper;
-    # successful reconcile has already acknowledged the pending group.
-    assert state["failure_recovery_pending_groups"] == []
+    # The coalesced close callback is delayed until its worker is released.
+    assert state["failure_recovery_pending_groups"] == ["1:1"]
 
     release_close.set()
     deadline = time.monotonic() + 1.0
-    while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
+    while (
+        manager.snapshot()["failure_recovery_worker_active"]
+        or manager.snapshot()["failure_recovery_pending_groups"]
+    ) and time.monotonic() < deadline:
         time.sleep(0.005)
-    assert manager.snapshot()["failure_recovery_worker_active"] is False
+    after = manager.snapshot()
+    assert after["failure_recovery_worker_active"] is False
+    assert after["failure_recovery_pending_groups"] == []
     manager.close()
 
 
