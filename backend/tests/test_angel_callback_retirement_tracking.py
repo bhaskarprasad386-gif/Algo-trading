@@ -257,6 +257,16 @@ def test_simultaneous_shard_failures_coalesce_callback_recovery_workers():
     manager.close()
 
 
+def test_shutdown_clears_coalesced_failure_recovery_queue():
+    manager = CommonWebSocketManager()
+    manager._failure_recovery_pending_groups.add(SocketGroup(1, 2))
+    manager._failure_recovery_groups.add(SocketGroup(1, 1))
+    manager.close()
+    state = manager.snapshot()
+    assert state["failure_recovery_pending_groups"] == []
+    assert state["failure_recovery_groups"] == []
+
+
 def test_snapshot_reports_registry_socket_token_mismatch_and_clears_when_aligned():
     manager = CommonWebSocketManager()
     key = InstrumentKey("NSE", "NSE", "IDX-101")
