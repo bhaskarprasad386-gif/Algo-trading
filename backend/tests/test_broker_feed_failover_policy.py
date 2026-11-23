@@ -694,15 +694,19 @@ def test_failback_occurs_exactly_at_both_dwell_and_stability_boundaries():
         shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=0,
     )
     assert switched.active_provider == "shoonya"
-    # Healthy Angel recovery begins at t=1; both timers are just short at t=4.999.
+    # Healthy Angel recovery begins at t=1; dwell expires at t=4, stability at t=6.
+    p.update(
+        failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1,
+    )
     before_boundary = p.update(
         failed_angel_sockets=0, angel_tick_age_seconds=0.2,
-        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=4.999,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=5.999,
     )
     assert before_boundary.active_provider == "shoonya"
     at_boundary = p.update(
         failed_angel_sockets=0, angel_tick_age_seconds=0.2,
-        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=5.0,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=6.0,
     )
     assert at_boundary.active_provider == "angel_one"
     assert at_boundary.mode == "PRIMARY"
