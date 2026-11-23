@@ -387,6 +387,47 @@ def test_failed_late_close_recovery_releases_admission_and_keeps_coalesced_group
     manager.close()
 
 
+def test_late_failure_close_callback_after_shutdown_does_not_recover_or_reconcile():
+    release_close = Event()
+    close_started = Event()
+    recovery_calls = []
+    reconcile_calls = []
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    socket = BlockingSocket()
+    manager._sockets[group] = socket
+    manager._socket_generation[group] = 1
+    manager._socket_generation_counter[group] = 1
+    manager._socket_tokens[group] = {(1, "token")}
+
+    def deferred_close(*args, **kwargs):
+        callback = kwargs.get("on_finished")
+
+        def worker_body():
+            close_started.set()
+            release_close.wait(timeout=2.0)
+            if callback:
+                callback()
+
+        worker = Thread(target=worker_body, daemon=True)
+        worker.start()
+        return worker
+
+    manager._close_socket_tracked = deferred_close
+    manager.recover_disconnected = lambda **kwargs: recovery_calls.append(kwargs) or 0
+    manager._reconcile = lambda: reconcile_calls.append(True)
+    manager._schedule_socket_failure_recovery(group, socket, 1, "failure")
+    assert close_started.wait(timeout=1.0)
+    manager.close()
+    release_close.set()
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert recovery_calls == []
+    assert reconcile_calls == []
+    assert manager.snapshot()["failure_recovery_worker_active"] is False
+
+
 def test_simultaneous_shard_failures_coalesce_callback_recovery_workers():
     release = Event()
     started = Event()
