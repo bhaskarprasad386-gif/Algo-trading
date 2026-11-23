@@ -214,6 +214,10 @@ class SharedIndexMarketDataRunner:
                 self.lifecycle.rotate_futures(tuple(current_futures + replacements))
                 self._futures_expiries.update(expiry_updates)
                 self._sync_state_universe()
+                # Clear only rollover-specific errors; preserve unrelated
+                # bootstrap/startup diagnostics until their own recovery succeeds.
+                if self._start_error and self._start_error.startswith("Futures rollover:"):
+                    self._start_error = None
                 return tuple(expiry_updates)
             except Exception as exc:
                 with self._lock:
