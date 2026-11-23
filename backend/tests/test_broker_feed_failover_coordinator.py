@@ -144,3 +144,39 @@ def test_consumer_mutations_do_not_change_input_or_cached_tick_payload():
     assert c.observe("angel_one", original) is True
     assert original["metadata"]["source"] == "feed"
     assert c.snapshot()["latest_record_count"] == 1
+
+
+
+def test_late_primary_ticks_are_suppressed_after_failover_and_backup_keeps_order():
+    received = []
+    c = MarketDataFailoverCoordinator(policy=policy(), on_record=lambda p, r: received.append((p, r["timestamp_ns"])))
+    assert c.observe("angel_one", tick("NIFTY", 10, 100)) is True
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+               shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    assert c.observe("angel_one", tick("NIFTY", 11, 101)) is False
+    assert c.observe("shoonya", tick("NIFTY", 20, 200)) is True
+    assert c.observe("shoonya", tick("NIFTY", 19, 199)) is False
+    assert received == [("angel_one", 10), ("shoonya", 20)]
+
+
+def test_no_valid_provider_suppresses_both_sources_until_policy_selects_one():
+    received = []
+    c = MarketDataFailoverCoordinator(policy=policy(), on_record=lambda p, r: received.append(p))
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+               shoonya_connected=False, shoonya_tick_age_seconds=None, now=10)
+    assert c.observe("angel_one", tick("NIFTY", 1, 100)) is False
+    assert c.observe("shoonya", tick("NIFTY", 1, 100)) is False
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+               shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=11)
+    assert c.observe("shoonya", tick("NIFTY", 2, 101)) is True
+    assert received == ["shoonya"]
+
+
+def test_timestamp_order_is_tracked_per_provider_and_per_instrument():
+    received = []
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: received.append((p, r["instrument_key"], r["timestamp_ns"])))
+    assert c.observe("angel_one", tick("NIFTY", 100, 100)) is True
+    assert c.observe("angel_one", tick("BANKNIFTY", 50, 50)) is True
+    assert c.observe("angel_one", tick("NIFTY", 99, 99)) is False
+    assert c.observe("angel_one", tick("BANKNIFTY", 51, 51)) is True
+    assert received == [("angel_one", "NIFTY", 100), ("angel_one", "BANKNIFTY", 50), ("angel_one", "BANKNIFTY", 51)]
