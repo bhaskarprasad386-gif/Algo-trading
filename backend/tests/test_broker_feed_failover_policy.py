@@ -521,3 +521,38 @@ def test_shoonya_connected_flag_requires_bool_and_invalid_value_is_atomic():
         assert after.active_provider == baseline.active_provider
         assert after.mode == baseline.mode
         assert after.reason == baseline.reason
+
+
+
+def test_tick_age_inputs_reject_strings_bools_and_non_numeric_values_atomically():
+    import pytest
+    p = policy()
+    baseline = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                       shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1500)
+    invalids = ("0.2", True, object())
+    for invalid in invalids:
+        with pytest.raises(ValueError):
+            p.update(failed_angel_sockets=0, angel_tick_age_seconds=invalid,
+                     shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1501)
+        after = p.snapshot()
+        assert after.active_provider == baseline.active_provider
+        assert after.mode == baseline.mode
+        assert after.reason == baseline.reason
+    for invalid in invalids:
+        with pytest.raises(ValueError):
+            p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                     shoonya_connected=True, shoonya_tick_age_seconds=invalid, now=1501)
+
+def test_update_timestamp_rejects_bool_and_string_types_without_mutation():
+    import pytest
+    p = policy()
+    baseline = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                       shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1600)
+    for invalid in (True, "1601", object()):
+        with pytest.raises(ValueError):
+            p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                     shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=invalid)
+        after = p.snapshot()
+        assert after.active_provider == baseline.active_provider
+        assert after.mode == baseline.mode
+        assert after.reason == baseline.reason
