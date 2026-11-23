@@ -17,6 +17,7 @@ from app.brokers.session_store import broker_sessions
 from app.brokers.shoonya import ShoonyaAdapter, ShoonyaHistoryUnavailable
 from app.brokers.shoonya_auth import ShoonyaAuthenticationError, ShoonyaOAuthAuthenticator
 from app.brokers.shoonya_oauth_state import ShoonyaOAuthFlowStore
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.logger import app_logger
 
@@ -24,14 +25,14 @@ router = APIRouter()
 
 
 class ShoonyaAuthUrlRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=200)
+    client_id: str = Field(default="", max_length=200)
     uid: str = Field(min_length=1, max_length=100)
     account_id: str = Field(min_length=1, max_length=100)
 
 
 class ShoonyaVerifyRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=200)
-    secret_code: str = Field(min_length=1, max_length=500)
+    client_id: str = Field(default="", max_length=200)
+    secret_code: str = Field(default="", max_length=500)
     auth_code: str = Field(min_length=1, max_length=2000)
     flow_id: str = Field(min_length=16, max_length=256)
     display_name: str | None = Field(default=None, max_length=100)
@@ -113,17 +114,20 @@ def shoonya_auth_url(
     payload: ShoonyaAuthUrlRequest,
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
+    client_id = str(payload.client_id or settings.SHOONYA_OAUTH_CLIENT_ID or "").strip()
+    if not client_id:
+        raise HTTPException(status_code=503, detail="Shoonya OAuth client ID is not configured on the server")
     redirect_uri = _configured_redirect_uri()
     if not redirect_uri:
         raise HTTPException(status_code=503, detail="Shoonya redirect URI is not configured on the server")
     try:
         flow_id = shoonya_oauth_flows.create(
-            client_id=payload.client_id,
+            client_id=client_id,
             redirect_uri=redirect_uri,
             uid=payload.uid,
             account_id=payload.account_id,
         )
-        url = ShoonyaOAuthAuthenticator.build_authorization_url(client_id=payload.client_id)
+        url = ShoonyaOAuthAuthenticator.build_authorization_url(client_id=client_id)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail="Shoonya OAuth configuration is invalid") from exc
     return {
@@ -141,10 +145,14 @@ def shoonya_verify(
     db: Session = Depends(get_db),
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
+    client_id = str(payload.client_id or settings.SHOONYA_OAUTH_CLIENT_ID or "").strip()
+    secret_code = str(payload.secret_code or settings.SHOONYA_OAUTH_SECRET_CODE or "")
+    if not client_id or not secret_code:
+        raise HTTPException(status_code=503, detail="Shoonya OAuth client ID and secret code are not configured")
     try:
         pending = shoonya_oauth_flows.consume(
             flow_id=payload.flow_id,
-            client_id=payload.client_id,
+            client_id=client_id,
             redirect_uri=_configured_redirect_uri(),
         )
     except ValueError as exc:
@@ -156,8 +164,8 @@ def shoonya_verify(
     adapter: ShoonyaAdapter | None = None
     try:
         authenticated = ShoonyaOAuthAuthenticator().exchange_auth_code(
-            client_id=payload.client_id,
-            secret_code=payload.secret_code,
+            client_id=client_id,
+            secret_code=secret_code,
             auth_code=payload.auth_code,
             expected_uid=pending.uid,
             expected_account_id=pending.account_id,
