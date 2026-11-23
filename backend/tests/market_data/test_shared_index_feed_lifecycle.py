@@ -492,3 +492,43 @@ def _capture_exception(call, errors):
         call()
     except Exception as exc:
         errors.append(exc)
+
+def test_subscription_validation_rejects_duplicate_tokens_before_registry_mutation():
+    manager = StubManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    items = list(_future_descriptors("dupe"))
+    second = items[1]
+    items[1] = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "NFO", items[0].key.token),
+        symbol=second.symbol, instrument_type=second.instrument_type,
+        exchange=second.exchange, segment=second.segment, expiry=second.expiry,
+        underlying=second.underlying,
+    )
+    try:
+        lifecycle.start_futures(items)
+    except ValueError as exc:
+        assert "duplicate subscription tokens" in str(exc)
+    else:
+        raise AssertionError("duplicate broker tokens must be rejected")
+    assert not manager.registry.subscriptions()
+    assert lifecycle.snapshot()["futures_active"] is False
+
+
+def test_subscription_validation_rejects_empty_token_before_registry_mutation():
+    manager = StubManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    items = list(_spot_descriptors())
+    first = items[0]
+    items[0] = InstrumentDescriptor(
+        key=InstrumentKey("NSE", "NSE", ""), symbol=first.symbol,
+        instrument_type=first.instrument_type, exchange=first.exchange,
+        segment=first.segment, underlying=first.underlying,
+    )
+    try:
+        lifecycle.start_spot(items)
+    except ValueError as exc:
+        assert "token must not be empty" in str(exc)
+    else:
+        raise AssertionError("empty broker tokens must be rejected")
+    assert not manager.registry.subscriptions()
+    assert lifecycle.snapshot()["spot_active"] is False
