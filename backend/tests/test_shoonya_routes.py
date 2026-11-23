@@ -370,3 +370,22 @@ def test_expired_token_cleanup_skips_remote_logout(monkeypatch):
     assert client.expires_at_monotonic is None
     http.post.assert_not_called()
     http.close.assert_called_once()
+
+def test_session_replacement_keeps_new_adapter_when_old_disconnect_fails():
+    owner_id = 99173
+
+    class OldAdapter(FakeAdapter):
+        def disconnect(self):
+            raise RuntimeError("provider logout failed")
+
+    old = OldAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="old"))
+    new = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="new"))
+    broker_sessions.replace(owner_id, "shoonya", old)
+
+    error = broker_sessions.replace_and_disconnect_previous(owner_id, "shoonya", new)
+
+    assert isinstance(error, RuntimeError)
+    assert broker_sessions.get(owner_id, "shoonya") is new
+    removed = broker_sessions.remove(owner_id, "shoonya")
+    assert removed is new
+    new.disconnect()
