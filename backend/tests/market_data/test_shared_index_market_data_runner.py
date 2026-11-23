@@ -164,6 +164,26 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
     assert snap["live_data_ready"] is True
     assert len(snap["records"]) == 52
     assert all(row["feed_age_seconds"] >= 0 and row["fresh"] for row in snap["records"])
+    assert snap["universe_coverage"]["complete"] is True
+    assert snap["universe_coverage"]["counts"] == {"index": 2, "future": 2, "option": 48}
+    assert snap["universe_coverage"]["per_underlying"]["NIFTY"] == {
+        "index": 1, "future": 1, "option": 26, "CE": 13, "PE": 13,
+    }
+    assert snap["universe_coverage"]["per_underlying"]["BANKNIFTY"] == {
+        "index": 1, "future": 1, "option": 22, "CE": 11, "PE": 11,
+    }
+    assert snap["all_records_fresh"] is True
+    # A same-sized or partial state must not pass readiness if its contract
+    # composition is incomplete. Retain only spot and futures records.
+    non_option_keys = tuple(
+        key for key in runner.lifecycle.active_keys()
+        if manager.registry.get(key).instrument_type != "option"
+    )
+    runner.state.retain_instruments(non_option_keys)
+    partial = runner.snapshot()
+    assert partial["universe_coverage"]["complete"] is False
+    assert partial["live_data_ready"] is False
+    assert partial["universe_coverage"]["counts"]["option"] == 0
     futures_rows = [row for row in snap["records"] if row["instrument_type"] == "future"]
     assert len(futures_rows) == 2
     assert all(row["oi"] == 8888 and row["volume"] == 1000 for row in futures_rows)
