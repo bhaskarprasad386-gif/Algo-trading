@@ -568,3 +568,26 @@ def test_concurrent_nifty_bank_option_rotations_are_serialized_and_atomic(monkey
     assert len([d for d in descriptors if d.underlying == "BANKNIFTY"]) == 22
     assert set(manager.registry.active_keys()) == set(runner.lifecycle.active_keys())
     runner.stop()
+
+def test_successful_futures_rollover_clears_only_rollover_error():
+    rows = _rows()
+    manager = RunnerManager()
+    runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=manager)
+    assert runner.start(rows)["enabled"] is True
+    runner._futures_expiries = {"NIFTY": "2026-11-20", "BANKNIFTY": "2026-12-24"}
+    original_rotate = runner.lifecycle.rotate_futures
+    attempts = {"count": 0}
+
+    def fail_once(descriptors):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("simulated partial transport failure")
+        return original_rotate(descriptors)
+
+    runner.lifecycle.rotate_futures = fail_once
+    assert runner._check_futures_rollover() == ()
+    assert runner.snapshot()["last_error"].startswith("Futures rollover:")
+    assert runner._check_futures_rollover() == ("NIFTY",)
+    assert runner.snapshot()["last_error"] is None
+    assert runner.snapshot()["futures_expiries"]["NIFTY"] == "2026-11-26"
+    runner.stop()
