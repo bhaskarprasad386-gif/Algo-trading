@@ -347,8 +347,6 @@ def test_failed_late_close_recovery_releases_admission_and_keeps_coalesced_group
     close_started = Event()
     recovery_called = Event()
     manager = CommonWebSocketManager()
-    # Prevent a supervisor pass racing this callback-recovery assertion.
-    manager._recovery_interval_seconds = 10.0
     group = SocketGroup(1, 0)
     pending = SocketGroup(1, 1)
     socket = BlockingSocket()
@@ -356,6 +354,13 @@ def test_failed_late_close_recovery_releases_admission_and_keeps_coalesced_group
     manager._socket_generation[group] = 1
     manager._socket_generation_counter[group] = 1
     manager._socket_tokens[group] = {(1, "0")}
+    # The coalesced failure must be a current socket generation; otherwise
+    # admission rejects it before it can enter the pending queue.
+    pending_socket = BlockingSocket()
+    manager._sockets[pending] = pending_socket
+    manager._socket_generation[pending] = 1
+    manager._socket_generation_counter[pending] = 1
+    manager._socket_tokens[pending] = {(1, "1")}
 
     def delayed_close(*args, **kwargs):
         callback = kwargs["on_finished"]
@@ -378,7 +383,7 @@ def test_failed_late_close_recovery_releases_admission_and_keeps_coalesced_group
     manager._reconcile = lambda: None
     manager._schedule_socket_failure_recovery(group, socket, 1, "failure")
     assert close_started.wait(timeout=1.0)
-    manager._schedule_socket_failure_recovery(pending, BlockingSocket(), 1, "coalesced")
+    manager._schedule_socket_failure_recovery(pending, pending_socket, 1, "coalesced")
     assert manager.snapshot()["failure_recovery_worker_active"] is True
     release_close.set()
     assert recovery_called.wait(timeout=1.0)
