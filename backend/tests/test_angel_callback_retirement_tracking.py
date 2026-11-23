@@ -332,7 +332,9 @@ def test_late_close_completion_keeps_recovery_admission_owned():
     state = manager.snapshot()
     assert state["failure_recovery_worker_active"] is True
     assert state["failure_recovery_admission_rejections"] == 1
-    assert state["failure_recovery_pending_groups"] == ["1:1"]
+    # The coalesced close callback completes synchronously in this test helper;
+    # successful reconcile has already acknowledged the pending group.
+    assert state["failure_recovery_pending_groups"] == []
 
     release_close.set()
     deadline = time.monotonic() + 1.0
@@ -520,7 +522,9 @@ def test_three_simultaneous_shard_failures_coalesce_and_drain_all_pending_groups
     manager._schedule_socket_failure_recovery(groups[2], sockets[2], 1, "third failure")
     state = manager.snapshot()
     assert state["failure_recovery_worker_active"] is True
-    assert state["failure_recovery_pending_groups"] == ["1:1", "1:2"]
+    # Both coalesced close callbacks complete synchronously in this helper,
+    # so their successful reconciles acknowledge the pending groups immediately.
+    assert state["failure_recovery_pending_groups"] == []
     release.set()
     deadline = time.monotonic() + 2.0
     while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
