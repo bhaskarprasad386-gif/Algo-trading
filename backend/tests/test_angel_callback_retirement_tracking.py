@@ -2,6 +2,8 @@ from threading import Event, Thread
 import time
 
 from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+from app.market_data.contracts import InstrumentKey
+from app.market_data.registry import InstrumentDescriptor
 
 
 class TimedOutAdapter:
@@ -252,4 +254,33 @@ def test_simultaneous_shard_failures_coalesce_callback_recovery_workers():
     while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
         time.sleep(0.01)
     assert manager.snapshot()["failure_recovery_worker_active"] is False
+    manager.close()
+
+
+def test_snapshot_reports_registry_socket_token_mismatch_and_clears_when_aligned():
+    manager = CommonWebSocketManager()
+    key = InstrumentKey("NSE", "NSE", "IDX-101")
+    manager.registry.register(InstrumentDescriptor(
+        key=key, symbol="NIFTY", instrument_type="index", exchange="NSE",
+        segment="NSE", underlying="NIFTY",
+    ))
+    manager.registry.subscribe("audit-consumer", key, mode=1)
+    group = SocketGroup(1, 0)
+
+    state = manager.snapshot()
+    mismatch = state["socket_token_set_mismatches"]
+    assert len(mismatch) == 1
+    assert mismatch[0]["group"] == "1:0"
+    assert mismatch[0]["missing_from_socket"]
+    assert mismatch[0]["unexpected_on_socket"] == []
+
+    expected = (manager._resolve_exchange_type(key), key.token)
+    manager._socket_tokens[group] = {expected, (expected[0], "OLD-999")}
+    mismatch = manager.snapshot()["socket_token_set_mismatches"]
+    assert len(mismatch) == 1
+    assert mismatch[0]["missing_from_socket"] == []
+    assert mismatch[0]["unexpected_on_socket"] == [[expected[0], "OLD-999"]]
+
+    manager._socket_tokens[group] = {expected}
+    assert manager.snapshot()["socket_token_set_mismatches"] == []
     manager.close()
