@@ -39,6 +39,7 @@ class MarketDataFailoverCoordinator:
         self._forwarded = 0
         self._suppressed = 0
         self._invalid_records = 0
+        self._callback_errors = 0
 
     @staticmethod
     def _instrument_key(record: dict[str, Any]) -> str:
@@ -96,14 +97,16 @@ class MarketDataFailoverCoordinator:
         now: float | None = None,
     ) -> FailoverSnapshot:
         """Update policy using externally measured provider health."""
-        decision = self.policy.update(
-            failed_angel_sockets=failed_angel_sockets,
-            angel_tick_age_seconds=angel_tick_age_seconds,
-            shoonya_connected=shoonya_connected,
-            shoonya_tick_age_seconds=shoonya_tick_age_seconds,
-            now=now,
-        )
+        # Serialize policy evaluation with observe() forwarding; otherwise a
+        # concurrent evaluate could publish a provider switch mid-callback.
         with self._lock:
+            decision = self.policy.update(
+                failed_angel_sockets=failed_angel_sockets,
+                angel_tick_age_seconds=angel_tick_age_seconds,
+                shoonya_connected=shoonya_connected,
+                shoonya_tick_age_seconds=shoonya_tick_age_seconds,
+                now=now,
+            )
             self._decision = decision
         return decision
 
@@ -118,6 +121,7 @@ class MarketDataFailoverCoordinator:
                 "forwarded_ticks": self._forwarded,
                 "suppressed_ticks": self._suppressed,
                 "invalid_records": self._invalid_records,
+                "callback_errors": self._callback_errors,
             }
 
 
