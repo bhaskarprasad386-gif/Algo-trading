@@ -316,7 +316,59 @@ def test_backup_socket_degradation_with_fresh_angel_tick_does_not_bypass_failbac
     assert s.active_provider == "shoonya"
     s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
                  shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=207)
-    assert s.active_provider == "shoonya"
-    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
-                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=208)
+    # Failback is allowed once both minimum dwell and stability are met.
     assert s.active_provider == "angel_one"
+    assert s.reason == "angel_stable_failback"
+
+
+
+def test_simultaneous_provider_recovery_from_no_feed_is_deterministic_and_primary_wins():
+    p = policy()
+    s = p.update(failed_angel_sockets=3, angel_tick_age_seconds=5.0,
+                 shoonya_connected=False, shoonya_tick_age_seconds=None, now=300)
+    assert s.active_provider == "none"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=301)
+    assert s.active_provider == "angel_one"
+    assert s.mode == "PRIMARY"
+    assert s.reason == "angel_recovered"
+
+
+
+def test_backup_degrades_to_none_then_fresh_shoonya_recovery_resets_dwell_clock():
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=5.0,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=400)
+    s = p.update(failed_angel_sockets=3, angel_tick_age_seconds=5.0,
+                 shoonya_connected=False, shoonya_tick_age_seconds=None, now=401)
+    assert s.active_provider == "none"
+    s = p.update(failed_angel_sockets=3, angel_tick_age_seconds=5.0,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=402)
+    assert s.active_provider == "shoonya"
+    assert s.switched_at == 402
+
+
+
+def test_recovery_events_with_identical_timestamp_are_serialized_consistently():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=5.0,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=500)
+    barrier = Barrier(2)
+    def healthy():
+        barrier.wait()
+        return p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                       shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=501)
+    def degraded():
+        barrier.wait()
+        return p.update(failed_angel_sockets=2, angel_tick_age_seconds=4.5,
+                       shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=501)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results=list(pool.map(lambda fn: fn(), (healthy,degraded)))
+    snap=p.snapshot()
+    assert snap.active_provider in ("shoonya","none")
+    assert snap.mode in ("BACKUP","NO_VALID_FEED")
+    assert all(r.active_provider in ("shoonya","none") for r in results)
