@@ -1114,6 +1114,7 @@ class CommonWebSocketManager:
                 )
                 with self._lock:
                     self._failure_recovery_groups.discard(group)
+                    self._failure_recovery_worker_active = False
 
         # A simultaneous shard outage must not spawn one recovery thread per
         # callback. Keep per-group invalidation, coalesce the rest, and let the
