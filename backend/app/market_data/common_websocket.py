@@ -1246,15 +1246,30 @@ class CommonWebSocketManager:
         error = failure.get("exception")
         if finished and error is None:
             return
+        late_completion_race = False
         if not finished:
             with self._lock:
                 tracked = self._socket_operation_workers.get(operation_id)
                 if tracked is not None and not tracked.get("timed_out"):
                     tracked["timed_out"] = True
                     self._socket_operation_worker_timeouts += 1
+                # The worker may finish after wait() returns False but before
+                # the timeout flag is set. In that window it removes its record
+                # and misses the late-completion reconcile. Recover that edge
+                # here, from the timeout caller, exactly once.
+                late_completion_race = tracked is None and completed.is_set()
         elif error is not None:
             with self._lock:
                 self._socket_operation_worker_failures += 1
+
+        if late_completion_race:
+            try:
+                self._reconcile()
+            except Exception as reconcile_exc:
+                app_logger.warning(
+                    "Common feed reconcile after timeout/completion race failed group=%s error=%s: %s",
+                    group_key, type(reconcile_exc).__name__, reconcile_exc,
+                )
 
         # Never leave a potentially half-mutated socket as authoritative.
         with self._lock:
