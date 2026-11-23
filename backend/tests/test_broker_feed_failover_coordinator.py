@@ -273,3 +273,48 @@ def test_callback_exception_cannot_mutate_cached_payload_on_failure():
     assert original["metadata"]["origin"] == "canonical"
     assert c._latest[("angel_one", "BANKNIFTY")]["metadata"]["origin"] == "canonical"
     assert c.snapshot()["callback_errors"] == 1
+
+
+
+def test_concurrent_same_instrument_observations_forward_in_timestamp_order():
+    from threading import Barrier, Thread
+
+    forwarded = []
+    barrier = Barrier(3)
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: forwarded.append(r["timestamp_ns"]))
+
+    def send(stamp):
+        barrier.wait(timeout=2)
+        c.observe("angel_one", tick("NIFTY", stamp, stamp))
+
+    low = Thread(target=send, args=(700,))
+    high = Thread(target=send, args=(701,))
+    low.start()
+    high.start()
+    barrier.wait(timeout=2)
+    low.join(timeout=2)
+    high.join(timeout=2)
+    assert not low.is_alive() and not high.is_alive()
+    # Lock serialization means the winning order is monotonic; if 701 wins,
+    # 700 is suppressed rather than regressing downstream state.
+    assert forwarded in ([700, 701], [701])
+    assert all(a < b for a, b in zip(forwarded, forwarded[1:]))
+    assert c.snapshot()["forwarded_ticks"] == len(forwarded)
+
+
+
+def test_reentrant_snapshot_inside_callback_reports_pre_delivery_counter():
+    snapshots = []
+    holder = {}
+
+
+    def callback(_provider, _record):
+        snapshots.append(holder["c"].snapshot())
+
+
+    c = MarketDataFailoverCoordinator(on_record=callback)
+    holder["c"] = c
+    assert c.observe("angel_one", tick("NIFTY", 800, 100)) is True
+    assert snapshots[0]["forwarded_ticks"] == 0
+    assert c.snapshot()["forwarded_ticks"] == 1
+    assert snapshots[0]["latest_record_count"] == 1
