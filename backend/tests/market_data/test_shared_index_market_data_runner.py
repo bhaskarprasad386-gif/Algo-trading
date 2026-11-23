@@ -647,3 +647,34 @@ def test_master_refresh_is_scheduled_even_when_option_bootstrap_is_incomplete():
     assert scheduled == [True]
     assert runner._bootstrap_options_done is False
     runner.stop()
+
+
+def test_incomplete_option_bootstrap_uses_short_master_refresh_cadence():
+    from threading import Event
+    import time
+
+    class CountingMaster(FakeMaster):
+        def __init__(self, rows):
+            super().__init__(rows)
+            self.refresh_event = Event()
+        def download(self, *, force=False):
+            if force:
+                self.refresh_event.set()
+            return self.rows
+
+    rows = _rows()
+    master = CountingMaster(rows)
+    runner = SharedIndexMarketDataRunner(instrument_master=master, manager=RunnerManager())
+    assert runner.start(rows)["enabled"] is True
+    runner._bootstrap_options_done = False
+    runner._master_refresh_interval_seconds = 24 * 60 * 60.0
+    runner._master_refresh_retry_delay_seconds = 60.0
+    runner._master_refresh_started_at = time.monotonic() - 61.0
+    assert runner._schedule_master_refresh() is True
+    assert master.refresh_event.wait(timeout=2)
+    deadline = time.monotonic() + 2
+    while runner._master_refresh_inflight and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert runner._master_refresh_error is None
+    assert runner._master_last_refresh_at is not None
+    runner.stop()
