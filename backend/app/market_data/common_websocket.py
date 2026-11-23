@@ -272,6 +272,7 @@ class CommonWebSocketManager:
         self._socket_operation_workers: dict[str, dict[str, Any]] = {}
         self._socket_operation_worker_sequence = 0
         self._socket_operation_worker_late_completions = 0
+        self._socket_operation_worker_late_failures = 0
         self._socket_operation_worker_admission_rejections = 0
         self._socket_operation_worker_timeouts = 0
         self._socket_operation_worker_failures = 0
@@ -1186,13 +1187,13 @@ class CommonWebSocketManager:
                     if tracked is not None:
                         if tracked.get("timed_out"):
                             self._socket_operation_worker_late_completions += 1
+                            if "exception" in failure:
+                                self._socket_operation_worker_late_failures += 1
+                            tracked["outcome"] = "late_error" if "exception" in failure else "late_success"
+                        else:
+                            tracked["outcome"] = "error" if "exception" in failure else "success"
                         tracked["worker_alive"] = False
                         tracked["completed_at"] = time.monotonic()
-                        tracked["outcome"] = (
-                            "error" if "exception" in failure else "late_success"
-                            if tracked.get("timed_out") else
-                            "error" if "exception" in failure else "success"
-                        )
                 completed.set()
 
         worker = Thread(
@@ -2309,6 +2310,7 @@ class CommonWebSocketManager:
                 "socket_operation_workers": [dict(item) for item in self._socket_operation_workers.values()],
                 "socket_operation_worker_timeouts": self._socket_operation_worker_timeouts,
                 "socket_operation_worker_late_completions": self._socket_operation_worker_late_completions,
+                "socket_operation_worker_late_failures": self._socket_operation_worker_late_failures,
                 "socket_operation_worker_admission_rejections": self._socket_operation_worker_admission_rejections,
                 "socket_operation_worker_failures": self._socket_operation_worker_failures,
                 "recovery_attempts": self._recovery_attempts,
