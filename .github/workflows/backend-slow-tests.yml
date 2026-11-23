@@ -1,0 +1,51 @@
+name: Full Backend Tests (Manual Only)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  slow-backend:
+    name: Full Backend Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: iv_basket_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d iv_basket_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+          python-version: "3.11"
+      - name: Install backend test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt pytest pytest-timeout "psycopg[binary]"
+      - name: Run complete backend tests (including isolated modules)
+        env:
+          SECRET_KEY: ci-test-secret-key-not-for-production
+          PYTHONPATH: backend
+          DATABASE_URL: "sqlite:///:memory:"
+          IV_TEST_POSTGRES_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/iv_basket_test"
+          LIVE_CASH_FUTURE_DATA_ENABLED: "false"
+          LIVE_CALENDAR_SPREAD_DATA_ENABLED: "false"
+          LIVE_SYNTHETIC_DATA_ENABLED: "false"
+          LIVE_BOX_SPREAD_DATA_ENABLED: "false"
+          LIVE_MARKET_DATA_PERSISTENCE_ENABLED: "false"
+          LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED: "false"
+          BACKTESTING_ENABLED: "true"
+        run: |
+          python -m pytest backend/tests -q --tb=short -r fE \
+            --timeout=60 --timeout-method=thread --maxfail=100
