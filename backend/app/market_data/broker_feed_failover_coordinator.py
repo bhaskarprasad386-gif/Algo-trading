@@ -36,6 +36,7 @@ class MarketDataFailoverCoordinator:
         self._lock = RLock()
         self._latest: dict[tuple[Provider, str], dict[str, Any]] = {}
         self._last_timestamp: dict[tuple[Provider, str], int] = {}
+        self._last_forwarded_timestamp: dict[str, int] = {}
         self._decision: FailoverSnapshot | None = None
         self._forwarded = 0
         self._suppressed = 0
@@ -85,11 +86,18 @@ class MarketDataFailoverCoordinator:
             # Serialize selection and forwarding so a provider switch cannot
             # overtake a tick already accepted by the active provider. Count
             # successful delivery only after the consumer callback returns.
+            # Prevent overlapping/replayed timestamps from two providers from
+            # being delivered twice during a failover handoff.
+            last_forwarded = self._last_forwarded_timestamp.get(key)
+            if last_forwarded is not None and stamp <= last_forwarded:
+                self._suppressed += 1
+                return False
             try:
                 self._on_record(provider, payload)
             except Exception:
                 self._callback_errors += 1
                 return False
+            self._last_forwarded_timestamp[key] = stamp
             self._forwarded += 1
             return True
 
