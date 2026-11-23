@@ -2129,3 +2129,21 @@ def test_retired_slot_waits_for_actual_transport_thread_after_close_returns():
     finally:
         LingeringTransportSocket.release_transport.set()
         manager.close()
+
+def test_clear_consumer_removes_transport_observer_route_with_subscription_owner():
+    registry = InstrumentRegistry()
+    d = descriptor("102")
+    registry.register(d)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    events = []
+    manager.register_transport_observer("owner", lambda *args: events.append(args))
+    manager.subscribe("owner", [d.key])
+
+    assert "owner" in manager._transport_observers
+    manager.clear_consumer("owner")
+
+    assert "owner" not in manager._transport_observers
+    assert registry.active_keys() == ()
+    assert manager.snapshot()["active_instruments"] == 0
+    manager.close()
+
