@@ -81,13 +81,17 @@ def test_negative_socket_count_rejected():
         raise AssertionError("negative socket failure count must be rejected")
 
 
-def test_negative_tick_age_is_not_accepted_as_fresh():
+def test_negative_tick_age_is_rejected_without_state_mutation():
+    import pytest
     p = policy()
-    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=-0.1,
+    before = p.snapshot()
+    with pytest.raises(ValueError, match="angel_tick_age_seconds"):
+        p.update(failed_angel_sockets=0, angel_tick_age_seconds=-0.1,
                  shoonya_connected=True, shoonya_tick_age_seconds=0.1, now=1)
-    assert s.angel_healthy is False
-    assert s.active_provider == "none"
-    assert s.mode == "DEGRADED_WAIT"
+    after = p.snapshot()
+    assert after.active_provider == before.active_provider
+    assert after.mode == before.mode
+    assert after.reason == before.reason
 
 
 def test_failback_stability_timer_resets_after_angel_feed_interrupt():
