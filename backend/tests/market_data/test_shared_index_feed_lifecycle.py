@@ -443,3 +443,52 @@ def test_shared_consumer_refs_survive_one_owner_clear_and_duplicate_subscribe():
     assert registry.active_keys() == ()
     assert registry.subscriptions() == ()
 
+
+
+def test_full_stop_barrier_blocks_concurrent_start_until_all_owners_teardown():
+    import threading
+    import time
+
+    class BlockingClearManager(StubManager):
+        def __init__(self):
+            super().__init__()
+            self.clear_entered = threading.Event()
+            self.release_clear = threading.Event()
+        def clear_consumer(self, consumer):
+            if consumer == SharedIndexFeedLifecycle.OPTIONS_CONSUMER:
+                self.clear_entered.set()
+                assert self.release_clear.wait(timeout=2)
+            return super().clear_consumer(consumer)
+
+
+    manager = BlockingClearManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    lifecycle.start_options(_options())
+    stop_errors = []
+    stop_thread = threading.Thread(target=lambda: _capture_exception(lifecycle.stop, stop_errors))
+    stop_thread.start()
+    assert manager.clear_entered.wait(timeout=1)
+
+    start_finished = threading.Event()
+    start_errors = []
+    start_thread = threading.Thread(target=lambda: (_capture_exception(lambda: lifecycle.start_spot(_spot_descriptors()), start_errors), start_finished.set()))
+    start_thread.start()
+    time.sleep(0.05)
+    assert not start_finished.is_set(), "start must wait until full OFF teardown barrier releases"
+
+    manager.release_clear.set()
+    stop_thread.join(timeout=2)
+    start_thread.join(timeout=2)
+    assert not stop_thread.is_alive()
+    assert not start_thread.is_alive()
+    assert stop_errors == []
+    assert start_errors == []
+    assert lifecycle.snapshot()["spot_active"] is True
+    lifecycle.stop()
+
+
+def _capture_exception(call, errors):
+    try:
+        call()
+    except Exception as exc:
+        errors.append(exc)
