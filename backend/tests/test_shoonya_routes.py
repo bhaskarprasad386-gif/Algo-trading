@@ -471,3 +471,19 @@ def test_verify_metadata_failure_removes_only_its_owned_session(monkeypatch, db_
     assert broker_sessions.get(0, "shoonya") is None
     assert broker_connections.get(0, "shoonya") is None
     assert client.disconnected is True
+
+def test_connection_metadata_commit_rejects_superseded_adapter():
+    owner_id = 99176
+    old = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="old"))
+    current = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="current"))
+    broker_sessions.replace(owner_id, "shoonya", current)
+    committed = []
+    assert broker_sessions.commit_if_current(
+        owner_id, "shoonya", old, lambda: committed.append("stale")
+    ) is False
+    assert committed == []
+    assert broker_sessions.commit_if_current(
+        owner_id, "shoonya", current, lambda: committed.append("current")
+    ) is True
+    assert committed == ["current"]
+    broker_sessions.remove(owner_id, "shoonya")
