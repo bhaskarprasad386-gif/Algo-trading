@@ -421,3 +421,15 @@ def test_concurrent_session_replacements_leave_single_active_adapter():
         assert all(result is None for result in results)
     finally:
         broker_sessions.remove(owner_id, "shoonya")
+
+def test_remove_if_current_does_not_remove_replacement_adapter():
+    owner_id = 99175
+    old = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="old"))
+    new = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="new"))
+    broker_sessions.replace(owner_id, "shoonya", old)
+    broker_sessions.replace(owner_id, "shoonya", new)
+
+    assert broker_sessions.remove_if_current(owner_id, "shoonya", old) is False
+    assert broker_sessions.get(owner_id, "shoonya") is new
+    assert broker_sessions.remove_if_current(owner_id, "shoonya", new) is True
+    assert broker_sessions.get(owner_id, "shoonya") is None
