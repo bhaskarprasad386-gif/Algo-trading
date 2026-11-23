@@ -263,6 +263,51 @@ def test_supervisor_preserves_pending_groups_when_recovery_fails():
     manager.close()
 
 
+def test_late_close_completion_keeps_recovery_admission_owned():
+    release_close = Event()
+    close_started = Event()
+    manager = CommonWebSocketManager()
+    groups = [SocketGroup(1, 0), SocketGroup(1, 1)]
+    sockets = [BlockingSocket(), BlockingSocket()]
+    for group, socket in zip(groups, sockets):
+        manager._sockets[group] = socket
+        manager._socket_generation[group] = 1
+        manager._socket_generation_counter[group] = 1
+        manager._socket_tokens[group] = {(1, str(group.shard))}
+
+    def delayed_close(*args, **kwargs):
+        callback = kwargs["on_finished"]
+
+        def worker_body():
+            close_started.set()
+            release_close.wait(timeout=2.0)
+            callback()
+
+        worker = Thread(target=worker_body, daemon=True)
+        worker.start()
+        return worker
+
+    manager._close_socket_tracked = delayed_close
+    manager.recover_disconnected = lambda **kwargs: 0
+    manager._reconcile = lambda: None
+    manager._schedule_socket_failure_recovery(groups[0], sockets[0], 1, "first failure")
+    assert close_started.wait(timeout=1.0)
+    assert manager.snapshot()["failure_recovery_worker_active"] is True
+
+    manager._schedule_socket_failure_recovery(groups[1], sockets[1], 1, "second failure")
+    state = manager.snapshot()
+    assert state["failure_recovery_worker_active"] is True
+    assert state["failure_recovery_admission_rejections"] == 1
+    assert state["failure_recovery_pending_groups"] == ["1:1"]
+
+    release_close.set()
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert manager.snapshot()["failure_recovery_worker_active"] is False
+    manager.close()
+
+
 def test_simultaneous_shard_failures_coalesce_callback_recovery_workers():
     release = Event()
     started = Event()
