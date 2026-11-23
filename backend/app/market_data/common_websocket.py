@@ -1063,10 +1063,8 @@ class CommonWebSocketManager:
 
         def _recover_after_close() -> None:
             try:
-                # Keep admission blocked while the supervisor processes the
-                # failure. Clear the marker only immediately before serialized
-                # reconciliation, so concurrent reconcile calls cannot race
-                # ahead and admit a replacement from stale state.
+                # Admission remains blocked through close completion and recovery,
+                # preventing a late close callback from overlapping a new worker.
                 self.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=None)
                 with self._reconcile_lock:
                     with self._lock:
@@ -1089,6 +1087,9 @@ class CommonWebSocketManager:
                     with self._lock:
                         if group not in self._sockets:
                             self._failure_recovery_groups.discard(group)
+            finally:
+                with self._lock:
+                    self._failure_recovery_worker_active = False
 
         def _recover() -> None:
             try:
@@ -1127,7 +1128,9 @@ class CommonWebSocketManager:
         def _recover_with_admission() -> None:
             try:
                 _recover()
-            finally:
+            except Exception:
+                # If close scheduling fails before the completion callback is
+                # registered, release admission so the supervisor can retry.
                 with self._lock:
                     self._failure_recovery_worker_active = False
 
