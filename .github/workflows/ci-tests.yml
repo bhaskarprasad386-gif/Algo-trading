@@ -60,9 +60,9 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d iv_basket_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
     steps:
       - uses: actions/checkout@v4
 
