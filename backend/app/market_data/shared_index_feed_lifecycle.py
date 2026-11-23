@@ -95,6 +95,20 @@ class SharedIndexFeedLifecycle:
                 raise ValueError(f"{name} requires exactly one CE and PE per strike")
 
     @staticmethod
+    def _restore_owner_keys(manager, consumer: str, old_keys, new_keys, mode: int) -> None:
+        """Restore registry ownership after a transport mutation failed partially."""
+        old_keys = tuple(old_keys)
+        added = tuple(key for key in new_keys if key not in set(old_keys))
+        # Registry operations are local and idempotent; establish desired owner
+        # state first, then ask the shared transport supervisor to reconcile.
+        for key in old_keys:
+            manager.registry.subscribe(consumer, key, mode)
+        for key in added:
+            manager.registry.unsubscribe(consumer, key)
+        manager.registry.unregister_many(added)
+        SharedIndexFeedLifecycle._reconcile_after_rollback(manager)
+
+    @staticmethod
     def _validated_descriptors(descriptors: Iterable[InstrumentDescriptor]) -> tuple[InstrumentDescriptor, ...]:
         items = tuple(descriptors)
         if not items:
@@ -216,36 +230,19 @@ class SharedIndexFeedLifecycle:
             try:
                 manager.subscribe(self.FUTURES_CONSUMER, list(new_keys), mode=self._futures_feed.mode)
             except Exception:
-                added = [key for key in new_keys if key not in set(old_keys)]
-                try:
-                    if added:
-                        manager.unsubscribe(self.FUTURES_CONSUMER, added)
-                except Exception:
-                    for key in added:
-                        manager.registry.unsubscribe(self.FUTURES_CONSUMER, key)
-                manager.registry.unregister_many(added)
-                self._reconcile_after_rollback(manager)
+                self._restore_owner_keys(
+                    manager, self.FUTURES_CONSUMER, old_keys, new_keys, self._futures_feed.mode,
+                )
                 raise
             obsolete = [key for key in old_keys if key not in set(new_keys)]
             if obsolete:
                 try:
                     manager.unsubscribe(self.FUTURES_CONSUMER, obsolete)
                 except Exception:
-                    # Reconcile the old owner first; unsubscribe may fail after partial mutation.
-                    try:
-                        manager.subscribe(self.FUTURES_CONSUMER, list(old_keys), mode=self._futures_feed.mode)
-                    except Exception:
-                        for key in old_keys:
-                            manager.registry.subscribe(self.FUTURES_CONSUMER, key, self._futures_feed.mode)
-                    added = [key for key in new_keys if key not in set(old_keys)]
-                    try:
-                        if added:
-                            manager.unsubscribe(self.FUTURES_CONSUMER, added)
-                    except Exception:
-                        for key in added:
-                            manager.registry.unsubscribe(self.FUTURES_CONSUMER, key)
-                    manager.registry.unregister_many(added)
-                    self._reconcile_after_rollback(manager)
+                    # Restore desired owner state even if transport operations fail again.
+                    self._restore_owner_keys(
+                        manager, self.FUTURES_CONSUMER, old_keys, new_keys, self._futures_feed.mode,
+                    )
                     raise
             if obsolete:
                 # Retire only unconsumed descriptors; registry protects shared refs.
@@ -273,37 +270,19 @@ class SharedIndexFeedLifecycle:
                 # subscribe() mutates the registry before reconcile; rollback the
                 # newly added consumer refs even when reconcile raises. Preserve
                 # all prior option keys and independent spot ownership.
-                added_keys = [key for key in new_keys if key not in set(old_keys)]
-                try:
-                    if added_keys:
-                        manager.unsubscribe(self.OPTIONS_CONSUMER, added_keys)
-                except Exception:
-                    # unsubscribe() also mutates registry before reconcile.
-                    for key in added_keys:
-                        manager.registry.unsubscribe(self.OPTIONS_CONSUMER, key)
-                manager.registry.unregister_many(added_keys)
-                self._reconcile_after_rollback(manager)
+                self._restore_owner_keys(
+                    manager, self.OPTIONS_CONSUMER, old_keys, new_keys, self._options_feed.mode,
+                )
                 raise
             obsolete = [key for key in old_keys if key not in set(new_keys)]
             if obsolete:
                 try:
                     manager.unsubscribe(self.OPTIONS_CONSUMER, obsolete)
                 except Exception:
-                    # Reconcile old owner first; unsubscribe can fail after partial mutation.
-                    try:
-                        manager.subscribe(self.OPTIONS_CONSUMER, list(old_keys), mode=self._options_feed.mode)
-                    except Exception:
-                        for key in old_keys:
-                            manager.registry.subscribe(self.OPTIONS_CONSUMER, key, self._options_feed.mode)
-                    added_keys = [key for key in new_keys if key not in set(old_keys)]
-                    try:
-                        if added_keys:
-                            manager.unsubscribe(self.OPTIONS_CONSUMER, added_keys)
-                    except Exception:
-                        for key in added_keys:
-                            manager.registry.unsubscribe(self.OPTIONS_CONSUMER, key)
-                    manager.registry.unregister_many(added_keys)
-                    self._reconcile_after_rollback(manager)
+                    # Restore desired owner state even if transport operations fail again.
+                    self._restore_owner_keys(
+                        manager, self.OPTIONS_CONSUMER, old_keys, new_keys, self._options_feed.mode,
+                    )
                     raise
             if obsolete:
                 # Retire only unconsumed descriptors; registry protects shared refs.
