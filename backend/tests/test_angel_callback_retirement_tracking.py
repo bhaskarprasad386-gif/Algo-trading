@@ -299,6 +299,42 @@ def test_supervisor_preserves_pending_groups_when_recovery_fails():
     manager.close()
 
 
+def test_supervisor_ack_does_not_drain_new_same_group_failure_during_reconcile():
+    manager = CommonWebSocketManager()
+    manager._recovery_interval_seconds = 0.01
+    manager._recovery_backoff_max_seconds = 0.05
+    pending_group = SocketGroup(1, 3)
+    manager._failure_recovery_pending_groups.add(pending_group)
+    manager._failure_recovery_pending_generations[pending_group] = 0
+    manager.registry.subscriptions = lambda: [object()]
+    manager.recover_disconnected = lambda **kwargs: 0
+    new_failure_marked = Event()
+    retry_reconcile_failed = Event()
+    reconcile_calls = []
+
+    def reconcile_with_same_group_race():
+        reconcile_calls.append(len(reconcile_calls) + 1)
+        if len(reconcile_calls) == 1:
+            with manager._lock:
+                manager._mark_failure_recovery_pending_locked(pending_group)
+            new_failure_marked.set()
+            return
+        retry_reconcile_failed.set()
+        raise RuntimeError("retry reconcile deliberately fails")
+
+    manager._broker_cooldown_remaining = lambda: 0.0
+    manager._reconcile = reconcile_with_same_group_race
+    manager._ensure_recovery_supervisor()
+    assert new_failure_marked.wait(timeout=1.0)
+    assert retry_reconcile_failed.wait(timeout=1.0)
+    # The first reconcile must not acknowledge the new generation just because
+    # it shares the same SocketGroup as the older pending failure.
+    state = manager.snapshot()
+    assert state["failure_recovery_pending_groups"] == ["1:3"]
+    assert manager._failure_recovery_pending_generations[pending_group] == 1
+    manager.close()
+
+
 def test_late_close_completion_keeps_recovery_admission_owned():
     release_close = Event()
     close_started = Event()
