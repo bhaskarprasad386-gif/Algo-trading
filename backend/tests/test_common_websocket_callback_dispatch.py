@@ -413,7 +413,8 @@ def _run_one_recovery_supervisor_iteration(manager):
 def test_supervisor_reconciles_pending_coalesced_failures_before_clearing():
     manager = CommonWebSocketManager()
     group = SocketGroup(mode=1, shard=2)
-    manager._mark_failure_recovery_pending_locked(group)
+    with manager._lock:
+        manager._mark_failure_recovery_pending_locked(group)
     reconciles = []
     manager._reconcile = lambda: reconciles.append("full-registry")
     _run_one_recovery_supervisor_iteration(manager)
@@ -425,7 +426,8 @@ def test_supervisor_reconciles_pending_coalesced_failures_before_clearing():
 def test_supervisor_keeps_pending_failures_when_reconcile_raises():
     manager = CommonWebSocketManager()
     group = SocketGroup(mode=1, shard=3)
-    manager._mark_failure_recovery_pending_locked(group)
+    with manager._lock:
+        manager._mark_failure_recovery_pending_locked(group)
     manager._reconcile = lambda: (_ for _ in ()).throw(RuntimeError("reconcile failed"))
     _run_one_recovery_supervisor_iteration(manager)
     state = manager.snapshot()
