@@ -1404,18 +1404,22 @@ class CommonWebSocketManager:
                     silent_age_seconds=silent_timeout,
                 )
                 cooldown_remaining = self._broker_cooldown_remaining()
+                with self._lock:
+                    has_pending_failures = bool(self._failure_recovery_pending_groups)
                 if cooldown_remaining > 0.0:
                     cooldown_was_active = True
-                elif cooldown_was_active:
+                elif cooldown_was_active or has_pending_failures:
+                    # A disconnected-socket pass alone is not a full desired-state
+                    # reconcile. Pending coalesced failures must survive until the
+                    # registry reconcile actually succeeds (or cooldown permits it).
                     self._reconcile()
                     cooldown_was_active = False
+                    with self._lock:
+                        self._failure_recovery_pending_groups.clear()
                 retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 with self._lock:
                     self._recovery_backoff_current_seconds = retry_delay
                     self._recovery_backoff_resets += 1
-                    # A successful full-registry recovery pass absorbs the
-                    # coalesced shard failures; clear only after that pass.
-                    self._failure_recovery_pending_groups.clear()
             except Exception as exc:
                 with self._lock:
                     if self._closed:
