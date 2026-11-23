@@ -626,3 +626,43 @@ def test_coalesced_failure_close_callback_after_shutdown_does_not_reconcile():
     assert reconciles == []
     assert manager.snapshot()["failure_recovery_worker_active"] is False
     assert manager.snapshot()["failure_recovery_pending_groups"] == []
+
+
+
+def test_late_socket_operation_completion_after_shutdown_cannot_reopen_transport():
+    release_operation = Event()
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    socket = BlockingSocket()
+    manager._socket_call_wait_seconds = 0.01
+    manager._sockets[group] = socket
+    manager._socket_tokens[group] = {(1, "late-token")}
+
+
+
+    try:
+        manager._run_socket_operation_bounded(
+            socket=socket, group=group,
+            operation=lambda: release_operation.wait(timeout=2.0),
+            operation_name="subscribe",
+        )
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("broker operation should time out before shutdown")
+
+
+
+    assert manager.snapshot()["socket_operation_worker_count"] == 1
+    assert group not in manager._sockets
+    manager.close()
+    release_operation.set()
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["socket_operation_worker_count"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    state = manager.snapshot()
+    assert state["socket_operation_worker_count"] == 0
+    assert state["socket_operation_worker_late_completions"] == 1
+    assert manager._sockets == {}
+    assert manager._socket_tokens == {}
+    assert manager._closed is True
