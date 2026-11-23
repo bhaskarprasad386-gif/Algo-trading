@@ -209,6 +209,8 @@ def shoonya_verify(
         }
     except HTTPException:
         if adapter is not None:
+            if broker_sessions.remove_if_current(user_id, "shoonya", adapter):
+                broker_connections.disconnect(user_id, "shoonya")
             adapter.disconnect()
         elif client is not None:
             client.disconnect()
@@ -216,6 +218,8 @@ def shoonya_verify(
         raise
     except (ShoonyaAuthenticationError, ShoonyaHistoryUnavailable, ValueError) as exc:
         if adapter is not None:
+            if broker_sessions.remove_if_current(user_id, "shoonya", adapter):
+                broker_connections.disconnect(user_id, "shoonya")
             adapter.disconnect()
         elif client is not None:
             client.disconnect()
@@ -223,6 +227,8 @@ def shoonya_verify(
         raise HTTPException(status_code=401, detail="Shoonya authentication or account verification failed") from exc
     except Exception as exc:
         if adapter is not None:
+            if broker_sessions.remove_if_current(user_id, "shoonya", adapter):
+                broker_connections.disconnect(user_id, "shoonya")
             adapter.disconnect()
         elif client is not None:
             client.disconnect()
