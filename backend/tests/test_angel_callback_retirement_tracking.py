@@ -720,3 +720,46 @@ def test_late_socket_operation_completion_after_shutdown_cannot_reopen_transport
     assert manager._socket_tokens == {}
     assert reconcile_calls == []
     assert manager._closed is True
+
+
+def test_partial_unsubscribe_failure_invalidates_socket_but_preserves_registry_intent():
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    key = InstrumentKey("NSE", "NSE", "IDX-777")
+    manager.registry.register(InstrumentDescriptor(
+        key=key, symbol="NIFTY", instrument_type="index", exchange="NSE",
+        segment="NSE", underlying="NIFTY",
+    ))
+    manager.registry.subscribe("partial-unsubscribe-audit", key, mode=1)
+    socket = BlockingSocket()
+    manager._socket_call_wait_seconds = 0.2
+    manager._sockets[group] = socket
+    manager._socket_generation[group] = 1
+    manager._socket_generation_counter[group] = 1
+    token_pair = (manager._resolve_exchange_type(key), key.token)
+    manager._socket_tokens[group] = {token_pair}
+    broker_tokens = {token_pair}
+    manager._close_socket_tracked = lambda *args, **kwargs: Thread()
+
+    def partially_mutating_unsubscribe():
+        broker_tokens.remove(token_pair)
+        raise RuntimeError("partial unsubscribe failure")
+
+    try:
+        manager._run_socket_operation_bounded(
+            socket=socket, group=group, operation=partially_mutating_unsubscribe,
+            operation_name="unsubscribe",
+        )
+    except RuntimeError as exc:
+        assert "partial unsubscribe failure" in str(exc)
+    else:
+        raise AssertionError("partial broker mutation failure must propagate")
+
+    assert group not in manager._sockets
+    assert group not in manager._socket_tokens
+    subscriptions = manager.registry.subscriptions()
+    assert any(item.key == key and item.mode == 1 for item in subscriptions)
+    assert broker_tokens == set()
+    state = manager.snapshot()
+    assert state["socket_operation_worker_failures"] == 1
+    manager.close()
