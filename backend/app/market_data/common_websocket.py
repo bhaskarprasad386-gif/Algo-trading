@@ -1424,9 +1424,19 @@ class CommonWebSocketManager:
             # after exchange/token pairs are globally sorted for that mode.
             pairs_by_mode: dict[int, set[tuple[int, str]]] = defaultdict(set)
             for sub in self.registry.subscriptions():
-                pairs_by_mode[sub.mode].add(
-                    (self._resolve_exchange_type(sub.key), sub.key.token.strip())
-                )
+                # Registry snapshots may be observed while reconciliation is
+                # recovering from a partial mutation. Ignore malformed entries
+                # rather than letting diagnostics crash the recovery supervisor.
+                mode = getattr(sub, "mode", None)
+                key = getattr(sub, "key", None)
+                token = str(getattr(key, "token", "") or "").strip()
+                if mode is None or key is None or not token:
+                    continue
+                try:
+                    exchange_type = self._resolve_exchange_type(key)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                pairs_by_mode[mode].add((exchange_type, token))
             expected_socket_groups: set[SocketGroup] = set()
             expected_assignments = self._build_shard_assignments(pairs_by_mode)
             for mode, assignments in expected_assignments.items():
