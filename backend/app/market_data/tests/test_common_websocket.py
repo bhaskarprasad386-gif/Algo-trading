@@ -2247,3 +2247,24 @@ def test_coalesced_failure_callback_still_retires_its_socket():
         with manager._lock:
             manager._failure_recovery_worker_active = False
         manager.close()
+
+
+def test_tracked_socket_retirement_completion_callback_runs_once_on_fast_close():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    socket = FakeSocket()
+    callbacks = []
+    try:
+        worker = manager._close_socket_tracked(
+            socket,
+            group=SocketGroup(1, 0),
+            generation=1,
+            reason="fast_close_callback_once",
+            on_finished=lambda: callbacks.append("finished"),
+            timeout=0.2,
+        )
+        if worker.is_alive():
+            worker.join(timeout=1.0)
+        assert socket.closed is True
+        assert callbacks == ["finished"]
+    finally:
+        manager.close()
