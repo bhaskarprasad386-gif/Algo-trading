@@ -71,7 +71,15 @@ class MarketDataFailoverCoordinator:
                 self._invalid_records += 1
             return False
         identity = (provider, key)
-        payload = deepcopy(record)
+        try:
+            payload = deepcopy(record)
+        except Exception:
+            # Canonical feed records must be safely copyable before caching or
+            # consumer delivery. Treat hostile/unsupported payload objects as an
+            # invalid record rather than letting adapter callbacks crash.
+            with self._lock:
+                self._invalid_records += 1
+            return False
         with self._lock:
             previous = self._last_timestamp.get(identity)
             if previous is not None and stamp <= previous:
