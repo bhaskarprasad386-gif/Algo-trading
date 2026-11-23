@@ -517,17 +517,12 @@ def test_subscription_validation_rejects_duplicate_tokens_before_registry_mutati
 def test_subscription_validation_rejects_empty_token_before_registry_mutation():
     manager = StubManager()
     lifecycle = SharedIndexFeedLifecycle(manager=manager)
-    items = list(_spot_descriptors())
-    first = items[0]
-    items[0] = InstrumentDescriptor(
-        key=InstrumentKey("NSE", "NSE", ""), symbol=first.symbol,
-        instrument_type=first.instrument_type, exchange=first.exchange,
-        segment=first.segment, underlying=first.underlying,
-    )
+    # InstrumentKey itself rejects empty tokens before descriptors reach the
+    # lifecycle validator, so exercise that public contract directly.
     try:
-        lifecycle.start_spot(items)
+        InstrumentKey("NSE", "NSE", "")
     except ValueError as exc:
-        assert "token must not be empty" in str(exc)
+        assert "token is required" in str(exc)
     else:
         raise AssertionError("empty broker tokens must be rejected")
     assert not manager.registry.subscriptions()
