@@ -54,8 +54,14 @@ class MarketDataFailoverPolicy:
             angel_failback_stability_seconds,
             minimum_shoonya_dwell_seconds,
         )
-        if any(not isfinite(value) or value <= 0 for value in values):
-            raise ValueError("failover timing values must be finite and positive")
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not isfinite(value)
+            or value <= 0
+            for value in values
+        ):
+            raise ValueError("failover timing values must be finite and positive numbers")
         self.angel_tick_fresh_seconds = angel_tick_fresh_seconds
         self.shoonya_tick_fresh_seconds = shoonya_tick_fresh_seconds
         self.angel_failover_stale_seconds = angel_failover_stale_seconds
@@ -80,8 +86,8 @@ class MarketDataFailoverPolicy:
     ) -> FailoverSnapshot:
         """Return a provider selection decision using locally measured tick ages."""
         now = monotonic() if now is None else now
-        if not isfinite(now):
-            raise ValueError("update timestamp must be finite")
+        if isinstance(now, bool) or not isinstance(now, (int, float)) or not isfinite(now):
+            raise ValueError("update timestamp must be a finite number")
         if (
             isinstance(failed_angel_sockets, bool)
             or not isinstance(failed_angel_sockets, int)
@@ -94,8 +100,13 @@ class MarketDataFailoverPolicy:
             ("angel_tick_age_seconds", angel_tick_age_seconds),
             ("shoonya_tick_age_seconds", shoonya_tick_age_seconds),
         ):
-            if age is not None and (not isfinite(age) or age < 0):
-                raise ValueError(f"{name} must be finite and non-negative when provided")
+            if age is not None and (
+                isinstance(age, bool)
+                or not isinstance(age, (int, float))
+                or not isfinite(age)
+                or age < 0
+            ):
+                raise ValueError(f"{name} must be a finite non-negative number when provided")
         angel_fresh = (
             angel_tick_age_seconds is not None
             and 0 <= angel_tick_age_seconds <= self.angel_tick_fresh_seconds
