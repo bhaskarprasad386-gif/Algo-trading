@@ -1251,15 +1251,18 @@ class CommonWebSocketManager:
                 completed.set()
                 if tracked is not None and tracked.get("timed_out"):
                     # Late completion can mutate the retired broker socket after
-                    # the caller's timeout invalidated it. Trigger authoritative
-                    # registry reconciliation as soon as the worker exits.
-                    try:
-                        self._reconcile()
-                    except Exception as reconcile_exc:
-                        app_logger.warning(
-                            "Common feed reconcile after late broker operation completion failed group=%s error=%s: %s",
-                            group_key, type(reconcile_exc).__name__, reconcile_exc,
-                        )
+                    # the caller's timeout invalidated it. Reconcile only while
+                    # the manager remains live; shutdown must be terminal.
+                    with self._lock:
+                        manager_closed = self._closed
+                    if not manager_closed:
+                        try:
+                            self._reconcile()
+                        except Exception as reconcile_exc:
+                            app_logger.warning(
+                                "Common feed reconcile after late broker operation completion failed group=%s error=%s: %s",
+                                group_key, type(reconcile_exc).__name__, reconcile_exc,
+                            )
 
         worker = Thread(
             target=_run,
