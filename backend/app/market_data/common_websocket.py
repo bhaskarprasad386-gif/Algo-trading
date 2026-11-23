@@ -1300,10 +1300,10 @@ class CommonWebSocketManager:
                 try:
                     self._reconcile()
                 except Exception as reconcile_exc:
-                app_logger.warning(
-                    "Common feed reconcile after timeout/completion race failed group=%s error=%s: %s",
-                    group_key, type(reconcile_exc).__name__, reconcile_exc,
-                )
+                    app_logger.warning(
+                        "Common feed reconcile after timeout/completion race failed group=%s error=%s: %s",
+                        group_key, type(reconcile_exc).__name__, reconcile_exc,
+                    )
 
         # Never leave a potentially half-mutated socket as authoritative.
         with self._lock:
