@@ -242,6 +242,27 @@ def test_recovery_supervisor_uses_bounded_backoff_after_transient_errors():
 
 
 
+def test_supervisor_preserves_pending_groups_when_recovery_fails():
+    manager = CommonWebSocketManager()
+    manager._recovery_interval_seconds = 0.01
+    pending_group = SocketGroup(1, 3)
+    manager._failure_recovery_pending_groups.add(pending_group)
+    failed_pass = Event()
+    manager.registry.subscriptions = lambda: [object()]
+
+    def fail_recovery(**kwargs):
+        failed_pass.set()
+        raise RuntimeError("transient recovery failure")
+
+    manager.recover_disconnected = fail_recovery
+    manager._ensure_recovery_supervisor()
+    assert failed_pass.wait(timeout=1.0)
+    # The failed pass must not consume coalesced failures; queue remains
+    # available for the next successful supervisor pass.
+    assert manager.snapshot()["failure_recovery_pending_groups"] == ["1:3"]
+    manager.close()
+
+
 def test_simultaneous_shard_failures_coalesce_callback_recovery_workers():
     release = Event()
     started = Event()
