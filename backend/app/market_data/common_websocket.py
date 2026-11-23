@@ -485,6 +485,7 @@ class CommonWebSocketManager:
             self._callbacks.pop(consumer, None)
             self._record_callbacks.pop(consumer, None)
             self._record_observers.pop(consumer, None)
+            self._transport_observers.pop(consumer, None)
             total = len(self.registry.subscriptions())
             if removed:
                 app_logger.info(
