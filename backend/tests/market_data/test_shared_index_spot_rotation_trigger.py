@@ -116,7 +116,9 @@ def test_trigger_reset_clears_old_epoch_anchor_pending_and_inflight():
     assert trigger.snapshot()["successful_anchor_spot"] == {}
     # New runner epoch must establish a fresh baseline, not rotate against old price.
     assert not trigger.on_spot("NIFTY", 24000)
-    assert trigger.snapshot()["successful_anchor_spot"] == {}
+    # The first tick establishes the baseline for this new epoch; it is not
+    # counted as a completed rotation request.
+    assert trigger.snapshot()["successful_anchor_spot"] == {"NIFTY": 24000}
 
 
 def test_late_rotation_completion_from_prior_epoch_cannot_commit_new_anchor():
