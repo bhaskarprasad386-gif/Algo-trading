@@ -3,6 +3,7 @@ from time import monotonic, sleep
 
 import pytest
 
+import app.market_data.common_websocket as common_websocket_module
 from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
 
 
@@ -64,4 +65,51 @@ def test_late_broker_operation_completion_triggers_registry_reconcile():
     with manager._lock:
         assert not manager._has_pending_socket_operation_locked(group)
     assert calls
+    manager.close()
+
+
+def test_timeout_wait_completion_race_still_reconciles(monkeypatch):
+    manager = CommonWebSocketManager(socket_factory=lambda: _Socket())
+    group = SocketGroup(mode=1, shard=0)
+    socket = _Socket()
+    with manager._lock:
+        manager._sockets[group] = socket
+        manager._socket_tokens[group] = {(1, "123")}
+        manager._socket_generation[group] = 2
+        manager._socket_generation_counter[group] = 2
+
+    release_operation = Event()
+    reconcile_called = Event()
+
+    class _CompletionEvent:
+        def __init__(self):
+            self._event = Event()
+
+        def set(self):
+            self._event.set()
+
+        def is_set(self):
+            return self._event.is_set()
+
+        def wait(self, timeout=None):
+            # Force the edge case: the worker finishes before the caller
+            # marks its tracked operation as timed out, but wait reports
+            # that the bounded wait expired.
+            release_operation.set()
+            assert self._event.wait(1.0)
+            return False
+
+    monkeypatch.setattr(common_websocket_module, "Event", _CompletionEvent)
+    manager._reconcile = reconcile_called.set
+
+    with pytest.raises(TimeoutError, match="exceeded"):
+        manager._run_socket_operation_bounded(
+            socket=socket,
+            group=group,
+            operation=lambda: release_operation.wait(1.0),
+            operation_name="subscribe",
+        )
+
+    assert reconcile_called.is_set(), "timeout/completion race must not miss reconcile"
+    assert manager.snapshot()["socket_operation_worker_count"] == 0
     manager.close()
