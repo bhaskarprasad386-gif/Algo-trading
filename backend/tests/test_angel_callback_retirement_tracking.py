@@ -785,7 +785,7 @@ def test_explicit_reconcile_retry_is_drained_after_transient_failure_without_reg
     manager._broker_cooldown_remaining = lambda: 0.0
 
     def fail_once_then_reconcile():
-        attempts.append(len(attempts) + 1
+        attempts.append(len(attempts) + 1)
         if len(attempts) == 1:
             raise RuntimeError("transient rollback reconcile failure")
         reconciled.set()
