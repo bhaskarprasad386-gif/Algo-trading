@@ -2349,6 +2349,7 @@ class CommonWebSocketManager:
                 self._last_successful_delivery_at.clear()
                 self._socket_generation.clear()
                 self._failure_recovery_groups.clear()
+                self._failure_recovery_pending_groups.clear()
         # Do not hold either manager lock while waiting for consumer callbacks:
         # a callback may legitimately request subscription changes during shutdown.
         for group, (generation, adapter) in callback_adapters:
