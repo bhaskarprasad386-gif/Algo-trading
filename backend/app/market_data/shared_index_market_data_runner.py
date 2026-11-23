@@ -97,6 +97,8 @@ class SharedIndexMarketDataRunner:
         self._spot_records: dict[str, Any] = {}
         self._futures_expiries: dict[str, str] = {}
         self._master_refresh_interval_seconds = 24 * 60 * 60.0
+        # Failed refreshes retry on a bounded short interval, not the full 24h cadence.
+        self._master_refresh_retry_delay_seconds = 60.0
         self._master_refresh_started_at = 0.0
         self._master_refresh_inflight = False
         self._master_last_refresh_at: str | None = None
@@ -174,6 +176,12 @@ class SharedIndexMarketDataRunner:
                     # An obsolete worker must not publish into a later ON epoch.
                     if self._running and generation == self._run_generation:
                         self._master_refresh_error = f"{type(exc).__name__}: {exc}"[:200]
+                        # Back off transient failures while preserving the successful-refresh cadence.
+                        self._master_refresh_started_at = (
+                            __import__("time").monotonic()
+                            - self._master_refresh_interval_seconds
+                            + self._master_refresh_retry_delay_seconds
+                        )
             finally:
                 with self._lock:
                     if self._master_refresh_generation == generation:
