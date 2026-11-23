@@ -93,13 +93,22 @@ class MarketDataFailoverCoordinator:
             if last_forwarded is not None and stamp <= last_forwarded:
                 self._suppressed += 1
                 return False
+            # Reserve both watermarks before invoking the consumer. RLock allows
+            # callbacks to re-enter observe(); without this reservation, the same
+            # timestamp could be recursively delivered before the outer call commits.
+            self._last_timestamp[identity] = stamp
+            self._last_forwarded_timestamp[key] = stamp
             try:
                 self._on_record(provider, payload)
             except Exception:
                 self._callback_errors += 1
+                # Roll back only our reservation; a re-entrant newer tick may
+                # have advanced either watermark while the callback was running.
+                if self._last_timestamp.get(identity) == stamp:
+                    self._last_timestamp.pop(identity, None)
+                if self._last_forwarded_timestamp.get(key) == stamp:
+                    self._last_forwarded_timestamp.pop(key, None)
                 return False
-            self._last_timestamp[identity] = stamp
-            self._last_forwarded_timestamp[key] = stamp
             self._forwarded += 1
             return True
 
