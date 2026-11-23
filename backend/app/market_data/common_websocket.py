@@ -1155,6 +1155,8 @@ class CommonWebSocketManager:
         started_at = time.monotonic()
         group_key = f"{group.mode}:{group.shard}"
         with self._lock:
+            if self._closed:
+                raise RuntimeError("WebSocket manager is closed; broker operation rejected")
             # A timed-out SDK call may still be mutating its retired socket.
             # Do not launch another broker operation for the same shard until
             # that worker exits; recovery can retry after this barrier clears.
