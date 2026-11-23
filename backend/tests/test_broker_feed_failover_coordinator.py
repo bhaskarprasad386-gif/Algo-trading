@@ -717,3 +717,28 @@ def test_reentrant_callback_cannot_deliver_same_tick_twice():
     assert snap["forwarded_ticks"] == 1
     assert snap["suppressed_ticks"] == 1
     assert snap["callback_errors"] == 0
+
+
+def test_outer_callback_failure_preserves_newer_reentrant_tick_watermarks():
+    delivered = []
+    holder = {}
+    older = tick("NIFTY", 1500, 100)
+    newer = tick("NIFTY", 1600, 101)
+
+    def callback(provider, payload):
+        delivered.append(payload["timestamp_ns"])
+        if payload["timestamp_ns"] == 1500:
+            assert holder["c"].observe(provider, newer) is True
+            raise RuntimeError("outer callback failed after reentrant delivery")
+
+    c = MarketDataFailoverCoordinator(on_record=callback)
+    holder["c"] = c
+    assert c.observe("angel_one", older) is False
+    # Outer failure must not roll back the newer tick delivered re-entrantly.
+    assert c.observe("angel_one", tick("NIFTY", 1550, 100.5)) is False
+    assert c.observe("angel_one", newer) is False
+    assert delivered == [1500, 1600]
+    snap = c.snapshot()
+    assert snap["forwarded_ticks"] == 1
+    assert snap["callback_errors"] == 1
+    assert snap["suppressed_ticks"] == 2
