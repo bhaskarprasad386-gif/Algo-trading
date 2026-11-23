@@ -2216,11 +2216,6 @@ def test_coalesced_failure_callback_still_retires_its_socket():
         socket = manager._sockets[group]
         generation = manager._socket_generation[group]
         with manager._lock:
-            manager._sockets.pop(group)
-            manager._socket_tokens.pop(group, None)
-            manager._socket_created_at.pop(group, None)
-            manager._socket_generation.pop(group, None)
-            manager._failure_recovery_groups.add(group)
             manager._failure_recovery_worker_active = True
         manager._schedule_socket_failure_recovery(
             group, socket, generation, "coalesced test failure"
