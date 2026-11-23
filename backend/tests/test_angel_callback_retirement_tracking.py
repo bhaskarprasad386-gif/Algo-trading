@@ -308,6 +308,53 @@ def test_late_close_completion_keeps_recovery_admission_owned():
     manager.close()
 
 
+def test_failed_late_close_recovery_releases_admission_and_keeps_coalesced_group():
+    release_close = Event()
+    close_started = Event()
+    recovery_called = Event()
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    pending = SocketGroup(1, 1)
+    socket = BlockingSocket()
+    manager._sockets[group] = socket
+    manager._socket_generation[group] = 1
+    manager._socket_generation_counter[group] = 1
+    manager._socket_tokens[group] = {(1, "0")}
+
+    def delayed_close(*args, **kwargs):
+        callback = kwargs["on_finished"]
+
+        def worker_body():
+            close_started.set()
+            release_close.wait(timeout=2.0)
+            callback()
+
+        worker = Thread(target=worker_body, daemon=True)
+        worker.start()
+        return worker
+
+    def fail_recovery(**kwargs):
+        recovery_called.set()
+        raise RuntimeError("transient recovery error")
+
+    manager._close_socket_tracked = delayed_close
+    manager.recover_disconnected = fail_recovery
+    manager._reconcile = lambda: None
+    manager._schedule_socket_failure_recovery(group, socket, 1, "failure")
+    assert close_started.wait(timeout=1.0)
+    manager._schedule_socket_failure_recovery(pending, BlockingSocket(), 1, "coalesced")
+    assert manager.snapshot()["failure_recovery_worker_active"] is True
+    release_close.set()
+    assert recovery_called.wait(timeout=1.0)
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    state = manager.snapshot()
+    assert state["failure_recovery_worker_active"] is False
+    assert state["failure_recovery_pending_groups"] == ["1:1"]
+    manager.close()
+
+
 def test_simultaneous_shard_failures_coalesce_callback_recovery_workers():
     release = Event()
     started = Event()
