@@ -773,3 +773,32 @@ def test_partial_unsubscribe_failure_invalidates_socket_but_preserves_registry_i
     state = manager.snapshot()
     assert state["socket_operation_worker_failures"] == 1
     manager.close()
+
+
+def test_explicit_reconcile_retry_is_drained_after_transient_failure_without_registry_intent():
+    manager = CommonWebSocketManager()
+    manager._recovery_interval_seconds = 0.01
+    manager._recovery_backoff_max_seconds = 0.2
+    attempts = []
+    reconciled = Event()
+    manager.recover_disconnected = lambda **_kwargs: 0
+
+    def fail_once_then_reconcile():
+        attempts.append(len(attempts) + 1
+        if len(attempts) == 1:
+            raise RuntimeError("transient rollback reconcile failure")
+        reconciled.set()
+
+    manager._reconcile = fail_once_then_reconcile
+    assert manager._request_reconcile_retry() is True
+    assert reconciled.wait(timeout=2.0)
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["reconcile_retry_pending"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+    state = manager.snapshot()
+    assert len(attempts) >= 2
+    assert state["reconcile_retry_pending"] is False
+    assert state["reconcile_retry_requests"] == 1
+    assert state["reconcile_retry_successes"] == 1
+    manager.close()
