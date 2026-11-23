@@ -203,3 +203,15 @@ def test_callback_reentrant_health_switch_applies_only_to_subsequent_ticks():
     assert c.observe("angel_one", tick("NIFTY", 2, 101)) is False
     assert c.observe("shoonya", tick("NIFTY", 3, 102)) is True
     assert received == [("angel_one", 1), ("shoonya", 3)]
+
+
+def test_cross_provider_duplicate_timestamp_is_suppressed_after_switch():
+    received = []
+    c = MarketDataFailoverCoordinator(policy=policy(), on_record=lambda p, r: received.append((p, r["timestamp_ns"])))
+    assert c.observe("angel_one", tick("NIFTY", 100, 100)) is True
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+              shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    # Backup's overlapping replay of the last primary timestamp must not duplicate.
+    assert c.observe("shoonya", tick("NIFTY", 100, 100)) is False
+    assert c.observe("shoonya", tick("NIFTY", 101, 101)) is True
+    assert received == [("angel_one", 100), ("shoonya", 101)]
