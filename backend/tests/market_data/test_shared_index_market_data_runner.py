@@ -621,7 +621,9 @@ def test_failed_master_refresh_uses_short_retry_backoff_not_daily_interval():
     runner._master_refresh_interval_seconds = 24 * 60 * 60.0
     runner._master_refresh_retry_delay_seconds = 60.0
     runner._bootstrap_options_done = True
-    runner._master_refresh_started_at = 0.0
+    # Simulate a completed 24-hour cadence; monotonic zero is not necessarily
+    # older than a day on fresh CI runners.
+    runner._master_refresh_started_at = time.monotonic() - runner._master_refresh_interval_seconds - 1.0
     assert runner._schedule_master_refresh() is True
     assert master.failed.wait(timeout=2)
     deadline = time.monotonic() + 2
