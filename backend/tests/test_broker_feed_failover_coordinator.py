@@ -545,3 +545,37 @@ def test_simultaneous_equal_time_health_updates_are_atomic_and_valid():
     final = p.snapshot()
     assert final.active_provider in ("angel_one", "shoonya", "none")
     assert final.mode in ("PRIMARY", "BACKUP", "NO_VALID_FEED", "DEGRADED_WAIT")
+
+
+def test_coordinator_concurrent_same_time_switches_keep_snapshot_consistent():
+    from threading import Barrier, Thread
+
+    c = MarketDataFailoverCoordinator(policy=policy(), on_record=lambda _p, _r: None)
+    barrier = Barrier(3)
+    exceptions = []
+
+    def evaluate(kwargs):
+        barrier.wait(timeout=2)
+        try:
+            c.evaluate(**kwargs)
+        except Exception as exc:
+            exceptions.append(exc)
+
+    backup_health = dict(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=50)
+    primary_health = dict(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=50)
+    threads = [Thread(target=evaluate, args=(backup_health,)),
+               Thread(target=evaluate, args=(primary_health,))]
+    for thread in threads:
+        thread.start()
+    barrier.wait(timeout=2)
+    for thread in threads:
+        thread.join(timeout=2)
+    assert all(not thread.is_alive() for thread in threads)
+    assert exceptions == []
+    snap = c.snapshot()
+    policy_snap = c.policy.snapshot()
+    assert snap["active_provider"] == policy_snap.active_provider
+    assert snap["mode"] == policy_snap.mode
+    assert snap["reason"] == policy_snap.reason
