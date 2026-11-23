@@ -2201,3 +2201,36 @@ def test_clear_consumer_removes_transport_observer_route_with_subscription_owner
     assert manager.snapshot()["active_instruments"] == 0
     manager.close()
 
+
+
+
+def test_coalesced_failure_callback_still_retires_its_socket():
+    registry = InstrumentRegistry()
+    item = descriptor("777")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("cash", [item.key])
+        group = SocketGroup(1, 0)
+        socket = manager._sockets[group]
+        generation = manager._socket_generation[group]
+        with manager._lock:
+            manager._sockets.pop(group)
+            manager._socket_tokens.pop(group, None)
+            manager._socket_created_at.pop(group, None)
+            manager._socket_generation.pop(group, None)
+            manager._failure_recovery_groups.add(group)
+            manager._failure_recovery_worker_active = True
+        manager._schedule_socket_failure_recovery(
+            group, socket, generation, "coalesced test failure"
+        )
+        assert socket.closed is True
+        assert manager.snapshot()["retired_transport_count"] == 0
+        with manager._lock:
+            assert group not in manager._failure_recovery_groups
+            assert group not in manager._failure_recovery_pending_groups
+    finally:
+        with manager._lock:
+            manager._failure_recovery_worker_active = False
+        manager.close()
