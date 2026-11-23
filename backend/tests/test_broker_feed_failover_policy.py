@@ -581,3 +581,32 @@ def test_failback_stability_timer_resets_after_angel_feed_flaps():
                  shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=22)
     assert s.active_provider == "angel_one"
     assert s.reason == "angel_stable_failback"
+
+
+def test_snapshot_preserves_latest_health_evidence_instead_of_reporting_false_values():
+    import pytest
+    p = policy()
+    first = p.update(
+        failed_angel_sockets=2,
+        angel_tick_age_seconds=0.4,
+        shoonya_connected=True,
+        shoonya_tick_age_seconds=0.3,
+        now=2000,
+    )
+    snap = p.snapshot()
+    assert snap == first
+    assert snap.angel_healthy is True
+    assert snap.shoonya_healthy is True
+    assert snap.failed_angel_sockets == 2
+
+    second = p.update(
+        failed_angel_sockets=3,
+        angel_tick_age_seconds=4.0,
+        shoonya_connected=False,
+        shoonya_tick_age_seconds=None,
+        now=2001,
+    )
+    assert p.snapshot() == second
+    assert p.snapshot().angel_healthy is False
+    assert p.snapshot().shoonya_healthy is False
+    assert p.snapshot().failed_angel_sockets == 3
