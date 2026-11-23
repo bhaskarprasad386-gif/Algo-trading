@@ -662,3 +662,26 @@ def test_no_feed_state_recovers_to_fresh_angel_even_with_all_sockets_marked_fail
     assert recovered.active_provider == "angel_one"
     assert recovered.mode == "PRIMARY"
     assert recovered.reason == "angel_recovered"
+
+
+def test_out_of_order_health_timestamp_is_atomic_and_next_valid_update_recovers():
+    import pytest
+    p = policy()
+    baseline = p.update(
+        failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1700,
+    )
+    with pytest.raises(ValueError, match="out-of-order health update timestamp"):
+        p.update(
+            failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+            shoonya_connected=False, shoonya_tick_age_seconds=None, now=1699,
+        )
+    assert p.snapshot() == baseline
+    # A rejected stale event must not advance the watermark or poison recovery.
+    recovered = p.update(
+        failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1701,
+    )
+    assert recovered.active_provider == "angel_one"
+    assert recovered.mode == "PRIMARY"
+    assert recovered.reason == "angel_healthy"
