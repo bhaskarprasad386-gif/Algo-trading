@@ -351,3 +351,37 @@ def test_primary_recovery_failure_keeps_coalesced_group_pending_for_supervisor()
     assert state["failure_recovery_worker_active"] is False
     assert state["failure_recovery_pending_groups"] == []
     manager.close()
+
+
+def test_coalesced_callback_reconcile_failure_keeps_pending_group_for_supervisor():
+    manager = CommonWebSocketManager(socket_factory=lambda: _Socket())
+    first, second = SocketGroup(mode=1, shard=0), SocketGroup(mode=1, shard=1)
+    first_socket, second_socket = _Socket(), _Socket()
+    _install_current(manager, first, first_socket, generation=51)
+    _install_current(manager, second, second_socket, generation=52)
+    close_callbacks = []
+    reconciles = []
+    manager._close_socket_tracked = lambda _socket, **kwargs: close_callbacks.append(kwargs["on_finished"])
+    def reconcile():
+        reconciles.append(1)
+        if len(reconciles) == 2:
+            raise RuntimeError("coalesced reconcile failed")
+    manager._reconcile = reconcile
+    manager.recover_disconnected = lambda **_kwargs: 0
+
+
+    manager._schedule_socket_failure_recovery(first, first_socket, 51, "primary")
+    deadline = monotonic() + 1.0
+    while len(close_callbacks) < 1 and monotonic() < deadline:
+        sleep(0.01)
+    assert len(close_callbacks) == 1
+    manager._schedule_socket_failure_recovery(second, second_socket, 52, "coalesced")
+    assert len(close_callbacks) == 2
+    close_callbacks[0]()
+    close_callbacks[1]()
+    state = manager.snapshot()
+    assert reconciles == [1, 1]
+    assert "1:1" in state["failure_recovery_pending_groups"], (
+        "coalesced group must remain pending when its reconciliation fails"
+    )
+    manager.close()
