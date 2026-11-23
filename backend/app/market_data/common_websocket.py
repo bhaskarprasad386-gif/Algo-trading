@@ -930,8 +930,6 @@ class CommonWebSocketManager:
                             reason="late_connect_success",
                             on_finished=lambda: self._reconcile_after_retirement(group),
                         )
-                        if not close_worker.is_alive():
-                            self._reconcile_after_retirement(group)
                         return
             except Exception as exc:
                 failure["exception"] = exc
@@ -994,8 +992,6 @@ class CommonWebSocketManager:
                         socket, group=group, generation=generation, reason="connect_failure",
                         on_finished=_resume_after_connect_failure, timeout=0.1,
                     )
-                    if not close_worker.is_alive():
-                        _resume_after_connect_failure()
                 # Return the connect exception after state and close gating are set,
                 # without waiting for any later supervisor reconciliation.
                 completed.set()
@@ -1105,10 +1101,9 @@ class CommonWebSocketManager:
                     socket, group=group, generation=generation, reason="failure_callback",
                     on_finished=_recover_after_close,
                 )
-                if close_worker.is_alive():
-                    # The tracked close watcher resumes recovery when the transport exits.
-                    return
-                _recover_after_close()
+                # The tracked retirement completion resumes recovery, including
+                # when close completed inside the bounded wait.
+                return
             except Exception as exc:
                 runtime_diagnostics.record(
                     component="Common Market Feed",
@@ -1157,8 +1152,6 @@ class CommonWebSocketManager:
                 reason="coalesced_failure_callback",
                 on_finished=_resume_coalesced_recovery,
             )
-            if not close_worker.is_alive():
-                _resume_coalesced_recovery()
             return
 
         def _recover_with_admission() -> None:
@@ -1326,9 +1319,6 @@ class CommonWebSocketManager:
                 reason=f"socket_{operation_name}_failure",
                 on_finished=_resume_after_operation_close,
             )
-            if not close_worker.is_alive():
-                _resume_after_operation_close()
-
         if not finished:
             error = TimeoutError(
                 f"WebSocket {operation_name} call exceeded "
@@ -2065,14 +2055,33 @@ class CommonWebSocketManager:
         worker = self._close_socket_bounded(
             socket, timeout=timeout, group=group, generation=generation, reason=reason
         )
+        # Bounded close may finish between the caller's first liveness check
+        # and watcher registration. Own completion in this helper and guard it
+        # exactly once so fast-close and watcher paths cannot double-reconcile.
+        completion_claimed = Event()
+
+        def _finish_once() -> None:
+            if completion_claimed.is_set():
+                return
+            completion_claimed.set()
+            if on_finished is not None:
+                try:
+                    on_finished()
+                except Exception as exc:
+                    app_logger.warning(
+                        "Common feed retirement completion handler failed group=%s reason=%s: %s",
+                        f"{group.mode}:{group.shard}", reason, exc,
+                    )
+
         if worker.is_alive():
             self._watch_retired_transport(
                 worker, group=group, generation=generation, reason=reason,
-                on_finished=on_finished, retirement_key=key,
+                on_finished=_finish_once, retirement_key=key,
             )
         else:
             with self._lock:
                 self._retired_transports.pop(key, None)
+            _finish_once()
         return worker
 
     @staticmethod
