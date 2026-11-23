@@ -215,3 +215,19 @@ def test_cross_provider_duplicate_timestamp_is_suppressed_after_switch():
     assert c.observe("shoonya", tick("NIFTY", 100, 100)) is False
     assert c.observe("shoonya", tick("NIFTY", 101, 101)) is True
     assert received == [("angel_one", 100), ("shoonya", 101)]
+
+
+def test_backup_stale_gap_suppresses_ticks_then_fresh_backup_recovers():
+    received = []
+    c = MarketDataFailoverCoordinator(policy=policy(), on_record=lambda p, r: received.append((p, r["timestamp_ns"])))
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+              shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    assert c.observe("shoonya", tick("NIFTY", 10, 100)) is True
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+              shoonya_connected=False, shoonya_tick_age_seconds=None, now=11)
+    assert c.snapshot()["active_provider"] == "none"
+    assert c.observe("shoonya", tick("NIFTY", 11, 101)) is False
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+              shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=12)
+    assert c.observe("shoonya", tick("NIFTY", 12, 102)) is True
+    assert received == [("shoonya", 10), ("shoonya", 12)]
