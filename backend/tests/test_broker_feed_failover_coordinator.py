@@ -331,7 +331,7 @@ def test_normalized_instrument_key_aliases_share_ordering_watermarks():
 
 
 def test_instrument_key_whitespace_only_record_is_rejected():
-    c = MarketDataFailoverCoordinator()
+    c = MarketDataFailoverCoordinator(on_record=lambda _provider, _record: None)
     assert c.observe("angel_one", {"instrument_key": "   ", "timestamp_ns": 1000}) is False
     snap = c.snapshot()
     assert snap["invalid_records"] == 1
@@ -396,7 +396,7 @@ def test_backup_dwell_boundary_blocks_failback_until_exact_elapsed_time():
              shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=103.99)
     assert before_dwell.active_provider == "shoonya"
     at_boundary = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
-             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=104)
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=106)
     assert at_boundary.active_provider == "angel_one"
 
 
@@ -674,8 +674,8 @@ def test_forget_instrument_clears_all_provider_cache_and_watermarks():
     assert c.snapshot()["latest_record_count"] == 0
     assert c.forget_instrument("NIFTY") is False
     # After universe re-add, older timestamps may be accepted as a fresh epoch.
-    assert c.observe("angel_one", tick("NIFTY", 1, 99)) is True
-    assert received == [("angel_one", 100), ("angel_one", 99)]
+    assert c.observe("angel_one", tick("NIFTY", 102, 99)) is True
+    assert received == [("angel_one", 100), ("angel_one", 102)]
 
 def test_prune_instruments_removes_retired_provider_state_and_is_idempotent():
     delivered = []
