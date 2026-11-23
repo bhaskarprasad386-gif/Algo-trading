@@ -768,3 +768,36 @@ def test_stop_force_clears_registry_when_consumer_clear_fails_before_mutation():
     assert all(manager.registry.get(key) is None for key in keys)
     assert lifecycle.snapshot()["options_active"] is False
     assert lifecycle.snapshot()["options_instruments"] == 0
+
+
+class RollbackReconcileRequestManager(FailAfterMutationManager):
+    def __init__(self):
+        super().__init__()
+        self.reconcile_error = True
+        self.retry_requests = 0
+    def _reconcile(self):
+        if self.reconcile_error:
+            self.reconcile_error = False
+            raise RuntimeError("transient rollback reconcile failure")
+    def _request_reconcile_retry(self):
+        self.retry_requests += 1
+
+
+def test_registry_rollback_requests_supervisor_retry_when_transport_reconcile_fails():
+    manager = RollbackReconcileRequestManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    old = _options()
+    lifecycle.start_options(old)
+    old_keys = set(d.key for d in old)
+    manager.fail_next_subscribe = True
+
+    try:
+        lifecycle.rotate_options(_options(shift=25))
+    except RuntimeError as exc:
+        assert "forced reconcile failure" in str(exc)
+    else:
+        raise AssertionError("partial subscribe should fail")
+
+    assert manager.registry.active_keys() == tuple(sorted(old_keys, key=lambda key: key.value))
+    assert manager.active[lifecycle.OPTIONS_CONSUMER] == old_keys
+    assert manager.retry_requests == 1
