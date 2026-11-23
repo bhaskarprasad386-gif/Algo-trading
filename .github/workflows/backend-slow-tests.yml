@@ -1,11 +1,11 @@
-name: Backend Slow Tests (Manual)
+name: Full Backend Tests (Manual Only)
 
 on:
   workflow_dispatch:
 
 jobs:
   slow-backend:
-    name: Isolated Strategy / History Tests
+    name: Full Backend Test Suite
     runs-on: ubuntu-latest
     timeout-minutes: 45
     services:
