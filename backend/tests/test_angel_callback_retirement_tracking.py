@@ -226,7 +226,8 @@ def test_supervisor_drains_coalesced_failure_groups_after_successful_recovery():
 
 def test_recovery_supervisor_exits_on_shutdown_without_retrying():
     manager = CommonWebSocketManager()
-    manager._recovery_interval_seconds = 0.01
+    # Production retry cadence is clamped to 100ms to avoid tight loops.
+    manager._recovery_interval_seconds = 0.1
     recovery_calls = []
     manager.recover_disconnected = lambda **kwargs: recovery_calls.append(kwargs) or 0
     manager.registry.subscriptions = lambda: [object()]
@@ -247,7 +248,8 @@ def test_recovery_supervisor_exits_on_shutdown_without_retrying():
 
 def test_recovery_supervisor_uses_bounded_backoff_after_transient_errors():
     manager = CommonWebSocketManager()
-    manager._recovery_interval_seconds = 0.01
+    # Test the production floor rather than an interval the loop clamps.
+    manager._recovery_interval_seconds = 0.1
     manager._recovery_backoff_max_seconds = 0.04
     calls = []
     recovery_succeeded = Event()
