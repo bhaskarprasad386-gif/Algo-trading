@@ -75,6 +75,8 @@ class MarketDataFailoverPolicy:
         self._angel_healthy_since: float | None = None
         self._last_update_at: float | None = None
         self._last_snapshot: FailoverSnapshot | None = None
+        self._grace_wait = False
+        self._none_reason = "no_provider_feed_is_fresh"
 
     def update(
         self,
@@ -149,15 +151,24 @@ class MarketDataFailoverPolicy:
                     else:
                         self._active = self.NONE
                         self._mode = "NO_VALID_FEED"
+                        self._none_reason = (
+                            "two_or_more_angel_sockets_failed_and_feed_unhealthy"
+                            if failed_angel_sockets >= 2 and not angel_fresh
+                            else "angel_feed_stale"
+                        )
                         self._reason = "angel_unhealthy_shoonya_not_ready"
+                        self._grace_wait = False
                 elif angel_fresh:
                     self._active = self.ANGEL_ONE
                     self._mode = "PRIMARY"
                     self._reason = "angel_healthy"
+                    self._grace_wait = False
                 else:
                     self._active = self.NONE
                     self._mode = "DEGRADED_WAIT"
                     self._reason = "angel_tick_stale_within_failover_grace"
+                    self._none_reason = "angel_feed_stale"
+                    self._grace_wait = True
             elif self._active == self.SHOONYA:
                 dwell_elapsed = (
                     self._switched_at is not None
@@ -176,23 +187,32 @@ class MarketDataFailoverPolicy:
                     self._active = self.NONE
                     self._mode = "NO_VALID_FEED"
                     self._reason = "shoonya_feed_stale"
+                    self._none_reason = "shoonya_feed_stale"
+                    self._grace_wait = False
                 else:
                     self._mode = "BACKUP"
                     self._reason = "shoonya_active_waiting_for_angel_stability"
             else:
-                if failover_needed and shoonya_fresh:
+                if self._grace_wait and not failover_needed:
+                    self._active = self.NONE
+                    self._mode = "DEGRADED_WAIT"
+                    self._reason = "angel_tick_stale_within_failover_grace"
+                elif failover_needed and shoonya_fresh:
                     self._active = self.SHOONYA
                     self._mode = "BACKUP"
-                    self._reason = "shoonya_validated_recovery"
+                    self._reason = self._none_reason
                     self._switched_at = now
+                    self._grace_wait = False
                 elif angel_fresh:
                     self._active = self.ANGEL_ONE
                     self._mode = "PRIMARY"
                     self._reason = "angel_recovered"
                     self._switched_at = now
+                    self._grace_wait = False
                 else:
                     self._mode = "NO_VALID_FEED"
-                    self._reason = "no_provider_feed_is_fresh"
+                    self._reason = self._none_reason
+                    self._grace_wait = False
 
             self._last_snapshot = FailoverSnapshot(
                 active_provider=self._active,
