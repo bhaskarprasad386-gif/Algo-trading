@@ -80,3 +80,36 @@ def test_concurrent_same_underlying_ticks_are_serialized_to_single_rotation():
     snap = controller.snapshot()
     assert snap["rotation_successes"] == 1
     assert snap["trigger"]["successful_anchor_spot"]["NIFTY"] == 22050
+
+
+def test_concurrent_rotations_for_both_locked_underlyings_are_consistent():
+    from concurrent.futures import ThreadPoolExecutor
+
+    lifecycle = StubLifecycle()
+    controller = SharedIndexOptionRotationController(
+        lifecycle=lifecycle,
+        instrument_rows=_rows,
+        expiry_for=lambda _: "26NOV2026",
+        thresholds={"NIFTY": 50, "BANKNIFTY": 100},
+        cooldown_seconds=0,
+    )
+    assert not controller.on_record(_spot("NIFTY", 22000))
+    assert not controller.on_record(_spot("BANKNIFTY", 48000))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(
+            lambda item: controller.on_record(_spot(*item)),
+            (("NIFTY", 22050), ("BANKNIFTY", 48100)),
+        ))
+
+    assert results == [True, True]
+    assert len(lifecycle.rotations) == 2
+    assert all(len(rotation) == 48 for rotation in lifecycle.rotations)
+    snapshot = controller.snapshot()
+    assert snapshot["rotation_successes"] == 2
+    assert snapshot["rotation_failures"] == 0
+    assert snapshot["trigger"]["successful_anchor_spot"] == {
+        "NIFTY": 22050.0,
+        "BANKNIFTY": 48100.0,
+    }
+    assert set(snapshot["last_rotation"]) == {"NIFTY", "BANKNIFTY"}
