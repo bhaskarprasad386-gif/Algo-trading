@@ -143,7 +143,14 @@ class SharedIndexMarketDataRunner:
         with self._lock:
             if not self._running or self._master_refresh_inflight:
                 return False
-            if time.monotonic() - self._master_refresh_started_at < self._master_refresh_interval_seconds:
+            # If option bootstrap is still incomplete, retry master refresh
+            # on the bounded recovery cadence instead of waiting a full day.
+            refresh_interval = (
+                self._master_refresh_retry_delay_seconds
+                if not self._bootstrap_options_done
+                else self._master_refresh_interval_seconds
+            )
+            if time.monotonic() - self._master_refresh_started_at < refresh_interval:
                 return False
             self._master_refresh_inflight = True
             generation = self._run_generation
