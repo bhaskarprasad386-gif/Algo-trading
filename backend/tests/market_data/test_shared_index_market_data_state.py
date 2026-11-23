@@ -295,8 +295,18 @@ def test_tick_histories_have_hard_caps_even_for_repeated_timestamps():
         bid_qty=5, ask_qty=8, volume=100, oi=200, underlying="NIFTY",
         expiry="2026-11-26", strike=25000, option_type=OptionType.CALL, lot_size=25,
     )
-    for _ in range(1000):
-        assert state.on_record(record)
+    for i in range(1000):
+        # Unique, increasing timestamps exercise history bounds without violating
+        # the state's duplicate/out-of-order tick rejection contract.
+        tick = MarketDataRecord(
+            instrument=record.instrument, symbol=record.symbol,
+            instrument_type=record.instrument_type, timestamp_ns=timestamp + i * 1_000_000,
+            ltp=record.ltp, bid=record.bid, ask=record.ask, bid_qty=record.bid_qty,
+            ask_qty=record.ask_qty, volume=record.volume + i, oi=record.oi + i,
+            underlying=record.underlying, expiry=record.expiry, strike=record.strike,
+            option_type=record.option_type, lot_size=record.lot_size,
+        )
+        assert state.on_record(tick)
     assert len(state._tick_history[inst.value]) <= state.MAX_TICK_HISTORY
     assert len(state._oi_history[inst.value]) <= state.MAX_OI_HISTORY
     assert len(state._volume_history[inst.value]) <= state.MAX_VOLUME_HISTORY
