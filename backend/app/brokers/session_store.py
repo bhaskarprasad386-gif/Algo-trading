@@ -7,6 +7,7 @@ session can be restored after a process restart.
 from __future__ import annotations
 
 from threading import RLock
+from typing import Callable
 
 from app.brokers.base import BrokerAdapter
 
@@ -56,7 +57,7 @@ class BrokerSessionStore:
         return None
 
     def commit_if_current(
-        self, owner_id: int, broker: str, adapter: BrokerAdapter, operation
+        self, owner_id: int, broker: str, adapter: BrokerAdapter, operation: Callable[[], None]
     ) -> bool:
         """Run a metadata commit only while this adapter remains the current session."""
         key = self._key(owner_id, broker)
