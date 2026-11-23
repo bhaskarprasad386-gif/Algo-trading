@@ -389,3 +389,35 @@ def test_session_replacement_keeps_new_adapter_when_old_disconnect_fails():
     removed = broker_sessions.remove(owner_id, "shoonya")
     assert removed is new
     new.disconnect()
+
+def test_concurrent_session_replacements_leave_single_active_adapter():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    owner_id = 99174
+    barrier = Barrier(2)
+
+    class Adapter:
+        name = "shoonya"
+
+        def __init__(self):
+            self.disconnected = False
+
+        def disconnect(self):
+            self.disconnected = True
+
+    adapters = [Adapter(), Adapter()]
+
+    def replace(adapter):
+        barrier.wait(timeout=2)
+        return broker_sessions.replace_and_disconnect_previous(owner_id, "shoonya", adapter)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(replace, adapters))
+        active = broker_sessions.get(owner_id, "shoonya")
+        assert active in adapters
+        assert active.disconnected is False
+        assert all(result is None for result in results)
+    finally:
+        broker_sessions.remove(owner_id, "shoonya")
