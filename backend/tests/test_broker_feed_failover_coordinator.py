@@ -384,3 +384,43 @@ def test_policy_rejects_out_of_order_health_update_without_state_change():
         raise AssertionError("out-of-order health update must be rejected")
     assert p.snapshot().active_provider == first.active_provider
     assert p.snapshot().mode == first.mode
+
+
+def test_backup_dwell_boundary_blocks_failback_until_exact_elapsed_time():
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=100)
+    p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=101)
+    before_dwell = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=103.99)
+    assert before_dwell.active_provider == "shoonya"
+    at_boundary = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=104)
+    assert at_boundary.active_provider == "angel_one"
+
+
+def test_invalid_health_arguments_leave_policy_state_unchanged():
+    p = policy()
+    before = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                      shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=5)
+    invalid_inputs = [
+        dict(failed_angel_sockets=True, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=6),
+        dict(failed_angel_sockets=0, angel_tick_age_seconds=float("nan"),
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=6),
+        dict(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=1, shoonya_tick_age_seconds=0.2, now=6),
+    ]
+    for kwargs in invalid_inputs:
+        try:
+            p.update(**kwargs)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid health inputs must be rejected")
+        after = p.snapshot()
+        assert after.active_provider == before.active_provider
+        assert after.mode == before.mode
+        assert after.reason == before.reason
+        assert after.switched_at == before.switched_at
