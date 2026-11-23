@@ -32,6 +32,7 @@ class SharedIndexMarketDataState:
         self._stale_dropped = 0
         self._out_of_order = 0
         self._capacity_dropped = 0
+        self._publish_errors = 0
         self._oi_history: dict[str, deque[tuple[int, int]]] = {}
         self._volume_history: dict[str, deque[tuple[int, int]]] = {}
         self._tick_history: dict[str, deque[tuple[int, float | None, float | None, float | None, float | None, float | None]]] = {}
@@ -87,7 +88,11 @@ class SharedIndexMarketDataState:
             # retain_instruments() can delete a retired key while this accepted
             # tick is outside the lock, and the delayed cache write resurrects it.
             put_market_data_record(record)
-            self._publish(record)
+            try:
+                self._publish(record)
+            except Exception:
+                # Consumer/UI publication must not break broker tick processing.
+                self._publish_errors += 1
         return True
 
 
@@ -223,6 +228,7 @@ class SharedIndexMarketDataState:
             out_of_order = self._out_of_order
             capacity_dropped = self._capacity_dropped
             retired_dropped = self._retired_dropped
+            publish_errors = self._publish_errors
         ages = {key: max(0, (now - record.timestamp_ns) / 1e9) for key, record in latest}
         fresh = sum(age <= self.max_age_ns / 1e9 for age in ages.values())
         return {
@@ -237,4 +243,5 @@ class SharedIndexMarketDataState:
             "out_of_order_ticks_dropped": out_of_order,
             "capacity_ticks_dropped": capacity_dropped,
             "retired_contract_ticks_dropped": retired_dropped,
+            "publish_callback_errors": publish_errors,
         }
