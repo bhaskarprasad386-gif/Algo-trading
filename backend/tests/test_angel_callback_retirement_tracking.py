@@ -319,3 +319,22 @@ def test_late_socket_operation_failure_is_reported_separately_after_timeout():
     assert state["socket_operation_worker_late_completions"] == 1
     assert state["socket_operation_worker_late_failures"] == 1
     manager.close()
+
+
+def test_manager_shutdown_waits_for_active_socket_operation_before_close():
+    release_operation = Event()
+    close_started = Event()
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    sock = type("Socket", (), {"connected": True, "close": lambda self: close_started.set()})()
+    manager._sockets[group] = sock
+    manager._socket_operation_workers["manual-op"] = {"group": "1:0", "worker_alive": True}
+    manager._socket_operation_events["manual-op"] = release_operation
+    shutdown_thread = Thread(target=manager.close, daemon=True)
+    shutdown_thread.start()
+    time.sleep(0.05)
+    assert not close_started.is_set(), "close must not race a tracked SDK mutation"
+    release_operation.set()
+    shutdown_thread.join(timeout=2.0)
+    assert not shutdown_thread.is_alive()
+    assert close_started.is_set()
