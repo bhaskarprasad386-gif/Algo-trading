@@ -2320,3 +2320,30 @@ def test_clear_consumer_during_inflight_tick_allows_admitted_callback_but_blocks
     finally:
         release.set()
         manager.close()
+
+
+def test_clear_higher_mode_consumer_downgrades_shared_subscription_without_losing_owner():
+    registry = InstrumentRegistry()
+    item = descriptor("shared-mode-downgrade-1")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("low-mode-owner", [item.key], mode=1)
+        manager.subscribe("high-mode-owner", [item.key], mode=3)
+        assert registry.subscriptions()[0].mode == 3
+
+        manager.clear_consumer("high-mode-owner")
+
+        remaining = registry.subscriptions()
+        assert len(remaining) == 1
+        assert remaining[0].consumers == frozenset({"low-mode-owner"})
+        assert remaining[0].mode == 1
+        snapshot = manager.snapshot()
+        assert snapshot["socket_token_set_mismatches"] == []
+        assert snapshot["missing_socket_groups"] == []
+        assert snapshot["connected_groups"] == ["1:0"]
+        socket = manager._sockets[SocketGroup(1, 0)]
+        assert socket.connect_calls[-1]["mode"] == 1
+    finally:
+        manager.close()
