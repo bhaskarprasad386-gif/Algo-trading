@@ -285,3 +285,38 @@ def test_missing_tick_age_is_allowed_as_unavailable_feed_evidence():
                  shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=90)
     assert s.active_provider == "shoonya"
     assert s.mode == "BACKUP"
+
+
+
+def test_tick_freshness_and_failover_thresholds_are_inclusive_at_boundaries():
+    p = policy()
+    fresh = p.update(failed_angel_sockets=2, angel_tick_age_seconds=1.0,
+                    shoonya_connected=True, shoonya_tick_age_seconds=1.0, now=100)
+    assert fresh.active_provider == "angel_one"
+    assert fresh.angel_healthy is True
+
+
+    stale = p.update(failed_angel_sockets=1, angel_tick_age_seconds=3.0,
+                    shoonya_connected=True, shoonya_tick_age_seconds=0.5, now=101)
+    assert stale.active_provider == "shoonya"
+    assert stale.reason == "angel_feed_stale"
+
+
+
+def test_backup_socket_degradation_with_fresh_angel_tick_does_not_bypass_failback_stability():
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=200)
+    # Angel is delivering a fresh tick, but two failed sockets make it unstable.
+    s = p.update(failed_angel_sockets=2, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=201)
+    assert s.active_provider == "shoonya"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=202)
+    assert s.active_provider == "shoonya"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=207)
+    assert s.active_provider == "shoonya"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=208)
+    assert s.active_provider == "angel_one"
