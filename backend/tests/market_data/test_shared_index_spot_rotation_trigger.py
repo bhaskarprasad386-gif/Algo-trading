@@ -138,7 +138,7 @@ def test_late_rotation_completion_from_prior_epoch_cannot_commit_new_anchor():
     trigger.rotation_result("NIFTY", success=True, spot=22060, epoch=old_epoch)
     state = trigger.snapshot()
     assert state["inflight_underlyings"] == ["NIFTY"]
-    assert state["successful_anchor_spot"] == {}
+    assert state["successful_anchor_spot"] == {"NIFTY": 24000}
 
     trigger.rotation_result("NIFTY", success=True, spot=24060, epoch=new_epoch)
     assert trigger.snapshot()["successful_anchor_spot"]["NIFTY"] == 24060
