@@ -651,3 +651,57 @@ def test_concurrent_option_rotations_are_serialized_and_final_owner_is_atomic():
     assert set(lifecycle._option_keys) == final_keys
     assert manager.active[SharedIndexFeedLifecycle.OPTIONS_CONSUMER] == final_keys
     assert manager.registry.active_keys() == tuple(sorted(final_keys, key=lambda key: key.value))
+
+
+def test_stop_waits_for_inflight_option_rotation_then_clears_all_owner_keys():
+    import threading
+
+    class BlockingRotationManager(StubManager):
+        def __init__(self):
+            super().__init__()
+            self.block_rotation = False
+            self.entered = threading.Event()
+            self.release = threading.Event()
+        def subscribe(self, consumer, keys, mode=1):
+            keys = list(keys)
+            if consumer == SharedIndexFeedLifecycle.OPTIONS_CONSUMER and self.block_rotation:
+                self.block_rotation = False
+                self.entered.set()
+                assert self.release.wait(timeout=2.0), "rotation subscribe must be released"
+            return super().subscribe(consumer, keys, mode)
+
+    manager = BlockingRotationManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    lifecycle.start_spot(_spot_descriptors())
+    lifecycle.start_options(_options())
+    lifecycle.start_futures(_future_descriptors("old"))
+    manager.block_rotation = True
+    rotation_errors = []
+    stop_errors = []
+    rotation_thread = threading.Thread(
+        target=lambda: _capture_exception(lambda: lifecycle.rotate_options(_options(shift=25)), rotation_errors),
+        daemon=True,
+    )
+    rotation_thread.start()
+    assert manager.entered.wait(timeout=1.0), "rotation should reach blocked subscribe"
+    stop_started = threading.Event()
+    def stop_runner():
+        stop_started.set()
+        _capture_exception(lifecycle.stop, stop_errors)
+    stop_thread = threading.Thread(target=stop_runner, daemon=True)
+    stop_thread.start()
+    assert stop_started.wait(timeout=1.0)
+    # stop cannot interleave owner teardown while rotation is mid-transaction.
+    assert lifecycle.snapshot()["options_active"] is True
+    manager.release.set()
+    rotation_thread.join(timeout=2.0)
+    stop_thread.join(timeout=2.0)
+    assert not rotation_thread.is_alive()
+    assert not stop_thread.is_alive()
+    assert rotation_errors == []
+    assert stop_errors == []
+    assert lifecycle.snapshot()["spot_active"] is False
+    assert lifecycle.snapshot()["options_active"] is False
+    assert lifecycle.snapshot()["futures_active"] is False
+    assert manager.registry.active_keys() == ()
+    assert manager.registry.subscriptions() == ()
