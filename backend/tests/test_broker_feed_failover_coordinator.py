@@ -465,7 +465,7 @@ def test_backup_dropout_and_angel_recovery_then_backup_recovery_are_deterministi
     next_backup = p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
                           shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=13)
     assert next_backup.active_provider == "shoonya"
-    assert next_backup.reason == "shoonya_validated_recovery"
+    assert next_backup.reason == "two_or_more_angel_sockets_failed_and_feed_unhealthy"
 
 
 def test_stale_tick_replay_is_suppressed_after_backup_to_primary_handoff():
@@ -693,7 +693,7 @@ def test_prune_instruments_removes_retired_provider_state_and_is_idempotent():
 
 def test_prune_instruments_rejects_string_argument():
     import pytest
-    c = MarketDataFailoverCoordinator()
+    c = MarketDataFailoverCoordinator(on_record=lambda _provider, _record: None)
     with pytest.raises(TypeError, match="not a string"):
         c.prune_instruments("NIFTY")
 
