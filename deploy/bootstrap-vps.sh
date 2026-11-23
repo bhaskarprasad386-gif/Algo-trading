@@ -34,8 +34,44 @@ git merge --ff-only origin/main
 
 log "Installing OS prerequisites"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y git python3 python3-venv python3-pip curl sqlite3 ca-certificates
+
+# Another unattended-upgrades or apt process may temporarily own the package locks.
+# Wait boundedly; never kill the lock owner or delete lock files.
+wait_for_apt_locks() {
+  local timeout_seconds="${1:-300}" elapsed=0 lock
+  local locks=(/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock)
+  while :; do
+    local busy=false
+    for lock in "${locks[@]}"; do
+      if command -v fuser >/dev/null 2>&1 && fuser "$lock" >/dev/null 2>&1; then
+        busy=true
+        break
+      fi
+    done
+    [[ "$busy" == false ]] && return 0
+    if (( elapsed >= timeout_seconds )); then
+      die "APT/DPKG locks remained busy after ${timeout_seconds}s; no package process was killed."
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+}
+
+apt_with_lock_retry() {
+  local attempt
+  for attempt in 1 2 3; do
+    wait_for_apt_locks 300
+    if "$@"; then
+      return 0
+    fi
+    log "APT command failed (attempt ${attempt}/3); waiting before safe retry"
+    sleep $((attempt * 10))
+  done
+  die "APT command failed after 3 attempts: $*"
+}
+
+apt_with_lock_retry apt-get update -y
+apt_with_lock_retry apt-get install -y git python3 python3-venv python3-pip curl sqlite3 ca-certificates
 
 log "Configuring VPS virtual memory"
 bash "$APP_DIR/deploy/configure-vps-swap.sh"
