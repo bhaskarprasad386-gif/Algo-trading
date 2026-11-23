@@ -559,3 +559,35 @@ def test_rotation_rollback_restores_registry_when_transport_cleanup_retries_fail
     assert manager.registry.active_keys() == tuple(sorted(old_keys, key=lambda key: key.value))
     assert lifecycle._option_keys == tuple(d.key for d in old)
     assert lifecycle.snapshot()["options_active"] is True
+
+class FailBeforeClearManager(FailAfterMutationManager):
+    def __init__(self):
+        super().__init__()
+        self.fail_clear_before_mutation = False
+        self._transport_observers = {}
+    def clear_consumer(self, consumer):
+        if self.fail_clear_before_mutation:
+            self.fail_clear_before_mutation = False
+            raise RuntimeError("clear failed before mutation")
+        return super().clear_consumer(consumer)
+
+
+def test_start_rollback_force_cleans_transport_observer_when_clear_fails_before_mutation():
+    manager = FailBeforeClearManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    consumer = lifecycle.OPTIONS_CONSUMER
+    manager._transport_observers[consumer] = lambda *_args: None
+    manager.fail_next_subscribe = True
+    manager.fail_clear_before_mutation = True
+
+    try:
+        lifecycle.start_options(_options())
+    except RuntimeError as exc:
+        assert "forced reconcile failure" in str(exc)
+    else:
+        raise AssertionError("initial options start should fail")
+
+    assert manager.registry.active_keys() == ()
+    assert consumer not in manager.callbacks
+    assert consumer not in manager._transport_observers
+    assert lifecycle.snapshot()["options_active"] is False
