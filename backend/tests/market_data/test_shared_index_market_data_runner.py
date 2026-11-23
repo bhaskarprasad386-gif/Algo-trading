@@ -627,3 +627,23 @@ def test_failed_master_refresh_uses_short_retry_backoff_not_daily_interval():
     # but must also avoid retrying on every live spot tick.
     assert runner._schedule_master_refresh() is False
     runner.stop()
+
+
+def test_master_refresh_is_scheduled_even_when_option_bootstrap_is_incomplete():
+    rows = _rows()
+    runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=RunnerManager())
+    assert runner.start(rows)["enabled"] is True
+    scheduled = []
+    runner._schedule_master_refresh = lambda: scheduled.append(True) or True
+    runner._bootstrap_options = lambda: False
+
+    runner._on_record(MarketDataRecord(
+        instrument=InstrumentKey("NSE", "NSE", "99001"),
+        symbol="NIFTY", instrument_type=InstrumentType.INDEX,
+        timestamp_ns=__import__("time").time_ns(), ltp=22000.0,
+        underlying="NIFTY",
+    ))
+
+    assert scheduled == [True]
+    assert runner._bootstrap_options_done is False
+    runner.stop()
