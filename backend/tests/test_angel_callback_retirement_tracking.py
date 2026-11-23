@@ -635,6 +635,8 @@ def test_late_socket_operation_completion_after_shutdown_cannot_reopen_transport
     group = SocketGroup(1, 0)
     socket = BlockingSocket()
     manager._socket_call_wait_seconds = 0.01
+    reconcile_calls = []
+    manager._reconcile = lambda: reconcile_calls.append(True)
     manager._sockets[group] = socket
     manager._socket_tokens[group] = {(1, "late-token")}
 
@@ -665,4 +667,5 @@ def test_late_socket_operation_completion_after_shutdown_cannot_reopen_transport
     assert state["socket_operation_worker_late_completions"] == 1
     assert manager._sockets == {}
     assert manager._socket_tokens == {}
+    assert reconcile_calls == []
     assert manager._closed is True
