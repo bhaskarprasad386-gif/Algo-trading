@@ -74,6 +74,7 @@ class MarketDataFailoverPolicy:
         self._switched_at: float | None = None
         self._angel_healthy_since: float | None = None
         self._last_update_at: float | None = None
+        self._last_snapshot: FailoverSnapshot | None = None
 
     def update(
         self,
@@ -193,7 +194,7 @@ class MarketDataFailoverPolicy:
                     self._mode = "NO_VALID_FEED"
                     self._reason = "no_provider_feed_is_fresh"
 
-            return FailoverSnapshot(
+            self._last_snapshot = FailoverSnapshot(
                 active_provider=self._active,
                 mode=self._mode,
                 reason=self._reason,
@@ -202,9 +203,12 @@ class MarketDataFailoverPolicy:
                 failed_angel_sockets=failed_angel_sockets,
                 switched_at=self._switched_at,
             )
+            return self._last_snapshot
 
     def snapshot(self) -> FailoverSnapshot:
         with self._lock:
+            if self._last_snapshot is not None:
+                return self._last_snapshot
             return FailoverSnapshot(
                 active_provider=self._active,
                 mode=self._mode,
