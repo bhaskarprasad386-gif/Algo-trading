@@ -1291,9 +1291,15 @@ class CommonWebSocketManager:
                 self._socket_operation_worker_failures += 1
 
         if late_completion_race:
-            try:
-                self._reconcile()
-            except Exception as reconcile_exc:
+            # The worker's timeout flag can be missed if it exits between
+            # wait(timeout=False) and the caller's lock acquisition. Shutdown
+            # may win that race too; never resurrect reconciliation then.
+            with self._lock:
+                manager_closed = self._closed
+            if not manager_closed:
+                try:
+                    self._reconcile()
+                except Exception as reconcile_exc:
                 app_logger.warning(
                     "Common feed reconcile after timeout/completion race failed group=%s error=%s: %s",
                     group_key, type(reconcile_exc).__name__, reconcile_exc,
