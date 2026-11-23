@@ -311,3 +311,42 @@ def test_auth_url_prefers_server_client_id_over_request_value(monkeypatch):
         uid="SH12345",
         account_id="SH12345",
     )
+
+
+def test_rest_client_expired_token_is_cleared_and_not_sent(monkeypatch):
+    from app.brokers.shoonya_routes import ShoonyaRESTClient
+
+    http = Mock()
+    client = ShoonyaRESTClient(
+        uid="SH12345",
+        account_id="SH12345",
+        access_token="expired-token",
+        expires_at_monotonic=10.0,
+        http=http,
+    )
+    monkeypatch.setattr(shoonya_routes, "monotonic", lambda: 10.0)
+    with pytest.raises(RuntimeError, match="token expired"):
+        client.get_user_details()
+    assert client.access_token == ""
+    assert client.expires_at_monotonic is None
+    http.post.assert_not_called()
+
+
+def test_authenticator_sets_24_hour_monotonic_expiry(monkeypatch):
+    from app.brokers import shoonya_auth
+
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"stat": "Ok", "susertoken": "tok", "uid": "SH12345", "actid": "SH12345"}
+
+    http = Mock()
+    http.post.return_value = Response()
+    monkeypatch.setattr(shoonya_auth, "monotonic", lambda: 100.0)
+    session = shoonya_auth.ShoonyaOAuthAuthenticator(http=http).exchange_auth_code(
+        client_id="cid", secret_code="secret", auth_code="auth", expected_uid="SH12345", expected_account_id="SH12345"
+    )
+    assert session.expires_at_monotonic == 100.0 + 86400
