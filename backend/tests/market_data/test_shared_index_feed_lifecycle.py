@@ -619,7 +619,7 @@ def test_concurrent_option_rotations_are_serialized_and_final_owner_is_atomic():
     initial = _options()
     lifecycle.start_options(initial)
     manager.rotation_subscribe_calls.clear()  # Ignore initial owner registration; count rotations only.
-    first = _options(shift=25
+    first = _options(shift=25)
     second = _options(shift=50)
     manager.block_once = True
     first_errors = []
