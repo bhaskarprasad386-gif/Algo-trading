@@ -491,3 +491,33 @@ def test_snapshot_provider_mode_pairs_never_conflict_across_transitions():
             assert s.mode == "BACKUP"
         else:
             assert s.mode in ("NO_VALID_FEED", "DEGRADED_WAIT")
+
+
+
+def test_socket_failure_count_rejects_fraction_and_boolean_inputs_without_mutation():
+    import pytest
+    p = policy()
+    baseline = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                       shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1300)
+    for invalid in (1.5, True, -1, 4):
+        with pytest.raises(ValueError):
+            p.update(failed_angel_sockets=invalid, angel_tick_age_seconds=0.2,
+                     shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1301)
+        after = p.snapshot()
+        assert after.active_provider == baseline.active_provider
+        assert after.mode == baseline.mode
+        assert after.reason == baseline.reason
+
+def test_shoonya_connected_flag_requires_bool_and_invalid_value_is_atomic():
+    import pytest
+    p = policy()
+    baseline = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                       shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1400)
+    for invalid in ("yes", 1, None):
+        with pytest.raises(ValueError):
+            p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                     shoonya_connected=invalid, shoonya_tick_age_seconds=0.2, now=1401)
+        after = p.snapshot()
+        assert after.active_provider == baseline.active_provider
+        assert after.mode == baseline.mode
+        assert after.reason == baseline.reason
