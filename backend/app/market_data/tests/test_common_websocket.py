@@ -2270,3 +2270,45 @@ def test_tracked_socket_retirement_completion_callback_runs_once_on_fast_close()
         assert callbacks == ["finished"]
     finally:
         manager.close()
+
+
+def test_clear_consumer_during_inflight_tick_allows_admitted_callback_but_blocks_next_tick():
+    registry = InstrumentRegistry()
+    item = descriptor("consumer-race-777")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    entered = Event()
+    release = Event()
+    received = []
+
+    def callback(message):
+        received.append(message["token"])
+        entered.set()
+        release.wait(timeout=2.0)
+
+    manager.register_callback("race-consumer", callback)
+    manager.subscribe("race-consumer", [item.key])
+    group = SocketGroup(1, 0)
+    try:
+        delivery = Thread(
+            target=lambda: manager._on_data(group, {"token": item.key.token, "exchange_type": 1}),
+            daemon=True,
+        )
+        delivery.start()
+        assert entered.wait(timeout=1.0), "first tick should enter admitted callback"
+
+        # Clearing ownership while a callback is already executing must not
+        # deadlock. In-flight delivery is allowed to finish, but future
+        # frames must not route to the removed consumer.
+        manager.clear_consumer("race-consumer")
+        release.set()
+        delivery.join(timeout=1.0)
+        assert not delivery.is_alive()
+        assert received == [item.key.token]
+
+        manager._on_data(group, {"token": item.key.token, "exchange_type": 1})
+        assert received == [item.key.token]
+        assert manager.registry.active_keys() == ()
+    finally:
+        release.set()
+        manager.close()
