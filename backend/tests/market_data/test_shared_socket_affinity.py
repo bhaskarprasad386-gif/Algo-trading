@@ -78,3 +78,10 @@ def test_affinity_slot_validates_mode_and_shard():
         AffinitySlot(5, 0)
     with pytest.raises(ValueError):
         AffinitySlot(3, -1)
+
+
+def test_plan_rejects_shard_index_outside_configured_socket_range():
+    planner = ConsumerSocketAffinity(max_sockets=3)
+    with pytest.raises(ValueError, match="shard is outside configured socket range"):
+        planner.plan({NIFTY: AffinitySlot(3, 3)}, {NIFTY: tokens(1, 1)})
+    assert planner.snapshot()["owners"] == {}
