@@ -591,3 +591,63 @@ def test_start_rollback_force_cleans_transport_observer_when_clear_fails_before_
     assert consumer not in manager.callbacks
     assert consumer not in manager._transport_observers
     assert lifecycle.snapshot()["options_active"] is False
+
+
+def test_concurrent_option_rotations_are_serialized_and_final_owner_is_atomic():
+    import threading
+
+    class BlockingFirstRotationManager(StubManager):
+        def __init__(self):
+            super().__init__()
+            self.block_once = False
+            self.entered = threading.Event()
+            self.release = threading.Event()
+            self.rotation_subscribe_calls = []
+        def subscribe(self, consumer, keys, mode=1):
+            keys = list(keys)
+            if consumer == SharedIndexFeedLifecycle.OPTIONS_CONSUMER and self.block_once:
+                self.block_once = False
+                self.rotation_subscribe_calls.append(tuple(keys))
+                self.entered.set()
+                assert self.release.wait(timeout=2.0), "blocked subscribe should be released"
+            elif consumer == SharedIndexFeedLifecycle.OPTIONS_CONSUMER:
+                self.rotation_subscribe_calls.append(tuple(keys))
+            return super().subscribe(consumer, keys, mode)
+
+    manager = BlockingFirstRotationManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    initial = _options()
+    lifecycle.start_options(initial)
+    first = _options(shift=25)
+    second = _options(shift=50)
+    manager.block_once = True
+    first_errors = []
+    second_errors = []
+    first_thread = threading.Thread(
+        target=lambda: _capture_exception(lambda: lifecycle.rotate_options(first), first_errors),
+        daemon=True,
+    )
+    second_entered = threading.Event()
+    def rotate_second():
+        second_entered.set()
+        _capture_exception(lambda: lifecycle.rotate_options(second), second_errors)
+    first_thread.start()
+    assert manager.entered.wait(timeout=1.0), "first rotation must enter subscribe"
+    second_thread = threading.Thread(target=rotate_second, daemon=True)
+    second_thread.start()
+    assert second_entered.wait(timeout=1.0)
+    # The second caller has started but cannot enter the manager's subscribe
+    # until the first caller finishes its add-before-remove transaction.
+    assert len(manager.rotation_subscribe_calls) == 1
+    manager.release.set()
+    first_thread.join(timeout=2.0)
+    second_thread.join(timeout=2.0)
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    assert first_errors == []
+    assert second_errors == []
+    assert len(manager.rotation_subscribe_calls) == 2
+    final_keys = set(d.key for d in second)
+    assert set(lifecycle._option_keys) == final_keys
+    assert manager.active[SharedIndexFeedLifecycle.OPTIONS_CONSUMER] == final_keys
+    assert manager.registry.active_keys() == tuple(sorted(final_keys, key=lambda key: key.value))
