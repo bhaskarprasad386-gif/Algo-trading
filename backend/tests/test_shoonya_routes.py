@@ -350,3 +350,23 @@ def test_authenticator_sets_24_hour_monotonic_expiry(monkeypatch):
         client_id="cid", secret_code="secret", auth_code="auth", expected_uid="SH12345", expected_account_id="SH12345"
     )
     assert session.expires_at_monotonic == 100.0 + 86400
+
+def test_expired_token_cleanup_skips_remote_logout(monkeypatch):
+    from app.brokers.shoonya_routes import ShoonyaRESTClient
+
+    http = Mock()
+    client = ShoonyaRESTClient(
+        uid="SH12345",
+        account_id="SH12345",
+        access_token="expired-token",
+        expires_at_monotonic=10.0,
+        http=http,
+    )
+    monkeypatch.setattr(shoonya_routes, "monotonic", lambda: 10.0)
+
+    client.disconnect()
+
+    assert client.access_token == ""
+    assert client.expires_at_monotonic is None
+    http.post.assert_not_called()
+    http.close.assert_called_once()
