@@ -162,6 +162,11 @@ class SharedIndexMarketDataRunner:
                 refreshed = tuple(self.instrument_master.download(force=True))
                 if not refreshed:
                     raise LookupError("refreshed instrument master was empty")
+                # Reject partial snapshots before publishing: each locked index
+                # must retain its required expiry family and active futures contract.
+                for underlying in LOCKED:
+                    choose_locked_expiry(refreshed, underlying)
+                    self.choose_nearest_future(refreshed, underlying)
                 with self._lock:
                     # Guard publication and contract rotations against OFF/restart.
                     if not self._running or generation != self._run_generation:
