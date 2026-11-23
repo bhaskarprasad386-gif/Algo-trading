@@ -338,3 +338,20 @@ def test_manager_shutdown_waits_for_active_socket_operation_before_close():
     shutdown_thread.join(timeout=2.0)
     assert not shutdown_thread.is_alive()
     assert close_started.is_set()
+
+
+def test_socket_operation_is_rejected_after_manager_shutdown():
+    manager = CommonWebSocketManager()
+    manager.close()
+    called = []
+    try:
+        manager._run_socket_operation_bounded(
+            socket=BlockingSocket(), group=SocketGroup(1, 0),
+            operation=lambda: called.append(True), operation_name="subscribe"
+        )
+    except RuntimeError as exc:
+        assert "manager is closed" in str(exc)
+    else:
+        raise AssertionError("closed manager must reject broker mutations")
+    assert called == []
+    assert manager.snapshot()["socket_operation_worker_count"] == 0
