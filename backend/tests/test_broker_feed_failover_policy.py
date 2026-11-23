@@ -685,3 +685,25 @@ def test_out_of_order_health_timestamp_is_atomic_and_next_valid_update_recovers(
     assert recovered.active_provider == "angel_one"
     assert recovered.mode == "PRIMARY"
     assert recovered.reason == "angel_healthy"
+
+
+def test_failback_occurs_exactly_at_both_dwell_and_stability_boundaries():
+    p = policy()
+    switched = p.update(
+        failed_angel_sockets=2, angel_tick_age_seconds=4.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=0,
+    )
+    assert switched.active_provider == "shoonya"
+    # Healthy Angel recovery begins at t=1; both timers are just short at t=4.999.
+    before_boundary = p.update(
+        failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=4.999,
+    )
+    assert before_boundary.active_provider == "shoonya"
+    at_boundary = p.update(
+        failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=5.0,
+    )
+    assert at_boundary.active_provider == "angel_one"
+    assert at_boundary.mode == "PRIMARY"
+    assert at_boundary.reason == "angel_stable_failback"
