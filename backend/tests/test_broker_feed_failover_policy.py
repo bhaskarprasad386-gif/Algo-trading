@@ -610,3 +610,19 @@ def test_snapshot_preserves_latest_health_evidence_instead_of_reporting_false_va
     assert p.snapshot().angel_healthy is False
     assert p.snapshot().shoonya_healthy is False
     assert p.snapshot().failed_angel_sockets == 3
+
+def test_angel_stale_grace_period_waits_until_failover_boundary_without_claiming_live_feed():
+    p = policy()
+    # Freshness expires at 1s, but failover threshold is 3s.
+    for now, age in ((1, 1.01), (2, 2.99)):
+        s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=age,
+                    shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=now)
+        assert s.active_provider == "none"
+        assert s.mode == "DEGRADED_WAIT"
+        assert s.reason == "angel_tick_stale_within_failover_grace"
+        assert s.shoonya_healthy is True
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=3.0,
+                shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=3)
+    assert s.active_provider == "shoonya"
+    assert s.mode == "BACKUP"
+    assert s.reason == "angel_feed_stale"
