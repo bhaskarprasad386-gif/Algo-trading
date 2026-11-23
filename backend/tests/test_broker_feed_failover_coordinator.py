@@ -742,3 +742,29 @@ def test_outer_callback_failure_preserves_newer_reentrant_tick_watermarks():
     assert snap["forwarded_ticks"] == 1
     assert snap["callback_errors"] == 1
     assert snap["suppressed_ticks"] == 2
+
+def test_reentrant_provider_switch_suppresses_backup_replay_of_inflight_primary_tick():
+    delivered = []
+    holder = {}
+    same = tick("NIFTY", 4242, 100)
+
+    def callback(provider, record):
+        delivered.append((provider, record["timestamp_ns"]))
+        if provider == "angel_one":
+            holder["c"].evaluate(
+                failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+                shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=42,
+            )
+            # Backup reconnect/replay inside the in-flight callback must not
+            # duplicate the primary timestamp reserved by the outer delivery.
+            assert holder["c"].observe("shoonya", same) is False
+
+    c = MarketDataFailoverCoordinator(policy=policy(), on_record=callback)
+    holder["c"] = c
+    assert c.observe("angel_one", same) is True
+    assert delivered == [("angel_one", 4242)]
+    snap = c.snapshot()
+    assert snap["active_provider"] == "shoonya"
+    assert snap["forwarded_ticks"] == 1
+    assert snap["suppressed_ticks"] == 1
+    assert snap["callback_errors"] == 0
