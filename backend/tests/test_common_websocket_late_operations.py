@@ -113,3 +113,46 @@ def test_timeout_wait_completion_race_still_reconciles(monkeypatch):
     assert reconcile_called.is_set(), "timeout/completion race must not miss reconcile"
     assert manager.snapshot()["socket_operation_worker_count"] == 0
     manager.close()
+
+
+def test_late_operation_completion_after_shutdown_does_not_reconcile():
+    manager = CommonWebSocketManager(socket_factory=lambda: _Socket())
+    group = SocketGroup(mode=1, shard=0)
+    socket = _Socket()
+    with manager._lock:
+        manager._sockets[group] = socket
+        manager._socket_tokens[group] = {(1, "123")}
+        manager._socket_generation[group] = 3
+        manager._socket_generation_counter[group] = 3
+
+
+    operation_entered = Event()
+    release_operation = Event()
+    reconciled = Event()
+
+
+    def late_operation():
+        operation_entered.set()
+        assert release_operation.wait(2.0)
+
+
+    manager._reconcile = reconciled.set
+    manager._socket_call_wait_seconds = 0.1
+    with pytest.raises(TimeoutError, match="exceeded"):
+        manager._run_socket_operation_bounded(
+            socket=socket,
+            group=group,
+            operation=late_operation,
+            operation_name="unsubscribe",
+        )
+    assert operation_entered.is_set()
+    assert manager.snapshot()["socket_operation_worker_count"] == 1
+
+
+    manager.close()
+    release_operation.set()
+    deadline = monotonic() + 1.0
+    while manager.snapshot()["socket_operation_worker_count"] and monotonic() < deadline:
+        sleep(0.01)
+    assert manager.snapshot()["socket_operation_worker_count"] == 0
+    assert not reconciled.is_set(), "shutdown is terminal; late SDK completion must not restart reconcile"
