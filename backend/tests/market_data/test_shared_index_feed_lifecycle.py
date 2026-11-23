@@ -532,3 +532,36 @@ def test_subscription_validation_rejects_empty_token_before_registry_mutation():
         raise AssertionError("empty broker tokens must be rejected")
     assert not manager.registry.subscriptions()
     assert lifecycle.snapshot()["spot_active"] is False
+
+class RepeatedRollbackFailureManager(StubManager):
+    def __init__(self):
+        super().__init__()
+        self.fail_added_unsubscribe = False
+    def unsubscribe(self, consumer, keys=None):
+        keys = list(keys or self.registry.active_keys())
+        if self.fail_added_unsubscribe and keys:
+            self.fail_added_unsubscribe = False
+            raise RuntimeError("persistent transport cleanup failure")
+        return super().unsubscribe(consumer, keys)
+
+
+def test_rotation_rollback_restores_registry_when_transport_cleanup_retries_fail():
+    manager = RepeatedRollbackFailureManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    old = _options()
+    lifecycle.start_options(old)
+    old_keys = set(lifecycle._option_keys)
+    replacement = _options(shift=25)
+    manager.fail_added_unsubscribe = True
+    try:
+        lifecycle.rotate_options(replacement)
+    except RuntimeError as exc:
+        assert "persistent transport cleanup failure" in str(exc)
+    else:
+        raise AssertionError("rotation cleanup failure must propagate")
+    # Registry is the local desired-state authority; transport reconciliation
+    # is requested so the supervisor can retry cleanup after this failure.
+    assert set(manager.registry.active_keys()) == old_keys
+    assert manager.registry.active_keys() == tuple(sorted(old_keys, key=lambda key: key.value))
+    assert lifecycle._option_keys == tuple(d.key for d in old)
+    assert lifecycle.snapshot()["options_active"] is True
