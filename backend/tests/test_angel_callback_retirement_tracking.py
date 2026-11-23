@@ -284,3 +284,38 @@ def test_snapshot_reports_registry_socket_token_mismatch_and_clears_when_aligned
     manager._socket_tokens[group] = {expected}
     assert manager.snapshot()["socket_token_set_mismatches"] == []
     manager.close()
+
+
+def test_late_socket_operation_failure_is_reported_separately_after_timeout():
+    release = Event()
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    socket = type("Socket", (), {"connected": True})()
+    manager._socket_call_wait_seconds = 0.01
+    manager._sockets[group] = socket
+    manager._socket_tokens[group] = {(1, "123")}
+    manager._close_socket_tracked = lambda *args, **kwargs: Thread()
+
+    def delayed_failure():
+        release.wait(timeout=1.0)
+        raise RuntimeError("late unsubscribe failure")
+
+    try:
+        manager._run_socket_operation_bounded(
+            socket=socket, group=group, operation=delayed_failure, operation_name="unsubscribe"
+        )
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("operation should timeout before its late failure")
+
+    assert group not in manager._sockets
+    assert group not in manager._socket_tokens
+    release.set()
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["socket_operation_worker_count"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    state = manager.snapshot()
+    assert state["socket_operation_worker_late_completions"] == 1
+    assert state["socket_operation_worker_late_failures"] == 1
+    manager.close()
