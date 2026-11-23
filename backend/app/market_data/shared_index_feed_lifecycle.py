@@ -51,6 +51,20 @@ class SharedIndexFeedLifecycle:
                 pass
 
     @staticmethod
+    def _force_clear_consumer(manager, consumer: str) -> None:
+        """Fallback cleanup if clear_consumer fails before or after mutation.
+
+        Remove every callback route owned by this consumer, not just normalized
+        callbacks, then restore the registry's desired state. Transport
+        reconciliation is requested separately by the caller.
+        """
+        manager.registry.clear_consumer(consumer)
+        for attribute in ("_callbacks", "_record_callbacks", "_record_observers", "_transport_observers"):
+            routes = getattr(manager, attribute, None)
+            if isinstance(routes, dict):
+                routes.pop(consumer, None)
+
+    @staticmethod
     def _validate_locked_options(items: tuple[InstrumentDescriptor, ...]) -> None:
         """Fail closed unless the exact locked symmetric CE/PE strike grids exist."""
         expected = {"NIFTY": 13, "BANKNIFTY": 11}
@@ -151,10 +165,7 @@ class SharedIndexFeedLifecycle:
                 try:
                     manager.clear_consumer(self.SPOT_CONSUMER)
                 except Exception:
-                    manager.registry.clear_consumer(self.SPOT_CONSUMER)
-                    manager._callbacks.pop(self.SPOT_CONSUMER, None)
-                    manager._record_callbacks.pop(self.SPOT_CONSUMER, None)
-                    manager._record_observers.pop(self.SPOT_CONSUMER, None)
+                    self._force_clear_consumer(manager, self.SPOT_CONSUMER)
                 manager.registry.unregister_many(registered_keys)
                 self._reconcile_after_rollback(manager)
                 raise
@@ -181,10 +192,7 @@ class SharedIndexFeedLifecycle:
                 try:
                     manager.clear_consumer(self.OPTIONS_CONSUMER)
                 except Exception:
-                    manager.registry.clear_consumer(self.OPTIONS_CONSUMER)
-                    manager._callbacks.pop(self.OPTIONS_CONSUMER, None)
-                    manager._record_callbacks.pop(self.OPTIONS_CONSUMER, None)
-                    manager._record_observers.pop(self.OPTIONS_CONSUMER, None)
+                    self._force_clear_consumer(manager, self.OPTIONS_CONSUMER)
                 manager.registry.unregister_many(registered_keys)
                 self._reconcile_after_rollback(manager)
                 raise
@@ -212,7 +220,7 @@ class SharedIndexFeedLifecycle:
                 try:
                     manager.clear_consumer(self.FUTURES_CONSUMER)
                 except Exception:
-                    manager.registry.clear_consumer(self.FUTURES_CONSUMER)
+                    self._force_clear_consumer(manager, self.FUTURES_CONSUMER)
                 manager.registry.unregister_many(registered_keys)
                 self._reconcile_after_rollback(manager)
                 raise
