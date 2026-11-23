@@ -487,3 +487,22 @@ def test_stale_tick_replay_is_suppressed_after_backup_to_primary_handoff():
     assert c.observe("angel_one", tick("NIFTY", 21, 210)) is True
     assert delivered == [("angel_one", 10), ("shoonya", 20), ("angel_one", 21)]
     assert c.snapshot()["suppressed_ticks"] == 1
+
+
+def test_rapid_health_oscillation_never_bypasses_continuous_failback_stability():
+    p = policy()
+    assert p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=0).active_provider == "shoonya"
+    # Repeated brief healthy windows are interrupted and must reset the timer.
+    for healthy_at, interrupted_at in ((1, 3), (4, 6), (7, 9)):
+        assert p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+            shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=healthy_at).active_provider == "shoonya"
+        assert p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+            shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=interrupted_at).active_provider == "shoonya"
+    # Only the uninterrupted healthy period starting at 10 can satisfy 5s.
+    p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    assert p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=14.99).active_provider == "shoonya"
+    assert p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=15).active_provider == "angel_one"
