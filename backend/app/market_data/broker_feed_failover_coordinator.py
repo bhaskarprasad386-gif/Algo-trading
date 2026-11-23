@@ -7,7 +7,6 @@ forwarded to the consumer. It does not start sockets or subscribe instruments.
 from __future__ import annotations
 
 from threading import RLock
-from time import monotonic
 from typing import Any, Callable, Literal
 
 from .broker_feed_failover import MarketDataFailoverPolicy, FailoverSnapshot
@@ -82,8 +81,10 @@ class MarketDataFailoverCoordinator:
                 self._suppressed += 1
                 return False
             self._forwarded += 1
-        self._on_record(provider, payload)
-        return True
+            # Serialize selection and forwarding so a provider switch cannot
+            # overtake a tick already accepted by the active provider.
+            self._on_record(provider, payload)
+            return True
 
     def evaluate(
         self,
