@@ -38,6 +38,7 @@ class SpotRotationTrigger:
         self._inflight: set[str] = set()
         self._rejected = 0
         self._failed = 0
+        self._epoch = 0
 
     def on_spot(self, underlying: str, price: float) -> bool:
         symbol = str(underlying).strip().upper()
@@ -67,10 +68,17 @@ class SpotRotationTrigger:
             self._pending.discard(symbol)
             return True
 
-    def rotation_result(self, underlying: str, *, success: bool, spot: float | None = None) -> None:
+    def current_epoch(self) -> int:
+        with self._lock:
+            return self._epoch
+
+    def rotation_result(self, underlying: str, *, success: bool, spot: float | None = None, epoch: int | None = None) -> None:
         """Commit anchor on success; preserve/requeue it on failure."""
         symbol = str(underlying).strip().upper()
         with self._lock:
+            # Ignore late completion from an older OFF/ON epoch.
+            if epoch is not None and epoch != self._epoch:
+                return
             if symbol not in self._thresholds or symbol not in self._inflight:
                 return
             self._inflight.discard(symbol)
@@ -106,6 +114,7 @@ class SpotRotationTrigger:
     def reset(self) -> None:
         """Reset anchors/pending work at runner OFF/ON boundaries."""
         with self._lock:
+            self._epoch += 1
             self._last_spot.clear()
             self._anchor_spot.clear()
             self._last_request.clear()
