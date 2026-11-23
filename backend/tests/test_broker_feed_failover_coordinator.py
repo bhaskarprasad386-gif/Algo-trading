@@ -506,3 +506,42 @@ def test_rapid_health_oscillation_never_bypasses_continuous_failback_stability()
         shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=14.99).active_provider == "shoonya"
     assert p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
         shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=15).active_provider == "angel_one"
+
+
+def test_simultaneous_equal_time_health_updates_are_atomic_and_valid():
+    from threading import Barrier, Thread
+
+    p = policy()
+    barrier = Barrier(3)
+    results = []
+    errors = []
+
+    def update(angel_age, shoonya_connected, backup_age):
+        barrier.wait(timeout=2)
+        try:
+            results.append(p.update(
+                failed_angel_sockets=3 if angel_age >= 3 else 0,
+                angel_tick_age_seconds=angel_age,
+                shoonya_connected=shoonya_connected,
+                shoonya_tick_age_seconds=backup_age,
+                now=100,
+            ))
+        except Exception as exc:
+            errors.append(exc)
+
+    # Concurrent inputs at the same timestamp must serialize as whole decisions,
+    # never produce a torn/invalid snapshot or corrupt internal state.
+    a = Thread(target=update, args=(4.0, True, 0.2))
+    b = Thread(target=update, args=(0.2, True, 0.2))
+    a.start()
+    b.start()
+    barrier.wait(timeout=2)
+    a.join(timeout=2)
+    b.join(timeout=2)
+    assert not a.is_alive() and not b.is_alive()
+    assert errors == []
+    assert len(results) == 2
+    assert all(r.active_provider in ("angel_one", "shoonya", "none") for r in results)
+    final = p.snapshot()
+    assert final.active_provider in ("angel_one", "shoonya", "none")
+    assert final.mode in ("PRIMARY", "BACKUP", "NO_VALID_FEED", "DEGRADED_WAIT")
