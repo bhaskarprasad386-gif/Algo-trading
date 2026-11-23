@@ -248,3 +248,40 @@ def test_concurrent_same_timestamp_health_updates_preserve_consistent_state():
     snap = p.snapshot()
     assert snap.active_provider == "angel_one"
     assert snap.mode == "PRIMARY"
+
+
+
+def test_invalid_angel_tick_age_values_are_rejected_without_state_mutation():
+    import pytest
+
+    p = policy()
+    initial = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                      shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=70)
+    for invalid in (-0.01, float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError, match="angel_tick_age_seconds"):
+            p.update(failed_angel_sockets=3, angel_tick_age_seconds=invalid,
+                    shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=71)
+        snap = p.snapshot()
+        assert snap.active_provider == initial.active_provider
+        assert snap.mode == initial.mode
+
+
+
+def test_invalid_shoonya_tick_age_values_are_rejected_even_when_disconnected():
+    import pytest
+
+
+    p = policy()
+    for invalid in (-0.01, float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError, match="shoonya_tick_age_seconds"):
+            p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                    shoonya_connected=False, shoonya_tick_age_seconds=invalid, now=80)
+
+
+
+def test_missing_tick_age_is_allowed_as_unavailable_feed_evidence():
+    p = policy()
+    s = p.update(failed_angel_sockets=3, angel_tick_age_seconds=None,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=90)
+    assert s.active_provider == "shoonya"
+    assert s.mode == "BACKUP"
