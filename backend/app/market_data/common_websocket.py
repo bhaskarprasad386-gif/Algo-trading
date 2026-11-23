@@ -1127,12 +1127,39 @@ class CommonWebSocketManager:
         # A simultaneous shard outage must not spawn one recovery thread per
         # callback. Keep per-group invalidation, coalesce the rest, and let the
         # shared supervisor reconcile the full desired registry.
+        coalesced = False
         with self._lock:
             if self._failure_recovery_worker_active:
                 self._failure_recovery_pending_groups.add(group)
                 self._failure_recovery_admission_rejections += 1
-                return
-            self._failure_recovery_worker_active = True
+                coalesced = True
+            else:
+                self._failure_recovery_worker_active = True
+
+        if coalesced:
+            # Recovery work is coalesced, but every failed transport still
+            # needs its own tracked close. Otherwise its socket is orphaned
+            # outside _sockets/_retired_transports and can leak broker sessions.
+            def _resume_coalesced_recovery(failed_group=group):
+                try:
+                    with self._reconcile_lock:
+                        with self._lock:
+                            self._failure_recovery_groups.discard(failed_group)
+                            self._failure_recovery_pending_groups.discard(failed_group)
+                        self._reconcile()
+                except Exception as exc:
+                    app_logger.warning(
+                        "Common feed coalesced recovery close completion failed group=%s: %s",
+                        f"{failed_group.mode}:{failed_group.shard}", exc,
+                    )
+            close_worker = self._close_socket_tracked(
+                socket, group=group, generation=generation,
+                reason="coalesced_failure_callback",
+                on_finished=_resume_coalesced_recovery,
+            )
+            if not close_worker.is_alive():
+                _resume_coalesced_recovery()
+            return
 
         def _recover_with_admission() -> None:
             try:
