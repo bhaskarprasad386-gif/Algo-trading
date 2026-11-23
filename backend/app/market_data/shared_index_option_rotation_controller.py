@@ -44,8 +44,9 @@ class SharedIndexOptionRotationController:
         with self._lock:
             if not self.trigger.on_spot(underlying, record.ltp):
                 return False
+            epoch = self.trigger.current_epoch()
             success = self._rotate(underlying, record.ltp)
-            self.trigger.rotation_result(underlying, success=success, spot=record.ltp)
+            self.trigger.rotation_result(underlying, success=success, spot=record.ltp, epoch=epoch)
             return success
 
 
@@ -53,12 +54,13 @@ class SharedIndexOptionRotationController:
     def flush_due(self) -> tuple[str, ...]:
         # Lock the pending-drain and rotation sequence against live spot callbacks.
         with self._lock:
+            epoch = self.trigger.current_epoch()
             due = self.trigger.flush_due()
             completed = []
             for underlying in due:
                 spot = self.trigger.snapshot()["last_spot"].get(underlying)
                 success = spot is not None and self._rotate(underlying, spot)
-                self.trigger.rotation_result(underlying, success=success, spot=spot)
+                self.trigger.rotation_result(underlying, success=success, spot=spot, epoch=epoch)
                 if success:
                     completed.append(underlying)
             return tuple(completed)
