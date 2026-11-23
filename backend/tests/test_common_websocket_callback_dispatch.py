@@ -276,3 +276,44 @@ def test_timed_out_retired_close_remains_visible_until_worker_exits():
         sleep(0.01)
     assert manager.snapshot()["retired_transport_count"] == 0
     manager.close()
+
+
+def test_coalesced_failure_close_callbacks_reconcile_each_group_and_release_worker():
+    manager = CommonWebSocketManager(socket_factory=lambda: _Socket())
+    first = SocketGroup(mode=1, shard=0)
+    second = SocketGroup(mode=1, shard=1)
+    first_socket, second_socket = _Socket(), _Socket()
+    _install_current(manager, first, first_socket, generation=31)
+    _install_current(manager, second, second_socket, generation=32)
+
+    close_callbacks = []
+    close_registered = Event()
+    reconciles = []
+    manager._close_socket_tracked = lambda _socket, **kwargs: close_callbacks.append(kwargs["on_finished"]
+    manager._reconcile = lambda: reconciles.append("full-registry")
+    manager.recover_disconnected = lambda **_kwargs: 0
+
+
+    manager._schedule_socket_failure_recovery(first, first_socket, 31, "first-shard-failed")
+    deadline = monotonic() + 1.0
+    while len(close_callbacks) < 1 and monotonic() < deadline:
+        sleep(0.01)
+    assert len(close_callbacks) == 1
+    assert manager.snapshot()["failure_recovery_worker_active"] is True
+
+
+    manager._schedule_socket_failure_recovery(second, second_socket, 32, "second-shard-failed")
+    assert len(close_callbacks) == 2, "coalesced failure must still retire its own socket"
+    assert "1:1" in manager.snapshot()["failure_recovery_pending_groups"]
+
+
+    # Finish the primary recovery, then the coalesced close callback. Both
+    # callbacks must account for their failed groups and leave admission clear.
+    close_callbacks[0]()
+    close_callbacks[1]()
+    state = manager.snapshot()
+    assert reconciles == ["full-registry", "full-registry"]
+    assert state["failure_recovery_worker_active"] is False
+    assert state["failure_recovery_pending_groups"] == []
+    assert state["failure_recovery_groups"] == []
+    manager.close()
