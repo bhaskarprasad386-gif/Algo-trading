@@ -540,7 +540,6 @@ class RepeatedRollbackFailureManager(StubManager):
     def unsubscribe(self, consumer, keys=None):
         keys = list(keys or self.registry.active_keys())
         if self.fail_added_unsubscribe and keys:
-            self.fail_added_unsubscribe = False
             raise RuntimeError("persistent transport cleanup failure")
         return super().unsubscribe(consumer, keys)
 
