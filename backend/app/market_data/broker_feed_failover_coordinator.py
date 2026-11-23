@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from threading import RLock
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Iterable, Literal
 
 from .broker_feed_failover import MarketDataFailoverPolicy, FailoverSnapshot
 
@@ -119,6 +119,35 @@ class MarketDataFailoverCoordinator:
                 self._last_timestamp.pop(identity, None)
             removed_forward = self._last_forwarded_timestamp.pop(key, None) is not None
             return bool(identities or removed_forward)
+
+    def prune_instruments(self, active_keys: Iterable[str]) -> int:
+        """Drop retained cache/watermarks for instruments outside the active universe.
+
+        The caller should invoke this after subscription-universe changes to keep
+        memory bounded to active instruments. Returns the number of unique keys
+        pruned.
+        """
+        if isinstance(active_keys, (str, bytes)):
+            raise TypeError("active_keys must be an iterable of instrument keys, not a string")
+        normalized = set()
+        for key in active_keys:
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("active instrument keys must be non-empty strings")
+            normalized.add(key.strip())
+        with self._lock:
+            known = {key for _, key in self._latest}
+            known.update(key for _, key in self._last_timestamp)
+            known.update(self._last_forwarded_timestamp)
+            retired = known - normalized
+            for identity in tuple(self._latest):
+                if identity[1] in retired:
+                    self._latest.pop(identity, None)
+            for identity in tuple(self._last_timestamp):
+                if identity[1] in retired:
+                    self._last_timestamp.pop(identity, None)
+            for key in retired:
+                self._last_forwarded_timestamp.pop(key, None)
+            return len(retired)
 
     def evaluate(
         self,
