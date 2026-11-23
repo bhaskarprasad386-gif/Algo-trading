@@ -196,7 +196,18 @@ def shoonya_verify(
         logout_error = broker_sessions.replace_and_disconnect_previous(user_id, "shoonya", adapter)
         if logout_error is not None:
             app_logger.error("Previous shoonya provider logout failed during reconnect: %s", type(logout_error).__name__)
-        item = broker_connections.connect(user_id, "shoonya", payload.display_name)
+        connection_item: list = []
+        metadata_committed = broker_sessions.commit_if_current(
+            user_id,
+            "shoonya",
+            adapter,
+            lambda: connection_item.append(
+                broker_connections.connect(user_id, "shoonya", payload.display_name)
+            ),
+        )
+        if not metadata_committed:
+            raise HTTPException(status_code=409, detail="Shoonya session was superseded by a newer reconnect")
+        item = connection_item[0]
         trading_safety.disable(user_id)
         return {
             "connected": item.connected,
