@@ -88,3 +88,25 @@ def test_negative_tick_age_is_not_accepted_as_fresh():
     assert s.angel_healthy is False
     assert s.active_provider == "none"
     assert s.mode == "DEGRADED_WAIT"
+
+
+def test_failback_stability_timer_resets_after_angel_feed_interrupt():
+    p = policy()
+    p.update(failed_angel_sockets=2, angel_tick_age_seconds=4.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    # Angel appears healthy, but the stability clock must reset when health drops.
+    p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=12)
+    p.update(failed_angel_sockets=2, angel_tick_age_seconds=4.2,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=14)
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=16)
+    assert s.active_provider == "shoonya"
+    # 5s stability from 16 plus 4s minimum dwell from 10 are both required.
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=20)
+    assert s.active_provider == "shoonya"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=21)
+    assert s.active_provider == "angel_one"
+    assert s.reason == "angel_stable_failback"
