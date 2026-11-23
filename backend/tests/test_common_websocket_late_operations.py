@@ -269,3 +269,57 @@ def test_timeout_completion_race_does_not_reconcile_if_shutdown_wins(monkeypatch
     assert reconcile_calls == [], "shutdown winning the completion race must not trigger reconcile"
     assert manager.snapshot()["socket_operation_worker_count"] == 0
     manager.close()
+
+
+class _StopAfterOneSupervisorPass:
+    def __init__(self):
+        self.calls = 0
+
+
+    def wait(self, _timeout):
+        self.calls += 1
+        return self.calls > 1
+
+
+
+def test_supervisor_acknowledges_only_pending_groups_from_reconcile_snapshot():
+    manager = CommonWebSocketManager(socket_factory=lambda: _Socket())
+    reconciled_group = SocketGroup(mode=1, shard=0)
+    concurrent_failure_group = SocketGroup(mode=1, shard=1)
+    with manager._lock:
+        manager._failure_recovery_pending_groups.add(reconciled_group)
+
+
+
+    reconcile_entered = Event()
+    concurrent_failure_added = Event()
+
+    def reconcile_with_concurrent_failure():
+        # Deterministically model a failure callback adding a second group
+        # after the supervisor's pending snapshot, during reconciliation.
+        reconcile_entered.set()
+        with manager._lock:
+            manager._failure_recovery_pending_groups.add(concurrent_failure_group)
+        concurrent_failure_added.set()
+
+
+
+    manager._recovery_stop = _StopAfterOneSupervisorPass()
+    manager._recovery_interval_seconds = 0.01
+    manager._recovery_backoff_max_seconds = 0.05
+    manager.registry.subscriptions = lambda: [object()]
+    manager.recover_disconnected = lambda **_kwargs: 0
+    manager._broker_cooldown_remaining = lambda: 0.0
+    manager._reconcile = reconcile_with_concurrent_failure
+
+    try:
+        manager._recovery_loop()
+        assert reconcile_entered.is_set()
+        assert concurrent_failure_added.is_set()
+        pending = set(manager._failure_recovery_pending_groups)
+        assert reconciled_group not in pending
+        assert concurrent_failure_group in pending, (
+            "a failure added during reconcile must remain pending for the next supervisor pass"
+        )
+    finally:
+        manager.close()
