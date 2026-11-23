@@ -2279,15 +2279,20 @@ def test_clear_consumer_during_inflight_tick_allows_admitted_callback_but_blocks
     manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
     entered = Event()
     release = Event()
-    received = []
+    removed_consumer_received = []
+    surviving_consumer_received = []
 
-    def callback(message):
-        received.append(message["token"])
+    def removed_callback(message):
+        removed_consumer_received.append(message["token"])
         entered.set()
         release.wait(timeout=2.0)
 
-    manager.register_callback("race-consumer", callback)
+    manager.register_callback("race-consumer", removed_callback)
+    manager.register_callback(
+        "surviving-consumer", lambda message: surviving_consumer_received.append(message["token"])
+    )
     manager.subscribe("race-consumer", [item.key])
+    manager.subscribe("surviving-consumer", [item.key])
     group = SocketGroup(1, 0)
     try:
         delivery = Thread(
@@ -2297,18 +2302,21 @@ def test_clear_consumer_during_inflight_tick_allows_admitted_callback_but_blocks
         delivery.start()
         assert entered.wait(timeout=1.0), "first tick should enter admitted callback"
 
-        # Clearing ownership while a callback is already executing must not
-        # deadlock. In-flight delivery is allowed to finish, but future
-        # frames must not route to the removed consumer.
+        # Clearing one owner must leave the shared socket and the other owner
+        # intact. In-flight delivery may complete, but subsequent frames
+        # must route only to the surviving consumer.
         manager.clear_consumer("race-consumer")
+        assert group in manager._sockets
+        assert registry.active_keys() == (item.key,)
         release.set()
         delivery.join(timeout=1.0)
         assert not delivery.is_alive()
-        assert received == [item.key.token]
+        assert removed_consumer_received == [item.key.token]
+        assert surviving_consumer_received == [item.key.token]
 
         manager._on_data(group, {"token": item.key.token, "exchange_type": 1})
-        assert received == [item.key.token]
-        assert manager.registry.active_keys() == ()
+        assert removed_consumer_received == [item.key.token]
+        assert surviving_consumer_received == [item.key.token, item.key.token]
     finally:
         release.set()
         manager.close()
