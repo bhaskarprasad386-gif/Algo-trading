@@ -407,6 +407,60 @@ def test_stale_socket_callback_is_ignored_after_recovery_replaces_socket():
         manager.close()
 
 
+def test_late_old_generation_connect_failure_cannot_invalidate_replacement():
+    class LateFailFirstConnectSocket(FakeSocket):
+        attempts = 0
+        release_first_connect = Event()
+
+        def connect(self, **kwargs):
+            type(self).attempts += 1
+            if type(self).attempts == 1:
+                self.connect_calls.append(kwargs)
+                self.connecting = True
+                type(self).release_first_connect.wait(timeout=3.0)
+                raise RuntimeError("late old generation handshake failure")
+            super().connect(**kwargs)
+
+    registry = InstrumentRegistry()
+    item = descriptor("late-connect-failure-777")
+    registry.register(item)
+    LateFailFirstConnectSocket.instances.clear()
+    LateFailFirstConnectSocket.attempts = 0
+    LateFailFirstConnectSocket.release_first_connect.clear()
+    manager = CommonWebSocketManager(registry, socket_factory=LateFailFirstConnectSocket)
+    manager._connect_call_wait_seconds = 0.05
+    manager._connect_timeout_seconds = 1.0
+    manager._recovery_interval_seconds = 60.0
+    try:
+        manager.subscribe("late-connect-failure", [item.key])
+        old_socket = LateFailFirstConnectSocket.instances[0]
+        group = SocketGroup(1, 0)
+        with manager._lock:
+            manager._socket_created_at[group] -= 2.0
+
+        assert manager.recover_disconnected(min_age_seconds=0.0) == 1
+        replacement = LateFailFirstConnectSocket.instances[1]
+        assert replacement.connect_calls == []
+
+        LateFailFirstConnectSocket.release_first_connect.set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            with manager._lock:
+                if manager._sockets.get(group) is replacement and replacement.connected:
+                    break
+            time.sleep(0.01)
+
+        with manager._lock:
+            assert manager._sockets.get(group) is replacement
+            assert manager._socket_generation.get(group) != 1
+        assert old_socket.closed is True
+        assert replacement.connected is True
+        assert manager.snapshot()["socket_groups"] == 1
+    finally:
+        LateFailFirstConnectSocket.release_first_connect.set()
+        manager.close()
+
+
 def test_recovery_replaces_socket_stuck_in_connecting_state_after_timeout():
     registry = InstrumentRegistry()
     d = descriptor("101")
