@@ -99,8 +99,18 @@ class SharedIndexFeedLifecycle:
         """Restore registry ownership after a transport mutation failed partially."""
         old_keys = tuple(old_keys)
         added = tuple(key for key in new_keys if key not in set(old_keys))
-        # Registry operations are local and idempotent; establish desired owner
-        # state first, then ask the shared transport supervisor to reconcile.
+        # Try the transport-facing API first so managers with bookkeeping
+        # mirrors update too. If another reconcile fails, force the registry
+        # back to the desired state and let the supervisor retry.
+        try:
+            manager.subscribe(consumer, list(old_keys), mode=mode)
+        except Exception:
+            pass
+        try:
+            if added:
+                manager.unsubscribe(consumer, list(added))
+        except Exception:
+            pass
         for key in old_keys:
             manager.registry.subscribe(consumer, key, mode)
         for key in added:
