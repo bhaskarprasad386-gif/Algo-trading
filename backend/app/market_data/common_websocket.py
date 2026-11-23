@@ -1405,17 +1405,20 @@ class CommonWebSocketManager:
                 )
                 cooldown_remaining = self._broker_cooldown_remaining()
                 with self._lock:
-                    has_pending_failures = bool(self._failure_recovery_pending_groups)
+                    pending_failures_to_ack = set(self._failure_recovery_pending_groups)
+                    has_pending_failures = bool(pending_failures_to_ack)
                 if cooldown_remaining > 0.0:
                     cooldown_was_active = True
                 elif cooldown_was_active or has_pending_failures:
                     # A disconnected-socket pass alone is not a full desired-state
                     # reconcile. Pending coalesced failures must survive until the
                     # registry reconcile actually succeeds (or cooldown permits it).
+                    # A callback may add new failures while reconcile is running;
+                    # acknowledge only the groups included in this pass's snapshot.
                     self._reconcile()
                     cooldown_was_active = False
                     with self._lock:
-                        self._failure_recovery_pending_groups.clear()
+                        self._failure_recovery_pending_groups.difference_update(pending_failures_to_ack)
                 retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 with self._lock:
                     self._recovery_backoff_current_seconds = retry_delay
