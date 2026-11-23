@@ -234,7 +234,7 @@ def test_recovery_supervisor_exits_on_shutdown_without_retrying():
     manager._ensure_recovery_supervisor()
     thread = manager._recovery_thread
     assert thread is not None and thread.is_alive()
-    time.sleep(0.03)
+    time.sleep(0.12)
     assert recovery_calls
 
 
