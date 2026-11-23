@@ -380,7 +380,8 @@ def test_failed_late_close_recovery_releases_admission_and_keeps_coalesced_group
 
     manager._close_socket_tracked = delayed_close
     manager.recover_disconnected = fail_recovery
-    manager._reconcile = lambda: None
+    reconciled = []
+    manager._reconcile = lambda: reconciled.append(True)
     manager._schedule_socket_failure_recovery(group, socket, 1, "failure")
     assert close_started.wait(timeout=1.0)
     manager._schedule_socket_failure_recovery(pending, pending_socket, 1, "coalesced")
@@ -392,7 +393,10 @@ def test_failed_late_close_recovery_releases_admission_and_keeps_coalesced_group
         time.sleep(0.005)
     state = manager.snapshot()
     assert state["failure_recovery_worker_active"] is False
-    assert state["failure_recovery_pending_groups"] == ["1:1"]
+    # The second transport completed its close and successfully reconciled the
+    # full desired registry, so its pending marker must be drained.
+    assert state["failure_recovery_pending_groups"] == []
+    assert reconciled == [True]
     manager.close()
 
 
@@ -448,7 +452,13 @@ def test_simultaneous_shard_failures_coalesce_callback_recovery_workers():
         manager._socket_generation[group] = 1
         manager._socket_generation_counter[group] = 1
         manager._socket_tokens[group] = {(1, str(group.shard))}
-    manager._close_socket_tracked = lambda *args, **kwargs: Thread()  # dead worker: close completed
+    def completed_close(*args, **kwargs):
+        callback = kwargs.get("on_finished")
+        if callback:
+            callback()
+        return Thread()  # completed close; callback models the tracked watcher
+
+    manager._close_socket_tracked = completed_close
 
 
     def wait_recovery(**kwargs):
