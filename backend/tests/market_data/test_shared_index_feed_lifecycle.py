@@ -662,6 +662,10 @@ def test_stop_waits_for_inflight_option_rotation_then_clears_all_owner_keys():
             self.block_rotation = False
             self.entered = threading.Event()
             self.release = threading.Event()
+            self.stop_clear_entered = threading.Event()
+        def clear_consumer(self, consumer):
+            self.stop_clear_entered.set()
+            return super().clear_consumer(consumer)
         def subscribe(self, consumer, keys, mode=1):
             keys = list(keys)
             if consumer == SharedIndexFeedLifecycle.OPTIONS_CONSUMER and self.block_rotation:
@@ -691,8 +695,10 @@ def test_stop_waits_for_inflight_option_rotation_then_clears_all_owner_keys():
     stop_thread = threading.Thread(target=stop_runner, daemon=True)
     stop_thread.start()
     assert stop_started.wait(timeout=1.0)
-    # stop cannot interleave owner teardown while rotation is mid-transaction.
-    assert lifecycle.snapshot()["options_active"] is True
+    # The stop thread is launched while rotation holds the lifecycle lock;
+    # teardown must not reach consumer clearing until rotation releases it.
+    assert lifecycle._lock.locked()
+    assert not manager.stop_clear_entered.is_set()
     manager.release.set()
     rotation_thread.join(timeout=2.0)
     stop_thread.join(timeout=2.0)
