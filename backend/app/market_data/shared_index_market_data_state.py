@@ -53,7 +53,9 @@ class SharedIndexMarketDataState:
                 self._retired_dropped += 1
                 return False
             previous = self._latest.get(key)
-            if previous is not None and ts < previous.timestamp_ns:
+            if previous is not None and ts <= previous.timestamp_ns:
+                # Equal timestamps are duplicate frames, not new observations.
+                # Reject them to avoid inflating tick-rate/history metrics.
                 self._out_of_order += 1
                 return False
             if key not in self._latest and len(self._latest) >= self.MAX_INSTRUMENTS:
