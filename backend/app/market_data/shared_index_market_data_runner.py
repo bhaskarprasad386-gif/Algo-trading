@@ -147,7 +147,7 @@ class SharedIndexMarketDataRunner:
             # on the bounded recovery cadence instead of waiting a full day.
             refresh_interval = (
                 self._master_refresh_retry_delay_seconds
-                if not self._bootstrap_options_done
+                if (not self._bootstrap_options_done or self._master_refresh_error is not None)
                 else self._master_refresh_interval_seconds
             )
             if time.monotonic() - self._master_refresh_started_at < refresh_interval:
@@ -189,11 +189,7 @@ class SharedIndexMarketDataRunner:
                     if self._running and generation == self._run_generation:
                         self._master_refresh_error = f"{type(exc).__name__}: {exc}"[:200]
                         # Back off transient failures while preserving the successful-refresh cadence.
-                        self._master_refresh_started_at = (
-                            __import__("time").monotonic()
-                            - self._master_refresh_interval_seconds
-                            + self._master_refresh_retry_delay_seconds
-                        )
+                        self._master_refresh_started_at = __import__("time").monotonic()
             finally:
                 with self._lock:
                     if self._master_refresh_generation == generation:
