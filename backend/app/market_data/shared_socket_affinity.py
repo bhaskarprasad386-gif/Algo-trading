@@ -65,9 +65,20 @@ class ConsumerSocketAffinity:
             name = str(owner).strip()
             if not name or not isinstance(slot, AffinitySlot):
                 raise ValueError("owner and AffinitySlot are required")
-            tokens = frozenset((int(exchange), str(token).strip()) for exchange, token in owner_tokens[owner])
-            if any(exchange <= 0 or not token for exchange, token in tokens):
-                raise ValueError("token pairs require positive exchange type and nonempty token")
+            raw_tokens = owner_tokens[owner]
+            tokens_list = []
+            for pair in raw_tokens:
+                try:
+                    exchange, token = pair
+                except (TypeError, ValueError):
+                    raise ValueError("token pairs require exchange type and token") from None
+                if isinstance(exchange, bool) or not isinstance(exchange, int) or exchange <= 0:
+                    raise ValueError("token pairs require positive integer exchange type")
+                normalized_token = str(token).strip()
+                if not normalized_token:
+                    raise ValueError("token pairs require positive exchange type and nonempty token")
+                tokens_list.append((exchange, normalized_token))
+            tokens = frozenset(tokens_list)
             if len(tokens) > self.max_tokens_per_socket:
                 raise ValueError(f"owner {name} exceeds socket token capacity")
             if slot.shard >= self.max_sockets:
