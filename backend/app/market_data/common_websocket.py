@@ -1143,10 +1143,14 @@ class CommonWebSocketManager:
                             self._failure_recovery_pending_groups.discard(failed_group)
                             return
                     with self._reconcile_lock:
+                        # Keep coalesced failure visible until a full registry
+                        # reconcile succeeds; the supervisor clears pending groups
+                        # after its own successful recovery pass.
                         with self._lock:
                             self._failure_recovery_groups.discard(failed_group)
-                            self._failure_recovery_pending_groups.discard(failed_group)
                         self._reconcile()
+                        with self._lock:
+                            self._failure_recovery_pending_groups.discard(failed_group)
                 except Exception as exc:
                     app_logger.warning(
                         "Common feed coalesced recovery close completion failed group=%s: %s",
