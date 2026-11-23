@@ -400,3 +400,29 @@ def test_latest_timestamp_wins_concurrent_health_updates_or_older_is_rejected():
     assert newer_result.active_provider in ("angel_one", "shoonya")
     assert older_result is None or older_result.active_provider in ("shoonya", "none")
     assert p.snapshot().active_provider in ("angel_one", "shoonya")
+
+
+
+def test_none_provider_keeps_mode_no_valid_feed_when_no_feed_recovers_within_grace():
+    p = policy()
+    s = p.update(failed_angel_sockets=3, angel_tick_age_seconds=5.0,
+                 shoonya_connected=False, shoonya_tick_age_seconds=None, now=700)
+    assert s.active_provider == "none"
+    assert s.mode == "NO_VALID_FEED"
+    s = p.update(failed_angel_sockets=3, angel_tick_age_seconds=3.0,
+                 shoonya_connected=False, shoonya_tick_age_seconds=None, now=701)
+    assert s.active_provider == "none"
+    assert s.mode == "NO_VALID_FEED"
+    assert s.reason == "no_provider_feed_is_fresh"
+
+
+def test_none_provider_validates_shoonya_recovery_timestamp_and_mode():
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=5.0,
+             shoonya_connected=False, shoonya_tick_age_seconds=None, now=800)
+    s = p.update(failed_angel_sockets=3, angel_tick_age_seconds=5.0,
+                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=801)
+    assert s.active_provider == "shoonya"
+    assert s.mode == "BACKUP"
+    assert s.reason == "shoonya_validated_recovery"
+    assert s.switched_at == 801
