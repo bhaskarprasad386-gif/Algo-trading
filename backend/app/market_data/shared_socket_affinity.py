@@ -72,6 +72,8 @@ class ConsumerSocketAffinity:
                 raise ValueError(f"owner {name} exceeds socket token capacity")
             if slot.shard >= self.max_sockets:
                 raise ValueError(f"owner {name} shard is outside configured socket range")
+            if name in normalized_slots:
+                raise ValueError(f"duplicate normalized affinity owner: {name}")
             normalized_slots[name] = slot
             normalized_tokens[name] = tokens
         groups = set(normalized_slots.values())
@@ -89,9 +91,12 @@ class ConsumerSocketAffinity:
     def commit(self, plan: AffinityPlan) -> None:
         if not isinstance(plan, AffinityPlan):
             raise TypeError("plan must be AffinityPlan")
+        # Revalidate at commit time: frozen plans still contain mutable dicts,
+        # so callers may have altered them after the original plan() validation.
+        validated = self.plan(plan.owner_slots, plan.owner_tokens)
         with self._lock:
-            self._owner_slots = dict(plan.owner_slots)
-            self._owner_tokens = dict(plan.owner_tokens)
+            self._owner_slots = dict(validated.owner_slots)
+            self._owner_tokens = dict(validated.owner_tokens)
 
     def release(self, owner: str) -> bool:
         name = str(owner).strip()
