@@ -232,3 +232,44 @@ def test_backup_stale_gap_suppresses_ticks_then_fresh_backup_recovers():
               shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=12)
     assert c.observe("shoonya", tick("NIFTY", 12, 102)) is True
     assert received == [("shoonya", 10), ("shoonya", 12)]
+
+
+
+def test_failed_callback_does_not_advance_cross_provider_watermark():
+    delivered = []
+    first = True
+
+    def callback(provider, record):
+        nonlocal first
+        if first:
+            first = False
+            raise RuntimeError("transient consumer failure")
+        delivered.append((provider, record["timestamp_ns"]))
+
+    c = MarketDataFailoverCoordinator(policy=policy(), on_record=callback)
+    assert c.observe("angel_one", tick("NIFTY", 500, 100)) is False
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+               shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    # The backup's same timestamp is eligible because the primary callback failed.
+    assert c.observe("shoonya", tick("NIFTY", 500, 101)) is True
+    assert delivered == [("shoonya", 500)]
+    assert c.snapshot()["callback_errors"] == 1
+    assert c.snapshot()["forwarded_ticks"] == 1
+
+
+
+def test_callback_exception_cannot_mutate_cached_payload_on_failure():
+    original = {"instrument_key": "BANKNIFTY", "timestamp_ns": 600,
+              "metadata": {"origin": "canonical"}}
+
+
+    def callback(_provider, record):
+        record["metadata"]["origin"] = "mutated-before-raise"
+        raise RuntimeError("consumer failed")
+
+
+    c = MarketDataFailoverCoordinator(on_record=callback)
+    assert c.observe("angel_one", original) is False
+    assert original["metadata"]["origin"] == "canonical"
+    assert c._latest[("angel_one", "BANKNIFTY")]["metadata"]["origin"] == "canonical"
+    assert c.snapshot()["callback_errors"] == 1
