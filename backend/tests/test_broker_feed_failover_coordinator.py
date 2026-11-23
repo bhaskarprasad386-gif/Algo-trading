@@ -180,3 +180,26 @@ def test_timestamp_order_is_tracked_per_provider_and_per_instrument():
     assert c.observe("angel_one", tick("NIFTY", 99, 99)) is False
     assert c.observe("angel_one", tick("BANKNIFTY", 51, 51)) is True
     assert received == [("angel_one", "NIFTY", 100), ("angel_one", "BANKNIFTY", 50), ("angel_one", "BANKNIFTY", 51)]
+
+
+def test_callback_reentrant_health_switch_applies_only_to_subsequent_ticks():
+    received = []
+    holder = {}
+    switched = []
+
+    def callback(provider, record):
+        received.append((provider, record["timestamp_ns"]))
+        if not switched:
+            switched.append(True)
+            holder["coordinator"].evaluate(
+                failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+                shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10,
+            )
+
+    c = MarketDataFailoverCoordinator(policy=policy(), on_record=callback)
+    holder["coordinator"] = c
+    assert c.observe("angel_one", tick("NIFTY", 1, 100)) is True
+    assert c.snapshot()["active_provider"] == "shoonya"
+    assert c.observe("angel_one", tick("NIFTY", 2, 101)) is False
+    assert c.observe("shoonya", tick("NIFTY", 3, 102)) is True
+    assert received == [("angel_one", 1), ("shoonya", 3)]
