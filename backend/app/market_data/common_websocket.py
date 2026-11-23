@@ -2073,15 +2073,13 @@ class CommonWebSocketManager:
                         f"{group.mode}:{group.shard}", reason, exc,
                     )
 
-        if worker.is_alive():
-            self._watch_retired_transport(
-                worker, group=group, generation=generation, reason=reason,
-                on_finished=_finish_once, retirement_key=key,
-            )
-        else:
-            with self._lock:
-                self._retired_transports.pop(key, None)
-            _finish_once()
+        # Always use the watcher, even for an already-finished close. It
+        # invokes completion on its own thread, avoiding reentrant reconcile
+        # when this helper is called from inside _reconcile().
+        self._watch_retired_transport(
+            worker, group=group, generation=generation, reason=reason,
+            on_finished=_finish_once, retirement_key=key,
+        )
         return worker
 
     @staticmethod
