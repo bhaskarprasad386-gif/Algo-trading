@@ -129,3 +129,18 @@ def test_callback_failure_does_not_block_later_successful_delivery():
     assert snap["callback_errors"] == 1
     assert snap["forwarded_ticks"] == 1
     assert snap["suppressed_ticks"] == 0
+
+
+
+def test_consumer_mutations_do_not_change_input_or_cached_tick_payload():
+    original = {"instrument_key": "NIFTY", "timestamp_ns": 500, "metadata": {"source": "feed"}}
+
+
+    def callback(_provider, record):
+        record["metadata"]["source"] = "consumer-mutated"
+
+
+    c = MarketDataFailoverCoordinator(on_record=callback)
+    assert c.observe("angel_one", original) is True
+    assert original["metadata"]["source"] == "feed"
+    assert c.snapshot()["latest_record_count"] == 1
