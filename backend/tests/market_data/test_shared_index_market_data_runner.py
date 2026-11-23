@@ -220,6 +220,7 @@ def test_instrument_master_refresh_publishes_complete_snapshot_without_tick_bloc
     runner = SharedIndexMarketDataRunner(instrument_master=master, manager=RunnerManager())
     runner.start(rows)
     runner._master_refresh_interval_seconds = 0
+    runner._master_refresh_retry_delay_seconds = 0
     assert runner._schedule_master_refresh() is True
     assert master.refresh_done.wait(timeout=2)
     # Wait for worker to publish its snapshot.
@@ -249,6 +250,7 @@ def test_failed_instrument_master_refresh_preserves_last_good_rows():
     runner.start(rows)
     original = runner._rows
     runner._master_refresh_interval_seconds = 0
+    runner._master_refresh_retry_delay_seconds = 0
     assert runner._schedule_master_refresh() is True
     assert master.done.wait(timeout=2)
     import time
@@ -284,6 +286,7 @@ def test_refresh_started_before_off_cannot_publish_after_off():
     runner.start(rows)
     original_rows = runner._rows
     runner._master_refresh_interval_seconds = 0
+    runner._master_refresh_retry_delay_seconds = 0
     assert runner._schedule_master_refresh()
     assert master.started.wait(timeout=2)
     runner.stop()
@@ -412,6 +415,7 @@ def test_stale_master_refresh_failure_cannot_pollute_restarted_runner_epoch():
     runner = SharedIndexMarketDataRunner(instrument_master=master, manager=RunnerManager())
     assert runner.start(rows)["enabled"] is True
     runner._master_refresh_interval_seconds = 0
+    runner._master_refresh_retry_delay_seconds = 0
     assert runner._schedule_master_refresh() is True
     assert master.refresh_started.wait(timeout=2)
 
