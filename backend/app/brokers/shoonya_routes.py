@@ -86,9 +86,15 @@ class ShoonyaRESTClient:
 
     def disconnect(self) -> None:
         token = self.access_token
+        token_is_expired = (
+            self.expires_at_monotonic is not None
+            and monotonic() >= self.expires_at_monotonic
+        )
         self.access_token = ""
         self.expires_at_monotonic = None
-        if token:
+        # Expired OAuth tokens are invalid for remote logout too. Clear local
+        # credentials first and avoid sending a stale bearer token on cleanup.
+        if token and not token_is_expired:
             try:
                 response = self.http.post(
                     f"{self.base_url}/Logout",
