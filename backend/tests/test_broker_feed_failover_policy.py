@@ -643,3 +643,22 @@ def test_two_socket_failures_trigger_failover_at_tick_freshness_boundary():
     assert s.mode == "BACKUP"
     assert s.reason == "two_or_more_angel_sockets_failed_and_feed_unhealthy"
     assert s.switched_at == 50
+
+
+def test_no_feed_state_recovers_to_fresh_angel_even_with_all_sockets_marked_failed():
+    p = policy()
+    outage = p.update(
+        failed_angel_sockets=3, angel_tick_age_seconds=4.2,
+        shoonya_connected=False, shoonya_tick_age_seconds=None, now=10,
+    )
+    assert outage.active_provider == "none"
+    assert outage.mode == "NO_VALID_FEED"
+    # Tick freshness is the authority: socket-count degradation alone cannot
+    # reject a provider that has resumed delivering fresh market data.
+    recovered = p.update(
+        failed_angel_sockets=3, angel_tick_age_seconds=0.2,
+        shoonya_connected=False, shoonya_tick_age_seconds=None, now=11,
+    )
+    assert recovered.active_provider == "angel_one"
+    assert recovered.mode == "PRIMARY"
+    assert recovered.reason == "angel_recovered"
