@@ -646,7 +646,7 @@ def test_concurrent_failback_and_backup_tick_handoff_delivers_timestamp_once():
     assert errors == []
     # Depending on lock acquisition order, the backup tick is delivered before
     # failback or rejected after the switch; the timestamp is never duplicated.
-    assert delivered in ([("shoonya", 1000)], [("angel_one", 1000)], [])
+    assert delivered in ([("shoonya", 1000)], [])
     assert c.snapshot()["forwarded_ticks"] == len(delivered)
 
 def test_callback_failure_allows_same_provider_same_timestamp_retry():
