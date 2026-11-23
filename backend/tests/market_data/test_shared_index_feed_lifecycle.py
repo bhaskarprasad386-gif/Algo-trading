@@ -715,3 +715,56 @@ def test_stop_waits_for_inflight_option_rotation_then_clears_all_owner_keys():
     assert lifecycle.snapshot()["futures_active"] is False
     assert manager.registry.active_keys() == ()
     assert manager.registry.subscriptions() == ()
+
+
+def test_failed_rotation_rollback_preserves_shared_external_owner_of_replacement_key():
+    manager = FailAfterMutationManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    old = _options()
+    lifecycle.start_options(old)
+    replacement = _options(shift=25)
+    shared = replacement[0]
+    manager.registry.register(shared)
+    manager.subscribe("external-owner", [shared.key], mode=3)
+    manager.fail_next_subscribe = True
+
+    try:
+        lifecycle.rotate_options(replacement)
+    except RuntimeError as exc:
+        assert "forced reconcile failure" in str(exc)
+    else:
+        raise AssertionError("partial replacement subscribe must fail")
+
+    old_keys = set(d.key for d in old)
+    assert manager.active[lifecycle.OPTIONS_CONSUMER] == old_keys
+    assert manager.registry.active_keys() == tuple(sorted(old_keys | {shared.key}, key=lambda key: key.value))
+    shared_subscription = next(sub for sub in manager.registry.subscriptions() if sub.key == shared.key)
+    assert shared_subscription.consumers == frozenset({"external-owner"})
+    assert shared_subscription.mode == 3
+    assert manager.registry.get(shared.key) == shared
+    assert all(manager.registry.get(d.key) is None for d in replacement if d.key != shared.key)
+
+
+def test_stop_force_clears_registry_when_consumer_clear_fails_before_mutation():
+    manager = FailBeforeClearManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    lifecycle.start_options(_options())
+    keys = tuple(lifecycle._option_keys)
+    consumer = lifecycle.OPTIONS_CONSUMER
+    manager._transport_observers[consumer] = lambda *_args: None
+    manager.fail_clear_before_mutation = True
+
+    try:
+        lifecycle.stop_options()
+    except RuntimeError as exc:
+        assert "clear failed before mutation" in str(exc)
+    else:
+        raise AssertionError("stop should surface clear failure")
+
+    assert manager.registry.active_keys() == ()
+    assert manager.active.get(consumer, set()) == set()
+    assert consumer not in manager.callbacks
+    assert consumer not in manager._transport_observers
+    assert all(manager.registry.get(key) is None for key in keys)
+    assert lifecycle.snapshot()["options_active"] is False
+    assert lifecycle.snapshot()["options_instruments"] == 0
