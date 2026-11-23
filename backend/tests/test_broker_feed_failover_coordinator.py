@@ -579,3 +579,29 @@ def test_coordinator_concurrent_same_time_switches_keep_snapshot_consistent():
     assert snap["active_provider"] == policy_snap.active_provider
     assert snap["mode"] == policy_snap.mode
     assert snap["reason"] == policy_snap.reason
+
+
+def test_policy_rejects_delayed_health_event_while_on_backup_without_mutation():
+    p = policy()
+    backup = p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=100)
+    assert backup.active_provider == "shoonya"
+    # Delayed healthy-primary event with older monotonic evaluation time must not
+    # reset failback stability or change backup authority.
+    try:
+        p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+            shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=99.5)
+    except ValueError as exc:
+        assert "out-of-order" in str(exc)
+    else:
+        raise AssertionError("delayed health event must be rejected")
+    after = p.snapshot()
+    assert after.active_provider == backup.active_provider
+    assert after.mode == backup.mode
+    assert after.reason == backup.reason
+    assert after.switched_at == backup.switched_at
+    # A properly ordered health event begins the stability timer normally.
+    recovered = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=101)
+    assert recovered.active_provider == "shoonya"
+    assert recovered.reason == "shoonya_active_waiting_for_angel_stability"
