@@ -54,3 +54,15 @@ def test_coordinator_can_fail_closed_when_policy_has_no_valid_provider():
     assert decision.active_provider == "none"
     assert c.observe("angel_one", tick("NIFTY", 100, 100)) is False
     assert not received
+
+
+def test_callback_failure_is_counted_and_does_not_claim_forwarding():
+    def broken_callback(_provider, _record):
+        raise RuntimeError("consumer unavailable")
+
+    c = MarketDataFailoverCoordinator(on_record=broken_callback)
+    assert c.observe("angel_one", tick("NIFTY", 200, 200)) is False
+    snap = c.snapshot()
+    assert snap["forwarded_ticks"] == 0
+    assert snap["callback_errors"] == 1
+    assert snap["suppressed_ticks"] == 0
