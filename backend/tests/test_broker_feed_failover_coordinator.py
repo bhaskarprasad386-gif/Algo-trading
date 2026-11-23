@@ -605,3 +605,46 @@ def test_policy_rejects_delayed_health_event_while_on_backup_without_mutation():
         shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=101)
     assert recovered.active_provider == "shoonya"
     assert recovered.reason == "shoonya_active_waiting_for_angel_stability"
+
+
+def test_concurrent_failback_and_backup_tick_handoff_delivers_timestamp_once():
+    from threading import Barrier, Thread
+
+    delivered = []
+    c = MarketDataFailoverCoordinator(policy=policy(),
+        on_record=lambda provider, record: delivered.append((provider, record["timestamp_ns"])))
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    c.evaluate(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=11)
+    # At t=15 both dwell and Angel stability are satisfied.
+    barrier = Barrier(3)
+    errors = []
+
+    def backup_tick():
+        barrier.wait(timeout=2)
+        try:
+            c.observe("shoonya", tick("NIFTY", 1000, 100))
+        except Exception as exc:
+            errors.append(exc)
+
+    def failback():
+        barrier.wait(timeout=2)
+        try:
+            c.evaluate(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=15)
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [Thread(target=backup_tick), Thread(target=failback)]
+    for thread in threads:
+        thread.start()
+    barrier.wait(timeout=2)
+    for thread in threads:
+        thread.join(timeout=2)
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    # Depending on lock acquisition order, the backup tick is delivered before
+    # failback or rejected after the switch; the timestamp is never duplicated.
+    assert delivered in ([("shoonya", 1000)], [("angel_one", 1000)], [])
+    assert c.snapshot()["forwarded_ticks"] == len(delivered)
