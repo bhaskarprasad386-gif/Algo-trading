@@ -696,3 +696,24 @@ def test_prune_instruments_rejects_string_argument():
     c = MarketDataFailoverCoordinator()
     with pytest.raises(TypeError, match="not a string"):
         c.prune_instruments("NIFTY")
+
+
+def test_reentrant_callback_cannot_deliver_same_tick_twice():
+    calls = []
+    holder = {}
+    record = tick("NIFTY", 1500, 100)
+
+    def callback(provider, payload):
+        calls.append((provider, payload["timestamp_ns"]))
+        # Re-enter with the exact same tick while the outer callback is active.
+        assert holder["c"].observe(provider, record) is False
+
+
+    c = MarketDataFailoverCoordinator(on_record=callback)
+    holder["c"] = c
+    assert c.observe("angel_one", record) is True
+    assert calls == [("angel_one", 1500)]
+    snap = c.snapshot()
+    assert snap["forwarded_ticks"] == 1
+    assert snap["suppressed_ticks"] == 1
+    assert snap["callback_errors"] == 0
