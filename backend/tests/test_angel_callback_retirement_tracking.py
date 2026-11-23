@@ -152,6 +152,38 @@ def test_second_broker_operation_for_group_rejected_while_late_worker_is_active(
 
 
 
+def test_shutdown_keeps_timed_out_socket_close_visible_until_late_exit():
+    close_started = Event()
+    release_close = Event()
+    socket = BlockingSocket()
+
+    def blocked_close():
+        close_started.set()
+        release_close.wait(timeout=3.0)
+        socket.closed = True
+
+    socket.close = blocked_close
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    manager._sockets[group] = socket
+    manager._socket_generation[group] = 2
+    manager._socket_generation_counter[group] = 2
+
+    shutdown = Thread(target=manager.close, daemon=True)
+    shutdown.start()
+    assert close_started.wait(timeout=1.0)
+    state = manager.snapshot()
+    assert state["retired_transport_count"] >= 1
+    assert any(item["reason"] == "manager_shutdown" for item in state["retired_transports"])
+    release_close.set()
+    shutdown.join(timeout=3.0)
+    assert not shutdown.is_alive()
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["retired_transport_count"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert manager.snapshot()["retired_transport_count"] == 0
+
+
 def test_manager_shutdown_blocks_reconcile_and_recovery_after_close():
     manager = CommonWebSocketManager()
     manager.close()
