@@ -83,6 +83,7 @@ class SharedIndexOptionRotationController:
                 instrument_type="option", segment="NFO", expiry=contract.expiry,
                 strike=contract.strike, option_type=contract.option_type,
                 lot_size=contract.lot_size, underlying=contract.underlying,
+                expiry_type="WEEKLY" if underlying == "NIFTY" else "MONTHLY",
             ) for contract in selection.contracts)
             current_descriptors = tuple(
                 descriptor for descriptor in self.lifecycle.option_descriptors()
