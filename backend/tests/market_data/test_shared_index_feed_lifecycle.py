@@ -370,6 +370,29 @@ def test_stop_clears_local_owner_flags_and_continues_after_partial_reconcile_fai
     assert manager.registry.active_keys() == ()
 
 
+
+
+def test_locked_options_reject_wrong_expiry_family_before_registry_mutation():
+    from dataclasses import replace
+
+    for underlying, wrong_type, expected_message in (
+        ("NIFTY", "MONTHLY", "NIFTY options must use WEEKLY expiry"),
+        ("BANKNIFTY", "WEEKLY", "BANKNIFTY options must use MONTHLY expiry"),
+    ):
+        manager = StubManager()
+        lifecycle = SharedIndexFeedLifecycle(manager=manager)
+        descriptors = list(_options())
+        index = next(i for i, item in enumerate(descriptors) if item.underlying == underlying)
+        descriptors[index] = replace(descriptors[index], expiry_type=wrong_type)
+        try:
+            lifecycle.start_options(descriptors)
+        except ValueError as exc:
+            assert expected_message in str(exc)
+        else:
+            raise AssertionError("wrong locked expiry family must be rejected")
+        assert manager.registry.subscriptions() == ()
+        assert manager.registry.active_keys() == ()
+
 def _spot_record(key, timestamp_ns=1):
     return MarketDataRecord(
         instrument=key, symbol="NIFTY", instrument_type=InstrumentType.INDEX,
