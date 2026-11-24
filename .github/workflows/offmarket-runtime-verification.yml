@@ -45,10 +45,20 @@ jobs:
             if timeout 10 ssh-keyscan -T 8 -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/tmp/offmarket-keyscan.err; then
               keyscan_ok=1
               break
+            else
+              printf 'SSH_KEYSCAN_ATTEMPT_FAILED=%s\\n' "$attempt" >&2
+              if [[ -s /tmp/offmarket-keyscan.err ]]; then
+                cat /tmp/offmarket-keyscan.err >&2
+              else
+                printf 'SSH_KEYSCAN_NO_STDERR=true\\n' >&2
+              fi
             fi
             sleep 3
           done
-          test "$keyscan_ok" -eq 1
+          if [[ "$keyscan_ok" -ne 1 ]]; then
+            printf 'SSH_KEYSCAN_FAILED: no host key received after 3 attempts; deployment was not started\\n' >&2
+            exit 1
+          fi
 
           REMOTE_SCRIPT=$(cat <<'REMOTE'
           set -euo pipefail

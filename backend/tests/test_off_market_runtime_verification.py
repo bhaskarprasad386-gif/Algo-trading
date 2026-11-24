@@ -152,3 +152,15 @@ def test_offmarket_butterfly_condor_shadow_empty_snapshot_is_safe_and_read_only(
     assert result["order_routing_enabled"] is False
     assert result["result_count"] == 0
     assert result["results"] == []
+
+
+
+def test_offmarket_keyscan_failure_stderr_is_reported_in_ci_logs():
+    from pathlib import Path
+
+    workflow = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "offmarket-runtime-verification.yml"
+    source = workflow.read_text()
+    assert "SSH_KEYSCAN_ATTEMPT_FAILED=%s" in source
+    assert "cat /tmp/offmarket-keyscan.err >&2" in source
+    assert "SSH_KEYSCAN_NO_STDERR=true" in source
+    assert "SSH_KEYSCAN_FAILED: no host key received after 3 attempts" in source
