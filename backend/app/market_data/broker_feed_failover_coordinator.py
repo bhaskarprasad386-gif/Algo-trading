@@ -37,6 +37,9 @@ class MarketDataFailoverCoordinator:
         self._latest: dict[tuple[Provider, str], dict[str, Any]] = {}
         self._last_timestamp: dict[tuple[Provider, str], int] = {}
         self._last_forwarded_timestamp: dict[str, int] = {}
+        # Delivery reservation identity protects re-entrant observations from an
+        # outer callback's failure rollback (including same-timestamp replay).
+        self._forward_reservations: dict[str, object] = {}
         self._decision: FailoverSnapshot | None = None
         self._forwarded = 0
         self._suppressed = 0
@@ -107,17 +110,24 @@ class MarketDataFailoverCoordinator:
             # timestamp could be recursively delivered before the outer call commits.
             self._last_timestamp[identity] = stamp
             self._last_forwarded_timestamp[key] = stamp
+            reservation = object()
+            self._forward_reservations[key] = reservation
             try:
                 self._on_record(provider, payload)
             except Exception:
                 self._callback_errors += 1
-                # Roll back only our reservation; a re-entrant newer tick may
-                # have advanced either watermark while the callback was running.
-                if self._last_timestamp.get(identity) == stamp:
-                    self._last_timestamp.pop(identity, None)
-                if self._last_forwarded_timestamp.get(key) == stamp:
-                    self._last_forwarded_timestamp.pop(key, None)
+                # Roll back only if this callback still owns the reservation.
+                # Re-entrant delivery (even of the same timestamp after an
+                # explicit retirement) installs a different token and survives.
+                if self._forward_reservations.get(key) is reservation:
+                    if self._last_timestamp.get(identity) == stamp:
+                        self._last_timestamp.pop(identity, None)
+                    if self._last_forwarded_timestamp.get(key) == stamp:
+                        self._last_forwarded_timestamp.pop(key, None)
+                    self._forward_reservations.pop(key, None)
                 return False
+            if self._forward_reservations.get(key) is reservation:
+                self._forward_reservations.pop(key, None)
             self._forwarded += 1
             return True
 
@@ -136,6 +146,7 @@ class MarketDataFailoverCoordinator:
                 self._latest.pop(identity, None)
                 self._last_timestamp.pop(identity, None)
             removed_forward = self._last_forwarded_timestamp.pop(key, None) is not None
+            self._forward_reservations.pop(key, None)
             return bool(identities or removed_forward)
 
     def prune_instruments(self, active_keys: Iterable[str]) -> int:
@@ -165,6 +176,7 @@ class MarketDataFailoverCoordinator:
                     self._last_timestamp.pop(identity, None)
             for key in retired:
                 self._last_forwarded_timestamp.pop(key, None)
+                self._forward_reservations.pop(key, None)
             return len(retired)
 
     def evaluate(
