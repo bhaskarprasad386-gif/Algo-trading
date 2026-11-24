@@ -152,3 +152,49 @@ def test_offmarket_butterfly_condor_shadow_empty_snapshot_is_safe_and_read_only(
     assert result["order_routing_enabled"] is False
     assert result["result_count"] == 0
     assert result["results"] == []
+
+
+def test_offmarket_runtime_workflow_uses_bounded_sqlite_quick_check():
+    from pathlib import Path
+
+    workflow = (
+        Path(__file__).resolve().parents[2]
+        / ".github"
+        / "workflows"
+        / "offmarket-runtime-verification.yml"
+    ).read_text()
+
+    assert 'timeout 15s sqlite3 -batch -noheader backend/algo_trading.db "PRAGMA quick_check(1);"' in workflow
+    assert "PRAGMA integrity_check;" not in workflow
+    assert "SQLITE_QUICK_CHECK=PASS" in workflow
+    assert "SQLITE_QUICK_CHECK_FAILED" in workflow
+
+
+def test_offmarket_runtime_workflow_does_not_replay_remote_diagnostics():
+    from pathlib import Path
+
+    workflow = (
+        Path(__file__).resolve().parents[2]
+        / ".github"
+        / "workflows"
+        / "offmarket-runtime-verification.yml"
+    ).read_text()
+
+    assert "timeout 150 ssh" in workflow
+    assert "'timeout 120s bash -s'" in workflow
+    assert "VPS_SSH_ATTEMPT=$attempt FAILED" not in workflow
+    assert "remote diagnostics were not replayed" in workflow
+
+
+def test_offmarket_runtime_workflow_bounds_informational_journal_scan():
+    from pathlib import Path
+
+    workflow = (
+        Path(__file__).resolve().parents[2]
+        / ".github"
+        / "workflows"
+        / "offmarket-runtime-verification.yml"
+    ).read_text()
+
+    assert "timeout 10s journalctl" in workflow
+    assert "RECENT_SERVICE_FAULTS=SKIPPED" in workflow
