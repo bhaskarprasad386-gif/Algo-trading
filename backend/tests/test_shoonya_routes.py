@@ -361,6 +361,28 @@ def test_verify_requires_server_credentials_even_when_request_supplies_credentia
     store.consume.assert_not_called()
 
 
+def test_verify_rejects_request_only_client_id_when_server_client_id_missing(monkeypatch, db_session):
+    store = Mock()
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "")
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_SECRET_CODE", "configured-secret")
+
+    with pytest.raises(HTTPException) as raised:
+        shoonya_routes.shoonya_verify(
+            shoonya_routes.ShoonyaVerifyRequest(
+                client_id="untrusted-request-client",
+                secret_code="untrusted-request-secret",
+                auth_code="auth-code",
+                flow_id="flow-id-1234567890",
+            ),
+            db=db_session,
+            user_id=0,
+        )
+
+    assert raised.value.status_code == 503
+    store.consume.assert_not_called()
+
+
 def test_auth_url_rejects_request_only_client_id(monkeypatch):
     monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "")
     monkeypatch.setenv("SHOONYA_REDIRECT_URI", "https://example.com/shoonya/callback")
