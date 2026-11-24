@@ -70,6 +70,7 @@ def test_auth_url_returns_authorize_url_and_correlated_flow(monkeypatch):
     assert "client_id=client-100" in result["authorization_url"]
     assert result["expires_in"] == 600
     store.create.assert_called_once_with(
+        owner_id=0,
         client_id="client-100",
         redirect_uri="https://example.com/shoonya/callback",
         uid="SH12345",
@@ -122,7 +123,12 @@ def test_verify_consumes_flow_and_binds_broker_identity(monkeypatch, db_session)
     assert result["kill_switch"] is True
     assert claims == [("shoonya", "SH12345")]
     assert connected == [True]
-    assert store.consume.called
+    store.consume.assert_called_once_with(
+        owner_id=0,
+        flow_id="flow-id-1234567890",
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+    )
     assert broker_sessions.get(0, "shoonya").connected is True
     cleanup()
 
