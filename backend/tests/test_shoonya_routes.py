@@ -911,3 +911,37 @@ def test_verify_closes_oauth_transport_after_successful_exchange(monkeypatch, db
     transport.close.assert_called_once_with()
     assert broker_sessions.get(0, "shoonya").connected is True
     cleanup()
+
+def test_authenticator_revokes_issued_token_when_authenticated_identity_mismatches():
+    from app.brokers.shoonya_auth import ShoonyaAuthenticationError, ShoonyaOAuthAuthenticator
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    http = Mock()
+    http.post.side_effect = [
+        Response({"stat": "Ok", "susertoken": "unexpected-token", "uid": "OTHER", "actid": "OTHER"}),
+        Response({"stat": "Ok"}),
+    ]
+
+    with pytest.raises(ShoonyaAuthenticationError, match="UID does not match"):
+        ShoonyaOAuthAuthenticator(http=http).exchange_auth_code(
+            client_id="cid",
+            secret_code="secret",
+            auth_code="auth",
+            expected_uid="SH12345",
+            expected_account_id="SH12345",
+        )
+
+    assert http.post.call_count == 2
+    logout = http.post.call_args_list[1]
+    assert logout.args[0].endswith("/Logout")
+    assert logout.kwargs["headers"]["Authorization"] == "Bearer unexpected-token"
+    assert logout.kwargs["data"] == 'jData={"uid":"OTHER"}'
