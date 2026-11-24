@@ -527,13 +527,13 @@ def test_pruning_one_instrument_preserves_other_instrument_ordering_state():
     c = MarketDataFailoverCoordinator(on_record=lambda p, r: received.append((r["instrument_key"], r["timestamp_ns"])))
     assert c.observe("angel_one", tick("NIFTY", 500, 100)) is True
     assert c.observe("angel_one", tick("BANKNIFTY", 700, 200)) is True
-    assert c.prune_instruments(["BANKNIFTY"]) == 1
-    # NIFTY remains active and keeps its watermark; the retired BANKNIFTY can
-    # restart with the same timestamp after pruning.
+    assert c.prune_instruments(["NIFTY"]) == 1
+    # BANKNIFTY is retired and may restart its clock; retained NIFTY rejects
+    # replay from before its watermark.
     assert c.observe("angel_one", tick("NIFTY", 499, 99)) is False
     assert c.observe("angel_one", tick("BANKNIFTY", 700, 201)) is True
     assert received == [("NIFTY", 500), ("BANKNIFTY", 700), ("BANKNIFTY", 700)]
-    assert c.snapshot()["latest_record_count"] == 1
+    assert c.snapshot()["latest_record_count"] == 2
 
 
 def test_prune_normalized_duplicate_active_keys_is_idempotent():
