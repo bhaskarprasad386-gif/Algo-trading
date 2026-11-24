@@ -945,3 +945,34 @@ def test_authenticator_revokes_issued_token_when_authenticated_identity_mismatch
     assert logout.args[0].endswith("/Logout")
     assert logout.kwargs["headers"]["Authorization"] == "Bearer unexpected-token"
     assert logout.kwargs["data"] == 'jData={"uid":"OTHER"}'
+
+
+def test_authenticator_preserves_identity_error_when_token_revocation_fails():
+    from app.brokers.shoonya_auth import ShoonyaAuthenticationError, ShoonyaOAuthAuthenticator
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    http = Mock()
+    http.post.side_effect = [
+        Response({"stat": "Ok", "susertoken": "unexpected-token", "uid": "SH12345", "actid": "OTHER"}),
+        RuntimeError("logout transport unavailable"),
+    ]
+
+    with pytest.raises(ShoonyaAuthenticationError, match="account does not match"):
+        ShoonyaOAuthAuthenticator(http=http).exchange_auth_code(
+            client_id="cid",
+            secret_code="secret",
+            auth_code="auth",
+            expected_uid="SH12345",
+            expected_account_id="SH12345",
+        )
+
+    assert http.post.call_count == 2
