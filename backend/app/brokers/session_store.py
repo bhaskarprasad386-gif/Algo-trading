@@ -87,13 +87,27 @@ class BrokerSessionStore:
         return None
 
     def commit_if_current(
-        self, owner_id: int, broker: str, adapter: BrokerAdapter, operation: Callable[[], None]
+        self,
+        owner_id: int,
+        broker: str,
+        adapter: BrokerAdapter,
+        operation: Callable[[], None],
+        *,
+        generation: int | None = None,
     ) -> bool:
-        """Run a metadata commit only while this adapter remains the current session."""
+        """Run metadata commit only while the adapter and its reservation remain current."""
         key = self._key(owner_id, broker)
         with self._lock:
             if self._sessions.get(key) is not adapter:
                 return False
+            if generation is not None:
+                if (
+                    isinstance(generation, bool)
+                    or not isinstance(generation, int)
+                    or generation <= 0
+                    or self._replacement_generations.get(key) != generation + 1
+                ):
+                    return False
             operation()
             return True
 
