@@ -179,7 +179,7 @@ def test_locked_options_reject_expiry_mismatch_and_asymmetric_strike_window():
         key=InstrumentKey("NFO", "NFO", "off-grid-pe"),
         symbol="off-grid-pe", instrument_type="option", exchange="NFO", segment="NFO",
         expiry=pe_original.expiry, strike=original.strike + 25, option_type="PE",
-        underlying=original.underlying,
+        underlying=original.underlying, expiry_type="WEEKLY",
     )
     try:
         lifecycle.start_options(broken_strikes)
