@@ -51,6 +51,14 @@ def cleanup():
     broker_connections.disconnect(0, "shoonya")
 
 
+@pytest.fixture(autouse=True)
+def configure_server_side_shoonya_oauth_credentials(monkeypatch):
+    # OAuth route tests exercise configured server credentials by default;
+    # tests for missing configuration explicitly override these settings.
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "server-client")
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_SECRET_CODE", "server-secret")
+
+
 def test_auth_url_returns_authorize_url_and_correlated_flow(monkeypatch):
     monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "client-100")
     store = Mock()
@@ -497,8 +505,7 @@ def test_concurrent_session_replacements_leave_single_active_adapter():
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(replace, adapters))
-        active = broker_sessions.get(owner_id, "shoonya")
-        assert active in adapters
+        active = broker_sessions.get(owner_id, "shoonya")        assert active in adapters
         assert active.disconnected is False
         assert all(result is None for result in results)
     finally:
