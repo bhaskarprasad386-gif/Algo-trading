@@ -95,6 +95,32 @@ def test_auth_url_does_not_require_uid_actid_or_owner_login(monkeypatch):
     )
 
 
+
+def test_public_status_reports_disconnected_without_identity_or_credentials(monkeypatch):
+    cleanup()
+    result = shoonya_routes.shoonya_status()
+    assert result == {
+        "broker": "shoonya",
+        "connected": False,
+        "real_trading": False,
+        "kill_switch": True,
+    }
+
+
+def test_public_status_reports_connected_without_leaking_account_identity(monkeypatch):
+    cleanup()
+    adapter = Mock(name="shoonya-adapter")
+    adapter.name = "shoonya"
+    broker_sessions.replace(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya", adapter)
+    broker_connections.connect(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya", "Private account")
+    result = shoonya_routes.shoonya_status()
+    assert result["connected"] is True
+    assert result["real_trading"] is False
+    assert "uid" not in result
+    assert "account_id" not in result
+    assert "display_name" not in result
+    cleanup()
+
 def test_verify_consumes_flow_and_binds_broker_identity(monkeypatch, db_session):
     cleanup()
     store = Mock()
