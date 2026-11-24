@@ -693,7 +693,7 @@ def test_backup_tick_cache_does_not_become_forwarded_after_switch_without_new_ti
 
 def test_switch_back_to_primary_suppresses_cross_provider_timestamp_replay():
     delivered = []
-    c = MarketDataFailoverCoordinator(on_record=lambda p, r: delivered.append((p, r["timestamp_ns"])))
+    c = MarketDataFailoverCoordinator(policy=policy(), on_record=lambda p, r: delivered.append((p, r["timestamp_ns"])))
     assert c.observe("angel_one", tick("NIFTY", 1600, 100)) is True
     c.evaluate(
         failed_angel_sockets=3, angel_tick_age_seconds=4.0,
