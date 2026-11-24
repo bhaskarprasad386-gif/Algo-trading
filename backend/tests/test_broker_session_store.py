@@ -136,3 +136,47 @@ def test_replace_and_disconnect_previous_does_not_disconnect_same_adapter():
     assert error is None
     assert store.get(7, "shoonya") is adapter
     assert adapter.connected is True
+
+
+def test_commit_if_current_rejects_session_superseded_by_new_reservation():
+    store = BrokerSessionStore()
+    adapter = FakeAdapter("shoonya")
+    generation = store.reserve_replacement(7, "shoonya")
+    installed, previous = store.replace_if_reserved(7, "shoonya", adapter, generation)
+    assert installed is True
+    assert previous is None
+
+    # A later OAuth attempt reserves ownership while the prior adapter is
+    # still installed and before the later attempt finishes its exchange.
+    newer_generation = store.reserve_replacement(7, "shoonya")
+    committed = []
+    accepted = store.commit_if_current(
+        7,
+        "shoonya",
+        adapter,
+        lambda: committed.append(True),
+        generation=generation,
+    )
+
+    assert newer_generation > generation
+    assert accepted is False
+    assert committed == []
+    assert store.get(7, "shoonya") is adapter
+
+
+def test_commit_if_current_accepts_matching_active_reservation():
+    store = BrokerSessionStore()
+    adapter = FakeAdapter("shoonya")
+    generation = store.reserve_replacement(7, "shoonya")
+    installed, _ = store.replace_if_reserved(7, "shoonya", adapter, generation)
+    assert installed is True
+
+    committed = []
+    assert store.commit_if_current(
+        7,
+        "shoonya",
+        adapter,
+        lambda: committed.append(True),
+        generation=generation,
+    )
+    assert committed == [True]
