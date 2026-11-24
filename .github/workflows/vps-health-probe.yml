@@ -31,6 +31,7 @@ jobs:
           export VPS_SSH_PORT=22
           export VPS_KNOWN_HOSTS_FILE="$HOME/.ssh/known_hosts"
           export VPS_HEALTH_EVIDENCE_FILE=/tmp/vps-health-probe.txt
+          # Record local keyscan/TCP evidence before any remote SSH command can fail.
           if ! bash deploy/vps-ssh-keyscan.sh; then
             exit 1
           fi
