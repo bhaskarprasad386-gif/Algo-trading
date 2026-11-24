@@ -1006,9 +1006,11 @@ def test_older_oauth_exchange_finishing_after_newer_success_cannot_replace_or_di
         flow_id="flow-id-1234567890",
     )
     nested_results = []
+    exchange_calls = []
 
     def exchange(self, **kwargs):
-        if not nested_results:
+        exchange_calls.append(kwargs)
+        if len(exchange_calls) == 1:
             # First OAuth request pauses inside token exchange while a newer
             # request completes the full authentication and session install.
             nested_results.append(
