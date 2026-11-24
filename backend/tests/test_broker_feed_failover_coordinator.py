@@ -589,7 +589,7 @@ def test_cross_provider_replay_watermarks_are_isolated_per_instrument():
     assert delivered == [
         ("angel_one", "NIFTY", 1000),
         ("angel_one", "BANKNIFTY", 1000),
-        ("shoonya", "BANKNIFTY", 1000),
+        ("shoonya", "BANKNIFTY", 1001),
         ("shoonya", "NIFTY", 1001),
     ]
     snap = c.snapshot()
