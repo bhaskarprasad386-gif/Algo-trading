@@ -98,6 +98,63 @@ def test_wrong_client_does_not_invalidate_legitimate_flow():
     assert pending.account_id == "SH12345"
 
 
+def test_wrong_redirect_does_not_invalidate_legitimate_flow():
+    store = ShoonyaOAuthFlowStore(token_factory=lambda size: "wrong-redirect")
+    flow_id = store.create(
+        owner_id=7,
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+        uid="SH12345",
+        account_id="SH12345",
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        store.consume(
+            owner_id=7,
+            flow_id=flow_id,
+            client_id="client-100",
+            redirect_uri="https://attacker.example/callback",
+        )
+    pending = store.consume(
+        owner_id=7,
+        flow_id=flow_id,
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+    )
+    assert pending.owner_id == 7
+
+
+def test_expired_flow_is_pruned_to_release_capacity():
+    now = [100.0]
+    values = iter(("expired-flow", "fresh-flow"))
+    store = ShoonyaOAuthFlowStore(
+        ttl_seconds=10,
+        max_entries=1,
+        clock=lambda: now[0],
+        token_factory=lambda size: next(values),
+    )
+    store.create(
+        owner_id=7,
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+        uid="SH12345",
+        account_id="SH12345",
+    )
+    now[0] = 110.0
+    fresh = store.create(
+        owner_id=8,
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+        uid="SH99999",
+        account_id="SH99999",
+    )
+    assert store.consume(
+        owner_id=8,
+        flow_id=fresh,
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+    ).owner_id == 8
+
+
 @pytest.mark.parametrize(
     "redirect_uri",
     [
