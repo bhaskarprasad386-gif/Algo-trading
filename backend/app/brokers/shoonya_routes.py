@@ -111,7 +111,12 @@ class ShoonyaRESTClient:
                 pass
         close = getattr(self.http, "close", None)
         if callable(close):
-            close()
+            try:
+                close()
+            except Exception:
+                # Best-effort HTTP transport cleanup must not mask the caller's
+                # auth/session failure or leave local token clearing undone.
+                pass
 
 
 shoonya_oauth_flows = ShoonyaOAuthFlowStore()
