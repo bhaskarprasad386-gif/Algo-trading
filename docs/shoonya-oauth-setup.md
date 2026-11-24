@@ -29,7 +29,7 @@ Set these values in the private backend environment (not in the repository or br
 - `SHOONYA_OAUTH_SECRET_CODE`
 - `SHOONYA_REDIRECT_URI`
 
-The auth URL endpoint may omit `client_id` in its request when the server setting is present. The verify endpoint may omit `client_id` and `secret_code`; it still requires the one-time `auth_code` and flow ID.
+The auth URL and verify endpoints use only server-configured `SHOONYA_OAUTH_CLIENT_ID` and `SHOONYA_OAUTH_SECRET_CODE`. Request-body credential fields are ignored; configure both values in the private backend environment. The verify endpoint requires the one-time `auth_code` and flow ID.
 
 ## Existing application behavior
 - The OAuth flow correlation ID is single-use and expires after 10 minutes.
