@@ -528,13 +528,12 @@ def test_pruning_one_instrument_preserves_other_instrument_ordering_state():
     assert c.observe("angel_one", tick("NIFTY", 500, 100)) is True
     assert c.observe("angel_one", tick("BANKNIFTY", 700, 200)) is True
     assert c.prune_instruments(["BANKNIFTY"]) == 1
-    # The retired instrument starts a fresh clock, while the retained one still
-    # rejects replay from before its watermark.
+    # NIFTY remains active and keeps its watermark; the retired BANKNIFTY can
+    # restart with the same timestamp after pruning.
     assert c.observe("angel_one", tick("NIFTY", 499, 99)) is False
     assert c.observe("angel_one", tick("BANKNIFTY", 700, 201)) is True
     assert received == [("NIFTY", 500), ("BANKNIFTY", 700), ("BANKNIFTY", 700)]
     assert c.snapshot()["latest_record_count"] == 1
-
 
 
 def test_prune_normalized_duplicate_active_keys_is_idempotent():
@@ -581,10 +580,10 @@ def test_cross_provider_replay_watermarks_are_isolated_per_instrument():
     assert c.observe("angel_one", tick("BANKNIFTY", 1000, 200)) is True
     c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
               shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=20)
-    # Same timestamp is a replay for NIFTY only; BANKNIFTY can independently
-    # accept its first backup tick at that timestamp.
+    # Cross-provider replay is rejected for NIFTY; BANKNIFTY accepts a newer
+    # timestamp independently of NIFTY's cross-provider watermark.
     assert c.observe("shoonya", tick("NIFTY", 1000, 101)) is False
-    assert c.observe("shoonya", tick("BANKNIFTY", 1000, 201)) is True
+    assert c.observe("shoonya", tick("BANKNIFTY", 1001, 201)) is True
     assert c.observe("shoonya", tick("NIFTY", 1001, 102)) is True
     assert delivered == [
         ("angel_one", "NIFTY", 1000),
