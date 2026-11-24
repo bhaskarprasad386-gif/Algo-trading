@@ -138,3 +138,36 @@ def test_store_is_bounded():
             client_id="client-100",
             redirect_uri="https://example.com/shoonya/callback",
         )
+
+
+def test_concurrent_consumers_cannot_reuse_same_oauth_flow():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+
+    store = ShoonyaOAuthFlowStore(token_factory=lambda size: "race-flow")
+    flow_id = store.create(
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+        uid="SH12345",
+        account_id="SH12345",
+    )
+    barrier = Barrier(2)
+
+
+    def consume_once():
+        barrier.wait(timeout=2)
+        try:
+            store.consume(
+                flow_id=flow_id,
+                client_id="client-100",
+                redirect_uri="https://example.com/shoonya/callback",
+            )
+            return "accepted"
+        except ValueError:
+            return "rejected"
+
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: consume_once(), range(2)))
+    assert sorted(results) == ["accepted", "rejected"]
