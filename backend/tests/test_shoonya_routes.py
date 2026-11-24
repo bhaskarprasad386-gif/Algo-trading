@@ -568,3 +568,19 @@ def test_reconnect_reservation_prevents_slow_old_oauth_exchange_from_overwriting
     assert existing.connected is False
     broker_sessions.remove(owner_id, "shoonya")
     newer_attempt.disconnect()
+
+
+def test_regular_session_mutation_invalidates_pending_reconnect_reservation():
+    owner_id = 99179
+    pending = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="pending"))
+    installed = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="installed"))
+    generation = broker_sessions.reserve_replacement(owner_id, "shoonya")
+    broker_sessions.replace(owner_id, "shoonya", installed)
+
+    accepted, displaced = broker_sessions.replace_if_reserved(
+        owner_id, "shoonya", pending, generation
+    )
+    assert accepted is False
+    assert displaced is None
+    assert broker_sessions.get(owner_id, "shoonya") is installed
+    broker_sessions.remove(owner_id, "shoonya")
