@@ -167,6 +167,7 @@ class CommonStrategyMarketFeed:
         lot_size: int | None = None,
         tick_size: float | None = None,
         underlying: str | None = None,
+        expiry_type: str | None = None,
     ) -> InstrumentDescriptor:
         exchange = str(exchange).strip().upper()
         if exchange not in _EXCHANGE_SEGMENTS:
@@ -184,6 +185,7 @@ class CommonStrategyMarketFeed:
             lot_size=lot_size,
             tick_size=tick_size,
             underlying=(str(underlying).strip().upper() or None) if underlying is not None else None,
+            expiry_type=(str(expiry_type).strip().upper() or None) if expiry_type is not None else None,
         )
 
     def start(
