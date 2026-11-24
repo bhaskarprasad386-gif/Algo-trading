@@ -447,3 +447,33 @@ def test_forget_instrument_reentrant_callback_resets_watermarks_atomically():
     assert snap["forwarded_ticks"] == 2
     assert snap["callback_errors"] == 0
     assert snap["latest_record_count"] == 0
+
+def test_reentrant_backup_delivery_watermark_survives_primary_callback_failure():
+    delivered = []
+    holder = {}
+    calls = 0
+
+    def callback(provider, record):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            holder["coordinator"].evaluate(
+                failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+                shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10,
+            )
+            assert holder["coordinator"].observe(
+                "shoonya", tick(record["instrument_key"], 101, 101)
+            ) is True
+            raise RuntimeError("primary callback failed after backup handoff")
+        delivered.append((provider, record["timestamp_ns"]))
+
+    c = MarketDataFailoverCoordinator(policy=policy(), on_record=callback)
+    holder["coordinator"] = c
+    assert c.observe("angel_one", tick("NIFTY", 100, 100)) is False
+    assert c.observe("shoonya", tick("NIFTY", 102, 102)) is True
+    assert delivered == [("shoonya", 101), ("shoonya", 102)]
+    snap = c.snapshot()
+    assert snap["active_provider"] == "shoonya"
+    assert snap["forwarded_ticks"] == 2
+    assert snap["callback_errors"] == 1
+    assert snap["suppressed_ticks"] == 0
