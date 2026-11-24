@@ -976,3 +976,58 @@ def test_authenticator_preserves_identity_error_when_token_revocation_fails():
         )
 
     assert http.post.call_count == 2
+
+
+def test_older_oauth_exchange_finishing_after_newer_success_cannot_replace_or_disconnect_it(monkeypatch, db_session):
+    cleanup()
+    store = Mock()
+    store.consume.return_value = Mock(uid="SH12345", account_id="SH12345")
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setenv("SHOONYA_REDIRECT_URI", "https://example.com/shoonya/callback")
+    monkeypatch.setattr(shoonya_routes.trading_safety, "disable", lambda user_id: None)
+    monkeypatch.setattr(shoonya_routes, "claim_authenticated_account", lambda *args: None)
+    monkeypatch.setattr(shoonya_routes, "set_owner_connection_state", lambda *args: None)
+
+    clients = {}
+    adapters = {}
+
+    def make_client(**kwargs):
+        client = FakeClient(**kwargs)
+        clients[kwargs["access_token"]] = client
+        return client
+
+    monkeypatch.setattr(shoonya_routes, "ShoonyaRESTClient", make_client)
+    monkeypatch.setattr(shoonya_routes, "ShoonyaAdapter", FakeAdapter)
+
+    request = shoonya_routes.ShoonyaVerifyRequest(
+        client_id="ignored",
+        secret_code="ignored",
+        auth_code="auth",
+        flow_id="flow-id-1234567890",
+    )
+    nested_results = []
+
+    def exchange(self, **kwargs):
+        if not nested_results:
+            # First OAuth request pauses inside token exchange while a newer
+            # request completes the full authentication and session install.
+            nested_results.append(
+                shoonya_routes.shoonya_verify(request, db=db_session, user_id=0)
+            )
+            return ShoonyaAuthenticatedSession("SH12345", "SH12345", "older-token")
+        return ShoonyaAuthenticatedSession("SH12345", "SH12345", "newer-token")
+
+    monkeypatch.setattr(shoonya_routes.ShoonyaOAuthAuthenticator, "exchange_auth_code", exchange)
+
+    with pytest.raises(HTTPException) as raised:
+        shoonya_routes.shoonya_verify(request, db=db_session, user_id=0)
+
+    assert raised.value.status_code == 409
+    assert nested_results[0]["connected"] is True
+    current = broker_sessions.get(0, "shoonya")
+    assert current is not None
+    assert current.client.access_token == "newer-token"
+    assert current.connected is True
+    assert clients["older-token"].disconnected is True
+    assert clients["newer-token"].disconnected is False
+    cleanup()
