@@ -139,14 +139,14 @@ shoonya_oauth_flows = ShoonyaOAuthFlowStore()
 @router.post("/shoonya/auth-url")
 def shoonya_auth_url(
     payload: ShoonyaAuthUrlRequest,
-    user_id: int = Depends(require_real_owner_access),
+    owner_id: int = Depends(require_real_owner_access),
 ) -> dict:
     client_id = str(settings.SHOONYA_OAUTH_CLIENT_ID or "").strip()
     if not client_id:
         raise HTTPException(status_code=503, detail="Shoonya OAuth client ID is not configured on the server")
     try:
         flow_id = shoonya_oauth_flows.create(
-            owner_id=user_id,
+            owner_id=owner_id,
             client_id=client_id,
             uid=payload.uid,
             account_id=payload.account_id,
@@ -168,7 +168,7 @@ def shoonya_auth_url(
 def shoonya_verify(
     payload: ShoonyaVerifyRequest,
     db: Session = Depends(get_db),
-    user_id: int = Depends(require_real_owner_access),
+    owner_id: int = Depends(require_real_owner_access),
 ) -> dict:
     client_id = str(settings.SHOONYA_OAUTH_CLIENT_ID or "").strip()
     secret_code = str(settings.SHOONYA_OAUTH_SECRET_CODE or "")
@@ -176,7 +176,7 @@ def shoonya_verify(
         raise HTTPException(status_code=503, detail="Shoonya OAuth client ID and secret code are not configured")
     try:
         pending = shoonya_oauth_flows.consume(
-            owner_id=user_id,
+            owner_id=owner_id,
             flow_id=payload.flow_id,
             client_id=client_id,
         )
@@ -185,12 +185,12 @@ def shoonya_verify(
 
     # Reserve ordering before network work: later reconnect attempts supersede
     # earlier ones even if their OAuth exchange completes last.
-    replacement_generation = broker_sessions.reserve_replacement(user_id, "shoonya")
-    trading_safety.disable(user_id)
+    replacement_generation = broker_sessions.reserve_replacement(owner_id, "shoonya")
+    trading_safety.disable(owner_id)
     client: ShoonyaRESTClient | None = None
     adapter: ShoonyaAdapter | None = None
     session_installed = False
-    previous_connection_item = broker_connections.get(user_id, "shoonya")
+    previous_connection_item = broker_connections.get(owner_id, "shoonya")
     connection_item: list = []
     try:
         authenticator = ShoonyaOAuthAuthenticator()
@@ -225,7 +225,7 @@ def shoonya_verify(
         adapter.connect(uid=authenticated.uid, account_id=authenticated.account_id)
 
         installed, previous = broker_sessions.replace_if_reserved(
-            user_id, "shoonya", adapter, replacement_generation
+            owner_id, "shoonya", adapter, replacement_generation
         )
         session_installed = installed
         if not installed:
@@ -245,11 +245,11 @@ def shoonya_verify(
             claim_authenticated_account(db, "shoonya", authenticated.account_id)
             set_owner_connection_state(db, True)
             connection_item.append(
-                broker_connections.connect(user_id, "shoonya", payload.display_name)
+                broker_connections.connect(owner_id, "shoonya", payload.display_name)
             )
 
         metadata_committed = broker_sessions.commit_if_current(
-            user_id,
+            owner_id,
             "shoonya",
             adapter,
             commit_owner_and_connection_metadata,
@@ -269,7 +269,7 @@ def shoonya_verify(
         }
     except HTTPException:
         if adapter is not None:
-            removed = broker_sessions.remove_if_adapter_current(user_id, "shoonya", adapter)
+            removed = broker_sessions.remove_if_adapter_current(owner_id, "shoonya", adapter)
             if removed:
                 metadata_item = connection_item[0] if connection_item else previous_connection_item
                 if metadata_item is not None:
@@ -284,11 +284,11 @@ def shoonya_verify(
         raise
     except (ShoonyaAuthenticationError, ShoonyaHistoryUnavailable, ValueError) as exc:
         if adapter is not None:
-            removed = broker_sessions.remove_if_adapter_current(user_id, "shoonya", adapter)
+            removed = broker_sessions.remove_if_adapter_current(owner_id, "shoonya", adapter)
             if removed:
                 metadata_item = connection_item[0] if connection_item else previous_connection_item
                 if metadata_item is not None:
-                    broker_connections.disconnect_if_current(user_id, "shoonya", metadata_item)
+                    broker_connections.disconnect_if_current(owner_id, "shoonya", metadata_item)
                 _disconnect_adapter_best_effort(adapter)
             elif not session_installed:
                 # This adapter never entered the registry (the reservation was
@@ -296,15 +296,14 @@ def shoonya_verify(
                 _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             _disconnect_client_best_effort(client)
-        db.rollback()
         raise HTTPException(status_code=401, detail="Shoonya authentication or account verification failed") from exc
     except Exception as exc:
         if adapter is not None:
-            removed = broker_sessions.remove_if_adapter_current(user_id, "shoonya", adapter)
+            removed = broker_sessions.remove_if_adapter_current(owner_id, "shoonya", adapter)
             if removed:
                 metadata_item = connection_item[0] if connection_item else previous_connection_item
                 if metadata_item is not None:
-                    broker_connections.disconnect_if_current(user_id, "shoonya", metadata_item)
+                    broker_connections.disconnect_if_current(owner_id, "shoonya", metadata_item)
                 _disconnect_adapter_best_effort(adapter)
             elif not session_installed:
                 # This adapter never entered the registry (the reservation was
@@ -312,6 +311,5 @@ def shoonya_verify(
                 _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             _disconnect_client_best_effort(client)
-        db.rollback()
         app_logger.error("Shoonya durable account binding failed: %s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Shoonya account could not be safely bound to the Box Spread owner") from exc
