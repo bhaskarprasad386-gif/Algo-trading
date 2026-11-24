@@ -97,11 +97,31 @@ class ShoonyaOAuthAuthenticator:
                 raise ShoonyaAuthenticationError(
                     "Shoonya GenAcsTok response is missing access token, UID or account identity"
                 )
-            if authenticated_uid != expected_uid:
-                raise ShoonyaAuthenticationError(
-                    "Shoonya authenticated UID does not match requested UID"
-                )
-            if authenticated_account != expected_account_id:
+            if authenticated_uid != expected_uid or authenticated_account != expected_account_id:
+                # GenAcsTok has already issued a bearer token, but its identity
+                # cannot be attached to this owner's requested account. Revoke
+                # it best-effort before rejecting the exchange; never retain or
+                # expose a token whose identity failed correlation.
+                if access_token:
+                    try:
+                        self.http.post(
+                            f"{self.api_base_url}/Logout",
+                            headers={
+                                "Authorization": f"Bearer {access_token}",
+                                "Content-Type": "text/plain",
+                            },
+                            data="jData=" + json.dumps(
+                                {"uid": authenticated_uid or expected_uid},
+                                separators=(",", ":"),
+                            ),
+                            timeout=10,
+                        )
+                    except Exception:
+                        pass
+                if authenticated_uid != expected_uid:
+                    raise ShoonyaAuthenticationError(
+                        "Shoonya authenticated UID does not match requested UID"
+                    )
                 raise ShoonyaAuthenticationError(
                     "Shoonya authenticated account does not match requested account"
                 )
