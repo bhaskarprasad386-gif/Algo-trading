@@ -8,12 +8,14 @@ from app.brokers.shoonya_oauth_state import ShoonyaOAuthFlowStore
 def test_flow_is_bound_to_client_redirect_uid_and_account():
     store = ShoonyaOAuthFlowStore(token_factory=lambda size: "flow-id")
     flow_id = store.create(
+        owner_id=7,
         client_id="client-100",
         redirect_uri="https://example.com/shoonya/callback",
         uid="SH12345",
         account_id="SH12345",
     )
     pending = store.consume(
+        owner_id=7,
         flow_id=flow_id,
         client_id="client-100",
         redirect_uri="https://example.com/shoonya/callback",
@@ -37,6 +39,7 @@ def test_flow_is_single_use():
     )
     with pytest.raises(ValueError, match="missing, expired, or already used"):
         store.consume(
+            owner_id=7,
             flow_id=flow_id,
             client_id="client-100",
             redirect_uri="https://example.com/shoonya/callback",
@@ -159,6 +162,7 @@ def test_concurrent_consumers_cannot_reuse_same_oauth_flow():
         barrier.wait(timeout=2)
         try:
             store.consume(
+                owner_id=7,
                 flow_id=flow_id,
                 client_id="client-100",
                 redirect_uri="https://example.com/shoonya/callback",
