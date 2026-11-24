@@ -39,9 +39,16 @@ def test_close_aborts_blocked_transport_after_graceful_timeout():
     transport = Thread(target=lambda: release.wait(timeout=5.0), daemon=True)
     transport.start()
 
+    wsapp = SimpleNamespace(sock=low_level)
+
+    def close_connection():
+        # SDK teardown may clear its public wsapp.sock reference while the
+        # transport thread is still unwinding the close handshake.
+        wsapp.sock = None
+
     sdk_socket = SimpleNamespace(
-        wsapp=SimpleNamespace(sock=low_level),
-        close_connection=lambda: None,
+        wsapp=wsapp,
+        close_connection=close_connection,
     )
     client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
     client.websocket = sdk_socket
