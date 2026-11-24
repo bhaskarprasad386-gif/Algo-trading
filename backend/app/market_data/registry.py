@@ -21,6 +21,30 @@ class InstrumentDescriptor:
     lot_size: int | None = None
     tick_size: float | None = None
     underlying: str | None = None
+    expiry_type: str | None = None
+
+    @property
+    def preferred_socket_lane(self) -> int | None:
+        """Stable lane affinity for the explicitly locked NIFTY/BANKNIFTY universe.
+
+        0 = NIFTY spot/weekly options; 1 = BANKNIFTY spot/monthly options;
+        2 = NIFTY and BANKNIFTY index futures. Other instruments are not
+        assigned to these dedicated lanes.
+        """
+        underlying = str(self.underlying or "").strip().upper()
+        kind = str(self.instrument_type or "").strip().lower()
+        expiry_type = str(self.expiry_type or "").strip().upper()
+        if kind == "index":
+            return {"NIFTY": 0, "BANKNIFTY": 1}.get(underlying)
+        if kind == "option":
+            if underlying == "NIFTY" and expiry_type == "WEEKLY":
+                return 0
+            if underlying == "BANKNIFTY" and expiry_type == "MONTHLY":
+                return 1
+            return None
+        if kind == "future" and underlying in {"NIFTY", "BANKNIFTY"}:
+            return 2
+        return None
 
 
 @dataclass(frozen=True)
