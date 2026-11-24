@@ -112,13 +112,26 @@ class BrokerSessionStore:
             return True
 
     def remove_if_current(
-        self, owner_id: int, broker: str, adapter: BrokerAdapter
+        self,
+        owner_id: int,
+        broker: str,
+        adapter: BrokerAdapter,
+        *,
+        generation: int | None = None,
     ) -> bool:
-        """Remove a session only if the registry still owns this exact adapter."""
+        """Remove only the current adapter while its optional reservation is still owned."""
         key = self._key(owner_id, broker)
         with self._lock:
             if self._sessions.get(key) is not adapter:
                 return False
+            if generation is not None:
+                if (
+                    isinstance(generation, bool)
+                    or not isinstance(generation, int)
+                    or generation <= 0
+                    or self._replacement_generations.get(key) != generation + 1
+                ):
+                    return False
             self._sessions.pop(key, None)
             self._replacement_generations[key] = self._replacement_generations.get(key, 0) + 1
             return True
