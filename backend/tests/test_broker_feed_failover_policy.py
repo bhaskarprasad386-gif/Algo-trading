@@ -860,3 +860,37 @@ def test_backup_freshness_does_not_short_circuit_angel_grace_window():
     assert failover.mode == "BACKUP"
     assert failover.reason == "angel_feed_stale"
 
+
+
+
+def test_backup_tick_freshness_boundary_is_inclusive_and_immediately_expires_after():
+    p = policy()
+    selected = p.update(
+        failed_angel_sockets=3,
+        angel_tick_age_seconds=4.0,
+        shoonya_connected=True,
+        shoonya_tick_age_seconds=0.2,
+        now=1800,
+    )
+    assert selected.active_provider == "shoonya"
+
+    boundary = p.update(
+        failed_angel_sockets=3,
+        angel_tick_age_seconds=4.0,
+        shoonya_connected=True,
+        shoonya_tick_age_seconds=1.0,
+        now=1801,
+    )
+    assert boundary.active_provider == "shoonya"
+    assert boundary.shoonya_healthy is True
+
+    expired = p.update(
+        failed_angel_sockets=3,
+        angel_tick_age_seconds=4.0,
+        shoonya_connected=True,
+        shoonya_tick_age_seconds=1.000001,
+        now=1802,
+    )
+    assert expired.active_provider == "none"
+    assert expired.mode == "NO_VALID_FEED"
+    assert expired.reason == "shoonya_feed_stale"
