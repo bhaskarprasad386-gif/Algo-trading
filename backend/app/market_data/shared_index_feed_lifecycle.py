@@ -84,6 +84,11 @@ class SharedIndexFeedLifecycle:
                 raise ValueError("option strike must be finite and positive")
             if not descriptor.expiry or not str(descriptor.expiry).strip():
                 raise ValueError("option expiry is required")
+            required_expiry_type = "WEEKLY" if descriptor.underlying == "NIFTY" else "MONTHLY"
+            if str(descriptor.expiry_type or "").strip().upper() != required_expiry_type:
+                raise ValueError(
+                    f"{descriptor.underlying} options must use {required_expiry_type} expiry"
+                )
             if not descriptor.symbol or not str(descriptor.symbol).strip():
                 raise ValueError("option symbol is required")
             by_underlying[descriptor.underlying].append(descriptor)
