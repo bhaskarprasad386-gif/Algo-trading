@@ -64,7 +64,7 @@ class ShoonyaOAuthFlowStore:
         redirect_uri = self._redirect(redirect_uri)
         if not all((client_id, uid, account_id)):
             raise ValueError("Shoonya client ID, UID and account ID are required")
-        flow_id = self._token_factory(32)
+        flow_id = str(self._token_factory(32) or "").strip()
         if not flow_id:
             raise RuntimeError("Unable to create Shoonya OAuth flow ID")
         now = self._clock()
@@ -74,6 +74,10 @@ class ShoonyaOAuthFlowStore:
                 for key, item in self._pending.items()
                 if now - item.issued_at < self.ttl_seconds
             }
+            # A token-factory collision must never overwrite an outstanding
+            # browser flow or evict another user's flow to make room for it.
+            if flow_id in self._pending:
+                raise RuntimeError("Shoonya OAuth flow ID collision")
             if len(self._pending) >= self.max_entries:
                 oldest = min(self._pending, key=lambda key: self._pending[key].issued_at)
                 self._pending.pop(oldest, None)
