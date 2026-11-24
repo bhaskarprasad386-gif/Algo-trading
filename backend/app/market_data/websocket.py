@@ -919,7 +919,11 @@ class MarketDataWebSocket:
                         app_logger.error(
                             f"Angel WebSocket transport shutdown failed during close: {shutdown_exc}"
                         )
-                transport_thread.join(timeout=6.0)
+                    transport_thread.join(timeout=6.0)
+                elif callable(abort):
+                    # Preserve the existing bounded wait when abort exists but
+                    # this SDK/socket wrapper exposes no separate shutdown().
+                    transport_thread.join(timeout=6.0)
         # A timed-out SDK close call may unwind after the transport is aborted.
         # Do not let that helper hold the common-feed retirement worker forever.
         if close_worker is not None and close_worker.is_alive():
