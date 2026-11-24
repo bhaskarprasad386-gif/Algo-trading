@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from app.brokers import shoonya_routes
 from app.brokers.shoonya_auth import ShoonyaAuthenticatedSession
 from app.brokers.connections import broker_connections
-from app.brokers.session_store import broker_sessions
+from app.brokers.session_store import BrokerSessionStore, broker_sessions
 
 
 class FakeClient:
@@ -584,3 +584,17 @@ def test_regular_session_mutation_invalidates_pending_reconnect_reservation():
     assert displaced is None
     assert broker_sessions.get(owner_id, "shoonya") is installed
     broker_sessions.remove(owner_id, "shoonya")
+
+
+def test_global_clear_invalidates_inflight_reconnect_reservation_without_generation_reuse():
+    store = BrokerSessionStore()
+    owner_id = 99180
+    pending = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="pending"))
+    generation = store.reserve_replacement(owner_id, "shoonya")
+    store.clear()
+    next_generation = store.reserve_replacement(owner_id, "shoonya")
+    assert next_generation > generation
+    accepted, previous = store.replace_if_reserved(owner_id, "shoonya", pending, generation)
+    assert accepted is False
+    assert previous is None
+    assert store.get(owner_id, "shoonya") is None
