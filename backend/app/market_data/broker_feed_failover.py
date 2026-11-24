@@ -189,7 +189,7 @@ class MarketDataFailoverPolicy:
                     self._mode = "BACKUP"
                     self._reason = "shoonya_active_waiting_for_angel_stability"
             else:
-                if self._grace_wait and not failover_needed:
+                if self._grace_wait and not failover_needed and not angel_fresh:
                     self._active = self.NONE
                     self._mode = "DEGRADED_WAIT"
                     self._reason = "angel_tick_stale_within_failover_grace"
