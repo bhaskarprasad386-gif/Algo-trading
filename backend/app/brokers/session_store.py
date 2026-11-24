@@ -17,6 +17,7 @@ class BrokerSessionStore:
 
     def __init__(self) -> None:
         self._sessions: dict[tuple[int, str], BrokerAdapter] = {}
+        self._replacement_generations: dict[tuple[int, str], int] = {}
         self._lock = RLock()
 
     @staticmethod
@@ -25,6 +26,30 @@ class BrokerSessionStore:
         if not normalized:
             raise ValueError("broker name cannot be empty")
         return int(owner_id), normalized
+
+    def reserve_replacement(self, owner_id: int, broker: str) -> int:
+        """Reserve reconnect ordering before a slow OAuth/network exchange."""
+        key = self._key(owner_id, broker)
+        with self._lock:
+            generation = self._replacement_generations.get(key, 0) + 1
+            self._replacement_generations[key] = generation
+            return generation
+
+    def replace_if_reserved(
+        self, owner_id: int, broker: str, adapter: BrokerAdapter, generation: int
+    ) -> tuple[bool, BrokerAdapter | None]:
+        """Install only if the caller still owns the latest reconnect reservation."""
+        key = self._key(owner_id, broker)
+        adapter_name = str(getattr(adapter, "name", "")).strip().lower()
+        if adapter_name != key[1]:
+            raise ValueError("adapter name does not match broker session key")
+        with self._lock:
+            if self._replacement_generations.get(key) != generation:
+                return False, None
+            self._replacement_generations[key] = generation + 1
+            previous = self._sessions.get(key)
+            self._sessions[key] = adapter
+            return True, previous
 
     def replace(
         self, owner_id: int, broker: str, adapter: BrokerAdapter
@@ -106,6 +131,7 @@ class BrokerSessionStore:
         with self._lock:
             sessions = list(self._sessions.values())
             self._sessions.clear()
+            self._replacement_generations.clear()
             return sessions
 
     def disconnect_all(self) -> list[tuple[str, Exception]]:
