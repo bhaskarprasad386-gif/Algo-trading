@@ -170,6 +170,9 @@ def shoonya_verify(
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Shoonya OAuth flow is invalid, expired, or already used") from exc
 
+    # Reserve ordering before network work: later reconnect attempts supersede
+    # earlier ones even if their OAuth exchange completes last.
+    replacement_generation = broker_sessions.reserve_replacement(user_id, "shoonya")
     # Re-authentication must disarm any prior process-local safety state first.
     trading_safety.disable(user_id)
     client: ShoonyaRESTClient | None = None
@@ -193,9 +196,19 @@ def shoonya_verify(
         claim_authenticated_account(db, "shoonya", authenticated.account_id)
         set_owner_connection_state(db, True)
 
-        logout_error = broker_sessions.replace_and_disconnect_previous(user_id, "shoonya", adapter)
-        if logout_error is not None:
-            app_logger.error("Previous shoonya provider logout failed during reconnect: %s", type(logout_error).__name__)
+        installed, previous = broker_sessions.replace_if_reserved(
+            user_id, "shoonya", adapter, replacement_generation
+        )
+        if not installed:
+            raise HTTPException(status_code=409, detail="Shoonya session was superseded by a newer reconnect")
+        if previous is not None:
+            try:
+                previous.disconnect()
+            except Exception as logout_error:
+                app_logger.error(
+                    "Previous shoonya provider logout failed during reconnect: %s",
+                    type(logout_error).__name__,
+                )
         connection_item: list = []
         metadata_committed = broker_sessions.commit_if_current(
             user_id,
