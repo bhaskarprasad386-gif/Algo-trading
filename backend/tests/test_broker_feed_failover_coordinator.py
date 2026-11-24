@@ -528,11 +528,11 @@ def test_pruning_one_instrument_preserves_other_instrument_ordering_state():
     assert c.observe("angel_one", tick("NIFTY", 500, 100)) is True
     assert c.observe("angel_one", tick("BANKNIFTY", 700, 200)) is True
     assert c.prune_instruments(["NIFTY"]) == 1
-    # BANKNIFTY is retired and may restart its clock; retained NIFTY rejects
-    # replay from before its watermark.
-    assert c.observe("angel_one", tick("NIFTY", 499, 99)) is False
-    assert c.observe("angel_one", tick("BANKNIFTY", 700, 201)) is True
-    assert received == [("NIFTY", 500), ("BANKNIFTY", 700), ("BANKNIFTY", 700)]
+    # Retained BANKNIFTY keeps its timestamp watermark; retired NIFTY may
+    # restart from the same timestamp after pruning.
+    assert c.observe("angel_one", tick("BANKNIFTY", 699, 199)) is False
+    assert c.observe("angel_one", tick("NIFTY", 500, 101)) is True
+    assert received == [("NIFTY", 500), ("BANKNIFTY", 700), ("NIFTY", 500)]
     assert c.snapshot()["latest_record_count"] == 2
 
 
@@ -580,15 +580,15 @@ def test_cross_provider_replay_watermarks_are_isolated_per_instrument():
     assert c.observe("angel_one", tick("BANKNIFTY", 1000, 200)) is True
     c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
               shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=20)
-    # Cross-provider replay is rejected for NIFTY; BANKNIFTY accepts a newer
-    # timestamp independently of NIFTY's cross-provider watermark.
+    # Replay is suppressed independently per key; equal timestamp is accepted
+    # for BANKNIFTY because its own cross-provider watermark is independent.
     assert c.observe("shoonya", tick("NIFTY", 1000, 101)) is False
-    assert c.observe("shoonya", tick("BANKNIFTY", 1001, 201)) is True
+    assert c.observe("shoonya", tick("BANKNIFTY", 1000, 201)) is True
     assert c.observe("shoonya", tick("NIFTY", 1001, 102)) is True
     assert delivered == [
         ("angel_one", "NIFTY", 1000),
         ("angel_one", "BANKNIFTY", 1000),
-        ("shoonya", "BANKNIFTY", 1001),
+        ("shoonya", "BANKNIFTY", 1000),
         ("shoonya", "NIFTY", 1001),
     ]
     snap = c.snapshot()
