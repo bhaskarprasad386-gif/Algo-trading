@@ -124,3 +124,15 @@ def test_replace_and_disconnect_previous_keeps_new_session_when_old_logout_fails
     assert isinstance(error, RuntimeError)
     assert store.get(7, "fyers") is current
     assert current.connected is True
+
+
+def test_replace_and_disconnect_previous_does_not_disconnect_same_adapter():
+    store = BrokerSessionStore()
+    adapter = FakeAdapter("shoonya")
+    store.replace(7, "shoonya", adapter)
+
+    error = store.replace_and_disconnect_previous(7, "shoonya", adapter)
+
+    assert error is None
+    assert store.get(7, "shoonya") is adapter
+    assert adapter.connected is True
