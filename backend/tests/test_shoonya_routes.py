@@ -84,12 +84,14 @@ def test_verify_consumes_flow_and_binds_broker_identity(monkeypatch, db_session)
     store = Mock()
     store.consume.return_value = Mock(uid="SH12345", account_id="SH12345")
     monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "server-client")
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_SECRET_CODE", "server-secret")
     monkeypatch.setenv("SHOONYA_REDIRECT_URI", "https://example.com/shoonya/callback")
-    monkeypatch.setattr(
-        shoonya_routes.ShoonyaOAuthAuthenticator,
-        "exchange_auth_code",
-        lambda self, **kwargs: ShoonyaAuthenticatedSession("SH12345", "SH12345", "token"),
-    )
+    exchange_calls = []
+    def exchange(self, **kwargs):
+        exchange_calls.append(kwargs)
+        return ShoonyaAuthenticatedSession("SH12345", "SH12345", "token")
+    monkeypatch.setattr(shoonya_routes.ShoonyaOAuthAuthenticator, "exchange_auth_code", exchange)
     client = FakeClient(uid="SH12345", account_id="SH12345", access_token="token")
     monkeypatch.setattr(shoonya_routes, "ShoonyaRESTClient", lambda **kwargs: client)
     monkeypatch.setattr(shoonya_routes, "ShoonyaAdapter", FakeAdapter)
@@ -108,8 +110,8 @@ def test_verify_consumes_flow_and_binds_broker_identity(monkeypatch, db_session)
 
     result = shoonya_routes.shoonya_verify(
         shoonya_routes.ShoonyaVerifyRequest(
-            client_id="client-100",
-            secret_code="secret",
+            client_id="untrusted-request-client",
+            secret_code="untrusted-request-secret",
             auth_code="auth-code",
             flow_id="flow-id-1234567890",
         ),
@@ -124,10 +126,11 @@ def test_verify_consumes_flow_and_binds_broker_identity(monkeypatch, db_session)
     assert result["kill_switch"] is True
     assert claims == [("shoonya", "SH12345")]
     assert connected == [True]
+    assert exchange_calls == [{"client_id": "server-client", "secret_code": "server-secret", "auth_code": "auth-code", "expected_uid": "SH12345", "expected_account_id": "SH12345"}]
     store.consume.assert_called_once_with(
         owner_id=0,
         flow_id="flow-id-1234567890",
-        client_id="client-100",
+        client_id="server-client",
         redirect_uri="https://example.com/shoonya/callback",
     )
     assert broker_sessions.get(0, "shoonya").connected is True
