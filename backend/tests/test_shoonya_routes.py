@@ -45,10 +45,10 @@ class FakeAdapter:
 
 
 def cleanup():
-    adapter = broker_sessions.remove(0, "shoonya")
+    adapter = broker_sessions.remove(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya")
     if adapter:
         adapter.disconnect()
-    broker_connections.disconnect(0, "shoonya")
+    broker_connections.disconnect(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya")
 
 
 @pytest.fixture(autouse=True)
@@ -68,9 +68,7 @@ def test_auth_url_returns_authorize_url_and_correlated_flow(monkeypatch):
     result = shoonya_routes.shoonya_auth_url(
         shoonya_routes.ShoonyaAuthUrlRequest(
             client_id="client-100",
-            uid="SH12345",
-            account_id="SH12345",
-        ),
+            ),
     )
 
     assert result["flow_id"] == "flow-id-1234567890"
@@ -79,8 +77,6 @@ def test_auth_url_returns_authorize_url_and_correlated_flow(monkeypatch):
     store.create.assert_called_once_with(
         owner_id=shoonya_routes.SHOONYA_SESSION_OWNER_ID,
         client_id="client-100",
-        uid="SH12345",
-        account_id="SH12345",
     )
 
 
@@ -116,15 +112,15 @@ def test_verify_consumes_flow_and_binds_broker_identity(monkeypatch, db_session)
     assert result["account_id"] == "SH12345"
     assert result["real_trading"] is False
     assert result["kill_switch"] is True
-    assert claims == [("shoonya", "SH12345")]
-    assert connected == [True]
+    assert claims == []
+    assert connected == []
     assert exchange_calls == [{"client_id": "server-client", "secret_code": "server-secret", "auth_code": "auth-code", "expected_uid": "SH12345", "expected_account_id": "SH12345"}]
     store.consume.assert_called_once_with(
         owner_id=shoonya_routes.SHOONYA_SESSION_OWNER_ID,
         flow_id="flow-id-1234567890",
         client_id="server-client",
     )
-    assert broker_sessions.get(0, "shoonya").connected is True
+    assert broker_sessions.get(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya").connected is True
     cleanup()
 
 
@@ -138,7 +134,7 @@ def test_superseded_oauth_attempt_does_not_claim_owner_or_connection(monkeypatch
 
     def supersede_during_oauth(self, **kwargs):
         # Simulate a later reconnect beginning while this OAuth exchange is slow.
-        broker_sessions.reserve_replacement(0, "shoonya")
+        broker_sessions.reserve_replacement(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya")
         return ShoonyaAuthenticatedSession("SH12345", "SH12345", "token")
 
     monkeypatch.setattr(
@@ -163,7 +159,7 @@ def test_superseded_oauth_attempt_does_not_claim_owner_or_connection(monkeypatch
     assert raised.value.status_code == 409
     assert claims == []
     assert connected == []
-    assert broker_sessions.get(0, "shoonya") is None
+    assert broker_sessions.get(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya") is None
     assert client.disconnected is True
     cleanup()
 
@@ -206,34 +202,30 @@ def test_shoonya_rest_client_clears_token_and_logs_out():
     assert http.post.call_args.args[0].endswith("/Logout")
 
 
-def test_owner_conflict_discards_session(monkeypatch, db_session):
+def test_shoonya_connection_does_not_claim_box_spread_owner(monkeypatch):
     cleanup()
     store = Mock()
-    store.consume.return_value = Mock(uid="SH12345", account_id="SH12345")
+    store.consume.return_value = Mock(uid=None, account_id=None)
     monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
-    monkeypatch.setenv("SHOONYA_REDIRECT_URI", "https://example.com/shoonya/callback")
     monkeypatch.setattr(
         shoonya_routes.ShoonyaOAuthAuthenticator,
         "exchange_auth_code",
-        lambda self, **kwargs: ShoonyaAuthenticatedSession("SH12345", "SH12345", "token"),
+        lambda self, **kwargs: ShoonyaAuthenticatedSession("SH12345", "ACT12345", "token"),
     )
-    client = FakeClient(uid="SH12345", account_id="SH12345", access_token="token")
+    client = FakeClient(uid="SH12345", account_id="ACT12345", access_token="token")
     monkeypatch.setattr(shoonya_routes, "ShoonyaRESTClient", lambda **kwargs: client)
     monkeypatch.setattr(shoonya_routes, "ShoonyaAdapter", FakeAdapter)
-    
-    with pytest.raises(HTTPException) as raised:
-        shoonya_routes.shoonya_verify(
-            shoonya_routes.ShoonyaVerifyRequest(
-                client_id="client-100",
-                secret_code="secret",
-                auth_code="auth-code",
-                flow_id="flow-id-1234567890",
-            ),
-                )
 
-    assert raised.value.status_code == 409
-    assert client.disconnected is True
+    result = shoonya_routes.shoonya_verify(
+        shoonya_routes.ShoonyaVerifyRequest(auth_code="auth-code", flow_id="flow-id-1234567890")
+    )
+
+    assert result["connected"] is True
+    assert result["uid"] == "SH12345"
+    assert result["account_id"] == "ACT12345"
+    assert broker_sessions.get(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya").connected is True
     assert broker_sessions.get(0, "shoonya") is None
+    cleanup()
 
 
 def test_shoonya_rest_client_uses_bearer_and_jdata_for_read_only_books():
@@ -345,9 +337,7 @@ def test_auth_url_rejects_request_only_client_id(monkeypatch):
         shoonya_routes.shoonya_auth_url(
             shoonya_routes.ShoonyaAuthUrlRequest(
                 client_id="untrusted-request-client",
-                uid="SH12345",
-                account_id="SH12345",
-            ),
+                    ),
             )
     assert raised.value.status_code == 503
 
@@ -518,8 +508,6 @@ def test_verify_metadata_failure_removes_only_its_owned_session(monkeypatch, db_
     monkeypatch.setattr(shoonya_routes, "ShoonyaRESTClient", lambda **kwargs: client)
     monkeypatch.setattr(shoonya_routes, "ShoonyaAdapter", FakeAdapter)
 
-    rollback = Mock()
-    monkeypatch.setattr(db_session, "rollback", rollback)
     monkeypatch.setattr(
         shoonya_routes.broker_connections,
         "connect",
@@ -537,10 +525,9 @@ def test_verify_metadata_failure_removes_only_its_owned_session(monkeypatch, db_
                 )
 
     assert raised.value.status_code == 503
-    assert broker_sessions.get(0, "shoonya") is None
-    assert broker_connections.get(0, "shoonya") is None
+    assert broker_sessions.get(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya") is None
+    assert broker_connections.get(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya") is None
     assert client.disconnected is True
-    rollback.assert_called_once()
 
 def test_connection_metadata_commit_rejects_superseded_adapter():
     owner_id = 99176
@@ -816,7 +803,7 @@ def test_verify_closes_oauth_transport_when_exchange_fails(monkeypatch, db_sessi
 
     assert raised.value.status_code == 401
     assert transport.closed is True
-    assert broker_sessions.get(0, "shoonya") is None
+    assert broker_sessions.get(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya") is None
     cleanup()
 
 
@@ -852,7 +839,7 @@ def test_verify_closes_oauth_transport_after_successful_exchange(monkeypatch, db
 
     assert result["connected"] is True
     transport.close.assert_called_once_with()
-    assert broker_sessions.get(0, "shoonya").connected is True
+    assert broker_sessions.get(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya").connected is True
     cleanup()
 
 def test_authenticator_revokes_issued_token_when_authenticated_identity_mismatches():
@@ -966,7 +953,7 @@ def test_older_oauth_exchange_finishing_after_newer_success_cannot_replace_or_di
 
     assert raised.value.status_code == 409
     assert nested_results[0]["connected"] is True
-    current = broker_sessions.get(0, "shoonya")
+    current = broker_sessions.get(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya")
     assert current is not None
     assert current.client.access_token == "newer-token"
     assert current.connected is True
