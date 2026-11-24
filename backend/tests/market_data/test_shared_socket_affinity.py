@@ -6,7 +6,7 @@ from app.market_data.shared_socket_affinity import (
 
 NIFTY = ConsumerSocketAffinity.LOCKED_OWNERS["nifty"]
 BANK = ConsumerSocketAffinity.LOCKED_OWNERS["banknifty"]
-OPTIONS = ConsumerSocketAffinity.LOCKED_OWNERS["options"]
+FUTURES = ConsumerSocketAffinity.LOCKED_OWNERS["futures"]
 
 def tokens(start, count, exchange=2):
     return {(exchange, str(start + i)) for i in range(count)}
@@ -14,14 +14,14 @@ def tokens(start, count, exchange=2):
 def test_locked_three_owner_plan_assigns_stable_distinct_shards():
     planner = ConsumerSocketAffinity()
     slots = planner.locked_slots(mode=3)
-    plan = planner.plan(slots, {NIFTY: tokens(100, 2), BANK: tokens(200, 2), OPTIONS: tokens(300, 48)})
+    plan = planner.plan(slots, {NIFTY: tokens(100, 2), BANK: tokens(200, 2), FUTURES: tokens(300, 48)})
     assert slots[NIFTY] == AffinitySlot(3, 0)
     assert slots[BANK] == AffinitySlot(3, 1)
-    assert slots[OPTIONS] == AffinitySlot(3, 2)
+    assert slots[FUTURES] == AffinitySlot(3, 2)
     planner.commit(plan)
     assert planner.resolve(NIFTY) == AffinitySlot(3, 0)
     assert planner.resolve(BANK) == AffinitySlot(3, 1)
-    assert planner.resolve(OPTIONS) == AffinitySlot(3, 2)
+    assert planner.resolve(FUTURES) == AffinitySlot(3, 2)
     assert len(planner.snapshot()["socket_groups"]) == 3
 
 def test_unclaimed_consumers_remain_unassigned_for_adaptive_manager():
@@ -36,8 +36,8 @@ def test_plan_rejects_more_than_three_groups_without_mutating_current_plan():
     planner.commit(original)
     candidate = planner.plan({
         NIFTY: AffinitySlot(3, 0), BANK: AffinitySlot(3, 1),
-        OPTIONS: AffinitySlot(3, 2),
-    }, {NIFTY: tokens(1, 1), BANK: tokens(2, 1), OPTIONS: tokens(3, 1)})
+        FUTURES: AffinitySlot(3, 2),
+    }, {NIFTY: tokens(1, 1), BANK: tokens(2, 1), FUTURES: tokens(3, 1)})
     with pytest.raises(ValueError, match="global socket limit"):
         planner.plan(candidate.owner_slots | {"other": AffinitySlot(2, 0)},
             candidate.owner_tokens | {"other": tokens(4, 1)})
