@@ -89,6 +89,7 @@ jobs:
             echo "BASE_DB_NOT_FOUND=$BASE_DB"
           fi
 
+          REMOTE
   verify:
 
     runs-on: ubuntu-latest
