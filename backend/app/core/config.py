@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     SHOONYA_UID: str = ""
     SHOONYA_ACTID: str = ""
     SHOONYA_ACCESS_TOKEN: str = ""
+    # OAuth credentials for owner-authenticated Shoonya login; secrets supplied via deployment environment.
+    SHOONYA_OAUTH_CLIENT_ID: str = ""
+    SHOONYA_OAUTH_SECRET_CODE: str = ""
     SHOONYA_MARKET_DATA_MAX_TOKENS: int = 500
     SHOONYA_MARKET_DATA_DISPATCH_QUEUE_MAX: int = 10000
     SHOONYA_MARKET_DATA_RECONNECT_MIN_SECONDS: float = 1.0

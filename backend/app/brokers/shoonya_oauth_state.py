@@ -9,8 +9,9 @@ from urllib.parse import urlsplit
 
 @dataclass(frozen=True)
 class PendingShoonyaOAuth:
+    owner_id: int
     client_id: str
-    redirect_uri: str
+    redirect_uri: str | None
     uid: str
     account_id: str
     issued_at: float
@@ -53,18 +54,21 @@ class ShoonyaOAuthFlowStore:
     def create(
         self,
         *,
+        owner_id: int,
         client_id: str,
-        redirect_uri: str,
+        redirect_uri: str | None = None,
         uid: str,
         account_id: str,
     ) -> str:
+        if isinstance(owner_id, bool) or not isinstance(owner_id, int) or owner_id < 0:
+            raise ValueError("Shoonya OAuth owner ID is invalid")
         client_id = str(client_id or "").strip()
         uid = str(uid or "").strip()
         account_id = str(account_id or "").strip()
-        redirect_uri = self._redirect(redirect_uri)
+        redirect_uri = self._redirect(redirect_uri) if redirect_uri else None
         if not all((client_id, uid, account_id)):
             raise ValueError("Shoonya client ID, UID and account ID are required")
-        flow_id = self._token_factory(32)
+        flow_id = str(self._token_factory(32) or "").strip()
         if not flow_id:
             raise RuntimeError("Unable to create Shoonya OAuth flow ID")
         now = self._clock()
@@ -74,10 +78,17 @@ class ShoonyaOAuthFlowStore:
                 for key, item in self._pending.items()
                 if now - item.issued_at < self.ttl_seconds
             }
+            # A token-factory collision must never overwrite an outstanding
+            # browser flow or evict another user's flow to make room for it.
+            if flow_id in self._pending:
+                raise RuntimeError("Shoonya OAuth flow ID collision")
             if len(self._pending) >= self.max_entries:
-                oldest = min(self._pending, key=lambda key: self._pending[key].issued_at)
-                self._pending.pop(oldest, None)
+                # Never evict a still-valid flow: an unauthenticated caller
+                # must not be able to invalidate another owner's login by
+                # filling the bounded store. Fail closed until a flow expires.
+                raise RuntimeError("Shoonya OAuth flow capacity is exhausted")
             self._pending[flow_id] = PendingShoonyaOAuth(
+                owner_id=owner_id,
                 client_id=client_id,
                 redirect_uri=redirect_uri,
                 uid=uid,
@@ -89,18 +100,26 @@ class ShoonyaOAuthFlowStore:
     def consume(
         self,
         *,
+        owner_id: int,
         flow_id: str,
         client_id: str,
-        redirect_uri: str,
+        redirect_uri: str | None = None,
     ) -> PendingShoonyaOAuth:
+        if isinstance(owner_id, bool) or not isinstance(owner_id, int) or owner_id < 0:
+            raise ValueError("Shoonya OAuth owner ID is invalid")
         flow_id = str(flow_id or "").strip()
         client_id = str(client_id or "").strip()
-        redirect_uri = self._redirect(redirect_uri)
+        redirect_uri = self._redirect(redirect_uri) if redirect_uri else None
         now = self._clock()
         with self._lock:
-            pending = self._pending.pop(flow_id, None)
-        if pending is None or now - pending.issued_at >= self.ttl_seconds:
-            raise ValueError("Shoonya OAuth flow is missing, expired, or already used")
-        if pending.client_id != client_id or pending.redirect_uri != redirect_uri:
-            raise ValueError("Shoonya OAuth flow does not match this client and callback")
-        return pending
+            pending = self._pending.get(flow_id)
+            if pending is None or now - pending.issued_at >= self.ttl_seconds:
+                self._pending.pop(flow_id, None)
+                raise ValueError("Shoonya OAuth flow is missing, expired, or already used")
+            if pending.owner_id != owner_id:
+                raise ValueError("Shoonya OAuth flow does not belong to this owner")
+            if pending.client_id != client_id or pending.redirect_uri != redirect_uri:
+                # A mismatched attempt must not let a caller invalidate the
+                # legitimate browser flow for this owner.
+                raise ValueError("Shoonya OAuth flow does not match this client and callback")
+            return self._pending.pop(flow_id)

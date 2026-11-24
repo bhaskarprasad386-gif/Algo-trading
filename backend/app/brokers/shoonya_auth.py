@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any
 from urllib.parse import urlencode
 
@@ -18,6 +19,7 @@ class ShoonyaAuthenticatedSession:
     uid: str
     account_id: str
     access_token: str
+    expires_at_monotonic: float | None = None
 
 
 class ShoonyaOAuthAuthenticator:
@@ -55,6 +57,26 @@ class ShoonyaOAuthAuthenticator:
             )
         return payload
 
+    def _revoke_issued_token(self, access_token: str, uid: str) -> None:
+        """Best-effort revoke a token that cannot be safely bound to an account."""
+        if not access_token:
+            return
+        try:
+            self.http.post(
+                f"{self.api_base_url}/Logout",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "text/plain",
+                },
+                data="jData=" + json.dumps(
+                    {"uid": uid}, separators=(",", ":")
+                ),
+                timeout=10,
+            )
+        except Exception:
+            # The caller must still reject the untrusted token response.
+            pass
+
     def exchange_auth_code(
         self,
         *,
@@ -91,15 +113,24 @@ class ShoonyaOAuthAuthenticator:
             access_token = str(token_payload.get("susertoken") or "").strip()
             authenticated_uid = str(token_payload.get("uid") or "").strip()
             authenticated_account = str(token_payload.get("actid") or "").strip()
-            if not access_token or not authenticated_uid or not authenticated_account:
+            if not access_token:
                 raise ShoonyaAuthenticationError(
                     "Shoonya GenAcsTok response is missing access token, UID or account identity"
                 )
-            if authenticated_uid != expected_uid:
+            if not authenticated_uid or not authenticated_account:
+                # A bearer token without complete identity is still issued
+                # credential material and must not be left active.
+                self._revoke_issued_token(access_token, authenticated_uid or expected_uid)
                 raise ShoonyaAuthenticationError(
-                    "Shoonya authenticated UID does not match requested UID"
+                    "Shoonya GenAcsTok response is missing access token, UID or account identity"
                 )
-            if authenticated_account != expected_account_id:
+            if authenticated_uid != expected_uid or authenticated_account != expected_account_id:
+                # Never retain a token whose identity failed correlation.
+                self._revoke_issued_token(access_token, authenticated_uid)
+                if authenticated_uid != expected_uid:
+                    raise ShoonyaAuthenticationError(
+                        "Shoonya authenticated UID does not match requested UID"
+                    )
                 raise ShoonyaAuthenticationError(
                     "Shoonya authenticated account does not match requested account"
                 )
@@ -107,6 +138,7 @@ class ShoonyaOAuthAuthenticator:
                 uid=authenticated_uid,
                 account_id=authenticated_account,
                 access_token=access_token,
+                expires_at_monotonic=monotonic() + 24 * 60 * 60,
             )
         except ShoonyaAuthenticationError:
             raise
