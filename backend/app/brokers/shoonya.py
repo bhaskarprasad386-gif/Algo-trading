@@ -43,6 +43,14 @@ class ShoonyaAdapter:
         self.uid: str | None = None
         self.connected = False
 
+    def _cleanup_failed_connect(self) -> None:
+        """Clear local identity without masking the original connect failure."""
+        try:
+            self.disconnect()
+        except Exception:
+            # The connection attempt is already rejected; cleanup is best effort.
+            pass
+
     def connect(self, **credentials: Any) -> dict[str, Any]:
         expected_uid = str(credentials.get("uid") or "").strip()
         expected_account_id = str(credentials.get("account_id") or "").strip()
@@ -51,20 +59,20 @@ class ShoonyaAdapter:
         try:
             profile = self.client.get_user_details()
         except Exception as exc:
-            self.disconnect()
+            self._cleanup_failed_connect()
             raise ShoonyaHistoryUnavailable(
                 f"Shoonya profile request failed: {type(exc).__name__}"
             ) from exc
         if not isinstance(profile, dict) or profile.get("stat") != "Ok":
-            self.disconnect()
+            self._cleanup_failed_connect()
             raise ShoonyaHistoryUnavailable("Shoonya profile response is unsuccessful or invalid")
         actual_uid = str(profile.get("uid") or "").strip()
         actual_account_id = str(profile.get("actid") or "").strip()
         if not actual_uid or not actual_account_id:
-            self.disconnect()
+            self._cleanup_failed_connect()
             raise ShoonyaHistoryUnavailable("Shoonya profile is missing uid or actid")
         if actual_uid != expected_uid or actual_account_id != expected_account_id:
-            self.disconnect()
+            self._cleanup_failed_connect()
             raise ShoonyaHistoryUnavailable(
                 "Shoonya authenticated UID/account does not match requested identity"
             )
