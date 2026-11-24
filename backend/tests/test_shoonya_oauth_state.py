@@ -220,3 +220,30 @@ def test_flow_id_collision_does_not_overwrite_or_evict_existing_flow():
     )
     assert pending.uid == "SH12345"
     assert pending.account_id == "SH12345"
+
+
+def test_wrong_owner_cannot_consume_or_invalidate_another_owners_flow():
+    store = ShoonyaOAuthFlowStore(token_factory=lambda size: "owner-bound-flow")
+    flow_id = store.create(
+        owner_id=7,
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+        uid="SH12345",
+        account_id="SH12345",
+    )
+
+    with pytest.raises(ValueError, match="does not belong to this owner"):
+        store.consume(
+            owner_id=8,
+            flow_id=flow_id,
+            client_id="client-100",
+            redirect_uri="https://example.com/shoonya/callback",
+        )
+
+    pending = store.consume(
+        owner_id=7,
+        flow_id=flow_id,
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+    )
+    assert pending.owner_id == 7
