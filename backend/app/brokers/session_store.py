@@ -40,6 +40,8 @@ class BrokerSessionStore:
     ) -> tuple[bool, BrokerAdapter | None]:
         """Install only if the caller still owns the latest reconnect reservation."""
         key = self._key(owner_id, broker)
+        if isinstance(generation, bool) or not isinstance(generation, int) or generation <= 0:
+            raise ValueError("replacement generation must be a positive integer")
         adapter_name = str(getattr(adapter, "name", "")).strip().lower()
         if adapter_name != key[1]:
             raise ValueError("adapter name does not match broker session key")
