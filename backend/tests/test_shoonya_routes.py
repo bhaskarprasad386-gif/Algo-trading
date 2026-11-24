@@ -1108,3 +1108,57 @@ def test_shoonya_adapter_rejects_invalid_profile_even_when_cleanup_fails():
     assert adapter.connected is False
     assert adapter.uid is None
     assert adapter.account_id is None
+
+
+
+@pytest.mark.parametrize(
+    "redirect_uri",
+    [
+        None,
+        "",
+        "http://example.com/shoonya/callback",
+        "https://user:password@example.com/shoonya/callback",
+        "https://example.com/shoonya/callback#fragment",
+    ],
+)
+def test_auth_url_fails_closed_for_missing_or_unsafe_registered_redirect(monkeypatch, redirect_uri):
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "server-client")
+    store = Mock()
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    if redirect_uri is None:
+        monkeypatch.delenv("SHOONYA_REDIRECT_URI", raising=False)
+    else:
+        monkeypatch.setenv("SHOONYA_REDIRECT_URI", redirect_uri)
+
+    with pytest.raises(HTTPException) as raised:
+        shoonya_routes.shoonya_auth_url(
+            shoonya_routes.ShoonyaAuthUrlRequest(
+                uid="SH12345",
+                account_id="SH12345",
+            ),
+            user_id=0,
+        )
+
+    assert raised.value.status_code == 503
+    store.create.assert_not_called()
+
+
+def test_verify_fails_closed_when_registered_redirect_is_missing(monkeypatch, db_session):
+    store = Mock()
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "server-client")
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_SECRET_CODE", "server-secret")
+    monkeypatch.delenv("SHOONYA_REDIRECT_URI", raising=False)
+
+    with pytest.raises(HTTPException) as raised:
+        shoonya_routes.shoonya_verify(
+            shoonya_routes.ShoonyaVerifyRequest(
+                auth_code="auth-code",
+                flow_id="flow-id-1234567890",
+            ),
+            db=db_session,
+            user_id=0,
+        )
+
+    assert raised.value.status_code == 401
+    store.consume.assert_not_called()
