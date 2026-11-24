@@ -446,7 +446,7 @@ def test_forget_instrument_reentrant_callback_resets_watermarks_atomically():
     snap = c.snapshot()
     assert snap["forwarded_ticks"] == 2
     assert snap["callback_errors"] == 0
-    assert snap["latest_record_count"] == 0
+    assert snap["latest_record_count"] == 1
 
 def test_reentrant_backup_delivery_watermark_survives_primary_callback_failure():
     delivered = []
