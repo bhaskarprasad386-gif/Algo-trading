@@ -17,7 +17,7 @@ def test_outer_callback_failure_cannot_rollback_reentrant_same_timestamp_after_r
             assert holder["coordinator"].forget_instrument("NIFTY") is True
             assert holder["coordinator"].observe(provider, tick(record["timestamp_ns"])) is True
             raise RuntimeError("outer callback fails after reentrant delivery")
-        delivered.append((provider, record["timestamp_ns]))
+        delivered.append((provider, record["timestamp_ns"]))
 
     coordinator = MarketDataFailoverCoordinator(on_record=callback)
     holder["coordinator"] = coordinator
