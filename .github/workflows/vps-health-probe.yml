@@ -231,6 +231,7 @@ jobs:
           echo "=== SERVICE TRANSACTIONS ==="
           journalctl -u algo-trading.service --since "20 minutes ago" --no-pager 2>/dev/null |
             grep -E 'Stopping|Stopped|Started|Starting|timeout|Failed|Main process exited|Killing|signal' |
+            python3 /opt/Algo-Trading/deploy/redact-sensitive-logs.py |
             tail -80 || true
 
           echo "=== SERVICE ==="
