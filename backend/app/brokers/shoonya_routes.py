@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from app.brokers.connections import broker_connections
 from app.brokers.real_owner_auth import require_real_owner_access
 from app.brokers.real_owner_state import claim_authenticated_account, set_owner_connection_state
-from app.brokers.safety import trading_safety
 from app.brokers.session_store import broker_sessions
 from app.brokers.shoonya import ShoonyaAdapter, ShoonyaHistoryUnavailable
 from app.brokers.shoonya_auth import ShoonyaAuthenticationError, ShoonyaOAuthAuthenticator
@@ -187,7 +186,6 @@ def shoonya_verify(
     # Reserve ordering before network work: later reconnect attempts supersede
     # earlier ones even if their OAuth exchange completes last.
     replacement_generation = broker_sessions.reserve_replacement(user_id, "shoonya")
-    # Re-authentication must disarm any prior process-local safety state first.
     trading_safety.disable(user_id)
     client: ShoonyaRESTClient | None = None
     adapter: ShoonyaAdapter | None = None
@@ -260,7 +258,6 @@ def shoonya_verify(
         if not metadata_committed:
             raise HTTPException(status_code=409, detail="Shoonya session was superseded by a newer reconnect")
         item = connection_item[0]
-        trading_safety.disable(user_id)
         return {
             "connected": item.connected,
             "broker": "shoonya",
@@ -276,7 +273,7 @@ def shoonya_verify(
             if removed:
                 metadata_item = connection_item[0] if connection_item else previous_connection_item
                 if metadata_item is not None:
-                    broker_connections.disconnect_if_current(user_id, "shoonya", metadata_item)
+                    broker_connections.disconnect_if_current(owner_id, "shoonya", metadata_item)
                 _disconnect_adapter_best_effort(adapter)
             elif not session_installed:
                 # This adapter never entered the registry (the reservation was
@@ -284,7 +281,6 @@ def shoonya_verify(
                 _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             _disconnect_client_best_effort(client)
-        db.rollback()
         raise
     except (ShoonyaAuthenticationError, ShoonyaHistoryUnavailable, ValueError) as exc:
         if adapter is not None:
