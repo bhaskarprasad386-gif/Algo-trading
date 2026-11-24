@@ -477,3 +477,46 @@ def test_reentrant_backup_delivery_watermark_survives_primary_callback_failure()
     assert snap["forwarded_ticks"] == 2
     assert snap["callback_errors"] == 1
     assert snap["suppressed_ticks"] == 0
+
+def test_reentrant_duplicate_timestamp_is_suppressed_before_outer_callback_commits():
+    holder = {}
+    nested_results = []
+    callbacks = []
+
+    def callback(provider, record):
+        callbacks.append((provider, record["timestamp_ns"]))
+        if len(callbacks) == 1:
+            nested_results.append(holder["coordinator"].observe(provider, record))
+
+    c = MarketDataFailoverCoordinator(on_record=callback)
+    holder["coordinator"] = c
+    assert c.observe("angel_one", tick("NIFTY", 300, 300)) is True
+    assert nested_results == [False]
+    assert callbacks == [("angel_one", 300)]
+    snap = c.snapshot()
+    assert snap["forwarded_ticks"] == 1
+    assert snap["suppressed_ticks"] == 1
+    assert snap["callback_errors"] == 0
+
+
+def test_prune_instrument_universe_reentrant_from_callback_clears_watermarks():
+    holder = {}
+    callbacks = []
+
+    def callback(provider, record):
+        callbacks.append((provider, record["instrument_key"], record["timestamp_ns"]))
+        if len(callbacks) == 1:
+            assert holder["coordinator"].prune_instruments([]) == 1
+
+    c = MarketDataFailoverCoordinator(on_record=callback)
+    holder["coordinator"] = c
+    assert c.observe("angel_one", tick("NIFTY", 400, 400)) is True
+    assert c.snapshot()["latest_record_count"] == 0
+    # Universe retirement resets timestamp ordering, allowing a newly subscribed
+    # instance of the same normalized key to start with its own clock.
+    assert c.observe("angel_one", tick(" NIFTY ", 400, 401)) is True
+    assert callbacks == [("angel_one", "NIFTY", 400), ("angel_one", " NIFTY ", 400)]
+    snap = c.snapshot()
+    assert snap["forwarded_ticks"] == 2
+    assert snap["callback_errors"] == 0
+    assert snap["latest_record_count"] == 0
