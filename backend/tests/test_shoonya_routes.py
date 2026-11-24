@@ -1088,16 +1088,14 @@ def test_manual_auth_url_does_not_require_registered_redirect(monkeypatch):
     store.create.return_value = "manual-flow-id-123456"
     monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
     result = shoonya_routes.shoonya_auth_url(
-        shoonya_routes.ShoonyaAuthUrlRequest(uid="SH12345", account_id="SH12345"),
+        shoonya_routes.ShoonyaAuthUrlRequest(),
     )
     assert result["authorization_code_mode"] == "manual"
     assert result["flow_id"] == "manual-flow-id-123456"
     assert "client_id=server-client" in result["authorization_url"]
     store.create.assert_called_once_with(
-        owner_id=42,
+        owner_id=shoonya_routes.SHOONYA_SESSION_OWNER_ID,
         client_id="server-client",
-        uid="SH12345",
-        account_id="SH12345",
     )
 
 
@@ -1124,7 +1122,7 @@ def test_manual_verify_consumes_flow_without_redirect_setting(monkeypatch, db_se
     assert result["real_trading"] is False
     assert result["kill_switch"] is True
     store.consume.assert_called_once_with(
-        owner_id=42,
+        owner_id=shoonya_routes.SHOONYA_SESSION_OWNER_ID,
         flow_id="manual-flow-id-123456",
         client_id="server-client",
     )
