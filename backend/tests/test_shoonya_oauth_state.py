@@ -72,7 +72,7 @@ def test_flow_expires():
         )
 
 
-def test_wrong_client_consumes_and_rejects_flow():
+def test_wrong_client_does_not_invalidate_legitimate_flow():
     store = ShoonyaOAuthFlowStore(token_factory=lambda size: "wrong-client")
     flow_id = store.create(
         owner_id=7,
@@ -88,13 +88,14 @@ def test_wrong_client_consumes_and_rejects_flow():
             client_id="other-client",
             redirect_uri="https://example.com/shoonya/callback",
         )
-    with pytest.raises(ValueError, match="missing, expired, or already used"):
-        store.consume(
-            owner_id=7,
-            flow_id=flow_id,
-            client_id="client-100",
-            redirect_uri="https://example.com/shoonya/callback",
-        )
+    pending = store.consume(
+        owner_id=7,
+        flow_id=flow_id,
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+    )
+    assert pending.uid == "SH12345"
+    assert pending.account_id == "SH12345"
 
 
 @pytest.mark.parametrize(
