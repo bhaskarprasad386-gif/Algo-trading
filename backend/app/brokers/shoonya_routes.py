@@ -18,6 +18,9 @@ from app.core.logger import app_logger
 
 router = APIRouter()
 
+# Reserved process-local namespace distinct from Box Spread real-owner ID (0).
+SHOONYA_SESSION_OWNER_ID = 2_147_483_647
+
 
 def _disconnect_adapter_best_effort(adapter: ShoonyaAdapter) -> None:
     """Keep cleanup failures from masking the original auth/metadata error."""
@@ -139,7 +142,7 @@ def shoonya_auth_url(
         raise HTTPException(status_code=503, detail="Shoonya OAuth client ID is not configured on the server")
     try:
         flow_id = shoonya_oauth_flows.create(
-            owner_id=0,
+            owner_id=SHOONYA_SESSION_OWNER_ID,
             client_id=client_id,
         )
         url = ShoonyaOAuthAuthenticator.build_authorization_url(client_id=client_id)
@@ -174,7 +177,7 @@ def shoonya_verify(
 
     # Reserve ordering before network work: later reconnect attempts supersede
     # earlier ones even if their OAuth exchange completes last.
-    owner_id = 0  # dedicated Shoonya namespace; never the Box Spread owner state
+    owner_id = SHOONYA_SESSION_OWNER_ID
     replacement_generation = broker_sessions.reserve_replacement(owner_id, "shoonya")
     client: ShoonyaRESTClient | None = None
     adapter: ShoonyaAdapter | None = None
