@@ -1162,3 +1162,57 @@ def test_verify_fails_closed_when_registered_redirect_is_missing(monkeypatch, db
 
     assert raised.value.status_code == 401
     store.consume.assert_not_called()
+
+
+def test_manual_auth_url_does_not_require_registered_redirect(monkeypatch):
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "server-client")
+    monkeypatch.delenv("SHOONYA_REDIRECT_URI", raising=False)
+    store = Mock()
+    store.create.return_value = "manual-flow-id-123456"
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    result = shoonya_routes.shoonya_auth_url(
+        shoonya_routes.ShoonyaAuthUrlRequest(uid="SH12345", account_id="SH12345"),
+        user_id=42,
+    )
+    assert result["authorization_code_mode"] == "manual"
+    assert result["flow_id"] == "manual-flow-id-123456"
+    assert "client_id=server-client" in result["authorization_url"]
+    store.create.assert_called_once_with(
+        owner_id=42,
+        client_id="server-client",
+        uid="SH12345",
+        account_id="SH12345",
+    )
+
+
+def test_manual_verify_consumes_flow_without_redirect_setting(monkeypatch, db_session):
+    cleanup()
+    monkeypatch.delenv("SHOONYA_REDIRECT_URI", raising=False)
+    store = Mock()
+    store.consume.return_value = Mock(uid="SH12345", account_id="SH12345")
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setattr(shoonya_routes.trading_safety, "disable", lambda user_id: None)
+    monkeypatch.setattr(
+        shoonya_routes.ShoonyaOAuthAuthenticator,
+        "exchange_auth_code",
+        lambda self, **kwargs: ShoonyaAuthenticatedSession("SH12345", "SH12345", "manual-token"),
+    )
+    client = FakeClient(uid="SH12345", account_id="SH12345", access_token="manual-token")
+    monkeypatch.setattr(shoonya_routes, "ShoonyaRESTClient", lambda **kwargs: client)
+    monkeypatch.setattr(shoonya_routes, "ShoonyaAdapter", FakeAdapter)
+    monkeypatch.setattr(shoonya_routes, "claim_authenticated_account", lambda *args: None)
+    monkeypatch.setattr(shoonya_routes, "set_owner_connection_state", lambda *args: None)
+    result = shoonya_routes.shoonya_verify(
+        shoonya_routes.ShoonyaVerifyRequest(auth_code="one-time-code", flow_id="manual-flow-id-123456"),
+        db=db_session,
+        user_id=42,
+    )
+    assert result["connected"] is True
+    assert result["real_trading"] is False
+    assert result["kill_switch"] is True
+    store.consume.assert_called_once_with(
+        owner_id=42,
+        flow_id="manual-flow-id-123456",
+        client_id="server-client",
+    )
+    cleanup()
