@@ -193,8 +193,6 @@ def shoonya_verify(
         )
         adapter = ShoonyaAdapter(client)
         adapter.connect(uid=authenticated.uid, account_id=authenticated.account_id)
-        claim_authenticated_account(db, "shoonya", authenticated.account_id)
-        set_owner_connection_state(db, True)
 
         installed, previous = broker_sessions.replace_if_reserved(
             user_id, "shoonya", adapter, replacement_generation
@@ -210,13 +208,19 @@ def shoonya_verify(
                     type(logout_error).__name__,
                 )
         connection_item: list = []
-        metadata_committed = broker_sessions.commit_if_current(
-            user_id,
-            "shoonya",
-            adapter,
-            lambda: connection_item.append(
+
+        def commit_owner_and_connection_metadata() -> None:
+            # Keep durable account-owner writes inside the session-current lock:
+            # a superseded OAuth attempt must not claim ownership or mark the
+            # shared owner connected before it is rejected.
+            claim_authenticated_account(db, "shoonya", authenticated.account_id)
+            set_owner_connection_state(db, True)
+            connection_item.append(
                 broker_connections.connect(user_id, "shoonya", payload.display_name)
-            ),
+            )
+
+        metadata_committed = broker_sessions.commit_if_current(
+            user_id, "shoonya", adapter, commit_owner_and_connection_metadata
         )
         if not metadata_committed:
             raise HTTPException(status_code=409, detail="Shoonya session was superseded by a newer reconnect")
