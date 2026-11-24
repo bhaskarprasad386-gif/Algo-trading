@@ -131,8 +131,10 @@ class BrokerSessionStore:
         """Remove all in-memory sessions; intended for controlled shutdown/tests."""
         with self._lock:
             sessions = list(self._sessions.values())
+            keys = set(self._sessions) | set(self._replacement_generations)
+            for key in keys:
+                self._replacement_generations[key] = self._replacement_generations.get(key, 0) + 1
             self._sessions.clear()
-            self._replacement_generations.clear()
             return sessions
 
     def disconnect_all(self) -> list[tuple[str, Exception]]:
