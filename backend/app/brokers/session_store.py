@@ -21,11 +21,18 @@ class BrokerSessionStore:
         self._lock = RLock()
 
     @staticmethod
+    def _owner(owner_id: int) -> int:
+        if isinstance(owner_id, bool) or not isinstance(owner_id, int) or owner_id < 0:
+            raise ValueError("owner ID must be a non-negative integer")
+        return owner_id
+
+    @staticmethod
     def _key(owner_id: int, broker: str) -> tuple[int, str]:
+        owner = BrokerSessionStore._owner(owner_id)
         normalized = str(broker).strip().lower()
         if not normalized:
             raise ValueError("broker name cannot be empty")
-        return int(owner_id), normalized
+        return owner, normalized
 
     def reserve_replacement(self, owner_id: int, broker: str) -> int:
         """Reserve reconnect ordering before a slow OAuth/network exchange."""
@@ -150,7 +157,7 @@ class BrokerSessionStore:
             return adapter
 
     def clear_owner(self, owner_id: int) -> list[BrokerAdapter]:
-        owner = int(owner_id)
+        owner = self._owner(owner_id)
         with self._lock:
             keys = [key for key in self._sessions if key[0] == owner]
             reserved_keys = [key for key in self._replacement_generations if key[0] == owner]
