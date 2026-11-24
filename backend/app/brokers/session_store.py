@@ -122,7 +122,8 @@ class BrokerSessionStore:
         owner = int(owner_id)
         with self._lock:
             keys = [key for key in self._sessions if key[0] == owner]
-            for key in keys:
+            reserved_keys = [key for key in self._replacement_generations if key[0] == owner]
+            for key in set(keys) | set(reserved_keys):
                 self._replacement_generations[key] = self._replacement_generations.get(key, 0) + 1
             return [self._sessions.pop(key) for key in keys]
 
