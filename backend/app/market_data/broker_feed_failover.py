@@ -62,6 +62,8 @@ class MarketDataFailoverPolicy:
             for value in values
         ):
             raise ValueError("failover timing values must be finite and positive numbers")
+        if angel_failover_stale_seconds <= angel_tick_fresh_seconds:
+            raise ValueError("angel failover stale threshold must exceed tick freshness threshold")
         self.angel_tick_fresh_seconds = angel_tick_fresh_seconds
         self.shoonya_tick_fresh_seconds = shoonya_tick_fresh_seconds
         self.angel_failover_stale_seconds = angel_failover_stale_seconds
