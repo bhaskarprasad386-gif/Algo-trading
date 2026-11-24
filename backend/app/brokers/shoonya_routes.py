@@ -241,7 +241,11 @@ def shoonya_verify(
             )
 
         metadata_committed = broker_sessions.commit_if_current(
-            user_id, "shoonya", adapter, commit_owner_and_connection_metadata
+            user_id,
+            "shoonya",
+            adapter,
+            commit_owner_and_connection_metadata,
+            generation=replacement_generation,
         )
         if not metadata_committed:
             raise HTTPException(status_code=409, detail="Shoonya session was superseded by a newer reconnect")
