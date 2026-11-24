@@ -168,7 +168,7 @@ def shoonya_verify(
         raise HTTPException(status_code=503, detail="Shoonya OAuth client ID and secret code are not configured")
     try:
         pending = shoonya_oauth_flows.consume(
-            owner_id=0,
+            owner_id=SHOONYA_SESSION_OWNER_ID,
             flow_id=payload.flow_id,
             client_id=client_id,
         )
