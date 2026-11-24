@@ -220,3 +220,102 @@ def test_current_reconnect_can_remove_its_own_failed_adapter():
         7, "shoonya", adapter, generation=generation
     )
     assert store.get(7, "shoonya") is None
+
+def test_clear_owner_invalidates_pending_replacement_without_installed_session():
+    store = BrokerSessionStore()
+    stale_generation = store.reserve_replacement(7, "shoonya")
+
+    assert store.clear_owner(7) == []
+    adapter = FakeAdapter("shoonya")
+    installed, previous = store.replace_if_reserved(
+        7, "shoonya", adapter, stale_generation
+    )
+
+    assert installed is False
+    assert previous is None
+    assert store.get(7, "shoonya") is None
+
+
+def test_clear_invalidates_pending_replacement_without_installed_session():
+    store = BrokerSessionStore()
+    stale_generation = store.reserve_replacement(7, "shoonya")
+
+    assert store.clear() == []
+    adapter = FakeAdapter("shoonya")
+    installed, previous = store.replace_if_reserved(
+        7, "shoonya", adapter, stale_generation
+    )
+
+    assert installed is False
+    assert previous is None
+    assert store.get(7, "shoonya") is None
+
+
+def test_remove_invalidates_pending_replacement_even_when_session_is_absent():
+    store = BrokerSessionStore()
+    stale_generation = store.reserve_replacement(7, "shoonya")
+
+    assert store.remove(7, "shoonya") is None
+    installed, previous = store.replace_if_reserved(
+        7, "shoonya", FakeAdapter("shoonya"), stale_generation
+    )
+
+    assert installed is False
+    assert previous is None
+
+
+def test_unreserved_replace_invalidates_older_pending_replacement():
+    store = BrokerSessionStore()
+    stale_generation = store.reserve_replacement(7, "shoonya")
+    current = FakeAdapter("shoonya")
+
+    assert store.replace(7, "shoonya", current) is None
+    installed, previous = store.replace_if_reserved(
+        7, "shoonya", FakeAdapter("shoonya"), stale_generation
+    )
+
+    assert installed is False
+    assert previous is None
+    assert store.get(7, "shoonya") is current
+
+
+def test_wrong_adapter_does_not_consume_valid_replacement_reservation():
+    store = BrokerSessionStore()
+    generation = store.reserve_replacement(7, "shoonya")
+
+    with pytest.raises(ValueError, match="does not match"):
+        store.replace_if_reserved(
+            7, "shoonya", FakeAdapter("angel_one"), generation
+        )
+
+    expected = FakeAdapter("shoonya")
+    installed, previous = store.replace_if_reserved(
+        7, "shoonya", expected, generation
+    )
+    assert installed is True
+    assert previous is None
+    assert store.get(7, "shoonya") is expected
+
+
+def test_failed_metadata_commit_releases_lock_and_preserves_current_session():
+    store = BrokerSessionStore()
+    adapter = FakeAdapter("shoonya")
+    generation = store.reserve_replacement(7, "shoonya")
+    installed, _ = store.replace_if_reserved(7, "shoonya", adapter, generation)
+    assert installed is True
+
+    def fail_commit():
+        raise RuntimeError("metadata write failed")
+
+    with pytest.raises(RuntimeError, match="metadata write failed"):
+        store.commit_if_current(
+            7, "shoonya", adapter, fail_commit, generation=generation
+        )
+
+    committed = []
+    assert store.commit_if_current(
+        7, "shoonya", adapter, lambda: committed.append(True),
+        generation=generation,
+    )
+    assert committed == [True]
+    assert store.get(7, "shoonya") is adapter
