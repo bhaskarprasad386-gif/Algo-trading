@@ -201,6 +201,8 @@ def shoonya_verify(
     client: ShoonyaRESTClient | None = None
     adapter: ShoonyaAdapter | None = None
     session_installed = False
+    previous_connection_item = broker_connections.get(user_id, "shoonya")
+    connection_item: list = []
     try:
         authenticator = ShoonyaOAuthAuthenticator()
         try:
@@ -247,8 +249,6 @@ def shoonya_verify(
                     "Previous shoonya provider logout failed during reconnect: %s",
                     type(logout_error).__name__,
                 )
-        connection_item: list = []
-
         def commit_owner_and_connection_metadata() -> None:
             # Keep durable account-owner writes inside the session-current lock:
             # a superseded OAuth attempt must not claim ownership or mark the
@@ -283,7 +283,9 @@ def shoonya_verify(
         if adapter is not None:
             removed = broker_sessions.remove_if_adapter_current(user_id, "shoonya", adapter)
             if removed:
-                broker_connections.disconnect(user_id, "shoonya")
+                metadata_item = connection_item[0] if connection_item else previous_connection_item
+                if metadata_item is not None:
+                    broker_connections.disconnect_if_current(user_id, "shoonya", metadata_item)
                 _disconnect_adapter_best_effort(adapter)
             elif not session_installed:
                 # This adapter never entered the registry (the reservation was
@@ -297,7 +299,9 @@ def shoonya_verify(
         if adapter is not None:
             removed = broker_sessions.remove_if_adapter_current(user_id, "shoonya", adapter)
             if removed:
-                broker_connections.disconnect(user_id, "shoonya")
+                metadata_item = connection_item[0] if connection_item else previous_connection_item
+                if metadata_item is not None:
+                    broker_connections.disconnect_if_current(user_id, "shoonya", metadata_item)
                 _disconnect_adapter_best_effort(adapter)
             elif not session_installed:
                 # This adapter never entered the registry (the reservation was
@@ -311,7 +315,9 @@ def shoonya_verify(
         if adapter is not None:
             removed = broker_sessions.remove_if_adapter_current(user_id, "shoonya", adapter)
             if removed:
-                broker_connections.disconnect(user_id, "shoonya")
+                metadata_item = connection_item[0] if connection_item else previous_connection_item
+                if metadata_item is not None:
+                    broker_connections.disconnect_if_current(user_id, "shoonya", metadata_item)
                 _disconnect_adapter_best_effort(adapter)
             elif not session_installed:
                 # This adapter never entered the registry (the reservation was
