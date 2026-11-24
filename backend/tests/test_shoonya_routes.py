@@ -52,6 +52,7 @@ def cleanup():
 
 
 def test_auth_url_returns_authorize_url_and_correlated_flow(monkeypatch):
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "client-100")
     store = Mock()
     store.create.return_value = "flow-id-1234567890"
     monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
@@ -328,7 +329,7 @@ def test_auth_url_uses_server_configured_client_id_when_request_blank(monkeypatc
     )
 
 
-def test_verify_requires_server_credentials_when_request_credentials_blank(monkeypatch, db_session):
+def test_verify_requires_server_credentials_even_when_request_supplies_credentials(monkeypatch, db_session):
     store = Mock()
     monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
     monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "")
@@ -336,6 +337,8 @@ def test_verify_requires_server_credentials_when_request_credentials_blank(monke
     with pytest.raises(HTTPException) as raised:
         shoonya_routes.shoonya_verify(
             shoonya_routes.ShoonyaVerifyRequest(
+                client_id="untrusted-client",
+                secret_code="request-body-secret",
                 auth_code="auth-code",
                 flow_id="flow-id-1234567890",
             ),
@@ -344,6 +347,21 @@ def test_verify_requires_server_credentials_when_request_credentials_blank(monke
         )
     assert raised.value.status_code == 503
     store.consume.assert_not_called()
+
+
+def test_auth_url_rejects_request_only_client_id(monkeypatch):
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "")
+    monkeypatch.setenv("SHOONYA_REDIRECT_URI", "https://example.com/shoonya/callback")
+    with pytest.raises(HTTPException) as raised:
+        shoonya_routes.shoonya_auth_url(
+            shoonya_routes.ShoonyaAuthUrlRequest(
+                client_id="untrusted-request-client",
+                uid="SH12345",
+                account_id="SH12345",
+            ),
+            user_id=0,
+        )
+    assert raised.value.status_code == 503
 
 
 def test_auth_url_prefers_server_client_id_over_request_value(monkeypatch):
