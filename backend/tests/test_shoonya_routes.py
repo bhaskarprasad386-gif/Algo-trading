@@ -498,10 +498,17 @@ def test_verify_metadata_failure_removes_only_its_owned_session(monkeypatch, db_
         "exchange_auth_code",
         lambda self, **kwargs: ShoonyaAuthenticatedSession("SH12345", "SH12345", "token"),
     )
-    client = FakeClient(uid="SH12345", account_id="SH12345", access_token="token")
+    class CleanupFailingClient(FakeClient):
+        def disconnect(self):
+            self.disconnected = True
+            raise RuntimeError("transport cleanup failed")
+
+    client = CleanupFailingClient(uid="SH12345", account_id="SH12345", access_token="token")
     monkeypatch.setattr(shoonya_routes, "ShoonyaRESTClient", lambda **kwargs: client)
     monkeypatch.setattr(shoonya_routes, "ShoonyaAdapter", FakeAdapter)
     monkeypatch.setattr(shoonya_routes.trading_safety, "disable", lambda user_id: None)
+    rollback = Mock()
+    monkeypatch.setattr(db_session, "rollback", rollback)
     monkeypatch.setattr(
         shoonya_routes.broker_connections,
         "connect",
@@ -524,6 +531,7 @@ def test_verify_metadata_failure_removes_only_its_owned_session(monkeypatch, db_
     assert broker_sessions.get(0, "shoonya") is None
     assert broker_connections.get(0, "shoonya") is None
     assert client.disconnected is True
+    rollback.assert_called_once()
 
 def test_connection_metadata_commit_rejects_superseded_adapter():
     owner_id = 99176
