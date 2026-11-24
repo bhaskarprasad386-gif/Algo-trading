@@ -572,3 +572,26 @@ def test_prune_generator_failure_is_atomic_before_state_mutation():
     assert c.observe("angel_one", tick("BANKNIFTY", 899, 199)) is False
     assert c.observe("angel_one", tick("NIFTY", 799, 99)) is False
 
+
+
+def test_cross_provider_replay_watermarks_are_isolated_per_instrument():
+    delivered = []
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: delivered.append((p, r["instrument_key"], r["timestamp_ns"])))
+    assert c.observe("angel_one", tick("NIFTY", 1000, 100)) is True
+    assert c.observe("angel_one", tick("BANKNIFTY", 1000, 200)) is True
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+              shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=20)
+    # Same timestamp is a replay for NIFTY only; BANKNIFTY can independently
+    # accept its first backup tick at that timestamp.
+    assert c.observe("shoonya", tick("NIFTY", 1000, 101)) is False
+    assert c.observe("shoonya", tick("BANKNIFTY", 1000, 201)) is True
+    assert c.observe("shoonya", tick("NIFTY", 1001, 102)) is True
+    assert delivered == [
+        ("angel_one", "NIFTY", 1000),
+        ("angel_one", "BANKNIFTY", 1000),
+        ("shoonya", "BANKNIFTY", 1000),
+        ("shoonya", "NIFTY", 1001),
+    ]
+    snap = c.snapshot()
+    assert snap["forwarded_ticks"] == 4
+    assert snap["suppressed_ticks"] == 1
