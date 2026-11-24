@@ -768,3 +768,47 @@ def test_replacement_reservation_rejects_non_integer_and_non_positive_generation
     assert previous is None
     assert store.get(owner_id, "shoonya") is adapter
     store.remove(owner_id, "shoonya")
+
+
+def test_verify_closes_oauth_transport_when_exchange_fails(monkeypatch, db_session):
+    cleanup()
+    store = Mock()
+    store.consume.return_value = Mock(uid="SH12345", account_id="SH12345")
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setenv("SHOONYA_REDIRECT_URI", "https://example.com/shoonya/callback")
+    monkeypatch.setattr(shoonya_routes.trading_safety, "disable", lambda user_id: None)
+
+    class Transport:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    transport = Transport()
+
+    class Authenticator:
+        def __init__(self):
+            self.http = transport
+
+        def exchange_auth_code(self, **kwargs):
+            raise shoonya_routes.ShoonyaAuthenticationError("rejected")
+
+    monkeypatch.setattr(shoonya_routes, "ShoonyaOAuthAuthenticator", Authenticator)
+
+    with pytest.raises(HTTPException) as raised:
+        shoonya_routes.shoonya_verify(
+            shoonya_routes.ShoonyaVerifyRequest(
+                client_id="client-100",
+                secret_code="secret",
+                auth_code="auth-code",
+                flow_id="flow-id-1234567890",
+            ),
+            db=db_session,
+            user_id=0,
+        )
+
+    assert raised.value.status_code == 401
+    assert transport.closed is True
+    assert broker_sessions.get(0, "shoonya") is None
+    cleanup()
