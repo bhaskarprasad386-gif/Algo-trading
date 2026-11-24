@@ -505,7 +505,8 @@ def test_concurrent_session_replacements_leave_single_active_adapter():
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(replace, adapters))
-        active = broker_sessions.get(owner_id, "shoonya")        assert active in adapters
+        active = broker_sessions.get(owner_id, "shoonya")
+        assert active in adapters
         assert active.disconnected is False
         assert all(result is None for result in results)
     finally:
