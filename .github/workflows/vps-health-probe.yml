@@ -3,6 +3,7 @@ name: VPS Health Probe
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - .github/workflows/vps-health-probe.yml
   schedule:
