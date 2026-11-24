@@ -547,7 +547,7 @@ def test_prune_normalized_duplicate_active_keys_is_idempotent():
     assert c.snapshot()["latest_record_count"] == 1
     assert c.prune_instruments(["NIFTY"]) == 0
     assert c.snapshot()["latest_record_count"] == 1
-    assert c.observe("angel_one", tick("NIFTY", 600, 101)) is True
+    assert c.observe("angel_one", tick("NIFTY", 601, 101)) is True
 
 
 
