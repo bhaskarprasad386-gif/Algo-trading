@@ -1068,3 +1068,43 @@ def test_authenticator_revokes_issued_token_when_identity_fields_are_missing():
     assert logout.args[0].endswith("/Logout")
     assert logout.kwargs["headers"]["Authorization"] == "Bearer orphan-token"
     assert logout.kwargs["data"] == 'jData={"uid":"SH12345"}'
+
+
+def test_shoonya_adapter_preserves_profile_error_when_disconnect_cleanup_fails():
+    from app.brokers.shoonya import ShoonyaAdapter, ShoonyaHistoryUnavailable
+
+    class BrokenClient:
+        def get_user_details(self):
+            raise RuntimeError("profile transport failed")
+
+        def disconnect(self):
+            raise RuntimeError("logout transport failed")
+
+    adapter = ShoonyaAdapter(BrokenClient())
+
+    with pytest.raises(ShoonyaHistoryUnavailable, match="profile request failed"):
+        adapter.connect(uid="SH12345", account_id="SH12345")
+
+    assert adapter.connected is False
+    assert adapter.uid is None
+    assert adapter.account_id is None
+
+
+def test_shoonya_adapter_rejects_invalid_profile_even_when_cleanup_fails():
+    from app.brokers.shoonya import ShoonyaAdapter, ShoonyaHistoryUnavailable
+
+    class InvalidProfileClient:
+        def get_user_details(self):
+            return {"stat": "Not_Ok"}
+
+        def disconnect(self):
+            raise RuntimeError("logout transport failed")
+
+    adapter = ShoonyaAdapter(InvalidProfileClient())
+
+    with pytest.raises(ShoonyaHistoryUnavailable, match="profile response is unsuccessful"):
+        adapter.connect(uid="SH12345", account_id="SH12345")
+
+    assert adapter.connected is False
+    assert adapter.uid is None
+    assert adapter.account_id is None
