@@ -595,3 +595,37 @@ def test_cross_provider_replay_watermarks_are_isolated_per_instrument():
     snap = c.snapshot()
     assert snap["forwarded_ticks"] == 4
     assert snap["suppressed_ticks"] == 1
+
+
+def test_forget_normalized_key_clears_standby_cache_and_replay_watermarks_once():
+    forwarded = []
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: forwarded.append((p, r["timestamp_ns"])))
+    assert c.observe("angel_one", tick("NIFTY", 1100, 100)) is True
+    # Standby records are cached and ordered even though not forwarded.
+    assert c.observe("shoonya", tick("NIFTY", 1101, 101)) is False
+    assert c.snapshot()["latest_record_count"] == 2
+    assert c.forget_instrument(" NIFTY ") is True
+    assert c.snapshot()["latest_record_count"] == 0
+    assert c.forget_instrument("NIFTY") is False
+    # Reset means the canonical instrument can re-enter with a fresh timestamp.
+    assert c.observe("angel_one", tick("NIFTY", 100, 99)) is True
+    assert forwarded == [("angel_one", 1100), ("angel_one", 100)]
+    assert c.snapshot()["forwarded_ticks"] == 2
+
+
+
+def test_invalid_provider_does_not_mutate_cache_or_ordering_counters():
+    c = MarketDataFailoverCoordinator(on_record=lambda _p, _r: None)
+    assert c.observe("angel_one", tick("NIFTY", 1200, 100)) is True
+    before = c.snapshot()
+    try:
+        c.observe("angel_two", tick("NIFTY", 1201, 101))
+    except ValueError as exc:
+        assert "provider" in str(exc)
+    else:
+        raise AssertionError("invalid provider must be rejected")
+    after = c.snapshot()
+    assert after["latest_record_count"] == before["latest_record_count"]
+    assert after["forwarded_ticks"] == before["forwarded_ticks"]
+    assert after["suppressed_ticks"] == before["suppressed_ticks"]
+    assert after["invalid_records"] == before["invalid_records"]
