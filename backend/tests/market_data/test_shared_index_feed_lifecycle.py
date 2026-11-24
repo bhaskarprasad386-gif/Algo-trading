@@ -47,6 +47,7 @@ def _options(shift=0):
                     key=InstrumentKey("NFO", "NFO", token), symbol=token,
                     instrument_type="option", exchange="NFO", segment="NFO",
                     expiry="TEST", strike=strike, option_type=opt, underlying=underlying,
+                    expiry_type="WEEKLY" if underlying == "NIFTY" else "MONTHLY",
                 ))
     return tuple(descriptors)
 
@@ -134,6 +135,7 @@ def test_locked_options_reject_unbalanced_pair_before_registry_mutation():
         key=InstrumentKey("NFO", "NFO", "duplicate-side-token"),
         symbol="duplicate-side-token", instrument_type="option", exchange="NFO", segment="NFO",
         expiry=target.expiry, strike=target.strike, option_type="CE", underlying=target.underlying,
+        expiry_type="WEEKLY",
     )
     try:
         lifecycle.start_options(broken)
@@ -153,7 +155,7 @@ def test_locked_options_reject_expiry_mismatch_and_asymmetric_strike_window():
         key=InstrumentKey("NFO", "NFO", "expiry-mismatch"),
         symbol="expiry-mismatch", instrument_type="option", exchange="NFO", segment="NFO",
         expiry="DIFFERENT", strike=broken_expiry[0].strike, option_type=broken_expiry[0].option_type,
-        underlying=broken_expiry[0].underlying,
+        underlying=broken_expiry[0].underlying, expiry_type="WEEKLY",
     )
     try:
         lifecycle.start_options(broken_expiry)
@@ -170,7 +172,7 @@ def test_locked_options_reject_expiry_mismatch_and_asymmetric_strike_window():
         key=InstrumentKey("NFO", "NFO", "off-grid-ce"),
         symbol="off-grid-ce", instrument_type="option", exchange="NFO", segment="NFO",
         expiry=original.expiry, strike=original.strike + 25, option_type="CE",
-        underlying=original.underlying,
+        underlying=original.underlying, expiry_type="WEEKLY",
     )
     pe_original = broken_strikes[paired_pe]
     broken_strikes[paired_pe] = InstrumentDescriptor(
