@@ -71,3 +71,34 @@ Acceptance:
 - Do not add Redis or split systemd services until cross-process ownership is required and benchmarked.
 - Do not alter trading/order execution behavior.
 - Do not merge, deploy, or touch VPS without explicit approval.
+
+
+## Runtime ownership audit — 2026-11-25
+
+This audit distinguishes a class that can open sockets from a production lifecycle that actually starts it. Search results alone are not treated as proof of runtime activation.
+
+### Confirmed application startup paths
+
+- `backend/app/main.py` creates `SharedIndexMarketDataRunner` and starts its recovery task during application lifespan. Its three feed consumers share the process-wide `CommonWebSocketManager`.
+- The live Cash-Future task is gated by `LIVE_CASH_FUTURE_DATA_ENABLED` and instantiates `LiveCashFutureCommonRunner`. That runner obtains `shared_common_manager()` and subscribes through the common registry; it is not the legacy two-socket collector.
+- Calendar Spread is gated by `LIVE_CALENDAR_SPREAD_DATA_ENABLED` and starts `LiveCalendarSpreadOneSecondCollector`, which uses the common strategy feed.
+- Synthetic and Box Spread have separate feature-flagged supervised tasks. Their underlying/option data paths use common-feed adapters; strategy logic remains separate.
+- IV Skew Flip creates distinct consumer adapters, including mode-3 spot/options and mode-1 equity/futures feeds. Those mode differences are real allocator inputs and cannot be collapsed by a naive lane-only key.
+- Other common-feed consumers found include commodity recording, Box Spread depth/shadow, calendar, and generic strategy runtime registrations. They must remain independent owners when allocation changes.
+
+### Direct-socket inventory and unresolved owners
+
+- `backend/app/market_data/live_cash_future_stream.py` still contains a legacy collector that directly creates two sockets (NSE and NFO). The application lifespan path inspected above starts `LiveCashFutureCommonRunner`, not this legacy collector. Its remaining references include health reporting/imports and a dedicated verification workflow; do not delete or migrate it until every external/manual invocation is ruled out.
+- `backend/app/market_data/engine.py` still has a generic fallback that constructs `MarketDataWebSocket()`. The current search did not establish a production lifespan activation path for that fallback. Keep it out of the common-feed migration until a concrete runtime caller is identified.
+- `live_synthetic_stream.py` retains a socket-factory fallback for explicitly injected/non-shared operation; its common-manager path disables private reconnect and delegates recovery to the shared manager.
+
+### Allocator constraints confirmed
+
+- Socket identity is `(mode, shard)`, so the global three-session cap must count groups across all modes.
+- Registry subscriptions collapse multiple consumer modes to the maximum mode for a shared instrument. That is an existing compatibility rule; changing it requires a dedicated migration and tests because consumers may otherwise observe altered broker mode.
+- The locked affinity metadata is instrument-level, while consumers span multiple underlyings and may subscribe in different modes. A safe implementation must resolve canonical descriptors per broker instrument, apply locked affinity only to compatible subscriptions, preserve consumer routes, and reject incompatible placement before mutating live assignments.
+- The existing allocator currently ignores `preferred_socket_lane`. No lane migration is authorized until a pure, atomic assignment plan covers all active modes, locked and unlocked instruments, token capacity, failover placement, and the global session cap.
+
+### Next acceptance gate
+
+Before enabling lane affinity, add deterministic tests for: canonical descriptor lookup across exchange/token identities; NIFTY/BANKNIFTY locked placement in the same mode; cross-mode group-cap rejection without assignment mutation; shared-instrument multi-consumer mode behavior; and failover/recovery placement preserving consumer routes. Then wire the pure plan into reconcile only after the plan can be validated without socket side effects.
