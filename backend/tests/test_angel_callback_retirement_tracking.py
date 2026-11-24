@@ -397,7 +397,13 @@ def test_failed_late_close_recovery_releases_admission_and_keeps_coalesced_group
     release_close.set()
     assert recovery_called.wait(timeout=1.0)
     deadline = time.monotonic() + 1.0
-    while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
+    while time.monotonic() < deadline:
+        state = manager.snapshot()
+        if (
+            not state["failure_recovery_worker_active"]
+            and state["failure_recovery_pending_groups"] == []
+        ):
+            break
         time.sleep(0.005)
     state = manager.snapshot()
     assert state["failure_recovery_worker_active"] is False
