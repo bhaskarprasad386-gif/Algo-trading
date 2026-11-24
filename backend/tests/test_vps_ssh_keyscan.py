@@ -135,7 +135,7 @@ esac
             self.root / ".github" / "workflows" / "vps-health-probe.yml"
         ).read_text(encoding="utf-8")
         self.assertIn("uses: actions/checkout@v4", workflow)
-        self.assertIn("bash deploy/vps-ssh-keyscan.sh", workflow)
+        self.assertIn("if ! bash deploy/vps-ssh-keyscan.sh; then", workflow)
         self.assertIn("tee -a /tmp/vps-health-probe.txt", workflow)
         self.assertIn("path: /tmp/vps-health-probe.txt", workflow)
 
