@@ -332,7 +332,6 @@ def test_auth_url_uses_server_configured_client_id_when_request_blank(monkeypatc
     store.create.assert_called_once_with(
         owner_id=0,
         client_id="configured-client",
-        redirect_uri="https://example.com/shoonya/callback",
         uid="SH12345",
         account_id="SH12345",
     )
