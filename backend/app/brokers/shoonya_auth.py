@@ -83,18 +83,16 @@ class ShoonyaOAuthAuthenticator:
         client_id: str,
         secret_code: str,
         auth_code: str,
-        expected_uid: str,
-        expected_account_id: str,
+        expected_uid: str | None = None,
+        expected_account_id: str | None = None,
     ) -> ShoonyaAuthenticatedSession:
         client_id = str(client_id or "").strip()
         secret_code = str(secret_code or "")
         auth_code = str(auth_code or "").strip()
-        expected_uid = str(expected_uid or "").strip()
-        expected_account_id = str(expected_account_id or "").strip()
-        if not all((client_id, secret_code, auth_code, expected_uid, expected_account_id)):
-            raise ValueError(
-                "Shoonya client ID, secret code, auth code, expected UID and account ID are required"
-            )
+        expected_uid = str(expected_uid or "").strip() or None
+        expected_account_id = str(expected_account_id or "").strip() or None
+        if not all((client_id, secret_code, auth_code)):
+            raise ValueError("Shoonya client ID, secret code and auth code are required")
 
         checksum = hashlib.sha256(
             f"{client_id}{secret_code}{auth_code}".encode("utf-8")
@@ -124,10 +122,10 @@ class ShoonyaOAuthAuthenticator:
                 raise ShoonyaAuthenticationError(
                     "Shoonya GenAcsTok response is missing access token, UID or account identity"
                 )
-            if authenticated_uid != expected_uid or authenticated_account != expected_account_id:
+            if (expected_uid and authenticated_uid != expected_uid) or (expected_account_id and authenticated_account != expected_account_id):
                 # Never retain a token whose identity failed correlation.
                 self._revoke_issued_token(access_token, authenticated_uid)
-                if authenticated_uid != expected_uid:
+                if expected_uid and authenticated_uid != expected_uid:
                     raise ShoonyaAuthenticationError(
                         "Shoonya authenticated UID does not match requested UID"
                     )
