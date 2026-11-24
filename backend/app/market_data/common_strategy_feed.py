@@ -43,7 +43,13 @@ def shared_common_manager(
         if _SHARED_MANAGER is None:
             _SHARED_AUTH = auth or AngelOneAuth()
             factory = socket_factory or (lambda: MarketDataWebSocket(auth=_SHARED_AUTH, auto_reconnect=False))
-            _SHARED_MANAGER = CommonWebSocketManager(socket_factory=factory)
+            _SHARED_MANAGER = CommonWebSocketManager(
+                socket_factory=factory,
+                # Keep the broker transport callback limited to bounded enqueue.
+                # Strategy normalization/cache fan-out runs on the shard worker,
+                # so a slow consumer cannot stall Angel's ping/pong loop.
+                async_callback_dispatch=True,
+            )
         return _SHARED_MANAGER
 
 
