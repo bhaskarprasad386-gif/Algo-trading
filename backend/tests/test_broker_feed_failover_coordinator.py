@@ -807,3 +807,62 @@ def test_rejected_out_of_order_policy_evaluation_preserves_coordinator_decision(
     )
     assert next_decision.active_provider == baseline.active_provider == "angel_one"
     assert next_decision.reason == "angel_healthy"
+
+
+def test_prune_validation_is_atomic_and_preserves_retained_instrument_watermarks():
+    import pytest
+    c = MarketDataFailoverCoordinator(on_record=lambda _p, _r: None)
+    assert c.observe("angel_one", tick("NIFTY", 100, 100)) is True
+    before = c.snapshot()
+    with pytest.raises(ValueError, match="non-empty strings"):
+        c.prune_instruments(["NIFTY", "  "])
+    assert c.snapshot() == before
+    # The rejected prune must not clear any tick cache/watermarks.
+    assert c.observe("angel_one", tick("NIFTY", 100, 100)) is False
+    assert c.observe("angel_one", tick("NIFTY", 101, 101)) is True
+
+
+def test_selected_provider_forwarding_watermarks_are_per_instrument():
+    delivered = []
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: delivered.append((p, r["instrument_key"], r["timestamp_ns"])))
+    assert c.observe("angel_one", tick("NIFTY", 1000, 100)) is True
+    assert c.observe("angel_one", tick("BANKNIFTY", 500, 200)) is True
+    # Cross-provider older replay for NIFTY is blocked, while another symbol
+    # with its own timestamp space remains eligible.
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+               shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    assert c.observe("shoonya", tick("NIFTY", 999, 99)) is False
+    assert c.observe("shoonya", tick("FINNIFTY", 1, 300)) is True
+    assert delivered == [("angel_one", "NIFTY", 1000),
+                        ("angel_one", "BANKNIFTY", 500),
+                        ("shoonya", "FINNIFTY", 1)]
+    snap = c.snapshot()
+    assert snap["forwarded_ticks"] == 3
+    assert snap["suppressed_ticks"] == 1
+
+def test_inactive_provider_cache_does_not_forward_after_switch_without_new_tick():
+    delivered = []
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: delivered.append((p, r["timestamp_ns"])))
+    # Cache a Shoonya tick while Angel is active; it must stay suppressed.
+    assert c.observe("shoonya", tick("NIFTY", 20, 101)) is False
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+               shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=30)
+    # Replayed cached tick is rejected; only a strictly newer tick is forwarded.
+    assert c.observe("shoonya", tick("NIFTY", 20, 101)) is False
+    assert c.observe("shoonya", tick("NIFTY", 21, 102)) is True
+    assert delivered == [("shoonya", 21)]
+    assert c.snapshot()["forwarded_ticks"] == 1
+    assert c.snapshot()["suppressed_ticks"] == 2
+
+
+def test_forget_instrument_clears_cross_provider_forwarding_watermark():
+    delivered = []
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: delivered.append((p, r["timestamp_ns"])))
+    assert c.observe("angel_one", tick("NIFTY", 5000, 100)) is True
+    c.evaluate(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+               shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=50)
+    assert c.observe("shoonya", tick("NIFTY", 4999, 99)) is False
+    assert c.forget_instrument("NIFTY") is True
+    # A re-added symbol gets a fresh epoch and can be forwarded from backup.
+    assert c.observe("shoonya", tick("NIFTY", 1, 98)) is True
+    assert delivered == [("angel_one", 5000), ("shoonya", 1)]
