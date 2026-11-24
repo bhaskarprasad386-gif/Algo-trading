@@ -155,6 +155,7 @@ def shoonya_auth_url(
         raise HTTPException(status_code=503, detail="Shoonya redirect URI is not configured on the server")
     try:
         flow_id = shoonya_oauth_flows.create(
+            owner_id=user_id,
             client_id=client_id,
             redirect_uri=redirect_uri,
             uid=payload.uid,
@@ -184,6 +185,7 @@ def shoonya_verify(
         raise HTTPException(status_code=503, detail="Shoonya OAuth client ID and secret code are not configured")
     try:
         pending = shoonya_oauth_flows.consume(
+            owner_id=user_id,
             flow_id=payload.flow_id,
             client_id=client_id,
             redirect_uri=_configured_redirect_uri(),
