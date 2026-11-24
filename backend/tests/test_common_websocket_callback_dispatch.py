@@ -116,19 +116,27 @@ def test_retiring_adapter_does_not_join_worker_while_manager_lock_is_held():
     socket = _Socket()
     _install_current(manager, group, socket)
     manager._install_callback_adapter(group, 1)
-    adapter = manager._callback_adapters[group][1]
 
-    started = monotonic()
+    stop_started = Event()
+    allow_stop_to_finish = Event()
+    stop_finished = Event()
+
+    def blocked_stop(_adapter, _group, _generation):
+        stop_started.set()
+        allow_stop_to_finish.wait(2.0)
+        stop_finished.set()
+
+    manager._stop_retired_callback_adapter = blocked_stop
     with manager._lock:
         manager._retire_callback_adapter_locked(group)
-    elapsed = monotonic() - started
+        assert stop_started.wait(1.0)
+        # The retirement worker is deliberately blocked. If retirement joined
+        # it while holding the manager lock, this assertion would never pass.
+        assert not stop_finished.is_set()
 
-    assert elapsed < 0.2
     assert group not in manager._callback_adapters
-    deadline = monotonic() + 1.0
-    while not adapter.snapshot()["closed"] and monotonic() < deadline:
-        sleep(0.01)
-    assert adapter.snapshot()["closed"] is True
+    allow_stop_to_finish.set()
+    assert stop_finished.wait(1.0)
     manager.close()
 
 def test_callback_dispatch_configuration_rejects_truthy_non_boolean_values():
