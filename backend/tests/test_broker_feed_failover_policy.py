@@ -780,3 +780,28 @@ def test_timing_configuration_rejects_zero_negative_bool_and_nonfinite_values():
             kwargs = {field: invalid}
             with pytest.raises(ValueError, match="finite and positive"):
                 MarketDataFailoverPolicy(**kwargs)
+
+
+def test_angel_fresh_recovery_exits_grace_wait_without_backup():
+    p = policy()
+    degraded = p.update(
+        failed_angel_sockets=0,
+        angel_tick_age_seconds=2.0,
+        shoonya_connected=False,
+        shoonya_tick_age_seconds=None,
+        now=100,
+    )
+    assert degraded.active_provider == "none"
+    assert degraded.mode == "DEGRADED_WAIT"
+
+    recovered = p.update(
+        failed_angel_sockets=0,
+        angel_tick_age_seconds=0.2,
+        shoonya_connected=False,
+        shoonya_tick_age_seconds=None,
+        now=101,
+    )
+    assert recovered.active_provider == "angel_one"
+    assert recovered.mode == "PRIMARY"
+    assert recovered.reason == "angel_recovered"
+
