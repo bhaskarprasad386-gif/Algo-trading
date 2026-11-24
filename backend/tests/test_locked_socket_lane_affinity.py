@@ -1,0 +1,31 @@
+from app.market_data.contracts import InstrumentKey
+from app.market_data.registry import InstrumentDescriptor
+
+
+def descriptor(kind, underlying, expiry_type=None):
+    return InstrumentDescriptor(
+        key=InstrumentKey("NFO" if kind != "index" else "NSE", "NFO" if kind != "index" else "NSE", f"{kind}-{underlying}-{expiry_type or 'spot'}"),
+        symbol=f"{underlying}-{kind}",
+        instrument_type=kind,
+        exchange="NFO" if kind != "index" else "NSE",
+        segment="NFO" if kind != "index" else "NSE",
+        underlying=underlying,
+        expiry_type=expiry_type,
+    )
+
+
+def test_locked_universe_has_exact_three_preferred_lanes():
+    assert descriptor("index", "NIFTY").preferred_socket_lane == 0
+    assert descriptor("option", "NIFTY", "WEEKLY").preferred_socket_lane == 0
+    assert descriptor("index", "BANKNIFTY").preferred_socket_lane == 1
+    assert descriptor("option", "BANKNIFTY", "MONTHLY").preferred_socket_lane == 1
+    assert descriptor("future", "NIFTY").preferred_socket_lane == 2
+    assert descriptor("future", "BANKNIFTY").preferred_socket_lane == 2
+
+
+def test_wrong_expiry_family_and_other_indices_are_not_assigned_to_locked_lanes():
+    assert descriptor("option", "NIFTY", "MONTHLY").preferred_socket_lane is None
+    assert descriptor("option", "BANKNIFTY", "WEEKLY").preferred_socket_lane is None
+    for symbol in ("FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"):
+        assert descriptor("index", symbol).preferred_socket_lane is None
+        assert descriptor("future", symbol).preferred_socket_lane is None
