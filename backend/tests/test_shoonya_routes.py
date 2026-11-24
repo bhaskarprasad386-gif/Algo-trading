@@ -749,3 +749,22 @@ def test_disconnect_clears_local_token_even_when_remote_logout_and_http_close_fa
     assert client.expires_at_monotonic is None
     http.post.assert_called_once()
     http.close.assert_called_once()
+
+
+
+def test_replacement_reservation_rejects_non_integer_and_non_positive_generations_atomically():
+    store = BrokerSessionStore()
+    owner_id = 99190
+    adapter = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="reserved"))
+    generation = store.reserve_replacement(owner_id, "shoonya")
+
+    for invalid in (True, False, 0, -1, 1.0, "1", None):
+        with pytest.raises(ValueError, match="replacement generation"):
+            store.replace_if_reserved(owner_id, "shoonya", adapter, invalid)
+        assert store.get(owner_id, "shoonya") is None
+
+    accepted, previous = store.replace_if_reserved(owner_id, "shoonya", adapter, generation)
+    assert accepted is True
+    assert previous is None
+    assert store.get(owner_id, "shoonya") is adapter
+    store.remove(owner_id, "shoonya")
