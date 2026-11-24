@@ -67,6 +67,16 @@ def test_session_store_clear_returns_all_sessions():
     assert store.get(7, "angel_one") is None
 
 
+
+@pytest.mark.parametrize("invalid_owner", [True, False, -1, 1.5, "7", None])
+def test_session_store_rejects_non_integer_or_negative_owner_ids(invalid_owner):
+    store = BrokerSessionStore()
+    with pytest.raises(ValueError, match="owner ID"):
+        store.get(invalid_owner, "shoonya")
+    with pytest.raises(ValueError, match="owner ID"):
+        store.clear_owner(invalid_owner)
+
+
 def test_session_store_rejects_empty_broker_name():
     store = BrokerSessionStore()
     with pytest.raises(ValueError, match="cannot be empty"):
