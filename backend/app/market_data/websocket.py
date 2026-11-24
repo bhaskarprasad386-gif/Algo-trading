@@ -897,18 +897,18 @@ class MarketDataWebSocket:
             and transport_thread.is_alive()
         ):
             abort = getattr(low_level_socket, "abort", None)
-            if callable(abort):
+            abort_attempted = callable(abort)
+            if abort_attempted:
                 try:
                     abort()
                 except Exception as abort_exc:
                     app_logger.error(f"Angel WebSocket transport abort failed during close: {abort_exc}")
+                transport_thread.join(timeout=1.0)
             # websocket-client's abort() is conditional on its connected flag.
             # WebSocket.close() clears that flag before waiting for the peer's
             # close frame, so abort() can be a no-op while recv_frame() remains
             # blocked. After a short abort grace period, shutdown() closes the
             # underlying descriptor unconditionally and wakes the receive thread.
-            if transport_thread.is_alive():
-                transport_thread.join(timeout=1.0)
             if transport_thread.is_alive():
                 shutdown = getattr(low_level_socket, "shutdown", None)
                 if callable(shutdown):
@@ -923,7 +923,7 @@ class MarketDataWebSocket:
                             f"Angel WebSocket transport shutdown failed during close: {shutdown_exc}"
                         )
                     transport_thread.join(timeout=6.0)
-                elif callable(abort):
+                elif abort_attempted:
                     # Preserve the existing bounded wait when abort exists but
                     # this SDK/socket wrapper exposes no separate shutdown().
                     transport_thread.join(timeout=6.0)
