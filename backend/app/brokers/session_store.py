@@ -76,7 +76,9 @@ class BrokerSessionStore:
         to the caller for logging, but never rolls back the new local session.
         """
         previous = self.replace(owner_id, broker, adapter)
-        if previous is None:
+        if previous is None or previous is adapter:
+            # Idempotent replacement must never disconnect the adapter that
+            # remains installed as the current session.
             return None
         try:
             previous.disconnect()
