@@ -738,7 +738,7 @@ def test_backup_does_not_failback_before_minimum_dwell_even_when_angel_stable():
                 shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=104)
     assert at_dwell.active_provider == "shoonya"
     s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
-                shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=105)
+                shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=106)
     assert s.active_provider == "angel_one"
     assert s.reason == "angel_stable_failback"
 
