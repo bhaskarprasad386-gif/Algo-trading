@@ -180,3 +180,33 @@ def test_commit_if_current_accepts_matching_active_reservation():
         generation=generation,
     )
     assert committed == [True]
+
+
+def test_stale_reconnect_cannot_remove_adapter_owned_by_newer_reservation():
+    store = BrokerSessionStore()
+    adapter = FakeAdapter("shoonya")
+    generation = store.reserve_replacement(7, "shoonya")
+    installed, _ = store.replace_if_reserved(7, "shoonya", adapter, generation)
+    assert installed is True
+
+    store.reserve_replacement(7, "shoonya")
+    removed = store.remove_if_current(
+        7, "shoonya", adapter, generation=generation
+    )
+
+    assert removed is False
+    assert store.get(7, "shoonya") is adapter
+    assert adapter.connected is True
+
+
+def test_current_reconnect_can_remove_its_own_failed_adapter():
+    store = BrokerSessionStore()
+    adapter = FakeAdapter("shoonya")
+    generation = store.reserve_replacement(7, "shoonya")
+    installed, _ = store.replace_if_reserved(7, "shoonya", adapter, generation)
+    assert installed is True
+
+    assert store.remove_if_current(
+        7, "shoonya", adapter, generation=generation
+    )
+    assert store.get(7, "shoonya") is None
