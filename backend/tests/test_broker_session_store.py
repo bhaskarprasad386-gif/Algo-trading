@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from app.brokers.connections import BrokerConnectionStore
 from app.brokers.session_store import BrokerSessionStore
 
 
@@ -351,3 +352,21 @@ def test_failed_metadata_commit_releases_lock_and_preserves_current_session():
     )
     assert committed == [True]
     assert store.get(7, "shoonya") is adapter
+
+
+def test_stale_session_cleanup_cannot_remove_newer_connection_metadata():
+    store = BrokerConnectionStore()
+    old_item = store.connect(7, "shoonya", "old-session")
+    new_item = store.connect(7, "shoonya", "new-session")
+
+    assert old_item is not new_item
+    assert store.disconnect_if_current(7, "shoonya", old_item) is False
+    assert store.get(7, "shoonya") is new_item
+
+
+def test_current_session_cleanup_removes_only_its_connection_metadata():
+    store = BrokerConnectionStore()
+    current = store.connect(7, "shoonya", "current-session")
+
+    assert store.disconnect_if_current(7, "shoonya", current) is True
+    assert store.get(7, "shoonya") is None
