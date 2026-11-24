@@ -127,6 +127,59 @@ def test_verify_consumes_flow_and_binds_broker_identity(monkeypatch, db_session)
     cleanup()
 
 
+def test_superseded_oauth_attempt_does_not_claim_owner_or_connection(monkeypatch, db_session):
+    cleanup()
+    store = Mock()
+    store.consume.return_value = Mock(uid="SH12345", account_id="SH12345")
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setenv("SHOONYA_REDIRECT_URI", "https://example.com/shoonya/callback")
+    claims, connected = [], []
+    monkeypatch.setattr(
+        shoonya_routes,
+        "claim_authenticated_account",
+        lambda db, broker, account: claims.append((broker, account)),
+    )
+    monkeypatch.setattr(
+        shoonya_routes,
+        "set_owner_connection_state",
+        lambda db, value: connected.append(value),
+    )
+    monkeypatch.setattr(shoonya_routes.trading_safety, "disable", lambda user_id: None)
+
+    def supersede_during_oauth(self, **kwargs):
+        # Simulate a later reconnect beginning while this OAuth exchange is slow.
+        broker_sessions.reserve_replacement(0, "shoonya")
+        return ShoonyaAuthenticatedSession("SH12345", "SH12345", "token")
+
+    monkeypatch.setattr(
+        shoonya_routes.ShoonyaOAuthAuthenticator,
+        "exchange_auth_code",
+        supersede_during_oauth,
+    )
+    client = FakeClient(uid="SH12345", account_id="SH12345", access_token="token")
+    monkeypatch.setattr(shoonya_routes, "ShoonyaRESTClient", lambda **kwargs: client)
+    monkeypatch.setattr(shoonya_routes, "ShoonyaAdapter", FakeAdapter)
+
+    with pytest.raises(HTTPException) as raised:
+        shoonya_routes.shoonya_verify(
+            shoonya_routes.ShoonyaVerifyRequest(
+                client_id="client-100",
+                secret_code="secret",
+                auth_code="auth-code",
+                flow_id="flow-id-1234567890",
+            ),
+            db=db_session,
+            user_id=0,
+        )
+
+    assert raised.value.status_code == 409
+    assert claims == []
+    assert connected == []
+    assert broker_sessions.get(0, "shoonya") is None
+    assert client.disconnected is True
+    cleanup()
+
+
 def test_verify_rejects_replayed_flow_before_network(monkeypatch, db_session):
     store = Mock()
     store.consume.side_effect = ValueError("replayed")
