@@ -1033,3 +1033,38 @@ def test_older_oauth_exchange_finishing_after_newer_success_cannot_replace_or_di
     assert clients["older-token"].disconnected is True
     assert clients["newer-token"].disconnected is False
     cleanup()
+
+
+def test_authenticator_revokes_issued_token_when_identity_fields_are_missing():
+    from app.brokers.shoonya_auth import ShoonyaAuthenticationError, ShoonyaOAuthAuthenticator
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    http = Mock()
+    http.post.side_effect = [
+        Response({"stat": "Ok", "susertoken": "orphan-token", "actid": "SH12345"}),
+        Response({"stat": "Ok"}),
+    ]
+
+    with pytest.raises(ShoonyaAuthenticationError, match="missing access token, UID or account identity"):
+        ShoonyaOAuthAuthenticator(http=http).exchange_auth_code(
+            client_id="cid",
+            secret_code="secret",
+            auth_code="auth",
+            expected_uid="SH12345",
+            expected_account_id="SH12345",
+        )
+
+    assert http.post.call_count == 2
+    logout = http.post.call_args_list[1]
+    assert logout.args[0].endswith("/Logout")
+    assert logout.kwargs["headers"]["Authorization"] == "Bearer orphan-token"
+    assert logout.kwargs["data"] == 'jData={"uid":"SH12345"}'
