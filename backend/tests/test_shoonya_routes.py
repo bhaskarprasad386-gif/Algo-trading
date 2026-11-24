@@ -413,8 +413,6 @@ def test_auth_url_prefers_server_client_id_over_request_value(monkeypatch):
     store.create.assert_called_once_with(
         owner_id=shoonya_routes.SHOONYA_SESSION_OWNER_ID,
         client_id="server-client",
-        uid="SH12345",
-        account_id="SH12345",
     )
 
 
