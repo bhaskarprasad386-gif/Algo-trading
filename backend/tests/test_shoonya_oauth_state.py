@@ -120,7 +120,7 @@ def test_rejects_unsafe_callback_uri(redirect_uri):
         )
 
 
-def test_store_is_bounded():
+def test_store_is_bounded_without_evicting_valid_flows():
     values = iter(("flow-1", "flow-2", "flow-3"))
     store = ShoonyaOAuthFlowStore(
         max_entries=2,
@@ -133,27 +133,33 @@ def test_store_is_bounded():
         uid="SH12345",
         account_id="SH12345",
     )
-    store.create(
-        owner_id=7,
+    second = store.create(
+        owner_id=8,
         client_id="client-100",
         redirect_uri="https://example.com/shoonya/callback",
-        uid="SH12345",
-        account_id="SH12345",
+        uid="SH99999",
+        account_id="SH99999",
     )
-    store.create(
-        owner_id=7,
-        client_id="client-100",
-        redirect_uri="https://example.com/shoonya/callback",
-        uid="SH12345",
-        account_id="SH12345",
-    )
-    with pytest.raises(ValueError, match="missing, expired, or already used"):
-        store.consume(
-            owner_id=7,
-            flow_id=first,
+    with pytest.raises(RuntimeError, match="capacity is exhausted"):
+        store.create(
+            owner_id=9,
             client_id="client-100",
             redirect_uri="https://example.com/shoonya/callback",
+            uid="SH00000",
+            account_id="SH00000",
         )
+    assert store.consume(
+        owner_id=7,
+        flow_id=first,
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+    ).owner_id == 7
+    assert store.consume(
+        owner_id=8,
+        flow_id=second,
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+    ).owner_id == 8
 
 
 
