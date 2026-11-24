@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 from time import monotonic
 
@@ -138,10 +137,6 @@ class ShoonyaRESTClient:
 shoonya_oauth_flows = ShoonyaOAuthFlowStore()
 
 
-def _configured_redirect_uri() -> str:
-    return str(os.getenv("SHOONYA_REDIRECT_URI") or "").strip()
-
-
 @router.post("/shoonya/auth-url")
 def shoonya_auth_url(
     payload: ShoonyaAuthUrlRequest,
@@ -150,14 +145,10 @@ def shoonya_auth_url(
     client_id = str(settings.SHOONYA_OAUTH_CLIENT_ID or "").strip()
     if not client_id:
         raise HTTPException(status_code=503, detail="Shoonya OAuth client ID is not configured on the server")
-    redirect_uri = _configured_redirect_uri()
-    if not redirect_uri:
-        raise HTTPException(status_code=503, detail="Shoonya redirect URI is not configured on the server")
     try:
         flow_id = shoonya_oauth_flows.create(
             owner_id=user_id,
             client_id=client_id,
-            redirect_uri=redirect_uri,
             uid=payload.uid,
             account_id=payload.account_id,
         )
@@ -169,7 +160,8 @@ def shoonya_auth_url(
         "authorization_url": url,
         "flow_id": flow_id,
         "expires_in": 600,
-        "callback": "Retain flow_id in the browser until the registered Shoonya callback returns the auth code.",
+        "authorization_code_mode": "manual",
+        "instructions": "Sign in at Shoonya, copy the auth code from the browser URL (even if the page says Access restricted), then submit it with this flow_id within 10 minutes.",
     }
 
 
@@ -188,7 +180,6 @@ def shoonya_verify(
             owner_id=user_id,
             flow_id=payload.flow_id,
             client_id=client_id,
-            redirect_uri=_configured_redirect_uri(),
         )
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Shoonya OAuth flow is invalid, expired, or already used") from exc
