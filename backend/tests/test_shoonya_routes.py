@@ -322,6 +322,7 @@ def test_auth_url_uses_server_configured_client_id_when_request_blank(monkeypatc
 
     assert "client_id=configured-client" in result["authorization_url"]
     store.create.assert_called_once_with(
+        owner_id=0,
         client_id="configured-client",
         redirect_uri="https://example.com/shoonya/callback",
         uid="SH12345",
@@ -383,6 +384,7 @@ def test_auth_url_prefers_server_client_id_over_request_value(monkeypatch):
     assert "client_id=server-client" in result["authorization_url"]
     assert "untrusted-request-client" not in result["authorization_url"]
     store.create.assert_called_once_with(
+        owner_id=0,
         client_id="server-client",
         redirect_uri="https://example.com/shoonya/callback",
         uid="SH12345",
