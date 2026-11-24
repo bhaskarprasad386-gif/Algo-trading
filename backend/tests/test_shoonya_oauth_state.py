@@ -156,6 +156,38 @@ def test_store_is_bounded():
         )
 
 
+
+def test_capacity_does_not_evict_another_valid_flow():
+    values = iter(("owner-a-flow", "owner-b-flow"))
+    store = ShoonyaOAuthFlowStore(
+        max_entries=1,
+        token_factory=lambda size: next(values),
+    )
+    first = store.create(
+        owner_id=7,
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+        uid="SH12345",
+        account_id="SH12345",
+    )
+
+    with pytest.raises(RuntimeError, match="capacity is exhausted"):
+        store.create(
+            owner_id=8,
+            client_id="client-100",
+            redirect_uri="https://example.com/shoonya/callback",
+            uid="SH99999",
+            account_id="SH99999",
+        )
+
+    pending = store.consume(
+        owner_id=7,
+        flow_id=first,
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+    )
+    assert pending.owner_id == 7
+
 def test_concurrent_consumers_cannot_reuse_same_oauth_flow():
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
