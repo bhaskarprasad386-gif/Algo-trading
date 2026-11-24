@@ -71,7 +71,6 @@ def test_auth_url_returns_authorize_url_and_correlated_flow(monkeypatch):
             uid="SH12345",
             account_id="SH12345",
         ),
-        user_id=0,
     )
 
     assert result["flow_id"] == "flow-id-1234567890"
@@ -110,8 +109,6 @@ def test_verify_consumes_flow_and_binds_broker_identity(monkeypatch, db_session)
             auth_code="auth-code",
             flow_id="flow-id-1234567890",
         ),
-        db=db_session,
-        user_id=0,
     )
 
     assert result["connected"] is True
@@ -161,9 +158,7 @@ def test_superseded_oauth_attempt_does_not_claim_owner_or_connection(monkeypatch
                 auth_code="auth-code",
                 flow_id="flow-id-1234567890",
             ),
-            db=db_session,
-            user_id=0,
-        )
+                )
 
     assert raised.value.status_code == 409
     assert claims == []
@@ -189,9 +184,7 @@ def test_verify_rejects_replayed_flow_before_network(monkeypatch, db_session):
                 auth_code="auth-code",
                 flow_id="flow-id-1234567890",
             ),
-            db=db_session,
-            user_id=0,
-        )
+                )
 
     assert raised.value.status_code == 401
     exchange.assert_not_called()
@@ -227,12 +220,7 @@ def test_owner_conflict_discards_session(monkeypatch, db_session):
     client = FakeClient(uid="SH12345", account_id="SH12345", access_token="token")
     monkeypatch.setattr(shoonya_routes, "ShoonyaRESTClient", lambda **kwargs: client)
     monkeypatch.setattr(shoonya_routes, "ShoonyaAdapter", FakeAdapter)
-    monkeypatch.setattr(
-        shoonya_routes,
-        "claim_authenticated_account",
-        lambda *args: (_ for _ in ()).throw(HTTPException(status_code=409, detail="owner conflict")),
-    )
-
+    
     with pytest.raises(HTTPException) as raised:
         shoonya_routes.shoonya_verify(
             shoonya_routes.ShoonyaVerifyRequest(
@@ -241,9 +229,7 @@ def test_owner_conflict_discards_session(monkeypatch, db_session):
                 auth_code="auth-code",
                 flow_id="flow-id-1234567890",
             ),
-            db=db_session,
-            user_id=0,
-        )
+                )
 
     assert raised.value.status_code == 409
     assert client.disconnected is True
@@ -303,7 +289,6 @@ def test_auth_url_uses_server_configured_client_id_when_request_blank(monkeypatc
             uid="SH12345",
             account_id="SH12345",
         ),
-        user_id=0,
     )
 
     assert "client_id=configured-client" in result["authorization_url"]
@@ -328,9 +313,7 @@ def test_verify_requires_server_credentials_even_when_request_supplies_credentia
                 auth_code="auth-code",
                 flow_id="flow-id-1234567890",
             ),
-            db=db_session,
-            user_id=0,
-        )
+                )
     assert raised.value.status_code == 503
     store.consume.assert_not_called()
 
@@ -349,9 +332,7 @@ def test_verify_rejects_request_only_client_id_when_server_client_id_missing(mon
                 auth_code="auth-code",
                 flow_id="flow-id-1234567890",
             ),
-            db=db_session,
-            user_id=0,
-        )
+                )
 
     assert raised.value.status_code == 503
     store.consume.assert_not_called()
@@ -367,8 +348,7 @@ def test_auth_url_rejects_request_only_client_id(monkeypatch):
                 uid="SH12345",
                 account_id="SH12345",
             ),
-            user_id=0,
-        )
+            )
     assert raised.value.status_code == 503
 
 
@@ -385,7 +365,6 @@ def test_auth_url_prefers_server_client_id_over_request_value(monkeypatch):
             uid="SH12345",
             account_id="SH12345",
         ),
-        user_id=0,
     )
 
     assert "client_id=server-client" in result["authorization_url"]
@@ -555,9 +534,7 @@ def test_verify_metadata_failure_removes_only_its_owned_session(monkeypatch, db_
                 auth_code="auth-code",
                 flow_id="flow-id-1234567890",
             ),
-            db=db_session,
-            user_id=0,
-        )
+                )
 
     assert raised.value.status_code == 503
     assert broker_sessions.get(0, "shoonya") is None
@@ -835,9 +812,7 @@ def test_verify_closes_oauth_transport_when_exchange_fails(monkeypatch, db_sessi
                 auth_code="auth-code",
                 flow_id="flow-id-1234567890",
             ),
-            db=db_session,
-            user_id=0,
-        )
+                )
 
     assert raised.value.status_code == 401
     assert transport.closed is True
@@ -873,8 +848,6 @@ def test_verify_closes_oauth_transport_after_successful_exchange(monkeypatch, db
             auth_code="auth-code",
             flow_id="flow-id-1234567890",
         ),
-        db=db_session,
-        user_id=0,
     )
 
     assert result["connected"] is True
@@ -981,7 +954,7 @@ def test_older_oauth_exchange_finishing_after_newer_success_cannot_replace_or_di
             # First OAuth request pauses inside token exchange while a newer
             # request completes the full authentication and session install.
             nested_results.append(
-                shoonya_routes.shoonya_verify(request, db=db_session, user_id=0)
+                shoonya_routes.shoonya_verify(request)
             )
             return ShoonyaAuthenticatedSession("SH12345", "SH12345", "older-token")
         return ShoonyaAuthenticatedSession("SH12345", "SH12345", "newer-token")
@@ -989,7 +962,7 @@ def test_older_oauth_exchange_finishing_after_newer_success_cannot_replace_or_di
     monkeypatch.setattr(shoonya_routes.ShoonyaOAuthAuthenticator, "exchange_auth_code", exchange)
 
     with pytest.raises(HTTPException) as raised:
-        shoonya_routes.shoonya_verify(request, db=db_session, user_id=0)
+        shoonya_routes.shoonya_verify(request)
 
     assert raised.value.status_code == 409
     assert nested_results[0]["connected"] is True
@@ -1088,7 +1061,6 @@ def test_manual_auth_url_does_not_require_registered_redirect(monkeypatch):
     monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
     result = shoonya_routes.shoonya_auth_url(
         shoonya_routes.ShoonyaAuthUrlRequest(uid="SH12345", account_id="SH12345"),
-        user_id=42,
     )
     assert result["authorization_code_mode"] == "manual"
     assert result["flow_id"] == "manual-flow-id-123456"
@@ -1119,8 +1091,6 @@ def test_manual_verify_consumes_flow_without_redirect_setting(monkeypatch, db_se
 
     result = shoonya_routes.shoonya_verify(
         shoonya_routes.ShoonyaVerifyRequest(auth_code="one-time-code", flow_id="manual-flow-id-123456"),
-        db=db_session,
-        user_id=42,
     )
     assert result["connected"] is True
     assert result["real_trading"] is False
