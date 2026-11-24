@@ -80,6 +80,21 @@ def test_auth_url_returns_authorize_url_and_correlated_flow(monkeypatch):
     )
 
 
+def test_auth_url_does_not_require_uid_actid_or_owner_login(monkeypatch):
+    store = Mock()
+    store.create.return_value = "flow-id-independent-123456"
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "server-client")
+
+    result = shoonya_routes.shoonya_auth_url(shoonya_routes.ShoonyaAuthUrlRequest())
+
+    assert result["broker"] == "shoonya"
+    store.create.assert_called_once_with(
+        owner_id=shoonya_routes.SHOONYA_SESSION_OWNER_ID,
+        client_id="server-client",
+    )
+
+
 def test_verify_consumes_flow_and_binds_broker_identity(monkeypatch, db_session):
     cleanup()
     store = Mock()
@@ -224,7 +239,7 @@ def test_shoonya_connection_does_not_claim_box_spread_owner(monkeypatch):
     assert result["uid"] == "SH12345"
     assert result["account_id"] == "ACT12345"
     assert broker_sessions.get(shoonya_routes.SHOONYA_SESSION_OWNER_ID, "shoonya").connected is True
-    assert broker_sessions.get(0, "shoonya") is None
+    assert broker_sessions.get(0, "shoonya") is None  # Box Spread owner namespace remains untouched
     cleanup()
 
 
