@@ -415,7 +415,6 @@ def test_auth_url_prefers_server_client_id_over_request_value(monkeypatch):
     store.create.assert_called_once_with(
         owner_id=0,
         client_id="server-client",
-        redirect_uri="https://example.com/shoonya/callback",
         uid="SH12345",
         account_id="SH12345",
     )
