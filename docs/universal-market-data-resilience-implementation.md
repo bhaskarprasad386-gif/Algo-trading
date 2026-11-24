@@ -102,3 +102,16 @@ This audit distinguishes a class that can open sockets from a production lifecyc
 ### Next acceptance gate
 
 Before enabling lane affinity, add deterministic tests for: canonical descriptor lookup across exchange/token identities; NIFTY/BANKNIFTY locked placement in the same mode; cross-mode group-cap rejection without assignment mutation; shared-instrument multi-consumer mode behavior; and failover/recovery placement preserving consumer routes. Then wire the pure plan into reconcile only after the plan can be validated without socket side effects.
+
+
+### Consumer-owner granularity audit — 2026-11-25
+
+A follow-up inspection of `SharedIndexFeedLifecycle` and `ConsumerSocketAffinity` found that the existing affinity helper's owner model does not match the live lifecycle's consumer boundaries:
+
+- The live lifecycle has three owners: `shared-index-market-data:spot`, `shared-index-market-data:options`, and `shared-index-market-data:futures`. The spot owner can hold both NIFTY and BANKNIFTY spot instruments; the options owner can hold NIFTY WEEKLY and BANKNIFTY MONTHLY options; futures are separately owned.
+- The standalone affinity helper instead declares `nifty`, `banknifty`, and `options` owners, and its third locked slot is currently named `options`. That does not represent the requested lane 2 (NIFTY + BANKNIFTY futures), and its first two owners cannot be mapped one-to-one to the live spot/options consumers.
+- Therefore, wiring the helper directly into reconcile would either split a consumer's subscriptions without preserving descriptor-level routes, or place mixed NIFTY/BANKNIFTY instruments together on the same consumer slot. Neither is acceptable.
+- The allocator must plan by canonical instrument identity and descriptor, not by consumer name. It must then project each instrument's chosen `SocketGroup(mode, shard)` back to every subscribed consumer route. The futures lane must include only NIFTY and BANKNIFTY futures; option lane membership is split by underlying and expiry family.
+- Before implementation, add tests proving one live consumer can route instruments to different lane groups while every consumer callback still receives exactly its own subscribed keys. Also test shared instrument subscriptions with multiple consumers/modes and exchange/token collisions without losing canonical identity.
+
+This is a concrete blocker, not a reason to rename the helper's owner labels: the helper's owner-level abstraction must be replaced or bypassed by an instrument-level planner before live allocator integration.
