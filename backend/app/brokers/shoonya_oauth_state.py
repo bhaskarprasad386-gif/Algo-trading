@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 class PendingShoonyaOAuth:
     owner_id: int
     client_id: str
-    redirect_uri: str
+    redirect_uri: str | None
     uid: str
     account_id: str
     issued_at: float
@@ -56,7 +56,7 @@ class ShoonyaOAuthFlowStore:
         *,
         owner_id: int,
         client_id: str,
-        redirect_uri: str,
+        redirect_uri: str | None = None,
         uid: str,
         account_id: str,
     ) -> str:
@@ -65,7 +65,7 @@ class ShoonyaOAuthFlowStore:
         client_id = str(client_id or "").strip()
         uid = str(uid or "").strip()
         account_id = str(account_id or "").strip()
-        redirect_uri = self._redirect(redirect_uri)
+        redirect_uri = self._redirect(redirect_uri) if redirect_uri else None
         if not all((client_id, uid, account_id)):
             raise ValueError("Shoonya client ID, UID and account ID are required")
         flow_id = str(self._token_factory(32) or "").strip()
@@ -103,13 +103,13 @@ class ShoonyaOAuthFlowStore:
         owner_id: int,
         flow_id: str,
         client_id: str,
-        redirect_uri: str,
+        redirect_uri: str | None = None,
     ) -> PendingShoonyaOAuth:
         if isinstance(owner_id, bool) or not isinstance(owner_id, int) or owner_id < 0:
             raise ValueError("Shoonya OAuth owner ID is invalid")
         flow_id = str(flow_id or "").strip()
         client_id = str(client_id or "").strip()
-        redirect_uri = self._redirect(redirect_uri)
+        redirect_uri = self._redirect(redirect_uri) if redirect_uri else None
         now = self._clock()
         with self._lock:
             pending = self._pending.get(flow_id)
