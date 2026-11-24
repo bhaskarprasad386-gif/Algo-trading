@@ -262,27 +262,36 @@ def shoonya_verify(
         }
     except HTTPException:
         if adapter is not None:
-            if broker_sessions.remove_if_current(user_id, "shoonya", adapter):
+            removed = broker_sessions.remove_if_current(
+                user_id, "shoonya", adapter, generation=replacement_generation
+            )
+            if removed:
                 broker_connections.disconnect(user_id, "shoonya")
-            _disconnect_adapter_best_effort(adapter)
+                _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             _disconnect_client_best_effort(client)
         db.rollback()
         raise
     except (ShoonyaAuthenticationError, ShoonyaHistoryUnavailable, ValueError) as exc:
         if adapter is not None:
-            if broker_sessions.remove_if_current(user_id, "shoonya", adapter):
+            removed = broker_sessions.remove_if_current(
+                user_id, "shoonya", adapter, generation=replacement_generation
+            )
+            if removed:
                 broker_connections.disconnect(user_id, "shoonya")
-            _disconnect_adapter_best_effort(adapter)
+                _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             _disconnect_client_best_effort(client)
         db.rollback()
         raise HTTPException(status_code=401, detail="Shoonya authentication or account verification failed") from exc
     except Exception as exc:
         if adapter is not None:
-            if broker_sessions.remove_if_current(user_id, "shoonya", adapter):
+            removed = broker_sessions.remove_if_current(
+                user_id, "shoonya", adapter, generation=replacement_generation
+            )
+            if removed:
                 broker_connections.disconnect(user_id, "shoonya")
-            _disconnect_adapter_best_effort(adapter)
+                _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             _disconnect_client_best_effort(client)
         db.rollback()
