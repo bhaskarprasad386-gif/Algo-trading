@@ -198,6 +198,7 @@ def shoonya_verify(
     trading_safety.disable(user_id)
     client: ShoonyaRESTClient | None = None
     adapter: ShoonyaAdapter | None = None
+    session_installed = False
     try:
         authenticated = ShoonyaOAuthAuthenticator().exchange_auth_code(
             client_id=client_id,
@@ -218,6 +219,7 @@ def shoonya_verify(
         installed, previous = broker_sessions.replace_if_reserved(
             user_id, "shoonya", adapter, replacement_generation
         )
+        session_installed = installed
         if not installed:
             raise HTTPException(status_code=409, detail="Shoonya session was superseded by a newer reconnect")
         if previous is not None:
@@ -268,6 +270,10 @@ def shoonya_verify(
             if removed:
                 broker_connections.disconnect(user_id, "shoonya")
                 _disconnect_adapter_best_effort(adapter)
+            elif not session_installed:
+                # This adapter never entered the registry (the reservation was
+                # superseded before installation), so it is always safe to close.
+                _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             _disconnect_client_best_effort(client)
         db.rollback()
@@ -280,6 +286,10 @@ def shoonya_verify(
             if removed:
                 broker_connections.disconnect(user_id, "shoonya")
                 _disconnect_adapter_best_effort(adapter)
+            elif not session_installed:
+                # This adapter never entered the registry (the reservation was
+                # superseded before installation), so it is always safe to close.
+                _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             _disconnect_client_best_effort(client)
         db.rollback()
@@ -291,6 +301,10 @@ def shoonya_verify(
             )
             if removed:
                 broker_connections.disconnect(user_id, "shoonya")
+                _disconnect_adapter_best_effort(adapter)
+            elif not session_installed:
+                # This adapter never entered the registry (the reservation was
+                # superseded before installation), so it is always safe to close.
                 _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             _disconnect_client_best_effort(client)
