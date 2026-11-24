@@ -111,11 +111,13 @@ class ShoonyaOAuthFlowStore:
         now = self._clock()
         with self._lock:
             pending = self._pending.get(flow_id)
-            if pending is not None and pending.owner_id != owner_id:
+            if pending is None or now - pending.issued_at >= self.ttl_seconds:
+                self._pending.pop(flow_id, None)
+                raise ValueError("Shoonya OAuth flow is missing, expired, or already used")
+            if pending.owner_id != owner_id:
                 raise ValueError("Shoonya OAuth flow does not belong to this owner")
-            pending = self._pending.pop(flow_id, None)
-        if pending is None or now - pending.issued_at >= self.ttl_seconds:
-            raise ValueError("Shoonya OAuth flow is missing, expired, or already used")
-        if pending.client_id != client_id or pending.redirect_uri != redirect_uri:
-            raise ValueError("Shoonya OAuth flow does not match this client and callback")
-        return pending
+            if pending.client_id != client_id or pending.redirect_uri != redirect_uri:
+                # A mismatched attempt must not let a caller invalidate the
+                # legitimate browser flow for this owner.
+                raise ValueError("Shoonya OAuth flow does not match this client and callback")
+            return self._pending.pop(flow_id)
