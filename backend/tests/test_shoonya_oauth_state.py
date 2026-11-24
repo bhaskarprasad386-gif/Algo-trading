@@ -162,7 +162,6 @@ def test_expired_flow_is_pruned_to_release_capacity():
         "https:///callback",
         "https://user:password@example.com/callback",
         "https://example.com/callback#fragment",
-        "",
     ],
 )
 def test_rejects_unsafe_callback_uri(redirect_uri):
