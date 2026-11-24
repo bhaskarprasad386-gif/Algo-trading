@@ -315,21 +315,31 @@ def test_auth_url_uses_server_configured_client_id_when_request_blank(monkeypatc
     store.create.return_value = "flow-id-server-config"
     monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
     monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "configured-client")
-    monkeypatch.setenv("SHOONYA_REDIRECT_URI", "https://example.com/shoonya/callback")
 
-    result = shoonya_routes.shoonya_auth_url(
-        shoonya_routes.ShoonyaAuthUrlRequest(
-            uid="SH12345",
-            account_id="SH12345",
-        ),
-    )
+    result = shoonya_routes.shoonya_auth_url(shoonya_routes.ShoonyaAuthUrlRequest())
 
     assert "client_id=configured-client" in result["authorization_url"]
     store.create.assert_called_once_with(
         owner_id=shoonya_routes.SHOONYA_SESSION_OWNER_ID,
         client_id="configured-client",
-        uid="SH12345",
-        account_id="SH12345",
+    )
+
+
+def test_auth_url_ignores_untrusted_request_client_id(monkeypatch):
+    store = Mock()
+    store.create.return_value = "flow-id-server-config"
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "server-client")
+
+    result = shoonya_routes.shoonya_auth_url(
+        shoonya_routes.ShoonyaAuthUrlRequest(client_id="attacker-client")
+    )
+
+    assert "client_id=server-client" in result["authorization_url"]
+    assert "attacker-client" not in result["authorization_url"]
+    store.create.assert_called_once_with(
+        owner_id=shoonya_routes.SHOONYA_SESSION_OWNER_ID,
+        client_id="server-client",
     )
 
 
