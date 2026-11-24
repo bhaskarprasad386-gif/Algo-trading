@@ -696,6 +696,11 @@ def test_failback_occurs_exactly_at_both_dwell_and_stability_boundaries():
     assert switched.active_provider == "shoonya"
     # Angel stability starts on the first fresh recovery tick at t=1.
     # Dwell (4s) expires at t=4, stability (5s) at t=6.
+    first_stable_tick = p.update(
+        failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=1.0,
+    )
+    assert first_stable_tick.active_provider == "shoonya"
     before_boundary = p.update(
         failed_angel_sockets=0, angel_tick_age_seconds=0.2,
         shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=5.999,
