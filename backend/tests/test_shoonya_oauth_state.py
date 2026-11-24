@@ -171,3 +171,32 @@ def test_concurrent_consumers_cannot_reuse_same_oauth_flow():
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: consume_once(), range(2)))
     assert sorted(results) == ["accepted", "rejected"]
+
+
+def test_flow_id_collision_does_not_overwrite_or_evict_existing_flow():
+    store = ShoonyaOAuthFlowStore(
+        max_entries=1,
+        token_factory=lambda size: "duplicate-flow",
+    )
+    flow_id = store.create(
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+        uid="SH12345",
+        account_id="SH12345",
+    )
+
+    with pytest.raises(RuntimeError, match="flow ID collision"):
+        store.create(
+            client_id="client-200",
+            redirect_uri="https://example.com/shoonya/callback",
+            uid="SH99999",
+            account_id="SH99999",
+        )
+
+    pending = store.consume(
+        flow_id=flow_id,
+        client_id="client-100",
+        redirect_uri="https://example.com/shoonya/callback",
+    )
+    assert pending.uid == "SH12345"
+    assert pending.account_id == "SH12345"
