@@ -894,3 +894,36 @@ def test_backup_tick_freshness_boundary_is_inclusive_and_immediately_expires_aft
     assert expired.active_provider == "none"
     assert expired.mode == "NO_VALID_FEED"
     assert expired.reason == "shoonya_feed_stale"
+
+
+def test_invalid_shoonya_tick_age_is_atomic_and_does_not_advance_timestamp():
+    import pytest
+
+    p = policy()
+    baseline = p.update(
+        failed_angel_sockets=0,
+        angel_tick_age_seconds=0.2,
+        shoonya_connected=True,
+        shoonya_tick_age_seconds=0.2,
+        now=2100,
+    )
+    with pytest.raises(ValueError, match="shoonya_tick_age_seconds"):
+        p.update(
+            failed_angel_sockets=3,
+            angel_tick_age_seconds=4.0,
+            shoonya_connected=True,
+            shoonya_tick_age_seconds=float("nan"),
+            now=2101,
+        )
+    assert p.snapshot() == baseline
+
+    # The rejected event must not poison the timestamp watermark.
+    recovered = p.update(
+        failed_angel_sockets=0,
+        angel_tick_age_seconds=0.2,
+        shoonya_connected=True,
+        shoonya_tick_age_seconds=0.2,
+        now=2101,
+    )
+    assert recovered.active_provider == "angel_one"
+    assert recovered.reason == "angel_healthy"
