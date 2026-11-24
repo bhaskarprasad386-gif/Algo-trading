@@ -38,6 +38,17 @@ class BrokerConnectionStore:
         with self._lock:
             self._items.pop((user_id, broker), None)
 
+    def disconnect_if_current(
+        self, user_id: int, broker: str, expected: BrokerConnection
+    ) -> bool:
+        """Remove connection metadata only while it still belongs to this session."""
+        with self._lock:
+            key = (user_id, broker)
+            if self._items.get(key) is not expected:
+                return False
+            self._items.pop(key, None)
+            return True
+
     def get(self, user_id: int, broker: str) -> BrokerConnection | None:
         with self._lock:
             return self._items.get((user_id, broker))
