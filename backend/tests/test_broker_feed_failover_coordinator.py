@@ -784,3 +784,26 @@ def test_uncloneable_canonical_payload_is_counted_invalid_without_crashing():
     assert snap["latest_record_count"] == 0
     assert snap["forwarded_ticks"] == 0
     assert snap["callback_errors"] == 0
+
+
+def test_rejected_out_of_order_policy_evaluation_preserves_coordinator_decision():
+    import pytest
+    c = MarketDataFailoverCoordinator(policy=policy(), on_record=lambda _p, _r: None)
+    baseline = c.evaluate(
+        failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=200,
+    )
+    before = c.snapshot()
+    with pytest.raises(ValueError, match="out-of-order health update timestamp"):
+        c.evaluate(
+            failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+            shoonya_connected=False, shoonya_tick_age_seconds=None, now=199,
+        )
+    assert c.snapshot() == before
+    # Subsequent valid evaluation still advances normally and keeps the active feed.
+    next_decision = c.evaluate(
+        failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=201,
+    )
+    assert next_decision.active_provider == baseline.active_provider == "angel_one"
+    assert next_decision.reason == "angel_healthy"
