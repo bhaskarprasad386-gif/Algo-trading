@@ -520,3 +520,55 @@ def test_prune_instrument_universe_reentrant_from_callback_clears_watermarks():
     assert snap["forwarded_ticks"] == 2
     assert snap["callback_errors"] == 0
     assert snap["latest_record_count"] == 0
+
+
+def test_pruning_one_instrument_preserves_other_instrument_ordering_state():
+    received = []
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: received.append((r["instrument_key"], r["timestamp_ns"])))
+    assert c.observe("angel_one", tick("NIFTY", 500, 100)) is True
+    assert c.observe("angel_one", tick("BANKNIFTY", 700, 200)) is True
+    assert c.prune_instruments(["BANKNIFTY"]) == 1
+    # The retired instrument starts a fresh clock, while the retained one still
+    # rejects replay from before its watermark.
+    assert c.observe("angel_one", tick("NIFTY", 499, 99)) is False
+    assert c.observe("angel_one", tick("BANKNIFTY", 700, 201)) is True
+    assert received == [("NIFTY", 500), ("BANKNIFTY", 700), ("BANKNIFTY", 700)]
+    assert c.snapshot()["latest_record_count"] == 1
+
+
+
+def test_prune_normalized_duplicate_active_keys_is_idempotent():
+    c = MarketDataFailoverCoordinator(on_record=lambda _p, _r: None)
+    assert c.observe("angel_one", tick("NIFTY", 600, 100)) is True
+    assert c.observe("shoonya", tick("BANKNIFTY", 600, 200)) is False
+    # Normalized aliases describe one retained instrument; repeated prune calls
+    # do not double-count retired keys or mutate retained state.
+    assert c.prune_instruments([" NIFTY ", "NIFTY", " NIFTY "]) == 1
+    assert c.snapshot()["latest_record_count"] == 1
+    assert c.prune_instruments(["NIFTY"]) == 0
+    assert c.snapshot()["latest_record_count"] == 1
+    assert c.observe("angel_one", tick("NIFTY", 600, 101)) is True
+
+
+
+def test_prune_generator_failure_is_atomic_before_state_mutation():
+    c = MarketDataFailoverCoordinator(on_record=lambda _p, _r: None)
+    assert c.observe("angel_one", tick("NIFTY", 800, 100)) is True
+    assert c.observe("angel_one", tick("BANKNIFTY", 900, 200)) is True
+
+    def broken_keys():
+        yield "NIFTY"
+        raise RuntimeError("universe snapshot interrupted")
+
+    try:
+        c.prune_instruments(broken_keys())
+    except RuntimeError as exc:
+        assert "interrupted" in str(exc)
+    else:
+        raise AssertionError("generator failure must propagate")
+    # Since the active universe was never fully validated, neither cache nor
+    # timestamp watermarks should have been pruned.
+    assert c.snapshot()["latest_record_count"] == 2
+    assert c.observe("angel_one", tick("BANKNIFTY", 899, 199)) is False
+    assert c.observe("angel_one", tick("NIFTY", 799, 99)) is False
+
