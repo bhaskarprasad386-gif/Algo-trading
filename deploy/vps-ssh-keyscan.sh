@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "\${VPS_HOST:?VPS_HOST must be set}"
+: "${VPS_HOST:?VPS_HOST must be set}"
 
-VPS_SSH_PORT="\${VPS_SSH_PORT:-22}"
-EVIDENCE_FILE="\${VPS_HEALTH_EVIDENCE_FILE:-/tmp/vps-health-probe.txt}"
-KNOWN_HOSTS_FILE="\${VPS_KNOWN_HOSTS_FILE:-$HOME/.ssh/known_hosts}"
-KEYSCAN_BIN="\${VPS_KEYSCAN_BIN:-ssh-keyscan}"
-TIMEOUT_BIN="\${VPS_TIMEOUT_BIN:-timeout}"
-SLEEP_BIN="\${VPS_SLEEP_BIN:-sleep}"
-PYTHON_BIN="\${VPS_PYTHON_BIN:-python3}"
-MAX_ATTEMPTS="\${VPS_KEYSCAN_ATTEMPTS:-3}"
-COMMAND_TIMEOUT="\${VPS_KEYSCAN_COMMAND_TIMEOUT_SECONDS:-8}"
-CONNECT_TIMEOUT="\${VPS_KEYSCAN_CONNECT_TIMEOUT_SECONDS:-5}"
-RETRY_DELAY="\${VPS_KEYSCAN_RETRY_DELAY_SECONDS:-2}"
-TCP_TIMEOUT="\${VPS_TCP_PROBE_TIMEOUT_SECONDS:-3}"
+VPS_SSH_PORT="${VPS_SSH_PORT:-22}"
+EVIDENCE_FILE="${VPS_HEALTH_EVIDENCE_FILE:-/tmp/vps-health-probe.txt}"
+KNOWN_HOSTS_FILE="${VPS_KNOWN_HOSTS_FILE:-$HOME/.ssh/known_hosts}"
+KEYSCAN_BIN="${VPS_KEYSCAN_BIN:-ssh-keyscan}"
+TIMEOUT_BIN="${VPS_TIMEOUT_BIN:-timeout}"
+SLEEP_BIN="${VPS_SLEEP_BIN:-sleep}"
+PYTHON_BIN="${VPS_PYTHON_BIN:-python3}"
+MAX_ATTEMPTS="${VPS_KEYSCAN_ATTEMPTS:-3}"
+COMMAND_TIMEOUT="${VPS_KEYSCAN_COMMAND_TIMEOUT_SECONDS:-8}"
+CONNECT_TIMEOUT="${VPS_KEYSCAN_CONNECT_TIMEOUT_SECONDS:-5}"
+RETRY_DELAY="${VPS_KEYSCAN_RETRY_DELAY_SECONDS:-2}"
+TCP_TIMEOUT="${VPS_TCP_PROBE_TIMEOUT_SECONDS:-3}"
 
 mkdir -p "$(dirname "$EVIDENCE_FILE")" "$(dirname "$KNOWN_HOSTS_FILE")"
 : > "$EVIDENCE_FILE"
@@ -31,8 +31,8 @@ keyscan_ok=0
 last_failure_kind=UNKNOWN
 
 for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
-  stdout_file="$tmpdir/keyscan-\${attempt}.stdout"
-  stderr_file="$tmpdir/keyscan-\${attempt}.stderr"
+  stdout_file="$tmpdir/keyscan-${attempt}.stdout"
+  stderr_file="$tmpdir/keyscan-${attempt}.stderr"
 
   if "$TIMEOUT_BIN" "$COMMAND_TIMEOUT" "$KEYSCAN_BIN" \
       -T "$CONNECT_TIMEOUT" -p "$VPS_SSH_PORT" -H "$VPS_HOST" \
