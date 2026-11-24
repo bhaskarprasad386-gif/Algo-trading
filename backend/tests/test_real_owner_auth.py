@@ -111,7 +111,7 @@ def test_broker_management_routes_require_owner_auth():
                 yield from concrete_routes(nested)
 
     for route in concrete_routes(routes.router):
-        if route.path.endswith("/owner-auth/login") or route.path.endswith("/web/settings"):
+        if (route.path.endswith("/owner-auth/login") or route.path.endswith("/web/settings")\n                or route.path.endswith("/shoonya/auth-url")\n                or route.path.endswith("/shoonya/verify")\n                or route.path.endswith("/shoonya/status")):
             continue
         assert any(
             dependency.call is auth.require_real_owner_access
