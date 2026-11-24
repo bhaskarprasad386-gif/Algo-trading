@@ -33,6 +33,13 @@ def _disconnect_adapter_best_effort(adapter: ShoonyaAdapter) -> None:
         app_logger.error("Shoonya adapter cleanup failed: %s", type(cleanup_error).__name__)
 
 
+def _disconnect_client_best_effort(client: ShoonyaRESTClient) -> None:
+    try:
+        client.disconnect()
+    except Exception as cleanup_error:
+        app_logger.error("Shoonya client cleanup failed: %s", type(cleanup_error).__name__)
+
+
 
 class ShoonyaAuthUrlRequest(BaseModel):
     client_id: str = Field(default="", max_length=200)
@@ -255,14 +262,14 @@ def shoonya_verify(
                 broker_connections.disconnect(user_id, "shoonya")
             _disconnect_adapter_best_effort(adapter)
         elif client is not None:
-            client.disconnect()
+            _disconnect_client_best_effort(client)
         db.rollback()
         raise
     except (ShoonyaAuthenticationError, ShoonyaHistoryUnavailable, ValueError) as exc:
         if adapter is not None:
             if broker_sessions.remove_if_current(user_id, "shoonya", adapter):
                 broker_connections.disconnect(user_id, "shoonya")
-            adapter.disconnect()
+            _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             client.disconnect()
         db.rollback()
