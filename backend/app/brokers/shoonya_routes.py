@@ -200,13 +200,28 @@ def shoonya_verify(
     adapter: ShoonyaAdapter | None = None
     session_installed = False
     try:
-        authenticated = ShoonyaOAuthAuthenticator().exchange_auth_code(
-            client_id=client_id,
-            secret_code=secret_code,
-            auth_code=payload.auth_code,
-            expected_uid=pending.uid,
-            expected_account_id=pending.account_id,
-        )
+        authenticator = ShoonyaOAuthAuthenticator()
+        try:
+            authenticated = authenticator.exchange_auth_code(
+                client_id=client_id,
+                secret_code=secret_code,
+                auth_code=payload.auth_code,
+                expected_uid=pending.uid,
+                expected_account_id=pending.account_id,
+            )
+        finally:
+            # The authenticator owns a one-shot requests.Session for the token
+            # exchange. Close its pool on both success and failure.
+            transport = getattr(authenticator, "http", None)
+            close_transport = getattr(transport, "close", None)
+            if callable(close_transport):
+                try:
+                    close_transport()
+                except Exception as cleanup_error:
+                    app_logger.error(
+                        "Shoonya OAuth transport cleanup failed: %s",
+                        type(cleanup_error).__name__,
+                    )
         client = ShoonyaRESTClient(
             uid=authenticated.uid,
             account_id=authenticated.account_id,
