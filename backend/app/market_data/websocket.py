@@ -899,6 +899,26 @@ class MarketDataWebSocket:
                     abort()
                 except Exception as abort_exc:
                     app_logger.error(f"Angel WebSocket transport abort failed during close: {abort_exc}")
+            # websocket-client's abort() is conditional on its connected flag.
+            # WebSocket.close() clears that flag before waiting for the peer's
+            # close frame, so abort() can be a no-op while recv_frame() remains
+            # blocked. After a short abort grace period, shutdown() closes the
+            # underlying descriptor unconditionally and wakes the receive thread.
+            if transport_thread.is_alive():
+                transport_thread.join(timeout=1.0)
+            if transport_thread.is_alive():
+                shutdown = getattr(low_level_socket, "shutdown", None)
+                if callable(shutdown):
+                    try:
+                        shutdown()
+                        app_logger.warning(
+                            "Angel WebSocket transport required immediate descriptor shutdown "
+                            "after abort did not terminate the close-handshake reader"
+                        )
+                    except Exception as shutdown_exc:
+                        app_logger.error(
+                            f"Angel WebSocket transport shutdown failed during close: {shutdown_exc}"
+                        )
                 transport_thread.join(timeout=6.0)
         # A timed-out SDK close call may unwind after the transport is aborted.
         # Do not let that helper hold the common-feed retirement worker forever.
