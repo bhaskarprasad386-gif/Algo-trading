@@ -534,3 +534,36 @@ def test_metadata_commit_lock_blocks_concurrent_session_replacement():
     finally:
         release_operation.set()
         broker_sessions.remove(owner_id, "shoonya")
+
+
+def test_reconnect_reservation_prevents_slow_old_oauth_exchange_from_overwriting_new_session():
+    owner_id = 99178
+    existing = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="existing"))
+    older_attempt = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="older"))
+    newer_attempt = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="newer"))
+    broker_sessions.replace(owner_id, "shoonya", existing)
+
+    older_generation = broker_sessions.reserve_replacement(owner_id, "shoonya")
+    newer_generation = broker_sessions.reserve_replacement(owner_id, "shoonya")
+
+    accepted_old, displaced_old = broker_sessions.replace_if_reserved(
+        owner_id, "shoonya", older_attempt, older_generation
+    )
+    assert accepted_old is False
+    assert displaced_old is None
+    assert broker_sessions.get(owner_id, "shoonya") is existing
+    assert older_attempt.connected is False
+
+    accepted_new, displaced_new = broker_sessions.replace_if_reserved(
+        owner_id, "shoonya", newer_attempt, newer_generation
+    )
+    assert accepted_new is True
+    assert displaced_new is existing
+    assert broker_sessions.get(owner_id, "shoonya") is newer_attempt
+    assert existing.connected is True  # install itself never performs network cleanup
+
+    # Only the winning reconnect owns cleanup of the displaced adapter.
+    displaced_new.disconnect()
+    assert existing.connected is False
+    broker_sessions.remove(owner_id, "shoonya")
+    newer_attempt.disconnect()
