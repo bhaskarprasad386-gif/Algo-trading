@@ -842,6 +842,11 @@ class MarketDataWebSocket:
             self._connecting = False
             socket = self.websocket
             self.websocket = None
+            # Retain the SDK's low-level WebSocket before close_connection() or
+            # WebSocketApp.teardown() can clear wsapp.sock while its close-handshake
+            # reader is still blocked.
+            wsapp = getattr(socket, "wsapp", None) if socket is not None else None
+            low_level_socket = getattr(wsapp, "sock", None) if wsapp is not None else None
             # connect() may still be waiting for the SDK handshake and therefore
             # has not copied the SDK's transport thread onto this wrapper yet.
             # Read the SDK-owned thread directly so close can retire it now.
@@ -891,8 +896,6 @@ class MarketDataWebSocket:
             and transport_thread is not current_thread()
             and transport_thread.is_alive()
         ):
-            wsapp = getattr(socket, "wsapp", None) if socket is not None else None
-            low_level_socket = getattr(wsapp, "sock", None) if wsapp is not None else None
             abort = getattr(low_level_socket, "abort", None)
             if callable(abort):
                 try:
