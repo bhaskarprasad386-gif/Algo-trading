@@ -628,3 +628,90 @@ def test_invalid_provider_does_not_mutate_cache_or_ordering_counters():
     assert after["forwarded_ticks"] == before["forwarded_ticks"]
     assert after["suppressed_ticks"] == before["suppressed_ticks"]
     assert after["invalid_records"] == before["invalid_records"]
+
+def test_concurrent_provider_switch_and_observation_never_delivers_wrong_provider_after_decision():
+    from threading import Barrier, Thread
+
+    delivered = []
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: delivered.append((p, r["timestamp_ns"])))
+    barrier = Barrier(3)
+
+    def primary_tick():
+        barrier.wait(timeout=2)
+        return c.observe("angel_one", tick("NIFTY", 1300, 100))
+
+    def switch():
+        barrier.wait(timeout=2)
+        return c.evaluate(
+            failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+            shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=30,
+        )
+
+    t1, t2 = Thread(target=primary_tick), Thread(target=switch)
+    t1.start()
+    t2.start()
+    barrier.wait(timeout=2)
+    t1.join(timeout=2)
+    t2.join(timeout=2)
+    assert not t1.is_alive() and not t2.is_alive()
+    # Whichever lock operation wins first, the switch is atomic with tick
+    # delivery: no primary tick can be forwarded after backup is selected.
+    assert delivered in ([("angel_one", 1300)], [])
+    assert c.snapshot()["active_provider"] == "shoonya"
+
+
+def test_callback_mutation_on_success_never_changes_cached_record():
+    delivered = []
+
+    def callback(provider, record):
+        record["nested"]["value"] = "consumer-mutated"
+        delivered.append((provider, record["nested"]["value"]))
+
+    original = {"instrument_key": "NIFTY", "timestamp_ns": 1400,
+               "nested": {"value": "original"}}
+    c = MarketDataFailoverCoordinator(on_record=callback)
+    assert c.observe("angel_one", original) is True
+    assert original["nested"]["value"] == "original"
+    assert c._latest[("angel_one", "NIFTY")]["nested"]["value"] == "original"
+    assert delivered == [("angel_one", "consumer-mutated")]
+
+
+def test_backup_tick_cache_does_not_become_forwarded_after_switch_without_new_tick():
+    delivered = []
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: delivered.append((p, r["timestamp_ns"])))
+    # Standby tick cached before provider selection changes.
+    assert c.observe("shoonya", tick("NIFTY", 1500, 100)) is False
+    c.evaluate(
+        failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=40,
+    )
+    # Cached backup data is not replayed automatically on selection; a fresh
+    # observe event is required to reach downstream.
+    assert delivered == []
+    assert c.observe("shoonya", tick("NIFTY", 1501, 101)) is True
+    assert delivered == [("shoonya", 1501)]
+
+def test_switch_back_to_primary_suppresses_cross_provider_timestamp_replay():
+    delivered = []
+    c = MarketDataFailoverCoordinator(on_record=lambda p, r: delivered.append((p, r["timestamp_ns"])))
+    assert c.observe("angel_one", tick("NIFTY", 1600, 100)) is True
+    c.evaluate(
+        failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=50,
+    )
+    assert c.observe("shoonya", tick("NIFTY", 1601, 101)) is True
+    # Failback decision is deterministic after stability/dwell.
+    c.evaluate(
+        failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=56,
+    )
+    assert c.snapshot()["active_provider"] == "shoonya"
+    c.evaluate(
+        failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=60,
+    )
+    assert c.snapshot()["active_provider"] == "angel_one"
+    assert c.observe("angel_one", tick("NIFTY", 1601, 102)) is False
+    assert c.observe("angel_one", tick("NIFTY", 1602, 103)) is True
+    assert delivered == [("angel_one", 1600), ("shoonya", 1601), ("angel_one", 1602)]
+
