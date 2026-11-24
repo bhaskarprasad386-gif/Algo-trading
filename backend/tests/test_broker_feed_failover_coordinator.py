@@ -710,6 +710,11 @@ def test_switch_back_to_primary_suppresses_cross_provider_timestamp_replay():
         failed_angel_sockets=0, angel_tick_age_seconds=0.2,
         shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=60,
     )
+    assert c.snapshot()["active_provider"] == "shoonya"
+    c.evaluate(
+        failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=61,
+    )
     assert c.snapshot()["active_provider"] == "angel_one"
     assert c.observe("angel_one", tick("NIFTY", 1601, 102)) is False
     assert c.observe("angel_one", tick("NIFTY", 1602, 103)) is True
