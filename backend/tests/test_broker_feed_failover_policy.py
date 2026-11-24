@@ -778,6 +778,8 @@ def test_timing_configuration_rejects_zero_negative_bool_and_nonfinite_values():
                   "minimum_shoonya_dwell_seconds"):
         for invalid in (0, -1, True, float("inf"), float("nan")):
             kwargs = {field: invalid}
+            if field == "angel_failover_stale_seconds":
+                kwargs["angel_tick_fresh_seconds"] = 0.5
             with pytest.raises(ValueError, match="finite and positive"):
                 MarketDataFailoverPolicy(**kwargs)
 
@@ -804,4 +806,52 @@ def test_angel_fresh_recovery_exits_grace_wait_without_backup():
     assert recovered.active_provider == "angel_one"
     assert recovered.mode == "PRIMARY"
     assert recovered.reason == "angel_recovered"
+
+def test_failover_stale_threshold_must_exceed_tick_freshness_threshold():
+    import pytest
+
+    with pytest.raises(ValueError, match="must exceed tick freshness"):
+        MarketDataFailoverPolicy(
+            angel_tick_fresh_seconds=2.5,
+            angel_failover_stale_seconds=2.5,
+        )
+    # A valid wider grace window is accepted.
+    MarketDataFailoverPolicy(
+        angel_tick_fresh_seconds=2.5,
+        angel_failover_stale_seconds=2.6,
+    )
+
+
+def test_backup_freshness_does_not_short_circuit_angel_grace_window():
+    p = policy()
+    grace = p.update(
+        failed_angel_sockets=0,
+        angel_tick_age_seconds=2.0,
+        shoonya_connected=True,
+        shoonya_tick_age_seconds=0.2,
+        now=100,
+    )
+    assert grace.active_provider == "none"
+    assert grace.mode == "DEGRADED_WAIT"
+
+    backup = p.update(
+        failed_angel_sockets=0,
+        angel_tick_age_seconds=2.9,
+        shoonya_connected=True,
+        shoonya_tick_age_seconds=0.2,
+        now=101,
+    )
+    assert backup.active_provider == "none"
+    assert backup.mode == "DEGRADED_WAIT"
+
+    failover = p.update(
+        failed_angel_sockets=0,
+        angel_tick_age_seconds=3.0,
+        shoonya_connected=True,
+        shoonya_tick_age_seconds=0.2,
+        now=102,
+    )
+    assert failover.active_provider == "shoonya"
+    assert failover.mode == "BACKUP"
+    assert failover.reason == "angel_feed_stale"
 
