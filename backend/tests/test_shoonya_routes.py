@@ -541,6 +541,7 @@ def test_reconnect_reservation_prevents_slow_old_oauth_exchange_from_overwriting
     existing = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="existing"))
     older_attempt = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="older"))
     newer_attempt = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="newer"))
+    existing.connected = True
     broker_sessions.replace(owner_id, "shoonya", existing)
 
     older_generation = broker_sessions.reserve_replacement(owner_id, "shoonya")
