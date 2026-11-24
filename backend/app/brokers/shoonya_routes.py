@@ -158,6 +158,20 @@ def shoonya_auth_url(
     }
 
 
+@router.get("/shoonya/status")
+def shoonya_status() -> dict:
+    """Expose only connection state; never disclose account identity or credentials."""
+    adapter = broker_sessions.get(SHOONYA_SESSION_OWNER_ID, "shoonya")
+    item = broker_connections.get(SHOONYA_SESSION_OWNER_ID, "shoonya")
+    connected = adapter is not None and item is not None and item.connected
+    return {
+        "broker": "shoonya",
+        "connected": connected,
+        "real_trading": False,
+        "kill_switch": True,
+    }
+
+
 @router.post("/shoonya/verify")
 def shoonya_verify(
     payload: ShoonyaVerifyRequest,
