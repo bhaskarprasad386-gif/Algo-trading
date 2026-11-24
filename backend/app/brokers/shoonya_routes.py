@@ -25,6 +25,15 @@ from app.core.logger import app_logger
 router = APIRouter()
 
 
+def _disconnect_adapter_best_effort(adapter: ShoonyaAdapter) -> None:
+    """Keep cleanup failures from masking the original auth/metadata error."""
+    try:
+        adapter.disconnect()
+    except Exception as cleanup_error:
+        app_logger.error("Shoonya adapter cleanup failed: %s", type(cleanup_error).__name__)
+
+
+
 class ShoonyaAuthUrlRequest(BaseModel):
     client_id: str = Field(default="", max_length=200)
     uid: str = Field(min_length=1, max_length=100)
@@ -244,7 +253,7 @@ def shoonya_verify(
         if adapter is not None:
             if broker_sessions.remove_if_current(user_id, "shoonya", adapter):
                 broker_connections.disconnect(user_id, "shoonya")
-            adapter.disconnect()
+            _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             client.disconnect()
         db.rollback()
