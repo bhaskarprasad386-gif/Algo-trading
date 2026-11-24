@@ -144,6 +144,23 @@ class BrokerSessionStore:
             return True
 
 
+    def remove_if_adapter_current(
+        self, owner_id: int, broker: str, adapter: BrokerAdapter
+    ) -> bool:
+        """Detach a failed adapter by identity without invalidating a newer reservation.
+
+        A newer reconnect may reserve while this adapter is installed but before
+        the replacement is ready. The failed attempt must be removable in that
+        window, while preserving the newer attempt's generation. If the newer
+        adapter has already installed, identity comparison protects it.
+        """
+        key = self._key(owner_id, broker)
+        with self._lock:
+            if self._sessions.get(key) is not adapter:
+                return False
+            self._sessions.pop(key, None)
+            return True
+
     def get(self, owner_id: int, broker: str) -> BrokerAdapter | None:
         key = self._key(owner_id, broker)
         with self._lock:
