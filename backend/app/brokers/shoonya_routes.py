@@ -271,16 +271,16 @@ def shoonya_verify(
                 broker_connections.disconnect(user_id, "shoonya")
             _disconnect_adapter_best_effort(adapter)
         elif client is not None:
-            client.disconnect()
+            _disconnect_client_best_effort(client)
         db.rollback()
         raise HTTPException(status_code=401, detail="Shoonya authentication or account verification failed") from exc
     except Exception as exc:
         if adapter is not None:
             if broker_sessions.remove_if_current(user_id, "shoonya", adapter):
                 broker_connections.disconnect(user_id, "shoonya")
-            adapter.disconnect()
+            _disconnect_adapter_best_effort(adapter)
         elif client is not None:
-            client.disconnect()
+            _disconnect_client_best_effort(client)
         db.rollback()
         app_logger.error("Shoonya durable account binding failed: %s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Shoonya account could not be safely bound to the Box Spread owner") from exc
