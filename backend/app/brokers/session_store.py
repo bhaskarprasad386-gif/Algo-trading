@@ -34,6 +34,7 @@ class BrokerSessionStore:
         if adapter_name != key[1]:
             raise ValueError("adapter name does not match broker session key")
         with self._lock:
+            self._replacement_generations[key] = self._replacement_generations.get(key, 0) + 1
             previous = self._sessions.get(key)
             self._sessions[key] = adapter
             return previous
@@ -76,6 +77,7 @@ class BrokerSessionStore:
             if self._sessions.get(key) is not adapter:
                 return False
             self._sessions.pop(key, None)
+            self._replacement_generations[key] = self._replacement_generations.get(key, 0) + 1
             return True
 
 
@@ -87,12 +89,16 @@ class BrokerSessionStore:
     def remove(self, owner_id: int, broker: str) -> BrokerAdapter | None:
         key = self._key(owner_id, broker)
         with self._lock:
-            return self._sessions.pop(key, None)
+            adapter = self._sessions.pop(key, None)
+            self._replacement_generations[key] = self._replacement_generations.get(key, 0) + 1
+            return adapter
 
     def clear_owner(self, owner_id: int) -> list[BrokerAdapter]:
         owner = int(owner_id)
         with self._lock:
             keys = [key for key in self._sessions if key[0] == owner]
+            for key in keys:
+                self._replacement_generations[key] = self._replacement_generations.get(key, 0) + 1
             return [self._sessions.pop(key) for key in keys]
 
     def clear(self) -> list[BrokerAdapter]:
