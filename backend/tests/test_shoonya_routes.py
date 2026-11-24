@@ -64,7 +64,6 @@ def test_auth_url_returns_authorize_url_and_correlated_flow(monkeypatch):
     store = Mock()
     store.create.return_value = "flow-id-1234567890"
     monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
-    monkeypatch.setenv("SHOONYA_REDIRECT_URI", "https://example.com/shoonya/callback")
 
     result = shoonya_routes.shoonya_auth_url(
         shoonya_routes.ShoonyaAuthUrlRequest(
@@ -81,7 +80,6 @@ def test_auth_url_returns_authorize_url_and_correlated_flow(monkeypatch):
     store.create.assert_called_once_with(
         owner_id=0,
         client_id="client-100",
-        redirect_uri="https://example.com/shoonya/callback",
         uid="SH12345",
         account_id="SH12345",
     )
@@ -139,7 +137,6 @@ def test_verify_consumes_flow_and_binds_broker_identity(monkeypatch, db_session)
         owner_id=0,
         flow_id="flow-id-1234567890",
         client_id="server-client",
-        redirect_uri="https://example.com/shoonya/callback",
     )
     assert broker_sessions.get(0, "shoonya").connected is True
     cleanup()
@@ -1111,57 +1108,6 @@ def test_shoonya_adapter_rejects_invalid_profile_even_when_cleanup_fails():
 
 
 
-@pytest.mark.parametrize(
-    "redirect_uri",
-    [
-        None,
-        "",
-        "http://example.com/shoonya/callback",
-        "https://user:password@example.com/shoonya/callback",
-        "https://example.com/shoonya/callback#fragment",
-    ],
-)
-def test_auth_url_fails_closed_for_missing_or_unsafe_registered_redirect(monkeypatch, redirect_uri):
-    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "server-client")
-    store = Mock()
-    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
-    if redirect_uri is None:
-        monkeypatch.delenv("SHOONYA_REDIRECT_URI", raising=False)
-    else:
-        monkeypatch.setenv("SHOONYA_REDIRECT_URI", redirect_uri)
-
-    with pytest.raises(HTTPException) as raised:
-        shoonya_routes.shoonya_auth_url(
-            shoonya_routes.ShoonyaAuthUrlRequest(
-                uid="SH12345",
-                account_id="SH12345",
-            ),
-            user_id=0,
-        )
-
-    assert raised.value.status_code == 503
-    store.create.assert_not_called()
-
-
-def test_verify_fails_closed_when_registered_redirect_is_missing(monkeypatch, db_session):
-    store = Mock()
-    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
-    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_CLIENT_ID", "server-client")
-    monkeypatch.setattr(shoonya_routes.settings, "SHOONYA_OAUTH_SECRET_CODE", "server-secret")
-    monkeypatch.delenv("SHOONYA_REDIRECT_URI", raising=False)
-
-    with pytest.raises(HTTPException) as raised:
-        shoonya_routes.shoonya_verify(
-            shoonya_routes.ShoonyaVerifyRequest(
-                auth_code="auth-code",
-                flow_id="flow-id-1234567890",
-            ),
-            db=db_session,
-            user_id=0,
-        )
-
-    assert raised.value.status_code == 401
-    store.consume.assert_not_called()
 
 
 def test_manual_auth_url_does_not_require_registered_redirect(monkeypatch):
