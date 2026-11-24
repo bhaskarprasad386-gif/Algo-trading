@@ -83,8 +83,10 @@ class ShoonyaOAuthFlowStore:
             if flow_id in self._pending:
                 raise RuntimeError("Shoonya OAuth flow ID collision")
             if len(self._pending) >= self.max_entries:
-                oldest = min(self._pending, key=lambda key: self._pending[key].issued_at)
-                self._pending.pop(oldest, None)
+                # Never evict a still-valid flow: an unauthenticated caller
+                # must not be able to invalidate another owner's login by
+                # filling the bounded store. Fail closed until a flow expires.
+                raise RuntimeError("Shoonya OAuth flow capacity is exhausted")
             self._pending[flow_id] = PendingShoonyaOAuth(
                 owner_id=owner_id,
                 client_id=client_id,
