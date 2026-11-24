@@ -343,3 +343,37 @@ def test_wrong_owner_cannot_consume_or_invalidate_another_owners_flow():
         redirect_uri="https://example.com/shoonya/callback",
     )
     assert pending.owner_id == 7
+
+
+def test_manual_flow_needs_no_redirect_uri_and_is_single_use():
+    store = ShoonyaOAuthFlowStore(token_factory=lambda size: "manual-flow")
+    flow_id = store.create(
+        owner_id=17,
+        client_id="client-100",
+        uid="SH12345",
+        account_id="SH12345",
+    )
+    pending = store.consume(
+        owner_id=17,
+        flow_id=flow_id,
+        client_id="client-100",
+    )
+    assert pending.redirect_uri is None
+    assert pending.uid == "SH12345"
+    with pytest.raises(ValueError, match="missing, expired, or already used"):
+        store.consume(owner_id=17, flow_id=flow_id, client_id="client-100")
+
+
+def test_manual_flow_rejects_wrong_owner_and_wrong_client_without_consuming():
+    store = ShoonyaOAuthFlowStore(token_factory=lambda size: "manual-bound-flow")
+    flow_id = store.create(
+        owner_id=17,
+        client_id="client-100",
+        uid="SH12345",
+        account_id="SH12345",
+    )
+    with pytest.raises(ValueError, match="does not belong to this owner"):
+        store.consume(owner_id=18, flow_id=flow_id, client_id="client-100")
+    with pytest.raises(ValueError, match="does not match"):
+        store.consume(owner_id=17, flow_id=flow_id, client_id="other-client")
+    assert store.consume(owner_id=17, flow_id=flow_id, client_id="client-100").owner_id == 17
