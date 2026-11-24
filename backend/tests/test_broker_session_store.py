@@ -209,6 +209,38 @@ def test_stale_reconnect_cannot_remove_adapter_owned_by_newer_reservation():
     assert adapter.connected is True
 
 
+def test_failed_installed_adapter_can_be_detached_without_invalidating_newer_reservation():
+    store = BrokerSessionStore()
+    failed_adapter = FakeAdapter("shoonya")
+    generation = store.reserve_replacement(7, "shoonya")
+    installed, _ = store.replace_if_reserved(7, "shoonya", failed_adapter, generation)
+    assert installed is True
+
+    newer_generation = store.reserve_replacement(7, "shoonya")
+    assert store.remove_if_adapter_current(7, "shoonya", failed_adapter) is True
+    assert store.get(7, "shoonya") is None
+
+    newer_adapter = FakeAdapter("shoonya")
+    accepted, previous = store.replace_if_reserved(7, "shoonya", newer_adapter, newer_generation)
+    assert accepted is True
+    assert previous is None
+    assert store.get(7, "shoonya") is newer_adapter
+
+
+def test_failed_old_adapter_cannot_detach_newer_installed_adapter():
+    store = BrokerSessionStore()
+    old_adapter = FakeAdapter("shoonya")
+    old_generation = store.reserve_replacement(7, "shoonya")
+    assert store.replace_if_reserved(7, "shoonya", old_adapter, old_generation)[0] is True
+
+    newer_generation = store.reserve_replacement(7, "shoonya")
+    newer_adapter = FakeAdapter("shoonya")
+    assert store.replace_if_reserved(7, "shoonya", newer_adapter, newer_generation)[0] is True
+
+    assert store.remove_if_adapter_current(7, "shoonya", old_adapter) is False
+    assert store.get(7, "shoonya") is newer_adapter
+
+
 def test_current_reconnect_can_remove_its_own_failed_adapter():
     store = BrokerSessionStore()
     adapter = FakeAdapter("shoonya")
