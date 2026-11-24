@@ -812,3 +812,43 @@ def test_verify_closes_oauth_transport_when_exchange_fails(monkeypatch, db_sessi
     assert transport.closed is True
     assert broker_sessions.get(0, "shoonya") is None
     cleanup()
+
+
+def test_verify_closes_oauth_transport_after_successful_exchange(monkeypatch, db_session):
+    cleanup()
+    store = Mock()
+    store.consume.return_value = Mock(uid="SH12345", account_id="SH12345")
+    monkeypatch.setattr(shoonya_routes, "shoonya_oauth_flows", store)
+    monkeypatch.setenv("SHOONYA_REDIRECT_URI", "https://example.com/shoonya/callback")
+    monkeypatch.setattr(shoonya_routes.trading_safety, "disable", lambda user_id: None)
+    transport = Mock()
+
+    class Authenticator:
+        def __init__(self):
+            self.http = transport
+
+        def exchange_auth_code(self, **kwargs):
+            return ShoonyaAuthenticatedSession("SH12345", "SH12345", "token")
+
+    client = FakeClient(uid="SH12345", account_id="SH12345", access_token="token")
+    monkeypatch.setattr(shoonya_routes, "ShoonyaOAuthAuthenticator", Authenticator)
+    monkeypatch.setattr(shoonya_routes, "ShoonyaRESTClient", lambda **kwargs: client)
+    monkeypatch.setattr(shoonya_routes, "ShoonyaAdapter", FakeAdapter)
+    monkeypatch.setattr(shoonya_routes, "claim_authenticated_account", lambda *args: None)
+    monkeypatch.setattr(shoonya_routes, "set_owner_connection_state", lambda *args: None)
+
+    result = shoonya_routes.shoonya_verify(
+        shoonya_routes.ShoonyaVerifyRequest(
+            client_id="client-100",
+            secret_code="secret",
+            auth_code="auth-code",
+            flow_id="flow-id-1234567890",
+        ),
+        db=db_session,
+        user_id=0,
+    )
+
+    assert result["connected"] is True
+    transport.close.assert_called_once_with()
+    assert broker_sessions.get(0, "shoonya").connected is True
+    cleanup()
