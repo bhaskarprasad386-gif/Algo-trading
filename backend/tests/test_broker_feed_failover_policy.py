@@ -694,16 +694,86 @@ def test_failback_occurs_exactly_at_both_dwell_and_stability_boundaries():
         shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=0,
     )
     assert switched.active_provider == "shoonya"
-    # Healthy Angel recovery begins at t=1; both timers are just short at t=4.999.
+    # Angel stability starts on the first fresh recovery tick at t=1.
+    # Dwell (4s) expires at t=4, stability (5s) at t=6.
     before_boundary = p.update(
         failed_angel_sockets=0, angel_tick_age_seconds=0.2,
-        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=4.999,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=5.999,
     )
     assert before_boundary.active_provider == "shoonya"
     at_boundary = p.update(
         failed_angel_sockets=0, angel_tick_age_seconds=0.2,
-        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=5.0,
+        shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=6.0,
     )
     assert at_boundary.active_provider == "angel_one"
     assert at_boundary.mode == "PRIMARY"
     assert at_boundary.reason == "angel_stable_failback"
+
+
+def test_shoonya_stale_tick_drops_backup_to_no_valid_feed_and_fresh_angel_recovers():
+    p = policy()
+    p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=10)
+    no_feed = p.update(failed_angel_sockets=3, angel_tick_age_seconds=4.0,
+                      shoonya_connected=True, shoonya_tick_age_seconds=2.0, now=11)
+    assert no_feed.active_provider == "none"
+    assert no_feed.mode == "NO_VALID_FEED"
+    assert no_feed.reason == "shoonya_feed_stale"
+    recovered = p.update(failed_angel_sockets=3, angel_tick_age_seconds=0.2,
+                       shoonya_connected=False, shoonya_tick_age_seconds=None, now=12)
+    assert recovered.active_provider == "angel_one"
+    assert recovered.mode == "PRIMARY"
+    assert recovered.reason == "angel_recovered"
+
+
+def test_backup_does_not_failback_before_minimum_dwell_even_when_angel_stable():
+    p = policy()
+    p.update(failed_angel_sockets=2, angel_tick_age_seconds=4.0,
+             shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=100)
+    for now in (101, 102, 103):
+        s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                    shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=now)
+        assert s.active_provider == "shoonya"
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=0.2,
+                shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=104)
+    assert s.active_provider == "angel_one"
+    assert s.reason == "angel_stable_failback"
+
+
+def test_angel_fresh_tick_with_two_failed_sockets_starts_stability_timer():
+    p = policy()
+    switched = p.update(failed_angel_sockets=2, angel_tick_age_seconds=4.0,
+                      shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=200)
+    assert switched.active_provider == "shoonya"
+    for now in (201, 202, 203, 204):
+        s = p.update(failed_angel_sockets=2, angel_tick_age_seconds=0.2,
+                    shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=now)
+        assert s.active_provider == "shoonya"
+    # Socket count prevents stability; fresh ticks alone do not failback.
+    assert s.reason == "shoonya_active_waiting_for_angel_stability"
+    recovered = p.update(failed_angel_sockets=1, angel_tick_age_seconds=0.2,
+                       shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=205)
+    assert recovered.active_provider == "shoonya"
+    final = p.update(failed_angel_sockets=1, angel_tick_age_seconds=0.2,
+                   shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=210)
+    assert final.active_provider == "angel_one"
+
+
+def test_failover_when_angel_tick_age_is_missing_and_backup_fresh():
+    p = policy()
+    s = p.update(failed_angel_sockets=0, angel_tick_age_seconds=None,
+                shoonya_connected=True, shoonya_tick_age_seconds=0.2, now=300)
+    assert s.active_provider == "shoonya"
+    assert s.mode == "BACKUP"
+    assert s.reason == "angel_feed_stale"
+
+
+def test_timing_configuration_rejects_zero_negative_bool_and_nonfinite_values():
+    import pytest
+    for field in ("angel_tick_fresh_seconds", "shoonya_tick_fresh_seconds",
+                  "angel_failover_stale_seconds", "angel_failback_stability_seconds",
+                  "minimum_shoonya_dwell_seconds"):
+        for invalid in (0, -1, True, float("inf"), float("nan")):
+            kwargs = {field: invalid}
+            with pytest.raises(ValueError, match="finite and positive"):
+                MarketDataFailoverPolicy(**kwargs)
