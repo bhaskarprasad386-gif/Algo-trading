@@ -639,6 +639,71 @@ def test_regular_session_mutation_invalidates_pending_reconnect_reservation():
     broker_sessions.remove(owner_id, "shoonya")
 
 
+def test_clear_owner_invalidates_only_that_owners_pending_reconnects():
+    store = BrokerSessionStore()
+    owner_a, owner_b = 99181, 99182
+    adapter_a = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="a"))
+    adapter_b = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="b"))
+    generation_a = store.reserve_replacement(owner_a, "shoonya")
+    generation_b = store.reserve_replacement(owner_b, "shoonya")
+
+    drained = store.clear_owner(owner_a)
+    assert drained == []
+    assert store.reserve_replacement(owner_a, "shoonya") > generation_a
+    accepted_a, previous_a = store.replace_if_reserved(owner_a, "shoonya", adapter_a, generation_a)
+    assert accepted_a is False
+    assert previous_a is None
+
+    accepted_b, previous_b = store.replace_if_reserved(owner_b, "shoonya", adapter_b, generation_b)
+    assert accepted_b is True
+    assert previous_b is None
+    assert store.get(owner_b, "shoonya") is adapter_b
+    store.remove(owner_b, "shoonya")
+    adapter_b.disconnect()
+
+
+def test_disconnect_all_continues_after_cleanup_failure_and_invalidates_reservations():
+    store = BrokerSessionStore()
+    owner_a, owner_b = 99183, 99184
+    generation_a = store.reserve_replacement(owner_a, "shoonya")
+    generation_b = store.reserve_replacement(owner_b, "shoonya")
+
+    class DisconnectAdapter:
+        name = "shoonya"
+
+        def __init__(self, fails=False):
+            self.fails = fails
+            self.calls = 0
+
+        def disconnect(self):
+            self.calls += 1
+            if self.fails:
+                raise RuntimeError("simulated logout failure")
+
+    failing = DisconnectAdapter(fails=True)
+    healthy = DisconnectAdapter()
+    store.replace(owner_a, "shoonya", failing)
+    store.replace(owner_b, "shoonya", healthy)
+
+    failures = store.disconnect_all()
+    assert len(failures) == 1
+    assert failures[0][0] == "shoonya"
+    assert isinstance(failures[0][1], RuntimeError)
+    assert failing.calls == 1
+    assert healthy.calls == 1
+    assert store.get(owner_a, "shoonya") is None
+    assert store.get(owner_b, "shoonya") is None
+
+    pending_a = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="pending-a"))
+    pending_b = FakeAdapter(FakeClient(uid="SH12345", account_id="SH12345", access_token="pending-b"))
+    accepted_a, _ = store.replace_if_reserved(owner_a, "shoonya", pending_a, generation_a)
+    accepted_b, _ = store.replace_if_reserved(owner_b, "shoonya", pending_b, generation_b)
+    assert accepted_a is False
+    assert accepted_b is False
+    pending_a.disconnect()
+    pending_b.disconnect()
+
+
 def test_global_clear_invalidates_inflight_reconnect_reservation_without_generation_reuse():
     store = BrokerSessionStore()
     owner_id = 99180
