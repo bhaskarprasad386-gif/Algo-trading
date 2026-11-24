@@ -171,7 +171,8 @@ jobs:
           else
             journal_status=$?
             echo "RECENT_SERVICE_FAULTS=SKIPPED exit=$journal_status"
-          fi          REMOTE
+          fi
+          REMOTE
           )
           if printf '%s\n' "$REMOTE_SCRIPT" | timeout 150 ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "$VPS_USER@$VPS_HOST" 'timeout 120s bash -s'; then
             echo "VPS_REMOTE_VERIFY=PASS"
