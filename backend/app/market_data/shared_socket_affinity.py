@@ -1,4 +1,4 @@
-"""Explicit consumer-to-shard affinity policy, isolated from the live feed manager.
+"""Explicit lane affinity policy, isolated from the live feed manager.
 
 This batch adds a deterministic planning primitive only. It does not apply socket
 assignments or change the shared manager's existing shard behavior.
@@ -26,12 +26,12 @@ class AffinityPlan:
     owner_tokens: dict[str, frozenset[tuple[int, str]]]
 
 class ConsumerSocketAffinity:
-    """Opt-in affinity reservations; unclaimed consumers remain adaptive."""
+    """Opt-in lane reservations; unclaimed consumers remain adaptive."""
 
     LOCKED_OWNERS = {
         "nifty": "shared-index-market-data:nifty",
         "banknifty": "shared-index-market-data:banknifty",
-        "options": "shared-index-market-data:options",
+        "futures": "shared-index-market-data:futures",
     }
 
     def __init__(self, *, max_sockets: int = 3, max_tokens_per_socket: int = 1000):
@@ -51,7 +51,7 @@ class ConsumerSocketAffinity:
         return {
             ConsumerSocketAffinity.LOCKED_OWNERS["nifty"]: AffinitySlot(mode, 0),
             ConsumerSocketAffinity.LOCKED_OWNERS["banknifty"]: AffinitySlot(mode, 1),
-            ConsumerSocketAffinity.LOCKED_OWNERS["options"]: AffinitySlot(mode, 2),
+            ConsumerSocketAffinity.LOCKED_OWNERS["futures"]: AffinitySlot(mode, 2),
         }
 
     def plan(self, owner_slots: dict[str, AffinitySlot],
