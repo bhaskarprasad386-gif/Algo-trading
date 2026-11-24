@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 @dataclass(frozen=True)
 class PendingShoonyaOAuth:
+    owner_id: int
     client_id: str
     redirect_uri: str
     uid: str
@@ -53,11 +54,14 @@ class ShoonyaOAuthFlowStore:
     def create(
         self,
         *,
+        owner_id: int,
         client_id: str,
         redirect_uri: str,
         uid: str,
         account_id: str,
     ) -> str:
+        if isinstance(owner_id, bool) or not isinstance(owner_id, int) or owner_id < 0:
+            raise ValueError("Shoonya OAuth owner ID is invalid")
         client_id = str(client_id or "").strip()
         uid = str(uid or "").strip()
         account_id = str(account_id or "").strip()
@@ -82,6 +86,7 @@ class ShoonyaOAuthFlowStore:
                 oldest = min(self._pending, key=lambda key: self._pending[key].issued_at)
                 self._pending.pop(oldest, None)
             self._pending[flow_id] = PendingShoonyaOAuth(
+                owner_id=owner_id,
                 client_id=client_id,
                 redirect_uri=redirect_uri,
                 uid=uid,
@@ -93,10 +98,13 @@ class ShoonyaOAuthFlowStore:
     def consume(
         self,
         *,
+        owner_id: int,
         flow_id: str,
         client_id: str,
         redirect_uri: str,
     ) -> PendingShoonyaOAuth:
+        if isinstance(owner_id, bool) or not isinstance(owner_id, int) or owner_id < 0:
+            raise ValueError("Shoonya OAuth owner ID is invalid")
         flow_id = str(flow_id or "").strip()
         client_id = str(client_id or "").strip()
         redirect_uri = self._redirect(redirect_uri)
@@ -105,6 +113,8 @@ class ShoonyaOAuthFlowStore:
             pending = self._pending.pop(flow_id, None)
         if pending is None or now - pending.issued_at >= self.ttl_seconds:
             raise ValueError("Shoonya OAuth flow is missing, expired, or already used")
+        if pending.owner_id != owner_id:
+            raise ValueError("Shoonya OAuth flow does not belong to this owner")
         if pending.client_id != client_id or pending.redirect_uri != redirect_uri:
             raise ValueError("Shoonya OAuth flow does not match this client and callback")
         return pending
