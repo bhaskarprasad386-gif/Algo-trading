@@ -2,6 +2,8 @@ from threading import Event, Thread
 from time import sleep
 from types import SimpleNamespace
 
+import websocket
+
 from app.market_data.websocket import MarketDataWebSocket, _close_sdk_connection_bounded
 
 
@@ -192,3 +194,41 @@ def test_retired_socket_callbacks_cannot_mutate_or_deliver_to_current_wrapper(mo
     assert after["connecting"] is False
     assert after["error_count"] == before["error_count"]
     assert client.websocket is None
+
+
+
+def test_close_uses_shutdown_when_websocket_client_abort_is_noop_after_close_starts():
+    release = Event()
+
+    class BlockingRawSocket:
+        _closed = False
+
+        def close(self):
+            self._closed = True
+            release.set()
+
+    raw_socket = BlockingRawSocket()
+    low_level = websocket.WebSocket()
+    low_level.sock = raw_socket
+    # websocket-client abort() only shuts down the raw socket while connected.
+    # Its close-handshake path flips connected=False before waiting in recv_frame.
+    low_level.connected = False
+    low_level.abort()
+    assert not release.is_set()
+
+    transport = Thread(target=lambda: release.wait(timeout=5.0), daemon=True)
+    transport.start()
+    sdk_socket = SimpleNamespace(
+        wsapp=SimpleNamespace(sock=low_level),
+        close_connection=lambda: None,
+    )
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.websocket = sdk_socket
+    client._transport_thread = transport
+
+    client.close()
+
+    assert raw_socket._closed is True
+    assert low_level.sock is None
+    assert not transport.is_alive()
+    assert client.health["transport_close_timed_out"] is False
