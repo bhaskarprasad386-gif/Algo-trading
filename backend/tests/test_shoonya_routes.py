@@ -716,3 +716,28 @@ def test_global_clear_invalidates_inflight_reconnect_reservation_without_generat
     assert accepted is False
     assert previous is None
     assert store.get(owner_id, "shoonya") is None
+
+
+def test_disconnect_clears_local_token_even_when_remote_logout_and_http_close_fail(monkeypatch):
+    from app.brokers.shoonya_routes import ShoonyaRESTClient
+
+
+    http = Mock()
+    http.post.side_effect = RuntimeError("logout network failure")
+    http.close.side_effect = RuntimeError("close failure")
+    client = ShoonyaRESTClient(
+        uid="SH12345",
+        account_id="SH12345",
+        access_token="valid-token",
+        expires_at_monotonic=100.0,
+        http=http,
+    )
+    monkeypatch.setattr(shoonya_routes, "monotonic", lambda: 10.0)
+
+
+    # Cleanup is best-effort: it cannot mask an upstream auth/session error.
+    client.disconnect()
+    assert client.access_token == ""
+    assert client.expires_at_monotonic is None
+    http.post.assert_called_once()
+    http.close.assert_called_once()
