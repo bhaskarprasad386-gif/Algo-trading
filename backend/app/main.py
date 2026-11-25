@@ -2722,6 +2722,12 @@ async def _iv_option_snapshot_daily_loop():
                         app_logger.exception("IV %s EOD snapshot completion check failed", symbol)
                 if already_saved:
                     continue
+                stream_id = {"NIFTY": "NIFTY_WEEKLY", "BANKNIFTY": "BANKNIFTY_MONTHLY"}[symbol]
+                # RUNNING is published before each chain's first ATM/expiry
+                # refresh attaches its option feed. Skip quietly during bootstrap
+                # instead of emitting a false failure and consuming retry time.
+                if not runtime.broker_snapshot_ready(stream_id):
+                    continue
                 monotonic_now = time_module.monotonic()
                 retry_delay = 15.0 if near_close else (next_delay[symbol] or 300.0)
                 if monotonic_now - last_attempt[symbol] < retry_delay:
