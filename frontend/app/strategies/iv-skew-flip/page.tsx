@@ -648,7 +648,7 @@ export default function IVSkewFlipPage() {
         const spotState=pushedRuntime.spot_feed as Row|undefined;
         const spotMap=spotState?.spot&&typeof spotState.spot==="object"?spotState.spot as Row:{};
         const bankSpotState=spotMap.BANKNIFTY&&typeof spotMap.BANKNIFTY==="object"?spotMap.BANKNIFTY as Row:{};
-        const observations:IvChartObservation[]=bankMetrics.filter(item=>item.iv_live===true&&n(item.iv)!==null&&n(item.source_timestamp_ns)!==null&&n(item.source_timestamp_ns)!>0).map(item=>({token:String(item.token??""),strike:n(item.strike)??undefined,option_type:String(item.option_type??""),timestamp_ns:n(item.source_timestamp_ns)??undefined,spot_timestamp_ns:n(item.spot_timestamp_ns)??undefined,spot_price:n(bankSpotState.price),iv:n(item.iv)})).filter(item=>Boolean(item.token)&&item.strike!==undefined&&item.timestamp_ns!==undefined&&Boolean(item.option_type));
+        const observations:IvChartObservation[]=bankMetrics.filter(item=>item.iv_source==="ANGEL_ONE"&&item.iv_live===true&&n(item.iv)!==null&&n(item.source_timestamp_ns)!==null&&n(item.source_timestamp_ns)!>0).map(item=>({token:String(item.token??""),strike:n(item.strike)??undefined,option_type:String(item.option_type??""),timestamp_ns:n(item.source_timestamp_ns)??undefined,spot_timestamp_ns:n(item.spot_timestamp_ns)??undefined,spot_price:n(bankSpotState.price),iv:n(item.iv)})).filter(item=>Boolean(item.token)&&item.strike!==undefined&&item.timestamp_ns!==undefined&&Boolean(item.option_type));
         if(observations.length){
           const cutoff=Date.now()*1_000_000-1_800_000_000_000;
           setBankChartHistory(current=>{
