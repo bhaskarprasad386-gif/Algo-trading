@@ -1,6 +1,6 @@
 # Universal Angel Market-Data Resilience — Implementation Plan
 
-Status: implementation in progress on `feat/universal-market-data-resilience`. No merge, production activation, or VPS deployment is authorized by this branch.
+Status: code implementation and exact-head automated validation complete on `feat/universal-market-data-resilience`; external production acceptance evidence remains open. No merge, production activation, or VPS deployment is authorized by this branch.
 
 ## Target
 
@@ -213,3 +213,29 @@ The lifecycle entry points now validate the complete broker instrument identity 
 - PR #754 changes backend market-data ingestion, allocation, lifecycle, and regression tests only. It does not change frontend deployment, reverse-proxy configuration, backend service deployment, or VPS state.
 - Frontend deployment cleanup belongs in its own explicitly scoped change. It must preserve the existing VPS Next.js start/build process and the frontend-to-backend WebSocket origin contract.
 - CI for this PR is GitHub Actions backend/integration/targeted-feed validation. External Cloudflare or Vercel deployment status is not an acceptance gate for this PR.
+
+
+## Final code-gate closure batch — 2026-11-25
+
+### Exact-head automated evidence
+
+Validated against PR head `7cad4b1da229d096a5af68d2ba208717b1144036`:
+
+- Backend Tests run `45534943421`: all jobs successful, including the full backend test job and Fast Broker Safety Gate.
+- Integration Tests run `45534943305`: all jobs successful, including integration, IV independent instrument-master network validation, instrument-master transport regressions, common-feed targeted regressions, and Box Spread master shutdown/cache regressions.
+- Targeted Common Feed Tests run `45534943278`: successful.
+- Off-Market Runtime Verification run `45534943459`: contract test successful; VPS runtime verification was skipped and is not claimed as passed.
+
+These results close the exact-head automated code-validation gate. They do not establish broker entitlement, external/manual caller absence, or production soak behavior.
+
+### Remaining external acceptance evidence (not code defects)
+
+1. **Broker session/token entitlement:** obtain written confirmation for the account's permitted simultaneous physical WebSocket sessions and per-session token limits. The software guard remains three sessions and 1,000 tokens per socket; do not increase either from assumptions. Record the broker response/account entitlement evidence before production activation.
+2. **External/manual socket callers:** repository startup-path inspection found active application owners using the shared manager, while a legacy two-socket Cash-Future collector and generic engine fallback remain in source without a confirmed active application-lifespan path. The source audit cannot rule out operator scripts, external imports, or manually launched processes. Obtain operator/runtime inventory confirmation before retiring compatibility code; do not delete these classes speculatively.
+3. **Representative production soak:** run only after entitlement and runtime ownership are confirmed and activation is separately authorized. Capture duration, instrument/token counts by lane, p50/p95/p99 ingress-to-consumer latency, process RSS, callback queue high-water/overflow, reconnect/failover counts and durations, stale/out-of-order rejection counts, and per-lane delivery gaps. Exercise the approved fault matrix and attach raw monitoring evidence. No production soak was run by this PR batch.
+
+### Explicit scope boundary
+
+- No Cloudflare, Vercel, frontend build/deploy, VPS, or reverse-proxy operation is part of PR #754 acceptance. The frontend is VPS-hosted; this PR is backend market-data scope.
+- No Shoonya credential/readiness work, strategy formula, order execution, or scanner behavior was changed as part of this gate closure.
+- PR remains draft until the external evidence above is supplied and reviewed. No merge or production activation is implied by green CI.
