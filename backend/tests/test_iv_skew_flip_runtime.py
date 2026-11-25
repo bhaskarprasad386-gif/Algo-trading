@@ -133,6 +133,9 @@ def test_broker_snapshot_context_resolves_each_active_underlying_independently()
     runtime.refresh_once()
 
     nifty_universe, nifty_spot = runtime.broker_snapshot_context("NIFTY_WEEKLY")
+    assert "BANKNIFTY_MONTHLY" in runtime._option_feeds, (
+        f"BANKNIFTY Monthly feed did not initialize: {runtime._last_error!r}"
+    )
     bank_universe, bank_spot = runtime.broker_snapshot_context("BANKNIFTY_MONTHLY")
 
     assert nifty_universe.underlying == "NIFTY"
@@ -824,6 +827,9 @@ def test_nifty_weekly_and_banknifty_monthly_keep_tomorrows_expiry_then_roll_afte
     # must remain selected for both independently configured chains.
     runtime.refresh_once()
     assert created["NIFTY_WEEKLY"].universe.expiry == "2026-11-24"
+    assert "BANKNIFTY_MONTHLY" in created, (
+        f"BANKNIFTY Monthly feed did not initialize: {runtime._last_error!r}"
+    )
     assert created["BANKNIFTY_MONTHLY"].universe.expiry == "2026-11-24"
 
     # After each actual expiry day closes, both streams move to their next
