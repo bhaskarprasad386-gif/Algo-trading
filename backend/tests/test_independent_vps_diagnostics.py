@@ -37,3 +37,57 @@ def test_database_initializes_with_empty_event_store(tmp_path: Path, monkeypatch
         assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
     finally:
         db.close()
+
+
+def test_api_runtime_events_are_persisted_without_api_process_dependency(tmp_path: Path, monkeypatch) -> None:
+    import json
+    from datetime import datetime, timezone
+
+    monkeypatch.setattr(agent, "DB_PATH", tmp_path / "events.sqlite3")
+    event = {
+        "id": "1700000000.123",
+        "time": datetime.now(timezone.utc).isoformat(),
+        "severity": "ERROR",
+        "component": "Shared Runner",
+        "message": "worker failed api_key=hidden-value",
+    }
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit):
+            return json.dumps({"errors": [event]}).encode()
+
+    monkeypatch.setattr(agent, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+    db = agent.connect_db()
+    try:
+        agent.collect_api_diagnostics(db)
+        row = db.execute("SELECT severity,component,message,source FROM events").fetchone()
+        assert row == ("ERROR", "Shared Runner", "worker failed api_key=[REDACTED]", "runtime-diagnostics-api")
+        assert agent._API_STATUS["reachable"] is True
+    finally:
+        db.close()
+
+
+def test_api_unreachable_does_not_clear_persisted_errors(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(agent, "DB_PATH", tmp_path / "events.sqlite3")
+    monkeypatch.setattr(agent, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("offline")))
+    db = agent.connect_db()
+    try:
+        db.execute(
+            "INSERT INTO events(event_id,cursor,timestamp,severity,component,message,source,inserted_at) VALUES(?,?,?,?,?,?,?,?)",
+            ("kept", "", "2026-11-26T00:00:00+00:00", "ERROR", "API", "last known error", "systemd-journal", 1),
+        )
+        db.commit()
+        agent.collect_api_diagnostics(db)
+        row = db.execute("SELECT message FROM events WHERE event_id='kept'").fetchone()
+        assert row == ("last known error",)
+        assert agent._API_STATUS["reachable"] is False
+    finally:
+        db.close()
