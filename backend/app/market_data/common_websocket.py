@@ -512,27 +512,55 @@ class CommonWebSocketManager:
     def _build_shard_assignments(
         self,
         pairs_by_mode: dict[int, set[tuple[int, str]]],
+        preferred_pairs_by_mode: dict[int, dict[tuple[int, str], int]] | None = None,
     ) -> dict[int, dict[tuple[int, str], int]]:
-        """Keep active pairs pinned and place only new pairs into available capacity."""
+        """Pin classified instruments to their dedicated lane and keep others separate.
+
+        A lane reservation is instrument-level: one options consumer can therefore
+        have NIFTY weekly contracts on lane 0 and BANKNIFTY monthly contracts on
+        lane 1. Unclassified instruments are never allowed to occupy a reserved
+        lane. If the remaining physical socket budget cannot hold them separately,
+        reconciliation fails closed before mutating socket or route state.
+        """
+        preferred_pairs_by_mode = preferred_pairs_by_mode or {}
         result: dict[int, dict[tuple[int, str], int]] = {}
         for mode, pairs in pairs_by_mode.items():
+            preferred = preferred_pairs_by_mode.get(mode, {})
+            if not set(preferred).issubset(pairs):
+                raise ValueError("preferred socket affinity references an inactive instrument")
+            if any(
+                isinstance(lane, bool) or not isinstance(lane, int)
+                or lane not in (0, 1, 2)
+                for lane in preferred.values()
+            ):
+                raise ValueError("locked instrument socket lane must be 0, 1, or 2")
+
+            reserved_lanes = set(preferred.values())
+            assignments = dict(preferred)
             previous = self._shard_assignments.get(mode, {})
-            assignments = {pair: previous[pair] for pair in pairs if pair in previous}
+            # Preserve adaptive placements only when they do not collide with a
+            # newly reserved locked lane. A collision is intentionally rehomed.
+            for pair in pairs - assignments.keys():
+                old_lane = previous.get(pair)
+                if old_lane is not None and old_lane not in reserved_lanes:
+                    assignments[pair] = old_lane
+
             occupancy: dict[int, int] = defaultdict(int)
             for shard_index in assignments.values():
                 occupancy[shard_index] += 1
+
             for pair in sorted(pairs - assignments.keys()):
                 available = next(
                     (
-                        shard_index for shard_index in sorted(occupancy)
-                        if occupancy[shard_index] < self._max_tokens_per_socket
+                        shard_index for shard_index in sorted(set(occupancy) | set(range(3)))
+                        if shard_index not in reserved_lanes
+                        and occupancy[shard_index] < self._max_tokens_per_socket
                     ),
                     None,
                 )
                 if available is None:
-                    used = set(occupancy)
                     available = 0
-                    while available in used:
+                    while available in reserved_lanes or occupancy[available] >= self._max_tokens_per_socket:
                         available += 1
                 assignments[pair] = available
                 occupancy[available] += 1
@@ -561,11 +589,38 @@ class CommonWebSocketManager:
                         for token in sorted(tokens):
                             groups_by_mode[mode].append((exchange_type, token))
 
-                # Preserve active placements; only new instruments are assigned.
+                # Derive preferred lanes from registered instrument metadata,
+                # not consumer names. This is required because the single options
+                # owner intentionally spans NIFTY weekly and BANKNIFTY monthly.
                 pairs_by_mode = {
                     mode: set(pairs) for mode, pairs in groups_by_mode.items()
                 }
-                next_assignments = self._build_shard_assignments(pairs_by_mode)
+                preferred_pairs_by_mode: dict[int, dict[tuple[int, str], int]] = defaultdict(dict)
+                affinity_by_pair: dict[tuple[int, tuple[int, str]], set[int | None]] = defaultdict(set)
+                for sub in self.registry.subscriptions():
+                    descriptor = self.registry.get(sub.key)
+                    if descriptor is None:
+                        continue
+                    exchange_type = self._resolve_exchange_type(sub.key)
+                    pair = (exchange_type, sub.key.token.strip())
+                    affinity_by_pair[(sub.mode, pair)].add(descriptor.preferred_socket_lane)
+                for (mode, pair), lanes in affinity_by_pair.items():
+                    locked_lanes = {lane for lane in lanes if lane is not None}
+                    if len(locked_lanes) > 1 or (locked_lanes and None in lanes):
+                        raise ValueError(
+                            "ambiguous broker token affinity: one exchange/token maps to "
+                            "conflicting locked and unclassified instruments"
+                        )
+                    if locked_lanes:
+                        preferred_pairs_by_mode[mode][pair] = next(iter(locked_lanes))
+
+                # Keep adaptive consumers out of reserved locked lanes. If all
+                # three dedicated lanes are occupied, unsupported instruments
+                # require another physical session and are rejected by the
+                # existing global budget gate below rather than silently mixed.
+                next_assignments = self._build_shard_assignments(
+                    pairs_by_mode, preferred_pairs_by_mode,
+                )
                 for mode, assignments in next_assignments.items():
                     for pair, shard_index in assignments.items():
                         shard = SocketGroup(mode=mode, shard=shard_index)
