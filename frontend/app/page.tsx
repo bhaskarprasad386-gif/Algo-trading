@@ -584,7 +584,7 @@ export default function HomePage() {
         </div>
         <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1.5 rounded-lg border theme-border theme-surface-2 px-2.5 py-1.5">
           <div className="text-[9px] leading-4 theme-subtle">Exchange session is schedule-based. API response time is not the same as exchange tick time. Cash-Future freshness uses its server observation timestamp; other scanner ages reflect browser-observed counter movement.</div>
-          <div className={`inline-flex shrink-0 items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-semibold ${feedLabel === "LIVE" ? "theme-success-bg theme-success" : feedLabel === "CLOSED" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger"}`}><Radio size={12} /> {feedLabel === "LIVE" ? "Market feed LIVE" : feedLabel === "CLOSED" ? "NSE MARKET CLOSED" : `Market feed ${feedLabel.toLowerCase()}`}</div>
+          <div className={`inline-flex shrink-0 items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-semibold ${feedLabel === "LIVE" ? "theme-success-bg theme-success" : feedLabel === "CLOSED" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger"}`}><Radio size={12} /> {feedLabel === "LIVE" ? "COMMON NSE/NFO FEED LIVE" : feedLabel === "CLOSED" ? "COMMON FEED • MARKET CLOSED" : `COMMON NSE/NFO FEED ${feedLabel.toLowerCase()}`}</div>
         </div>
       </section>
 
@@ -686,7 +686,7 @@ export default function HomePage() {
               <div className="min-w-0">
                 <div className="text-[13px] font-bold">Error Diagnostics</div>
                 <div className="mt-0.5 text-[10px] theme-subtle">
-                  {diagnosticCount ? `${diagnosticCount.toLocaleString("en-IN")} runtime errors recorded since API process start (not an active-error count)` : "No errors recorded by this endpoint since API process start"}
+                  {diagnosticCount ? `${diagnosticCount.toLocaleString("en-IN")} latest persisted VPS events • journal + API runtime` : "No persisted VPS error events in the current sample"}{diagnosticsFetchFailed ? " • Collector route unreachable; retaining last sample" : diagnosticsApiReachable === false ? " • API unreachable; VPS log history remains available" : diagnosticsApiReachable === true ? " • API process reachable" : ""}
                 </div>
               </div>
             </div>
