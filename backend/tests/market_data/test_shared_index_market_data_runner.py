@@ -720,7 +720,7 @@ def test_partial_master_refresh_is_rejected_and_last_good_rows_preserved():
 
 
 def test_real_common_manager_keeps_locked_runner_on_exactly_three_socket_lanes():
-    from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+    from app.market_data.common_websocket import CommonWebSocketManager
 
     class Socket:
         def __init__(self):
@@ -751,7 +751,9 @@ def test_real_common_manager_keeps_locked_runner_on_exactly_three_socket_lanes()
         # Spot + futures startup must reserve exactly the three physical lanes;
         # the first spot ticks then attach both option families without creating
         # another socket or allowing a fourth lane.
-        assert set(manager.snapshot()["socket_groups"]) == {"3:0", "3:1", "3:2"}
+        initial_snapshot = manager.snapshot()
+        assert initial_snapshot["socket_groups"] == 3
+        assert initial_snapshot["required_socket_groups"] == ["3:0", "3:1", "3:2"]
         spot_callback = manager._record_callbacks[runner.lifecycle.SPOT_CONSUMER]
         import time
         spot_callback(MarketDataRecord(
@@ -765,11 +767,16 @@ def test_real_common_manager_keeps_locked_runner_on_exactly_three_socket_lanes()
             timestamp_ns=time.time_ns(), ltp=48000.0, underlying="BANKNIFTY",
         ))
 
-        assert set(manager.snapshot()["socket_groups"]) == {"3:0", "3:1", "3:2"}
+        snapshot = manager.snapshot()
+        assert snapshot["socket_groups"] == 3
+        assert snapshot["required_socket_groups"] == ["3:0", "3:1", "3:2"]
+        assert snapshot["required_socket_group_count"] == 3
+        assert snapshot["missing_socket_groups"] == []
         assignments = manager._shard_assignments[3]
+        roster_rows = snapshot["subscription_roster"]
         roster = {
             (row["instrument_type"], row["underlying"]): row["socket_group"]
-            for row in manager.snapshot()["subscription_roster"]
+            for row in roster_rows
         }
         assert assignments[(1, "99001")] == 0
         assert assignments[(1, "99002")] == 1
@@ -785,12 +792,17 @@ def test_real_common_manager_keeps_locked_runner_on_exactly_three_socket_lanes()
             for row in manager.snapshot()["subscription_roster"]
             if row["instrument_type"] == "option" and row["underlying"] == "BANKNIFTY"
         )
+        futures_rows = [row for row in roster_rows if row["instrument_type"] == "future"]
+        assert len(futures_rows) == 2
+        assert {row["underlying"] for row in futures_rows} == {"NIFTY", "BANKNIFTY"}
+        assert all(row["socket_group"] == "3:2" for row in futures_rows)
+        # Lane 2 is futures-only; no spot or option may leak into that socket.
         assert all(
-            row["socket_group"] == "3:2"
-            for row in manager.snapshot()["subscription_roster"]
-            if row["instrument_type"] == "future"
+            row["instrument_type"] == "future"
+            for row in roster_rows if row["socket_group"] == "3:2"
         )
-        assert manager.snapshot()["required_socket_groups"] == ["3:0", "3:1", "3:2"]
+        assert {row["socket_group"] for row in roster_rows} == {"3:0", "3:1", "3:2"}
+        assert snapshot["max_socket_sessions"] == 3
     finally:
         runner.stop()
         manager.close()
