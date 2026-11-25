@@ -496,14 +496,43 @@ class SharedIndexMarketDataRunner:
             bootstrap_done = self._bootstrap_options_done
             master_refresh_error = self._master_refresh_error
             master_last_refresh_at = self._master_last_refresh_at
+        state = self.state.snapshot()
+        lifecycle = self.lifecycle.snapshot()
+        now_ns = __import__("time").time_ns()
+        with self._lock:
+            spot_records = dict(self._spot_records)
+        latest_spots = {
+            symbol: {
+                "price": record.ltp,
+                "timestamp_ns": record.timestamp_ns,
+                "age_seconds": max(0.0, (now_ns - record.timestamp_ns) / 1e9),
+            }
+            for symbol, record in spot_records.items()
+        }
+        feed_groups = state.get("feed_health_by_group", {})
+        expected = {"NIFTY": {"index": 1, "future": 1, "option": 26}, "BANKNIFTY": {"index": 1, "future": 1, "option": 22}}
+        counts = {}
+        for underlying, required in expected.items():
+            counts[underlying] = {}
+            for kind in ("index", "future", "option"):
+                group = feed_groups.get(underlying + ":" + kind, {})
+                counts[underlying][kind] = int(group.get("count", 0))
+        universe_complete = counts == expected
+        all_records_fresh = int(state.get("instrument_count", 0)) == 52 and int(state.get("fresh_count", 0)) == 52
+        live_data_ready = running and bootstrap_done and universe_complete and all_records_fresh
         return {
             "runner": "shared-index-market-data",
             "enabled": running,
             "started_at": started_at,
             "last_error": error,
             "initial_option_bootstrap_done": bootstrap_done,
-            "state": self.state.snapshot(),
-            "lifecycle": self.lifecycle.snapshot(),
+            "state": state,
+            "lifecycle": lifecycle,
+            "latest_spots": latest_spots,
+            "feed_health_by_group": feed_groups,
+            "universe_coverage": {"counts": counts, "complete": universe_complete},
+            "all_records_fresh": all_records_fresh,
+            "live_data_ready": live_data_ready,
             "master_refresh": {
                 "last_success_at": master_last_refresh_at,
                 "last_error": master_refresh_error,
