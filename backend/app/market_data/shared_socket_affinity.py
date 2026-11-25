@@ -34,6 +34,7 @@ class InstrumentAffinityPlan:
 
     assignments: dict[InstrumentKey, AffinitySlot]
     token_pairs_by_slot: dict[AffinitySlot, frozenset[tuple[int, str]]]
+    unassigned_keys: frozenset[InstrumentKey]
 
 class ConsumerSocketAffinity:
     """Opt-in lane reservations; unclaimed consumers remain adaptive."""
@@ -86,11 +87,13 @@ class ConsumerSocketAffinity:
         assignments: dict[InstrumentKey, AffinitySlot] = {}
         pairs_by_slot: dict[AffinitySlot, set[tuple[int, str]]] = {}
         pair_slots: dict[tuple[int, str], AffinitySlot] = {}
+        unassigned_keys: set[InstrumentKey] = set()
         for descriptor in tuple(descriptors):
             if not isinstance(descriptor, InstrumentDescriptor):
                 raise TypeError("descriptors must contain InstrumentDescriptor values")
             lane = descriptor.preferred_socket_lane
             if lane is None:
+                unassigned_keys.add(descriptor.key)
                 continue
             slot = AffinitySlot(mode, lane)
             existing = assignments.get(descriptor.key)
@@ -119,6 +122,7 @@ class ConsumerSocketAffinity:
             token_pairs_by_slot={
                 slot: frozenset(pairs) for slot, pairs in pairs_by_slot.items()
             },
+            unassigned_keys=frozenset(unassigned_keys),
         )
 
     def plan(self, owner_slots: dict[str, AffinitySlot],
