@@ -100,3 +100,17 @@ def test_alert_strike_grid_supports_banknifty_hundred_point_contracts():
     assert even_strikes([58000, 58050, 58100, 58150, 58200], 100.0) == (58000.0, 58100.0, 58200.0)
     assert even_strikes([24900, 24950, 25000], 50.0) == (24900.0, 24950.0, 25000.0)
 
+def test_banknifty_early_entry_structural_guard_accepts_bank_contract_identity():
+    from types import SimpleNamespace
+    from app.scanner.iv_skew_flip.alerts.conditions import _structurally_valid
+
+    bank_observation = SimpleNamespace(
+        token="BANK-58000-CE", expiry="2026-11-26", underlying="BANKNIFTY",
+        option_type="CE", source_timestamp_ns=100, spot_timestamp_ns=100,
+        spot_price=58100.0, iv=18.5, iv_input="BID_ASK_MIDPOINT",
+        bid=120.0, ask=121.0, oi=50000, oi_timestamp_ns=100, volume=1000,
+    )
+
+    assert _structurally_valid(bank_observation, "BANKNIFTY") == ()
+    assert "WRONG_UNIVERSE" in _structurally_valid(bank_observation, "NIFTY")
+
