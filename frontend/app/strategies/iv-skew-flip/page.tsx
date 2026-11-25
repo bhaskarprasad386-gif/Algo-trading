@@ -876,7 +876,7 @@ export default function IVSkewFlipPage() {
       </div>
       {alertFetchError&&<p className="text-xs text-amber-600">{alertFetchError}</p>}
       {earlyAlerts.find(row=>row.state==="EARLY_ENTRY") ? (()=>{const alert=earlyAlerts.find(row=>row.state==="EARLY_ENTRY")!;return <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-sm text-emerald-700">EARLY ENTRY • {alert.direction}</b><span className="text-xs theme-muted">{alert.strategy.replaceAll("_"," ")}</span></div>
+        <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-sm text-emerald-700">{alert.underlying??"NIFTY"} EARLY ENTRY • {alert.direction}</b><span className="text-xs theme-muted">{alert.strategy.replaceAll("_"," ")}</span></div>
         <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 text-sm">
           <div><span className="theme-muted text-xs">Contract</span><b className="block">{alert.strike} {alert.option_type}</b></div>
           <div><span className="theme-muted text-xs">Expiry</span><b className="block">{alert.expiry}</b></div>
@@ -884,7 +884,7 @@ export default function IVSkewFlipPage() {
           <div><span className="theme-muted text-xs">Premium</span><b className="block">{fmt(alert.premium)}</b></div>
         </div><p className="mt-2 text-xs theme-muted">{alert.reason??"Signal criteria met"} • IV Δ {delta(alert.iv_change_points," pt",3)} • Volume {fmt(alert.volume_ratio)}x</p>
       </div>;})() : <div className="rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface-2 p-3 text-sm theme-muted">Abhi koi active EARLY_ENTRY alert nahi hai. WATCH / stale feed ko entry signal nahi maana jayega.</div>}
-      <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-xs">
+      <div className="overflow-x-auto"><table className="w-full min-w-[880px] text-left text-xs">
         <thead className="theme-muted"><tr>{["Time (IST)","Index","Strategy","Contract","Direction","Spot","State","Delivery","Conditions / saved values"].map(label=><th key={label} className="border-b theme-border px-2 py-2">{label}</th>)}</tr></thead>
         <tbody>{earlyAlerts.length===0?<tr><td colSpan={9} className="px-2 py-4 theme-muted">No saved early-entry alerts yet.</td></tr>:earlyAlerts.map(alert=>{const checks=alert.metadata?.checks&&typeof alert.metadata.checks==="object"?alert.metadata.checks as Row:{};return <tr key={alert.id} className="border-b theme-border align-top">
           <td className="px-2 py-2 whitespace-nowrap">{sampleTime(alert.observed_at_ns)}</td><td className="px-2 py-2 font-bold">{alert.underlying??"NIFTY"}</td><td className="px-2 py-2">{alert.strategy.replaceAll("_"," ")}</td><td className="px-2 py-2">{alert.strike} {alert.option_type}<span className="block theme-muted">{alert.expiry}</span></td><td className="px-2 py-2">{alert.direction}</td><td className="px-2 py-2">{fmt(alert.spot)}</td><td className="px-2 py-2"><span className="rounded-md border-2 border-slate-300 dark:border-slate-600 px-2 py-1">{alert.state}</span></td><td className="px-2 py-2">{alert.delivery_status??"—"}</td>
