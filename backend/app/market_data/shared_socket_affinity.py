@@ -88,10 +88,19 @@ class ConsumerSocketAffinity:
         pairs_by_slot: dict[AffinitySlot, set[tuple[int, str]]] = {}
         pair_slots: dict[tuple[int, str], AffinitySlot] = {}
         unassigned_keys: set[InstrumentKey] = set()
+        descriptor_by_key: dict[InstrumentKey, InstrumentDescriptor] = {}
+        lane_by_key: dict[InstrumentKey, int | None] = {}
         for descriptor in tuple(descriptors):
             if not isinstance(descriptor, InstrumentDescriptor):
                 raise TypeError("descriptors must contain InstrumentDescriptor values")
+            previous_descriptor = descriptor_by_key.get(descriptor.key)
+            if previous_descriptor is not None and previous_descriptor != descriptor:
+                raise ValueError(f"conflicting descriptors for {descriptor.key.value}")
+            descriptor_by_key[descriptor.key] = descriptor
             lane = descriptor.preferred_socket_lane
+            if descriptor.key in lane_by_key and lane_by_key[descriptor.key] != lane:
+                raise ValueError(f"conflicting lane affinity for {descriptor.key.value}")
+            lane_by_key[descriptor.key] = lane
             if lane is None:
                 unassigned_keys.add(descriptor.key)
                 continue
