@@ -2530,7 +2530,7 @@ def test_retirement_during_normalized_callback_stops_remaining_fanout():
                 "exchange_type": 1,
                 "ltp": 10000,
                 "timestamp_ns": "1792386003000000000",
-            }, generation),
+            }),
             daemon=True,
         )
         delivery.start()
