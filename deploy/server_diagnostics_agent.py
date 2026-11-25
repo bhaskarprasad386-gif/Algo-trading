@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+from urllib.request import Request, urlopen
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,6 +25,10 @@ POLL_SECONDS = max(2, int(os.environ.get("DIAGNOSTICS_POLL_SECONDS", "5")))
 RETENTION_DAYS = max(1, int(os.environ.get("DIAGNOSTICS_RETENTION_DAYS", "14")))
 MAX_EVENTS = max(100, int(os.environ.get("DIAGNOSTICS_MAX_EVENTS", "3000")))
 STOP = threading.Event()
+API_URL = os.environ.get("DIAGNOSTICS_API_URL", "http://127.0.0.1:8000/api/v1/diagnostics/errors?limit=100")
+API_TIMEOUT_SECONDS = max(0.5, float(os.environ.get("DIAGNOSTICS_API_TIMEOUT_SECONDS", "2")))
+_API_STATUS_LOCK = threading.Lock()
+_API_STATUS = {"reachable": False, "last_success_at": None}
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 _SECRET_PATTERNS = [
@@ -83,6 +88,48 @@ def classify(priority: int, message: str = "") -> str | None:
     return None
 
 
+
+def collect_api_diagnostics(db: sqlite3.Connection) -> None:
+    """Persist process-local runtime diagnostics while the API is still reachable."""
+    try:
+        request = Request(API_URL, headers={"Accept": "application/json"}, method="GET")
+        with urlopen(request, timeout=API_TIMEOUT_SECONDS) as response:
+            if response.status != 200:
+                raise OSError("diagnostics API returned non-200")
+            payload = json.loads(response.read(1_000_000).decode("utf-8"))
+        if not isinstance(payload, dict) or not isinstance(payload.get("errors"), list):
+            raise ValueError("diagnostics API schema is invalid")
+    except Exception:
+        with _API_STATUS_LOCK:
+            _API_STATUS["reachable"] = False
+        return
+
+    now = time.time()
+    with db:
+        for event in payload["errors"][:100]:
+            if not isinstance(event, dict):
+                continue
+            event_id = str(event.get("id") or "").strip()
+            if not event_id:
+                continue
+            severity = str(event.get("severity") or "ERROR").upper()
+            if severity not in {"CRITICAL", "ERROR", "WARNING"}:
+                continue
+            raw_time = str(event.get("time") or "")
+            try:
+                stamp = datetime.fromisoformat(raw_time.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat()
+            except (TypeError, ValueError, OverflowError):
+                stamp = datetime.now(timezone.utc).isoformat()
+            component = sanitize(event.get("component") or "Runtime", 120)
+            message = sanitize(event.get("message") or event.get("error_type") or "Runtime diagnostic event")
+            db.execute(
+                "INSERT OR IGNORE INTO events(event_id,cursor,timestamp,severity,component,message,source,inserted_at) VALUES(?,?,?,?,?,?,?,?)",
+                ("api:" + event_id, "", stamp, severity, component, message, "runtime-diagnostics-api", now),
+            )
+    with _API_STATUS_LOCK:
+        _API_STATUS["reachable"] = True
+        _API_STATUS["last_success_at"] = datetime.now(timezone.utc).isoformat()
+
 def collect_once(db: sqlite3.Connection) -> None:
     cursor = state_get(db, "journal_cursor")
     command = ["journalctl", "--unit", UNIT, "--no-pager", "--output=json"]
@@ -138,6 +185,7 @@ def collector_loop() -> None:
     while not STOP.is_set():
         try:
             collect_once(db)
+            collect_api_diagnostics(db)
         except Exception:
             # Keep the collector alive; do not leak raw exception data to another log.
             pass
@@ -164,7 +212,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path == "/health":
-            self._json(200, {"status": "ok", "service": "algo-diagnostics-agent", "source_unit": UNIT, "server_time": datetime.now(timezone.utc).isoformat()})
+            with _API_STATUS_LOCK:
+                api_status = dict(_API_STATUS)
+            self._json(200, {"status": "ok", "service": "algo-diagnostics-agent", "source_unit": UNIT, "api_process_reachable": api_status["reachable"], "api_last_success_at": api_status["last_success_at"], "server_time": datetime.now(timezone.utc).isoformat()})
             return
         if parsed.path != "/api/errors":
             self._json(404, {"status": "not_found"})
@@ -177,7 +227,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             rows = db.execute("SELECT event_id,timestamp,severity,component,message,source FROM events ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
             errors = [{"id": row[0], "time": row[1], "severity": row[2], "component": row[3], "message": row[4], "source": row[5]} for row in rows]
-            self._json(200, {"status": "ok", "source": "vps-systemd-journal", "server_time": datetime.now(timezone.utc).isoformat(), "count": len(errors), "errors": errors})
+            with _API_STATUS_LOCK:
+                api_status = dict(_API_STATUS)
+            self._json(200, {"status": "ok", "source": "vps-journal+runtime-diagnostics", "api_process_reachable": api_status["reachable"], "api_last_success_at": api_status["last_success_at"], "server_time": datetime.now(timezone.utc).isoformat(), "count": len(errors), "errors": errors})
         finally:
             db.close()
 
