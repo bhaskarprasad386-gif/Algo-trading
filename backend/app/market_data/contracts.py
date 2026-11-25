@@ -43,6 +43,7 @@ class MarketDataRecord:
     symbol: str
     instrument_type: InstrumentType
     timestamp_ns: int
+    exchange_timestamp_ns: int | None = None
     received_at_monotonic_ns: int | None = None
     timeframe: str = "1s"
     ltp: float | None = None
@@ -73,6 +74,12 @@ class MarketDataRecord:
             raise TypeError("instrument_type must be an InstrumentType")
         if isinstance(self.timestamp_ns, bool) or not isinstance(self.timestamp_ns, int) or self.timestamp_ns < 0:
             raise ValueError("timestamp_ns must be a non-negative integer")
+        if self.exchange_timestamp_ns is not None and (
+            isinstance(self.exchange_timestamp_ns, bool)
+            or not isinstance(self.exchange_timestamp_ns, int)
+            or self.exchange_timestamp_ns < 0
+        ):
+            raise ValueError("exchange_timestamp_ns must be a non-negative integer when provided")
         if self.received_at_monotonic_ns is not None and (
             isinstance(self.received_at_monotonic_ns, bool)
             or not isinstance(self.received_at_monotonic_ns, int)
@@ -122,6 +129,7 @@ class MarketDataRecord:
             "symbol": self.symbol,
             "instrument_type": self.instrument_type.value,
             "timestamp_ns": self.timestamp_ns,
+            "exchange_timestamp_ns": self.exchange_timestamp_ns,
             "received_at_monotonic_ns": self.received_at_monotonic_ns,
             "timeframe": self.timeframe,
             "ltp": self.ltp,
