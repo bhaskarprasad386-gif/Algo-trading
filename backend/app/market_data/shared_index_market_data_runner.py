@@ -214,6 +214,40 @@ class SharedIndexMarketDataRunner:
         Thread(target=worker, name="shared-index-master-refresh", daemon=True).start()
         return True
 
+    def _check_option_expiry_rollover(self) -> tuple[str, ...]:
+        """Roll an expired option family on the first fresh spot tick, even without ATM movement."""
+        with self._lock:
+            if not self._running or not self._bootstrap_options_done:
+                return ()
+            now = datetime.now(IST)
+            today = now.date()
+            descriptors = self.lifecycle.option_descriptors()
+            completed = []
+            for underlying in LOCKED:
+                active_expiries = {
+                    _parse_expiry(descriptor.expiry)
+                    for descriptor in descriptors
+                    if descriptor.underlying == underlying and descriptor.expiry
+                }
+                if not active_expiries:
+                    continue
+                # Do not roll today's expiry before its 15:30 IST close.
+                latest_active = max(active_expiries)
+                if latest_active > today or (
+                    latest_active == today and (now.hour, now.minute) < (15, 30)
+                ):
+                    continue
+                target_expiry = self._expiry_for(underlying)
+                if active_expiries == {_parse_expiry(target_expiry)}:
+                    continue
+                spot = self._spot_records.get(underlying)
+                if spot is not None and spot.ltp is not None:
+                    if self.rotation._rotate(underlying, float(spot.ltp)):
+                        completed.append(underlying)
+            if completed:
+                self._sync_state_universe()
+            return tuple(completed)
+
     def _check_futures_rollover(self) -> tuple[str, ...]:
         """Roll expired index futures without dropping the current subscription first."""
         with self._lock:
@@ -340,6 +374,7 @@ class SharedIndexMarketDataRunner:
                 flushed = self.rotation.flush_due()
                 if flushed:
                     self._sync_state_universe()
+                self._check_option_expiry_rollover()
                 self._check_futures_rollover()
 
     def start(self, instrument_rows: Iterable[dict] | None = None) -> dict:
