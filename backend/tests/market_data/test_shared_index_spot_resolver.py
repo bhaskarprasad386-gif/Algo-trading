@@ -59,3 +59,40 @@ def test_locked_spot_resolver_rejects_missing_token():
         assert "invalid or duplicate index spot token" in str(exc)
     else:
         raise AssertionError("missing index token must fail closed")
+
+def test_real_instrument_master_rows_resolve_canonical_shared_spot_descriptors():
+    # Exercise the production InstrumentMaster resolver against provider-shaped
+    # Angel One rows, without invoking network download or process-wide cache.
+    from app.market_data.instruments import InstrumentMaster
+
+    master = InstrumentMaster()
+    master.instruments = [
+        {
+            "exch_seg": "NSE",
+            "instrumenttype": "AMXIDX",
+            "token": "9991001",
+            "symbol": "",
+            "name": "NIFTY",
+        },
+        {
+            "exch_seg": "NSE",
+            "instrumenttype": "AMXIDX",
+            "token": "9991002",
+            "symbol": "BANK NIFTY",
+            "name": "BANKNIFTY",
+        },
+    ]
+    master._loaded = True
+
+    descriptors = resolve_locked_index_spot_descriptors(master)
+
+    assert len(descriptors) == 2
+    assert [(d.underlying, d.symbol) for d in descriptors] == [
+        ("NIFTY", "NIFTY"),
+        ("BANKNIFTY", "BANKNIFTY"),
+    ]
+    assert [d.key.token for d in descriptors] == ["9991001", "9991002"]
+    assert all(d.key.exchange == "NSE" for d in descriptors)
+    assert all(d.key.segment == "NSE" for d in descriptors)
+    assert all(d.instrument_type == "index" for d in descriptors)
+
