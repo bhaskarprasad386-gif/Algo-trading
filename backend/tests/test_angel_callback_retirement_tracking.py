@@ -852,3 +852,105 @@ def test_late_failure_callback_from_retired_generation_cannot_recover_replacemen
     assert recovery_requests == []
     assert cooldown_requests == []
     manager.close()
+
+
+
+def test_socket_failure_callback_waits_for_atomic_subscription_rotation():
+    manager = CommonWebSocketManager()
+    first = InstrumentDescriptor(
+        key=InstrumentKey("NSE", "NSE", "NIFTY-ROTATION-BASE"),
+        symbol="NIFTY",
+        instrument_type="index",
+        exchange="NSE",
+        segment="NSE",
+        underlying="NIFTY",
+    )
+    second = InstrumentDescriptor(
+        key=InstrumentKey("NSE", "NSE", "BANKNIFTY-ROTATION-NEXT"),
+        symbol="BANKNIFTY",
+        instrument_type="index",
+        exchange="NSE",
+        segment="NSE",
+        underlying="BANKNIFTY",
+    )
+    manager.registry.register_many((first, second))
+    manager.registry.subscribe("rotation-owner", first.key, mode=1)
+
+    group = SocketGroup(1, 0)
+    socket = BlockingSocket()
+    manager._sockets[group] = socket
+    manager._socket_generation[group] = 7
+    manager._socket_generation_counter[group] = 7
+    manager._socket_tokens[group] = {(1, first.key.token)}
+
+    rotation_entered = Event()
+    release_rotation = Event()
+    failure_finished = Event()
+    reconcile_calls = []
+
+    def blocked_reconcile():
+        reconcile_calls.append(True)
+        if len(reconcile_calls) == 1:
+            rotation_entered.set()
+            assert release_rotation.wait(timeout=2.0), "subscription reconcile must be released"
+
+    manager._reconcile = blocked_reconcile
+    manager.recover_disconnected = lambda **_kwargs: 0
+
+    def completed_close(_socket, **kwargs):
+        callback = kwargs.get("on_finished")
+        if callback:
+            callback()
+        return Thread()
+
+    manager._close_socket_tracked = completed_close
+
+    rotation_errors = []
+    rotation = Thread(
+        target=lambda: _capture_exception(
+            lambda: manager.subscribe("rotation-owner", (second.key,), mode=1),
+            rotation_errors,
+        ),
+        daemon=True,
+    )
+    failure = Thread(
+        target=lambda: (
+            manager._handle_socket_failure(group, socket, 7, "transport disconnected"),
+            failure_finished.set(),
+        ),
+        daemon=True,
+    )
+
+    rotation.start()
+    assert rotation_entered.wait(timeout=1.0), "rotation must enter its reconcile transaction"
+    failure.start()
+    time.sleep(0.05)
+
+    # Failure invalidation must not interleave with the registry/route transaction.
+    assert manager._sockets[group] is socket
+    assert manager._socket_generation[group] == 7
+    assert not failure_finished.is_set()
+
+    release_rotation.set()
+    rotation.join(timeout=2.0)
+    failure.join(timeout=2.0)
+    assert not rotation.is_alive()
+    assert not failure.is_alive()
+    assert rotation_errors == []
+    assert failure_finished.is_set()
+    assert {sub.key for sub in manager.registry.subscriptions()} == {first.key, second.key}
+
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert group not in manager._sockets
+    assert manager.snapshot()["failure_recovery_worker_active"] is False
+    assert manager.snapshot()["failure_recovery_pending_groups"] == []
+    manager.close()
+
+
+def _capture_exception(callback, errors):
+    try:
+        callback()
+    except Exception as exc:
+        errors.append(exc)
