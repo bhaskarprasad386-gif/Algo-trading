@@ -178,3 +178,44 @@ def test_strategy_b_rejects_old_prior_bar_when_latest_bar_is_fresh():
     )
     assert result.state == AlertState.WATCH
     assert "STALE_PRICE_HISTORY" in result.reasons
+
+
+def test_banknifty_strategy_b_emits_positive_support_rejection_on_100_point_grid():
+    from dataclasses import replace
+
+    now = 1_800_000_000 * NS
+    wall = [replace(
+        wall_observation(
+            token="BANK-PE-58000", option_type="PE", ts=now-(2-i)*60*NS,
+            strike=58000, iv=[12.0, 11.95, 11.80][i],
+            oi=[10000, 10100, 10300][i],
+        ),
+        underlying="BANKNIFTY", expiry="2026-11-26", spot_price=58030.0,
+    ) for i in range(3)]
+    bars = [
+        SpotBar(now-60*NS, 58010, 58020, 58000, 58015),
+        SpotBar(now, 58010, 58040, 58000, 58035),
+    ]
+    entry = replace(
+        wall_observation(
+            token="BANK-CE-58000", option_type="CE", ts=now,
+            strike=58000, iv=12.1, oi=9000,
+        ),
+        underlying="BANKNIFTY", expiry="2026-11-26", spot_price=58030.0,
+        bid=99.0, ask=101.0, ltp=100.0,
+    )
+
+    result = evaluate_strategy_b(
+        now_ns=now, expiry="2026-11-26", spot_bars=bars,
+        underlying="BANKNIFTY", wall_tolerance_points=30.0,
+        spot_sync_tolerance_points=10.0,
+        ce_wall_history=[], pe_wall_history=wall,
+        entry_quote=entry, direction="BULLISH",
+    )
+
+    assert result.state == AlertState.EARLY_ENTRY
+    assert result.candidate is not None
+    assert result.candidate.underlying == "BANKNIFTY"
+    assert result.candidate.expiry == "2026-11-26"
+    assert result.candidate.strike == 58000.0
+    assert result.candidate.option_type == "CE"
