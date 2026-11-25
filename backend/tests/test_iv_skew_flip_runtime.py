@@ -117,7 +117,7 @@ def test_broker_snapshot_context_resolves_each_active_underlying_independently()
         option_feed_factory=lambda stream_id: created.setdefault(
             stream_id, FakeOptionFeed(stream_id)
         ),
-        clock_ns=lambda: 20_000_000_000,
+        clock_ns=lambda: 10_000_000_000,
         clock_datetime=lambda: now,
     )
     runtime._rows_by_stream = {
