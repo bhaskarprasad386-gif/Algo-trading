@@ -124,3 +124,36 @@ def test_journal_collector_persists_loguru_errors_and_advances_cursor(tmp_path: 
         assert db.execute("SELECT COUNT(*) FROM events").fetchone() == (2,)
     finally:
         db.close()
+
+
+def test_journal_cursor_rotation_falls_back_and_resumes(tmp_path: Path, monkeypatch) -> None:
+    import json
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(agent, "DB_PATH", tmp_path / "events.sqlite3")
+    calls = []
+    record = {
+        "__CURSOR": "rotated-cursor",
+        "__REALTIME_TIMESTAMP": "1795651200000000",
+        "PRIORITY": "3",
+        "SYSLOG_IDENTIFIER": "uvicorn",
+        "MESSAGE": "worker exception",
+    }
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if "--after-cursor" in command:
+            return SimpleNamespace(returncode=1, stdout="", stderr="Failed to seek to cursor")
+        return SimpleNamespace(returncode=0, stdout=json.dumps(record) + "\\n", stderr="")
+
+    monkeypatch.setattr(agent.subprocess, "run", fake_run)
+    db = agent.connect_db()
+    try:
+        agent.state_set(db, "journal_cursor", "expired-cursor")
+        agent.collect_once(db)
+        assert len(calls) == 2
+        assert "--since" in calls[1]
+        assert db.execute("SELECT value FROM collector_state WHERE key='journal_cursor'").fetchone() == ("rotated-cursor",)
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone() == (1,)
+    finally:
+        db.close()
