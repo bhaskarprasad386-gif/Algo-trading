@@ -2358,6 +2358,10 @@ class CommonWebSocketManager:
                         "pong_count",
                         "last_ping_at_monotonic_ns",
                         "last_pong_at_monotonic_ns",
+                        "heartbeat_state",
+                        "last_pong_age_seconds",
+                        "ping_interval_seconds",
+                        "ping_timeout_seconds",
                         "health_read_error",
                     )
                     if key in health
