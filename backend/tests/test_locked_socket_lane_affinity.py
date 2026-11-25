@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor
 
@@ -29,3 +31,24 @@ def test_wrong_expiry_family_and_other_indices_are_not_assigned_to_locked_lanes(
     for symbol in ("FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"):
         assert descriptor("index", symbol).preferred_socket_lane is None
         assert descriptor("future", symbol).preferred_socket_lane is None
+
+
+
+def test_wrong_exchange_instruments_do_not_inherit_locked_lane_affinity():
+    wrong_nifty_spot = replace(descriptor("index", "NIFTY"), exchange="BSE", segment="BSE")
+    wrong_bank_spot = replace(descriptor("index", "BANKNIFTY"), exchange="BSE", segment="BSE")
+    wrong_nifty_option = replace(
+        descriptor("option", "NIFTY", "WEEKLY"),
+        exchange="BFO",
+        segment="BFO",
+    )
+    wrong_bank_future = replace(
+        descriptor("future", "BANKNIFTY"),
+        exchange="BFO",
+        segment="BFO",
+    )
+
+    assert wrong_nifty_spot.preferred_socket_lane is None
+    assert wrong_bank_spot.preferred_socket_lane is None
+    assert wrong_nifty_option.preferred_socket_lane is None
+    assert wrong_bank_future.preferred_socket_lane is None
