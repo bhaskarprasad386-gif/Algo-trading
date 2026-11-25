@@ -49,7 +49,10 @@ route before relying on it.
 
 The dashboard and mobile error page use the independent collector, not the API
 error route. The mobile page keeps the last successful response in component state and
-browser-local cache. The collector also shows whether the trading API process is
+browser-local cache. Dashboard Shared Runner polling uses the dedicated
+`/api/v1/market-data/shared-index-runner/health-lite` endpoint, which reports
+per-underlying/per-instrument freshness and socket lifecycle without serializing
+the full decorated 52-contract quote snapshot. The collector also shows whether the trading API process is
 currently reachable separately from the collector itself. A failed refresh marks the collector unreachable but never
 replaces previous logs with an empty list. It shows the last successful sync time.
 
