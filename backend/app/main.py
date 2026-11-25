@@ -2688,80 +2688,77 @@ def _capture_iv_broker_option_snapshot(underlying: str = "NIFTY"):
     )
 
 
-def _iv_snapshot_saved_today(day):
+def _iv_snapshot_saved_today(day, underlying: str = "NIFTY", expected_contracts: int = 22):
     # An earlier manual fetch must not suppress the scheduled near-close snapshot.
     start = datetime.combine(day, time(15, 27), tzinfo=IST).timestamp() * 1_000_000_000
     end = datetime.combine(day, time.max, tzinfo=IST).timestamp() * 1_000_000_000
+    symbol = str(underlying or "").strip().upper()
     with SessionLocal() as db:
         received_iv_contracts = db.query(
             func.count(func.distinct(IVOptionObservation.token))
         ).filter(
-            IVOptionObservation.underlying == "NIFTY",
+            IVOptionObservation.underlying == symbol,
             IVOptionObservation.iv_source == "ANGEL_ONE",
             IVOptionObservation.iv.isnot(None),
             IVOptionObservation.sampled_at_ns >= int(start),
             IVOptionObservation.sampled_at_ns <= int(end),
         ).scalar() or 0
-        return received_iv_contracts >= 22
+        return received_iv_contracts >= int(expected_contracts)
 
 
 async def _iv_option_snapshot_daily_loop():
-    """Persist broker IV during market hours and make bounded near-close retries."""
-    last_attempt_monotonic = 0.0
-    next_attempt_delay = 0.0
+    """Persist bounded broker-IV snapshots independently for each active index chain."""
+    last_attempt = {"NIFTY": 0.0, "BANKNIFTY": 0.0}
+    next_delay = {"NIFTY": 0.0, "BANKNIFTY": 0.0}
+    expected_by_symbol = {"NIFTY": 22, "BANKNIFTY": 14}
     while True:
         now = datetime.now(IST)
         current_time = now.time()
         runtime = iv_skew_flip_runtime
-        if (
-            runtime is not None
-            and runtime.snapshot().get("status") == "RUNNING"
-            and time(9, 20) <= current_time <= time(15, 30, 20)
-        ):
+        runner_on = runtime is not None and runtime.snapshot().get("status") == "RUNNING"
+        capture_window = time(9, 20) <= current_time <= time(15, 30, 20)
+        if runner_on and capture_window:
             near_close = time(15, 28) <= current_time <= time(15, 30, 20)
-            already_saved = False
-            if near_close:
-                try:
-                    already_saved = await asyncio.to_thread(_iv_snapshot_saved_today, now.date())
-                except Exception:
-                    app_logger.exception("IV EOD snapshot completion check failed")
-            if not already_saved:
-                monotonic_now = time_module.monotonic()
-                retry_delay = 15.0 if near_close else (
-                    next_attempt_delay if next_attempt_delay > 0 else 300.0
-                )
-                if monotonic_now - last_attempt_monotonic >= retry_delay:
-                    last_attempt_monotonic = monotonic_now
+            for symbol in ("NIFTY", "BANKNIFTY"):
+                already_saved = False
+                if near_close:
                     try:
-                        result = await asyncio.to_thread(_capture_iv_broker_option_snapshot)
-                        received = int(result.get("iv_received_contracts") or 0)
-                        expected = int(result.get("expected_contracts") or 22)
-                        if received >= expected:
-                            next_attempt_delay = 300.0
-                            app_logger.info(
-                                "IV Angel One option snapshot persisted: expiry=%s contracts=%s IV=%s",
-                                result.get("expiry"), result.get("saved_contracts"), received,
-                            )
-                        else:
-                            next_attempt_delay = 15.0 if near_close else (60.0 if received > 0 else 300.0)
-                            app_logger.warning(
-                                "IV Angel One snapshot incomplete; preserving last valid IV and retrying: expiry=%s IV=%s/%s",
-                                result.get("expiry"), received, expected,
-                            )
-                    except Exception:
-                        next_attempt_delay = 15.0 if near_close else 300.0
-                        app_logger.exception(
-                            "IV Angel One option snapshot attempt failed; next retry in %.0fs",
-                            next_attempt_delay,
+                        already_saved = await asyncio.to_thread(
+                            _iv_snapshot_saved_today, now.date(), symbol, expected_by_symbol[symbol]
                         )
+                    except Exception:
+                        app_logger.exception("IV %s EOD snapshot completion check failed", symbol)
+                if already_saved:
+                    continue
+                monotonic_now = time_module.monotonic()
+                retry_delay = 15.0 if near_close else (next_delay[symbol] or 300.0)
+                if monotonic_now - last_attempt[symbol] < retry_delay:
+                    continue
+                last_attempt[symbol] = monotonic_now
+                try:
+                    result = await asyncio.to_thread(_capture_iv_broker_option_snapshot, symbol)
+                    received = int(result.get("iv_received_contracts") or 0)
+                    expected = int(result.get("expected_contracts") or expected_by_symbol[symbol])
+                    if received >= expected:
+                        next_delay[symbol] = 300.0
+                        app_logger.info(
+                            "IV Angel One %s option snapshot persisted: expiry=%s contracts=%s IV=%s",
+                            symbol, result.get("expiry"), result.get("saved_contracts"), received,
+                        )
+                    else:
+                        next_delay[symbol] = 15.0 if near_close else (60.0 if received > 0 else 300.0)
+                        app_logger.warning(
+                            "IV Angel One %s snapshot incomplete; preserving last valid IV and retrying: expiry=%s IV=%s/%s",
+                            symbol, result.get("expiry"), received, expected,
+                        )
+                except Exception:
+                    next_delay[symbol] = 15.0 if near_close else 300.0
+                    app_logger.exception("IV Angel One %s snapshot failed; next retry in %.0fs", symbol, next_delay[symbol])
         else:
-            # OFF must pause all broker calls and clear the throttle so turning
-            # the scanner ON during market hours starts capture immediately.
-            runner_off = runtime is None or runtime.snapshot().get("status") != "RUNNING"
-            outside_capture_hours = current_time < time(9, 20) or current_time > time(15, 30, 20)
-            if runner_off or outside_capture_hours:
-                last_attempt_monotonic = 0.0
-                next_attempt_delay = 0.0
+            # OFF pauses all broker calls; re-enable starts each stream promptly.
+            for symbol in last_attempt:
+                last_attempt[symbol] = 0.0
+                next_delay[symbol] = 0.0
         await asyncio.sleep(15)
 
 
