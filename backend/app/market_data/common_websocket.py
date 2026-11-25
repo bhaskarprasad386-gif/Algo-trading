@@ -1052,7 +1052,9 @@ class CommonWebSocketManager:
                             and not self._closed
                         )
                 if not _still_current():
-                    self._close_socket_bounded(socket)
+                    # Another lifecycle path already invalidated and registered
+                    # this generation's retirement. Its close watcher owns the
+                    # socket; a second untracked close would bypass deduplication.
                     return
                 # A replacement worker may already be queued for admission
                 # while another shard's close is still in flight. Re-check
@@ -1065,7 +1067,9 @@ class CommonWebSocketManager:
                         break
                     time.sleep(0.05)
                 if not _still_current():
-                    self._close_socket_bounded(socket)
+                    # Another lifecycle path already invalidated and registered
+                    # this generation's retirement. Its close watcher owns the
+                    # socket; a second untracked close would bypass deduplication.
                     return
                 # Admission is process-wide, not merely a timestamp check:
                 # hold the same lock through handshake completion and orphan
