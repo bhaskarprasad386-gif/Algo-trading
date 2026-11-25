@@ -2638,3 +2638,31 @@ def test_new_generation_failure_is_not_suppressed_by_prior_lane_recovery_marker(
         assert manager._failure_recovery_pending_versions[group] == 1
     finally:
         manager.close()
+
+def test_rejected_affinity_subscribe_rolls_back_only_the_attempted_consumer():
+    registry = InstrumentRegistry()
+    item = descriptor("capacity-rollback-991")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._ensure_recovery_supervisor = lambda: None
+    manager._reconcile = lambda: None
+
+    manager.subscribe("existing-owner", [item.key], mode=1)
+    manager.subscribe("other-owner", [item.key], mode=3)
+    before = registry.snapshot_consumer("existing-owner")
+
+    def reject_reconcile():
+        raise ValueError("global WebSocket limit exceeded")
+
+    manager._reconcile = reject_reconcile
+    try:
+        manager.subscribe("existing-owner", [item.key], mode=2)
+    except ValueError as exc:
+        assert "global WebSocket limit" in str(exc)
+    else:
+        raise AssertionError("capacity rejection must propagate")
+
+    assert registry.snapshot_consumer("existing-owner") == before == {item.key: 1}
+    shared = registry.subscriptions()[0]
+    assert shared.consumers == frozenset({"existing-owner", "other-owner"})
+    assert shared.mode == 3
