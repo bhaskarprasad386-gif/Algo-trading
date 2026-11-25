@@ -100,6 +100,52 @@ def make_rows(symbol, expiry, base, step):
     return rows
 
 
+
+
+def test_broker_snapshot_context_resolves_each_active_underlying_independently():
+    now = datetime(2026, 11, 25, 10, 0, tzinfo=IST)
+    rows = (
+        make_rows("NIFTY", "26NOV2026", 100, 10)
+        + make_rows("BANKNIFTY", "26NOV2026", 200, 100)
+    )
+    spot = FakeSpotFeed()
+    created = {}
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster(rows),
+        spot_feed=spot,
+        option_feed_factory=lambda stream_id: created.setdefault(
+            stream_id, FakeOptionFeed(stream_id)
+        ),
+        clock_ns=lambda: 20_000_000_000,
+        clock_datetime=lambda: now,
+    )
+    runtime._rows_by_stream = {
+        stream_id: runtime._rows_for_symbol(rows, config.symbol)
+        for stream_id, config in CHAIN_CONFIGS
+    }
+    runtime.refresh_once()
+
+    nifty_universe, nifty_spot = runtime.broker_snapshot_context("NIFTY_WEEKLY")
+    bank_universe, bank_spot = runtime.broker_snapshot_context("BANKNIFTY_MONTHLY")
+
+    assert nifty_universe.underlying == "NIFTY"
+    assert bank_universe.underlying == "BANKNIFTY"
+    assert len(nifty_universe.contracts) == 22
+    assert len(bank_universe.contracts) == 14
+    assert nifty_spot is spot.last_spot_snapshot("NIFTY")
+    assert bank_spot is spot.last_spot_snapshot("BANKNIFTY")
+
+    try:
+        runtime.broker_snapshot_context("NIFTY_MONTHLY")
+    except RuntimeError as exc:
+        assert "not initialized" in str(exc)
+    else:
+        raise AssertionError("disabled NIFTY Monthly must not expose a broker snapshot universe")
+
+    runtime.stop()
+
+
 def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
     import app.scanner.iv_skew_flip.runtime as runtime_module
 
