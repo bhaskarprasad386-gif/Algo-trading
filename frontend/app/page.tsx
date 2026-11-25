@@ -521,8 +521,11 @@ export default function HomePage() {
     const subscriptions = group ? socketRoster.filter((item: any) => String(item.socket_group) === group) : [];
     const consumers = Array.from(new Set(subscriptions.flatMap((item: any) => Array.isArray(item.consumer) ? item.consumer : [])));
     const connected = health?.connected === true && health?.stopping !== true;
-    const status = !group ? "NOT ASSIGNED" : !health ? "MISSING" : health.stopping ? "STOPPING" : health.connecting ? "CONNECTING" : connected ? "CONNECTED" : "DISCONNECTED";
-    return { label: "SOCKET " + (index + 1), group: group ?? "No required group", status, heartbeat: health?.heartbeat_state ? String(health.heartbeat_state) : "UNKNOWN", pongAge: health?.last_pong_age_seconds != null && Number.isFinite(Number(health.last_pong_age_seconds)) ? Number(health.last_pong_age_seconds) : null, reconnects: Number(health?.reconnect_count ?? 0), errors: Number(health?.error_count ?? 0), subscriptions: subscriptions.length, consumers: consumers.slice(0, 3).join(" • ") || "No active consumer roster" };
+    const heartbeat = health?.heartbeat_state ? String(health.heartbeat_state).toUpperCase() : "UNKNOWN";
+    const subscriptionRejections = Number(health?.subscription_rejection_count ?? 0);
+    const heartbeatDegraded = /STALE|TIMEOUT|FAILED|ERROR/.test(heartbeat) || health?.transport_close_timed_out === true;
+    const status = !group ? "NOT ASSIGNED" : !health ? "MISSING" : health.stopping ? "STOPPING" : health.connecting ? "CONNECTING" : connected && (heartbeatDegraded || subscriptionRejections > 0) ? "DEGRADED" : connected ? "CONNECTED" : "DISCONNECTED";
+    return { label: "SOCKET " + (index + 1), group: group ?? "No required group", status, heartbeat, pongAge: health?.last_pong_age_seconds != null && Number.isFinite(Number(health.last_pong_age_seconds)) ? Number(health.last_pong_age_seconds) : null, reconnects: Number(health?.reconnect_count ?? 0), errors: Number(health?.error_count ?? 0), subscriptionRejections, subscriptions: subscriptions.length, consumers: consumers.slice(0, 3).join(" • ") || "No active consumer roster" };
   });
   const sharedRunnerEnabled = sharedRunner?.enabled === true;
   const sharedRunnerReady = sharedRunner?.live_data_ready === true;
@@ -644,11 +647,11 @@ export default function HomePage() {
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {sharedSocketCards.map((socket) => {
                 const good = socket.status === "CONNECTED";
-                const warning = socket.status === "CONNECTING" || socket.status === "NOT ASSIGNED";
+                const warning = socket.status === "CONNECTING" || socket.status === "NOT ASSIGNED" || socket.status === "DEGRADED";
                 return <div key={socket.label} className="min-w-0 rounded-xl border theme-border p-3">
                   <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold">{socket.label}</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (good ? "theme-success-bg theme-success" : warning ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{socket.status}</span></div>
                   <div className="mt-1 text-[9px] theme-subtle">Group: {socket.group}</div>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]"><div><span className="theme-subtle">Heartbeat</span><div className="mt-0.5 font-bold">{socket.heartbeat}</div></div><div><span className="theme-subtle">Last pong age</span><div className="mt-0.5 font-bold tabular-nums">{socket.pongAge == null ? "—" : socket.pongAge.toFixed(1) + "s"}</div></div><div><span className="theme-subtle">Subscriptions</span><div className="mt-0.5 font-bold tabular-nums">{socket.subscriptions}</div></div><div><span className="theme-subtle">Reconnects / errors</span><div className="mt-0.5 font-bold tabular-nums">{socket.reconnects} / {socket.errors}</div></div></div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]"><div><span className="theme-subtle">Heartbeat</span><div className="mt-0.5 font-bold">{socket.heartbeat}</div></div><div><span className="theme-subtle">Last pong age</span><div className="mt-0.5 font-bold tabular-nums">{socket.pongAge == null ? "—" : socket.pongAge.toFixed(1) + "s"}</div></div><div><span className="theme-subtle">Subscriptions</span><div className="mt-0.5 font-bold tabular-nums">{socket.subscriptions}</div></div><div><span className="theme-subtle">Reconnects / errors</span><div className="mt-0.5 font-bold tabular-nums">{socket.reconnects} / {socket.errors}</div><span className="theme-subtle">Subscription rejects</span><div className="mt-0.5 font-bold tabular-nums">{socket.subscriptionRejections}</div></div></div>
                   <div className="mt-2 break-words text-[9px] leading-4 theme-subtle">{socket.consumers}</div>
                 </div>;
               })}
