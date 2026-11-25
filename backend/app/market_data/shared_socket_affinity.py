@@ -18,7 +18,7 @@ class AffinitySlot:
     shard: int
 
     def __post_init__(self):
-        if isinstance(self.mode, bool) or self.mode not in (1, 2, 3, 4):
+        if isinstance(self.mode, bool) or not isinstance(self.mode, int) or self.mode not in (1, 2, 3, 4):
             raise ValueError("mode must be 1, 2, 3, or 4")
         if isinstance(self.shard, bool) or not isinstance(self.shard, int) or self.shard < 0:
             raise ValueError("shard must be a non-negative integer")
