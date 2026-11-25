@@ -955,8 +955,11 @@ class IVSkewFlipRuntime:
         if isinstance(wall_history_times, list) and wall_history_times:
             stamps = [format_change_time(item.get("quote")) for item in wall_history_times if isinstance(item, dict)]
             change_time_text += " • Wall history " + ",".join(stamps)
+        underlying = str(payload.get("underlying") or "NIFTY").strip().upper()
+        expiry_label = "WEEKLY" if underlying == "NIFTY" else "MONTHLY"
+        calibration_label = " • PILOT THRESHOLDS" if underlying == "BANKNIFTY" else ""
         lines = [
-            f"{emoji} <b>{escape(str(payload.get('underlying') or 'NIFTY').upper())} {'WEEKLY' if str(payload.get('underlying') or 'NIFTY').upper() == 'NIFTY' else 'MONTHLY'} IV EARLY ENTRY</b>",
+            f"{emoji} <b>{escape(underlying)} {expiry_label} IV EARLY ENTRY{calibration_label}</b>",
             f"<b>Strategy:</b> {escape(str(payload.get('strategy') or '—'))}",
             f"<b>Signal:</b> {escape(direction)} • {escape(str(payload.get('option_type') or '—'))}",
             f"<b>Contract:</b> {escape(str(payload.get('strike') or '—'))} • Expiry {escape(str(payload.get('expiry') or '—'))}",
@@ -967,6 +970,8 @@ class IVSkewFlipRuntime:
             f"<b>Reason:</b> {escape(str(payload.get('reason') or 'Conditions satisfied'))}",
             f"<b>Alert ID:</b> {int(payload.get('event_id') or 0)} • Alert only; no order placed",
         ]
+        if underlying == "BANKNIFTY":
+            lines.insert(2, "<b>Calibration:</b> Pilot thresholds scaled to the 100-point strike grid; forward validation pending")
         body = json.dumps({"chat_id": chat_id, "text": "\n".join(lines), "parse_mode": "HTML", "disable_web_page_preview": True}).encode("utf-8")
         request = Request(
             f"https://api.telegram.org/bot{token}/sendMessage",
