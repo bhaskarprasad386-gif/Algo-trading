@@ -285,5 +285,5 @@ def test_failed_banknifty_expiry_rotation_detaches_previous_shared_universe():
         adapter.start(next_expiry)
     assert adapter.latest_quotes() == ()
     assert adapter.resolved_universe() is None
-    assert adapter.snapshot()["status"] == "WAITING_FOR_SHARED_RUNNER"
+    assert adapter.snapshot()["status"] == "STOPPED"
     assert runner.stop_calls == 0
