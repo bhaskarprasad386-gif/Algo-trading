@@ -212,6 +212,20 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
     assert created["NIFTY_WEEKLY"].universe.strikes[5] == 140.0
     assert runtime._samplers["NIFTY_WEEKLY"].inherited_from is previous_sampler
 
+    # BANKNIFTY ATM movement independently rotates its seven-strike window;
+    # NIFTY's already-resolved weekly universe must remain unchanged.
+    weekly_after_move = created["NIFTY_WEEKLY"].universe
+    previous_bank_sampler = runtime._samplers["BANKNIFTY_MONTHLY"]
+    spot.prices["BANKNIFTY"] = SpotSnapshot(900.0, 12_000_000_000)
+    spot.last_prices["BANKNIFTY"] = spot.prices["BANKNIFTY"]
+    runtime.refresh_once()
+    assert created["BANKNIFTY_MONTHLY"].universe.atm_strike == 900.0
+    assert len(created["BANKNIFTY_MONTHLY"].universe.contracts) == 14
+    assert len(created["BANKNIFTY_MONTHLY"].universe.strikes) == 7
+    assert runtime._samplers["BANKNIFTY_MONTHLY"].inherited_from is previous_bank_sampler
+    assert created["NIFTY_WEEKLY"].universe is weekly_after_move
+    runtime.stop()
+
 
 def test_runtime_waits_for_fresh_spot_before_option_subscriptions(monkeypatch):
     import app.scanner.iv_skew_flip.runtime as runtime_module
