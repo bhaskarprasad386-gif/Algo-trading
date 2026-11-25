@@ -412,6 +412,13 @@ class CommonWebSocketManager:
                     )
 
     def subscribe(self, consumer: str, keys: list[InstrumentKey], mode: int = 1) -> tuple[Subscription, ...]:
+        # Serialize registry mutation with reconciliation. Without this outer
+        # transaction, a rejected capacity change can leave a consumer registered
+        # even though no socket/route was admitted.
+        with self._reconcile_lock:
+            return self._subscribe_serialized(consumer, keys, mode)
+
+    def _subscribe_serialized(self, consumer: str, keys: list[InstrumentKey], mode: int = 1) -> tuple[Subscription, ...]:
         consumer = self._consumer_name(consumer)
         if not keys:
             return ()
@@ -447,11 +454,37 @@ class CommonWebSocketManager:
                     f"consumer_subscriptions={len(after)} total_subscriptions={len(self.registry.subscriptions())}"
                 )
         self._ensure_recovery_supervisor()
-        self._reconcile()
+        try:
+            self._reconcile()
+        except Exception:
+            # Restore this consumer's exact pre-call ownership and mode. The
+            # reconcile lock prevents another subscription mutation from being
+            # overwritten while rollback is in progress.
+            with self._lock:
+                current_keys = [
+                    sub.key for sub in self.registry.subscriptions()
+                    if consumer in sub.consumers
+                ]
+                for key in current_keys:
+                    self.registry.unsubscribe(consumer, key)
+                for key, previous_mode in before.items():
+                    self.registry.subscribe(consumer, key, mode=previous_mode)
+            try:
+                self._reconcile()
+            except Exception as rollback_error:
+                app_logger.error(
+                    "Common feed subscription rollback reconcile failed consumer=%s: %s",
+                    consumer, rollback_error,
+                )
+            raise
         with self._lock:
             return tuple(sub for sub in self.registry.subscriptions() if consumer in sub.consumers)
 
     def unsubscribe(self, consumer: str, keys: list[InstrumentKey] | None = None) -> None:
+        with self._reconcile_lock:
+            self._unsubscribe_serialized(consumer, keys)
+
+    def _unsubscribe_serialized(self, consumer: str, keys: list[InstrumentKey] | None = None) -> None:
         consumer = self._consumer_name(consumer)
         with self._lock:
             before = {
@@ -478,6 +511,10 @@ class CommonWebSocketManager:
         self._reconcile()
 
     def clear_consumer(self, consumer: str) -> None:
+        with self._reconcile_lock:
+            self._clear_consumer_serialized(consumer)
+
+    def _clear_consumer_serialized(self, consumer: str) -> None:
         consumer = self._consumer_name(consumer)
         with self._lock:
             before = sum(1 for sub in self.registry.subscriptions() if consumer in sub.consumers)
