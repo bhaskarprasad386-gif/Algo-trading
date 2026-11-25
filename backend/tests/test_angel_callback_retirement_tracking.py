@@ -1020,4 +1020,13 @@ def test_coalesced_close_reconcile_failure_keeps_group_pending_until_supervisor_
     state = manager.snapshot()
     assert state["failure_recovery_pending_groups"] == []
     assert len(reconcile_attempts) >= 2
+
+    # Finish the other two tracked closes and ensure the primary admission
+    # lease is released only by its own completion path.
+    deferred_closes[groups[2]]()
+    deferred_closes[groups[0]]()
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert manager.snapshot()["failure_recovery_worker_active"] is False
     manager.close()
