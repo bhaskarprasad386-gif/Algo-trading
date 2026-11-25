@@ -119,9 +119,11 @@ function SignalSummary({ title, chain, spot }: { title: string; chain: Chain; sp
   const metrics = (Array.isArray(sampler.live_metrics) ? sampler.live_metrics as Row[] : [])
     .filter(item => item.iv_source === "ANGEL_ONE" && n(item.iv) !== null);
   const avg = (rows: Row[]) => rows.length ? rows.reduce((s, x) => s + Number(x.iv), 0) / rows.length : null;
-  const brokerIvStatus = metrics.some(item => item.iv_live === true)
-    ? "BROKER IV • LIVE"
-    : metrics.length ? "BROKER IV • LAST" : "WAITING FOR BROKER IV";
+  const brokerIvStatus = (rows: Row[]) => {
+    if (!rows.length) return "WAITING FOR BROKER IV";
+    const liveCount = rows.filter(item => item.iv_live === true).length;
+    return liveCount === rows.length ? "BROKER IV • LIVE" : liveCount > 0 ? "BROKER IV • MIXED" : "BROKER IV • LAST";
+  };
   const spotPrice = n(spot.price);
   const resolvedStrikes = Array.isArray(feed.strikes) ? feed.strikes.map(n).filter((x): x is number => x !== null) : [];
   const strikes = (resolvedStrikes.length ? resolvedStrikes : metrics.map(x => n(x.strike)).filter((x): x is number => x !== null)).sort((a,b)=>a-b);
@@ -129,11 +131,12 @@ function SignalSummary({ title, chain, spot }: { title: string; chain: Chain; sp
   const atm = atmIndex >= 0 ? strikes[atmIndex] : null;
   const byContract = new Map(metrics.filter(x => n(x.iv) !== null).map(x => [`${n(x.strike)}:${String(x.option_type)}`, x]));
   const matchedSkewPairs: number[] = [];
+  const matchedSkewRows: Row[] = [];
   if (atmIndex >= 0) {
     for (const offset of [0, 1, 2]) {
       const call = byContract.get(`${strikes[atmIndex + offset]}:CE`);
       const put = byContract.get(`${strikes[atmIndex - offset]}:PE`);
-      if (call && put) matchedSkewPairs.push(Number(call.iv) - Number(put.iv));
+      if (call && put) { matchedSkewPairs.push(Number(call.iv) - Number(put.iv)); matchedSkewRows.push(call, put); }
     }
   }
   // Match the backend engine: live-spot ATM (midpoint ties round upward) and up to two equidistant OTM CE/PE pairs.
@@ -149,8 +152,8 @@ function SignalSummary({ title, chain, spot }: { title: string; chain: Chain; sp
   return <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
     <Metric label={`${title} Spot`} value={fmt(spotPrice)} sub={`${spot.last_trade_time ? new Date(String(spot.last_trade_time)).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",hour12:true}) : "Time unavailable"} • ${spot.fresh === true ? "LIVE" : spot.quote_status === "LAST_KNOWN_STALE" ? `LAST KNOWN • STALE • ${age(spot.age_ms)} old` : "WAITING"}`} />
     <Metric label="ATM Strike" value={fmt(atm, 0)} />
-    <Metric label="ATM IV" value={atmIv === null ? "—" : `${fmt(atmIv, 2)}%`} sub={brokerIvStatus} />
-    <Metric label="IV Skew (CE−PE)" value={skew === null ? "—" : `${skew > 0 ? "+" : ""}${fmt(skew, 2)} pt`} sub={brokerIvStatus} />
+    <Metric label="ATM IV" value={atmIv === null ? "—" : `${fmt(atmIv, 2)}%`} sub={brokerIvStatus(atmPair)} />
+    <Metric label="IV Skew (CE−PE)" value={skew === null ? "—" : `${skew > 0 ? "+" : ""}${fmt(skew, 2)} pt`} sub={brokerIvStatus(matchedSkewRows)} />
     <Metric label="IV Flip" value={status("IV_FLIP")} />
     <Metric label="Gamma Blast" value={status("GAMMA_BLAST")} sub={String(feed.status ?? "WAITING")} />
   </div>;
