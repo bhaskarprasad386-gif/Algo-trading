@@ -49,8 +49,20 @@ def test_successful_official_download_is_atomically_persisted(isolated_master_ca
 
     assert master.download(force=True) == rows
     payload = json.loads(isolated_master_cache.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 1
+    # Successful downloads now persist integrity-protected schema v2 snapshots.
+    # Verify the digest as well as the atomic payload contents so this test
+    # catches incomplete or corrupted writes, not just a schema number change.
+    assert payload["schema_version"] == 2
     assert payload["instruments"] == rows
+    assert payload["content_sha256"] == instruments_module.hashlib.sha256(
+        json.dumps(
+            rows,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
     assert datetime.fromisoformat(payload["fetched_at"]).tzinfo is not None
 
 
