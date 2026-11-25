@@ -1094,3 +1094,43 @@ def test_shared_runner_expiry_selection_rolls_banknifty_monthly_only_after_close
     assert choose_locked_expiry(rows, "BANKNIFTY", now=before_close) == "2026-11-26"
     assert choose_locked_expiry(rows, "BANKNIFTY", now=at_close) == "2026-12-31"
 
+def test_banknifty_telegram_alert_is_identified_as_monthly_pilot(monkeypatch):
+    import json
+    import app.scanner.iv_skew_flip.runtime as runtime_module
+    from app.core.config import settings
+
+    class Response:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def read(self):
+            return b'{"ok": true}'
+
+    captured = {}
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "test-chat")
+    monkeypatch.setattr(runtime_module, "urlopen", fake_urlopen)
+
+    runtime_module.IVSkewFlipRuntime._telegram_sender({
+        "underlying": "BANKNIFTY", "strategy": "IV_VOLUME_MOMENTUM",
+        "direction": "BULLISH", "option_type": "CE", "strike": 58000,
+        "expiry": "2026-11-26", "spot": 58100, "premium": 125,
+        "iv_change_points": 0.25, "volume_ratio": 3.0,
+        "observed_at_ns": 1_800_000_000_000_000_000, "event_id": 7,
+        "reason": "test alert",
+    })
+
+    message = captured["body"]["text"]
+    assert "BANKNIFTY MONTHLY IV EARLY ENTRY" in message
+    assert "PILOT THRESHOLDS" in message
+    assert "forward validation pending" in message
+    assert "test-chat" == captured["body"]["chat_id"]
+    assert captured["timeout"] == 5
+
