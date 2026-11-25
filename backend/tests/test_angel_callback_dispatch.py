@@ -283,3 +283,45 @@ def test_retirement_fences_remaining_callbacks_in_already_dequeued_batch():
     assert seen == ["inflight"]
     assert adapter.snapshot()["callback_attempts"] == 1
     assert adapter.snapshot()["closed"] is True
+
+
+
+def test_graceful_stop_timeout_fences_remaining_invocations_in_active_batch():
+    from threading import Event
+
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    entered = Event()
+    release = Event()
+    seen = []
+
+    def blocked(value):
+        entered.set()
+        release.wait(timeout=2.0)
+        seen.append(value)
+
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(
+            CallbackInvocation(blocked, "inflight", "raw"),
+            CallbackInvocation(seen.append, "must-not-run-after-timeout", "record"),
+        ),
+    )
+    assert entered.wait(timeout=1.0)
+
+    with pytest.raises(TimeoutError, match="shutdown budget"):
+        adapter.stop(timeout=0.05, drain=True)
+
+    state = adapter.snapshot()
+    assert state["closed"] is True
+    assert state["generation"] == 2
+    assert state["callback_attempts"] == 1
+
+    release.set()
+    worker = adapter._thread
+    assert worker is not None
+    worker.join(timeout=1.0)
+    assert not worker.is_alive()
+    assert seen == ["inflight"]
+    assert adapter.snapshot()["callback_attempts"] == 1
