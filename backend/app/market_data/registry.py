@@ -33,16 +33,17 @@ class InstrumentDescriptor:
         """
         underlying = str(self.underlying or "").strip().upper()
         kind = str(self.instrument_type or "").strip().lower()
+        exchange = str(self.exchange or "").strip().upper()
         expiry_type = str(self.expiry_type or "").strip().upper()
-        if kind == "index":
+        if kind == "index" and exchange == "NSE":
             return {"NIFTY": 0, "BANKNIFTY": 1}.get(underlying)
-        if kind == "option":
+        if kind == "option" and exchange == "NFO":
             if underlying == "NIFTY" and expiry_type == "WEEKLY":
                 return 0
             if underlying == "BANKNIFTY" and expiry_type == "MONTHLY":
                 return 1
             return None
-        if kind == "future" and underlying in {"NIFTY", "BANKNIFTY"}:
+        if kind == "future" and exchange == "NFO" and underlying in {"NIFTY", "BANKNIFTY"}:
             return 2
         return None
 
