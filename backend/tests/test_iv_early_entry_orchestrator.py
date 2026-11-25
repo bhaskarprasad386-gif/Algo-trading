@@ -114,3 +114,42 @@ def test_banknifty_early_entry_structural_guard_accepts_bank_contract_identity()
     assert _structurally_valid(bank_observation, "BANKNIFTY") == ()
     assert "WRONG_UNIVERSE" in _structurally_valid(bank_observation, "NIFTY")
 
+def test_lifecycle_transition_refreshes_cached_history_even_when_sampler_is_degraded():
+    class _LifecycleHistoryStore(_LifecycleStore):
+        def __init__(self):
+            super().__init__()
+            self.latest_calls = []
+            self.expirations_result = 1
+
+        def expire_session_alerts(self, *, now):
+            self.expirations.append(now)
+            return self.expirations_result
+
+        def latest(self, *, limit=20, underlying=None):
+            self.latest_calls.append((limit, underlying))
+            return [{
+                "id": 41, "underlying": underlying, "state": "EXPIRED",
+                "reason": "PRIOR_SESSION_ALERT",
+            }]
+
+    now_ns = 1_800_000_000 * 1_000_000_000
+    now = datetime.fromtimestamp(now_ns / 1_000_000_000, tz=timezone.utc)
+    store = _LifecycleHistoryStore()
+    engine = IVEarlyEntryAlertEngine(store)
+    engine._history_loaded.add("BANKNIFTY")
+    engine._last_results["BANKNIFTY_MONTHLY"] = {
+        "state": "WATCH", "underlying": "BANKNIFTY",
+        "alerts": [{"id": 41, "underlying": "BANKNIFTY", "state": "EARLY_ENTRY"}],
+    }
+
+    result = engine.evaluate(
+        sampler=_NotLiveSampler(),
+        spot=SimpleNamespace(timestamp_ns=now_ns - 10_000_000_000, price=58100.0),
+        expiry="2026-11-26", now=now, now_ns=now_ns,
+        underlying="BANKNIFTY", strike_step=100.0,
+    )
+
+    assert result["reason"] == "SAMPLER_NOT_LIVE"
+    assert store.latest_calls == [(30, "BANKNIFTY")]
+    assert engine.snapshot("BANKNIFTY")["alerts"][0]["state"] == "EXPIRED"
+    assert engine.snapshot("NIFTY")["underlying"] == "NIFTY"
