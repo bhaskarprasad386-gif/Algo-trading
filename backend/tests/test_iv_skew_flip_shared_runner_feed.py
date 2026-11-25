@@ -265,3 +265,25 @@ def test_shared_runner_option_adapter_recovers_after_quote_gap_without_resubscri
     assert adapter.snapshot(now_ns=now + 21_000_000_000)["status"] == "LIVE"
     assert len(adapter.latest_quotes()) == 6
     assert runner.stop_calls == 0
+
+
+def test_failed_banknifty_expiry_rotation_detaches_previous_shared_universe():
+    now = time_ns()
+    current = make_universe(expiry="2026-11-26")
+    next_expiry = make_universe(expiry="2026-12-31")
+    runner = FakeSharedRunner(make_records(current, now), make_descriptors(current))
+    adapter = IVSharedRunnerOptionFeedAdapter(
+        shared_runner=runner, stream_id="BANKNIFTY_MONTHLY",
+        clock_ns=lambda: now,
+    )
+    adapter.start(current)
+    assert len(adapter.latest_quotes()) == 6
+
+    # The shared runner has not rotated yet. A failed attempt to attach the
+    # next expiry must not leak the previous expiry's still-fresh quotes.
+    with pytest.raises(RuntimeError, match="UNIVERSE_MISMATCH|EXPIRY_MISMATCH"):
+        adapter.start(next_expiry)
+    assert adapter.latest_quotes() == ()
+    assert adapter.resolved_universe() is None
+    assert adapter.snapshot()["status"] == "WAITING_FOR_SHARED_RUNNER"
+    assert runner.stop_calls == 0
