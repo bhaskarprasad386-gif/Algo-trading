@@ -5,8 +5,13 @@ from app.market_data.shared_index_option_rotation_controller import SharedIndexO
 class StubLifecycle:
     def __init__(self):
         self.rotations = []
+        self.current_options = ()
     def rotate_options(self, descriptors):
-        self.rotations.append(tuple(descriptors))
+        selected = tuple(descriptors)
+        self.rotations.append(selected)
+        self.current_options = selected
+    def option_descriptors(self):
+        return self.current_options
 
 
 
@@ -20,7 +25,7 @@ class FakeClock:
 
 def _rows(expiry="26NOV2026"):
     rows = []
-    for underlying, base, step, count in (("NIFTY", 21750, 50, 13), ("BANKNIFTY", 48000, 100, 11)):
+    for underlying, base, step, count in (("NIFTY", 21750, 50, 13), ("BANKNIFTY", 47600, 100, 11)):
         for index in range(count):
             strike = base + index * step
             for side in ("CE", "PE"):
@@ -80,3 +85,44 @@ def test_concurrent_same_underlying_ticks_are_serialized_to_single_rotation():
     snap = controller.snapshot()
     assert snap["rotation_successes"] == 1
     assert snap["trigger"]["successful_anchor_spot"]["NIFTY"] == 22050
+
+
+def test_concurrent_rotations_for_both_locked_underlyings_are_consistent():
+    from concurrent.futures import ThreadPoolExecutor
+
+    lifecycle = StubLifecycle()
+    controller = SharedIndexOptionRotationController(
+        lifecycle=lifecycle,
+        instrument_rows=_rows,
+        expiry_for=lambda _: "26NOV2026",
+        thresholds={"NIFTY": 50, "BANKNIFTY": 100},
+        cooldown_seconds=0,
+    )
+    assert not controller.on_record(_spot("NIFTY", 22000))
+    assert not controller.on_record(_spot("BANKNIFTY", 48000))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(
+            lambda item: controller.on_record(_spot(*item)),
+            (("NIFTY", 22050), ("BANKNIFTY", 48100)),
+        ))
+
+    assert results == [True, True]
+    assert len(lifecycle.rotations) == 2
+    # The first request selects one underlying; the serialized second request
+    # must preserve the first set and add the other underlying's contracts.
+    rotation_counts = sorted(len(rotation) for rotation in lifecycle.rotations)
+    assert rotation_counts in ([22, 48], [26, 48])
+    final_options = lifecycle.option_descriptors()
+    assert len(final_options) == 48
+    assert len({descriptor.key for descriptor in final_options}) == 48
+    assert sum(descriptor.underlying == "NIFTY" for descriptor in final_options) == 26
+    assert sum(descriptor.underlying == "BANKNIFTY" for descriptor in final_options) == 22
+    snapshot = controller.snapshot()
+    assert snapshot["rotation_successes"] == 2
+    assert snapshot["rotation_failures"] == 0
+    assert snapshot["trigger"]["successful_anchor_spot"] == {
+        "NIFTY": 22050.0,
+        "BANKNIFTY": 48100.0,
+    }
+    assert set(snapshot["last_rotation"]) == {"NIFTY", "BANKNIFTY"}

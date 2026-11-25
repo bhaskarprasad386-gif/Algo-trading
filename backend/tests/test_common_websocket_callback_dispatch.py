@@ -440,3 +440,62 @@ def test_supervisor_keeps_pending_failures_when_reconcile_raises():
     assert state["failure_recovery_pending_groups"] == ["1:3"]
     assert state["recovery_backoff_errors"] == 1
     manager.close()
+
+
+def test_supervisor_does_not_ack_new_same_group_failure_during_reconcile():
+    manager = CommonWebSocketManager()
+    group = SocketGroup(mode=1, shard=5)
+    with manager._lock:
+        first_generation = manager._mark_failure_recovery_pending_locked(group)
+    observed_generations = []
+
+    def reconcile_with_new_same_group_failure():
+        with manager._lock:
+            observed_generations.append(manager._failure_recovery_pending_generations[group])
+            manager._mark_failure_recovery_pending_locked(group)
+
+    manager._reconcile = reconcile_with_new_same_group_failure
+    _run_one_recovery_supervisor_iteration(manager)
+    state = manager.snapshot()
+    assert first_generation == 1
+    assert observed_generations == [1]
+    assert state["failure_recovery_pending_groups"] == ["1:5"], (
+        "the supervisor must leave a same-group failure arriving after its snapshot pending"
+    )
+    with manager._lock:
+        assert manager._failure_recovery_pending_generations[group] == 2
+    manager.close()
+
+
+def test_coalesced_failure_close_callbacks_complete_in_reverse_order():
+    manager = CommonWebSocketManager(socket_factory=lambda: _Socket())
+    first, second = SocketGroup(mode=1, shard=0), SocketGroup(mode=1, shard=1)
+    first_socket, second_socket = _Socket(), _Socket()
+    _install_current(manager, first, first_socket, generation=71)
+    _install_current(manager, second, second_socket, generation=72)
+    close_callbacks = []
+    reconciles = []
+    manager._close_socket_tracked = lambda _socket, **kwargs: close_callbacks.append(kwargs["on_finished"])
+    manager._reconcile = lambda: reconciles.append("full-registry")
+    manager.recover_disconnected = lambda **_kwargs: 0
+
+
+    manager._schedule_socket_failure_recovery(first, first_socket, 71, "first-shard-failed")
+    deadline = monotonic() + 1.0
+    while len(close_callbacks) < 1 and monotonic() < deadline:
+        sleep(0.01)
+    assert len(close_callbacks) == 1
+    manager._schedule_socket_failure_recovery(second, second_socket, 72, "second-shard-failed")
+    assert len(close_callbacks) == 2
+    assert "1:1" in manager.snapshot()["failure_recovery_pending_groups"]
+
+
+    # Complete the coalesced retirement before the primary worker's close.
+    close_callbacks[1]()
+    close_callbacks[0]()
+    state = manager.snapshot()
+    assert reconciles == ["full-registry", "full-registry"]
+    assert state["failure_recovery_worker_active"] is False
+    assert state["failure_recovery_pending_groups"] == []
+    assert state["failure_recovery_groups"] == []
+    manager.close()

@@ -299,6 +299,42 @@ def test_supervisor_preserves_pending_groups_when_recovery_fails():
     manager.close()
 
 
+def test_supervisor_ack_does_not_drain_new_same_group_failure_during_reconcile():
+    manager = CommonWebSocketManager()
+    manager._recovery_interval_seconds = 0.01
+    manager._recovery_backoff_max_seconds = 0.05
+    pending_group = SocketGroup(1, 3)
+    manager._failure_recovery_pending_groups.add(pending_group)
+    manager._failure_recovery_pending_generations[pending_group] = 0
+    manager.registry.subscriptions = lambda: [object()]
+    manager.recover_disconnected = lambda **kwargs: 0
+    new_failure_marked = Event()
+    retry_reconcile_failed = Event()
+    reconcile_calls = []
+
+    def reconcile_with_same_group_race():
+        reconcile_calls.append(len(reconcile_calls) + 1)
+        if len(reconcile_calls) == 1:
+            with manager._lock:
+                manager._mark_failure_recovery_pending_locked(pending_group)
+            new_failure_marked.set()
+            return
+        retry_reconcile_failed.set()
+        raise RuntimeError("retry reconcile deliberately fails")
+
+    manager._broker_cooldown_remaining = lambda: 0.0
+    manager._reconcile = reconcile_with_same_group_race
+    manager._ensure_recovery_supervisor()
+    assert new_failure_marked.wait(timeout=1.0)
+    assert retry_reconcile_failed.wait(timeout=1.0)
+    # The first reconcile must not acknowledge the new generation just because
+    # it shares the same SocketGroup as the older pending failure.
+    state = manager.snapshot()
+    assert state["failure_recovery_pending_groups"] == ["1:3"]
+    assert manager._failure_recovery_pending_generations[pending_group] == 1
+    manager.close()
+
+
 def test_late_close_completion_keeps_recovery_admission_owned():
     release_close = Event()
     close_started = Event()
@@ -661,6 +697,58 @@ def test_socket_operation_is_rejected_after_manager_shutdown():
     assert manager.snapshot()["socket_operation_worker_count"] == 0
 
 
+def test_coalesced_callback_ack_preserves_new_same_group_failure_generation():
+    manager = CommonWebSocketManager()
+    manager._recovery_interval_seconds = 5.0
+    primary = SocketGroup(1, 0)
+    coalesced = SocketGroup(1, 1)
+    primary_socket, coalesced_socket = BlockingSocket(), BlockingSocket()
+    for group, socket in ((primary, primary_socket), (coalesced, coalesced_socket)):
+        manager._sockets[group] = socket
+        manager._socket_generation[group] = 1
+        manager._socket_generation_counter[group] = 1
+        manager._socket_tokens[group] = {(1, str(group.shard))}
+
+    primary_close_started = Event()
+    coalesced_reconciled = Event()
+    primary_callback = []
+
+    def controlled_close(socket, **kwargs):
+        callback = kwargs.get("on_finished")
+        if kwargs.get("reason") == "failure_callback":
+            primary_callback.append(callback)
+            primary_close_started.set()
+            return Thread()
+        if kwargs.get("reason") == "coalesced_failure_callback":
+            if callback:
+                callback()
+            return Thread()
+        return Thread()
+
+    manager._close_socket_tracked = controlled_close
+    manager.recover_disconnected = lambda **kwargs: 0
+
+    def reconcile_with_new_failure():
+        with manager._lock:
+            manager._mark_failure_recovery_pending_locked(coalesced)
+        coalesced_reconciled.set()
+
+    manager._reconcile = reconcile_with_new_failure
+    manager._schedule_socket_failure_recovery(primary, primary_socket, 1, "primary")
+    assert primary_close_started.wait(timeout=1.0)
+    manager._schedule_socket_failure_recovery(coalesced, coalesced_socket, 1, "coalesced")
+    assert coalesced_reconciled.wait(timeout=1.0)
+    state = manager.snapshot()
+    assert state["failure_recovery_pending_groups"] == ["1:1"]
+    assert manager._failure_recovery_pending_generations[coalesced] == 2
+
+    # Release the admitted primary worker with a normal reconcile, then shut down.
+    manager._reconcile = lambda: None
+    assert primary_callback and callable(primary_callback[0])
+    primary_callback[0]()
+    manager.close()
+
+
 def test_coalesced_failure_close_callback_after_shutdown_does_not_reconcile():
     callbacks = []
     manager = CommonWebSocketManager()
@@ -778,4 +866,34 @@ def test_partial_unsubscribe_failure_invalidates_socket_but_preserves_registry_i
     assert broker_tokens == set()
     state = manager.snapshot()
     assert state["socket_operation_worker_failures"] == 1
+    manager.close()
+
+
+def test_explicit_reconcile_retry_is_drained_after_transient_failure_without_registry_intent():
+    manager = CommonWebSocketManager()
+    manager._recovery_interval_seconds = 0.01
+    manager._recovery_backoff_max_seconds = 0.2
+    attempts = []
+    reconciled = Event()
+    manager.recover_disconnected = lambda **_kwargs: 0
+    manager._broker_cooldown_remaining = lambda: 0.0
+
+    def fail_once_then_reconcile():
+        attempts.append(len(attempts) + 1)
+        if len(attempts) == 1:
+            raise RuntimeError("transient rollback reconcile failure")
+        reconciled.set()
+
+    manager._reconcile = fail_once_then_reconcile
+    assert manager._request_reconcile_retry() is True
+    assert reconciled.wait(timeout=2.0)
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["reconcile_retry_pending"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+    state = manager.snapshot()
+    assert len(attempts) >= 2
+    assert state["reconcile_retry_pending"] is False
+    assert state["reconcile_retry_requests"] == 1
+    assert state["reconcile_retry_successes"] == 1
     manager.close()
