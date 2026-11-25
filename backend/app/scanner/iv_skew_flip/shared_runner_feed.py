@@ -110,7 +110,9 @@ class IVSharedRunnerSpotFeedAdapter:
             return self._last.get(str(symbol).strip().upper())
 
     def spot_snapshot(self, symbol: str, *, now_ns: int | None = None) -> SpotSnapshot | None:
-        if not _shared_runner_ready(self.shared_runner):
+        with self._lock:
+            started = self._started
+        if not started or not _shared_runner_ready(self.shared_runner):
             return None
         quote = self.last_spot_snapshot(symbol)
         if quote is None:
@@ -134,7 +136,7 @@ class IVSharedRunnerSpotFeedAdapter:
         for symbol in self.DEFAULT_SYMBOLS:
             quote = latest.get(symbol)
             age_ns = None if quote is None else now - quote.timestamp_ns
-            fresh = (runner_ready and quote is not None and age_ns is not None
+            fresh = (started and runner_ready and quote is not None and age_ns is not None
                      and -1_000_000_000 <= age_ns <= self.max_age_ns)
             if fresh:
                 fresh_count += 1
