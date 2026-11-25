@@ -231,11 +231,32 @@ class SharedIndexMarketDataState:
             publish_errors = self._publish_errors
         ages = {key: max(0, (now - record.timestamp_ns) / 1e9) for key, record in latest}
         fresh = sum(age <= self.max_age_ns / 1e9 for age in ages.values())
+        feed_health_by_group: dict[str, dict[str, Any]] = {}
+        for key, record in latest:
+            data = record.as_dict()
+            underlying = str(data.get("underlying") or "").strip().upper()
+            instrument_type = str(data.get("instrument_type") or "").strip().lower()
+            if underlying not in {"NIFTY", "BANKNIFTY"} or instrument_type not in {"index", "option", "future"}:
+                continue
+            age_ns = now - record.timestamp_ns
+            age_seconds = max(0.0, age_ns / 1e9)
+            group_key = f"{underlying}:{instrument_type}"
+            group = feed_health_by_group.setdefault(
+                group_key,
+                {"underlying": underlying, "instrument_type": instrument_type, "count": 0, "fresh_count": 0, "stale_count": 0, "max_age_seconds": 0.0},
+            )
+            group["count"] += 1
+            group["max_age_seconds"] = max(group["max_age_seconds"], age_seconds)
+            if -1_000_000_000 <= age_ns <= self.max_age_ns:
+                group["fresh_count"] += 1
+            else:
+                group["stale_count"] += 1
         return {
             "instrument_count": len(latest),
             "fresh_count": fresh,
             "stale_count": len(ages) - fresh,
             "feed_fresh": bool(ages) and fresh == len(ages),
+            "feed_health_by_group": feed_health_by_group,
             "max_age_seconds": self.max_age_ns / 1e9,
             "max_feed_age_seconds": max(ages.values(), default=None),
             "accepted_ticks": accepted,
