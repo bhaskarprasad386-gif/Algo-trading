@@ -42,6 +42,10 @@ class IVSharedRunnerSpotFeedAdapter:
         selected = {str(item).strip().upper() for item in symbols}
         if selected != set(self.DEFAULT_SYMBOLS):
             raise ValueError("IV shared spot adapter is locked to NIFTY and BANKNIFTY")
+        health = getattr(self.shared_runner, "health_snapshot", None)
+        runner_status = health() if callable(health) else self.shared_runner.snapshot()
+        if not runner_status.get("enabled"):
+            raise RuntimeError("SHARED_RUNNER_NOT_READY: shared index market data is not running")
         with self._lock:
             self._started = True
         self._refresh_last()
