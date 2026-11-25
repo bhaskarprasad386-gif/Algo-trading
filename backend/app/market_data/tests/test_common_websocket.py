@@ -2400,3 +2400,57 @@ def test_clear_normalized_consumer_during_tick_keeps_shared_owner_delivery():
     finally:
         release.set()
         manager.close()
+
+
+def test_retired_generation_cannot_publish_normalized_tick_after_slow_normalization(monkeypatch):
+    """A callback admitted before retirement must not overwrite the replacement cache."""
+    registry = InstrumentRegistry()
+    item = descriptor("retired-normalize-991")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    entered = Event()
+    release = Event()
+    delivered = []
+    cache_writes = []
+    manager.register_normalized_callback("slow-normalizer-race", delivered.append)
+    original_normalize = manager._normalizer.normalize
+
+    def blocked_normalize(instrument, payload):
+        record = original_normalize(instrument, payload)
+        entered.set()
+        assert release.wait(timeout=2.0), "test must release blocked normalization"
+        return record
+
+    manager._normalizer.normalize = blocked_normalize
+    monkeypatch.setattr(common_websocket_module, "put_market_data_record", cache_writes.append)
+    try:
+        manager.subscribe("slow-normalizer-race", [item.key])
+        group = SocketGroup(1, 0)
+        old_generation = manager._socket_generation[group]
+        delivery = Thread(
+            target=lambda: manager._on_data(group, {
+                "token": item.key.token,
+                "exchange_type": 1,
+                "ltp": 12345,
+                "timestamp_ns": "1792386000000000000",
+            }, old_generation),
+            daemon=True,
+        )
+        delivery.start()
+        assert entered.wait(timeout=1.0), "normalization should be blocked after admission"
+
+        replacement = FakeSocket()
+        with manager._lock:
+            manager._sockets[group] = replacement
+            manager._socket_generation[group] = old_generation + 1
+
+        release.set()
+        delivery.join(timeout=1.0)
+        assert not delivery.is_alive()
+        assert cache_writes == []
+        assert delivered == []
+        assert manager.snapshot()["normalized_records_emitted"] == 0
+    finally:
+        release.set()
+        manager.close()
