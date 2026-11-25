@@ -239,9 +239,10 @@ def test_offmarket_vps_verification_is_read_only_and_has_no_deploy_or_restart_st
     assert "systemctl is-active algo-trading.service" in remote
     assert "PRAGMA quick_check(1);" in remote
     assert "journalctl" in remote
+
+
 def test_offmarket_remote_verification_has_one_bounded_ssh_execution():
     from pathlib import Path
-    import re
 
     workflow = (
         Path(__file__).resolve().parents[2]
