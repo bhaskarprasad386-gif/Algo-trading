@@ -954,3 +954,70 @@ def _capture_exception(callback, errors):
         callback()
     except Exception as exc:
         errors.append(exc)
+
+
+def test_coalesced_close_reconcile_failure_keeps_group_pending_until_supervisor_success():
+    """A failed coalesced reconcile must remain queued for the recovery supervisor."""
+    manager = CommonWebSocketManager()
+    groups = [SocketGroup(1, shard) for shard in range(3)]
+    sockets = [BlockingSocket() for _ in groups]
+    deferred_closes = {}
+
+    for group, socket in zip(groups, sockets):
+        manager._sockets[group] = socket
+        manager._socket_generation[group] = 11
+        manager._socket_generation_counter[group] = 11
+        manager._socket_tokens[group] = {(1, f"lane-{group.shard}")}
+
+    def defer_close(socket, **kwargs):
+        group = kwargs["group"]
+        deferred_closes[group] = kwargs.get("on_finished")
+        return Thread()
+
+    manager._close_socket_tracked = defer_close
+    reconcile_attempts = []
+
+    def fail_first_reconcile():
+        reconcile_attempts.append(True)
+        if len(reconcile_attempts) == 1:
+            raise RuntimeError("transient coalesced reconcile failure")
+
+    manager._reconcile = fail_first_reconcile
+    manager.recover_disconnected = lambda **_kwargs: 0
+
+    # The first failure owns the recovery worker; the next two are coalesced,
+    # but each transport still receives an independent retirement callback.
+    for index in range(3):
+        manager._schedule_socket_failure_recovery(
+            groups[index], sockets[index], 11, f"lane {index} failed"
+        )
+        deadline = time.monotonic() + 1.0
+        while groups[index] not in deferred_closes and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert groups[index] in deferred_closes
+
+    assert manager.snapshot()["failure_recovery_pending_groups"] == ["1:1", "1:2"]
+
+    # Complete one coalesced close while its desired-state reconcile fails.
+    deferred_closes[groups[1]]()
+    state = manager.snapshot()
+    assert state["failure_recovery_pending_groups"] == ["1:1", "1:2"]
+    assert "1:1" not in state["failure_recovery_groups"]
+
+    # The supervisor must retry the pending desired-state reconcile and only
+    # acknowledge the captured groups after that reconcile succeeds.
+    manager._recovery_interval_seconds = 0.01
+    manager._recovery_backoff_max_seconds = 0.02
+    manager._recovery_stop.clear()
+    supervisor = Thread(target=manager._recovery_loop, daemon=True)
+    supervisor.start()
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["failure_recovery_pending_groups"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    manager._recovery_stop.set()
+    supervisor.join(timeout=1.0)
+
+    state = manager.snapshot()
+    assert state["failure_recovery_pending_groups"] == []
+    assert len(reconcile_attempts) >= 2
+    manager.close()
