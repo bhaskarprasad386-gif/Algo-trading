@@ -425,3 +425,62 @@ def test_locked_three_lane_budget_rejects_unclassified_instruments_without_lane_
         }
     finally:
         manager.close()
+
+
+def test_locked_affinity_is_idempotent_across_reconcile_and_partial_owner_release():
+    registry = InstrumentRegistry()
+    nifty_option = _descriptor("NIFTY-WEEKLY-IDEMPOTENT")
+    bank_option = _descriptor("BANK-MONTHLY-IDEMPOTENT")
+
+    def future(token, underlying):
+        return InstrumentDescriptor(
+            key=InstrumentKey("NFO", "NFO", token),
+            symbol=token,
+            instrument_type="future",
+            exchange="NFO",
+            segment="NFO",
+            underlying=underlying,
+            expiry="2026-12-31",
+        )
+
+    nifty_future = future("NIFTY-FUT-IDEMPOTENT", "NIFTY")
+    bank_future = future("BANK-FUT-IDEMPOTENT", "BANKNIFTY")
+    registry.register_many((nifty_option, bank_option, nifty_future, bank_future))
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._recovery_interval_seconds = 60.0
+
+    try:
+        manager.subscribe("shared-options-owner", (nifty_option.key, bank_option.key), mode=3)
+        manager.subscribe("shared-futures-owner", (nifty_future.key, bank_future.key), mode=3)
+        expected = {
+            (2, nifty_option.key.token): 0,
+            (2, bank_option.key.token): 1,
+            (2, nifty_future.key.token): 2,
+            (2, bank_future.key.token): 2,
+        }
+        assert manager._shard_assignments[3] == expected
+
+        first_routes = {group: dict(routes) for group, routes in manager._route_index.items()}
+        manager._reconcile()
+        manager._reconcile()
+        assert manager._shard_assignments[3] == expected
+        assert manager._route_index == first_routes
+        assert {
+            row["token"]: row["socket_group"]
+            for row in manager.snapshot()["subscription_roster"]
+        } == {
+            nifty_option.key.token: "3:0",
+            bank_option.key.token: "3:1",
+            nifty_future.key.token: "3:2",
+            bank_future.key.token: "3:2",
+        }
+
+        manager.unsubscribe("shared-options-owner", (bank_option.key,))
+        assert manager._shard_assignments[3] == {
+            (2, nifty_option.key.token): 0,
+            (2, nifty_future.key.token): 2,
+            (2, bank_future.key.token): 2,
+        }
+        assert set(manager._route_index) == {SocketGroup(3, 0), SocketGroup(3, 2)}
+    finally:
+        manager.close()
