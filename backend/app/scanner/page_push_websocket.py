@@ -508,15 +508,20 @@ async def page_updates(websocket: WebSocket) -> None:
             parsed_origin = urlparse(origin)
             origin_scheme = parsed_origin.scheme.lower()[:16] or "none"
             origin_host = (parsed_origin.hostname or "none").lower()[:253]
+            # The allowlist compares scheme + netloc, so an explicit port is
+            # operationally relevant and safe to log separately.
+            origin_port = parsed_origin.port
         except ValueError:
             origin_scheme = "invalid"
             origin_host = "invalid"
-        # Log only the parsed scheme/host. Never include the raw Origin header,
-        # which may contain paths, query strings, or user-supplied secrets.
+            origin_port = "invalid"
+        # Log only parsed origin components. Never include the raw Origin
+        # header, which may contain paths, query strings, or user-supplied secrets.
         _log.warning(
-            "Rejected scanner page WebSocket origin scheme=%r host=%r",
+            "Rejected scanner page WebSocket origin scheme=%r host=%r port=%r",
             origin_scheme,
             origin_host,
+            origin_port,
         )
         await websocket.close(code=1008)
         return
