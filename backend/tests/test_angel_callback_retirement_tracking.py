@@ -207,6 +207,7 @@ def test_supervisor_drains_coalesced_failure_groups_after_successful_recovery():
     manager._recovery_interval_seconds = 0.01
     pending = {SocketGroup(1, 1), SocketGroup(1, 2)}
     manager._failure_recovery_pending_groups.update(pending)
+    manager._failure_recovery_pending_versions.update({group: 1 for group in pending})
     recovery_succeeded = Event()
     manager.registry.subscriptions = lambda: [object()]
     # Exercise successful supervisor acknowledgement without fixture-dependent reconciliation.
@@ -1051,6 +1052,7 @@ def test_recovery_supervisor_does_not_acknowledge_failures_added_during_reconcil
     first_group = SocketGroup(1, 1)
     late_group = SocketGroup(1, 2)
     manager._failure_recovery_pending_groups.add(first_group)
+    manager._failure_recovery_pending_versions[first_group] = 1
     reconcile_entered = Event()
     release_reconcile = Event()
     reconcile_calls = []
@@ -1071,6 +1073,7 @@ def test_recovery_supervisor_does_not_acknowledge_failures_added_during_reconcil
 
     assert reconcile_entered.wait(timeout=1.0)
     manager._failure_recovery_pending_groups.add(late_group)
+    manager._failure_recovery_pending_versions[late_group] = 1
     release_reconcile.set()
 
     deadline = time.monotonic() + 1.0
