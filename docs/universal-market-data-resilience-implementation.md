@@ -54,7 +54,7 @@ This ledger prevents implemented foundations from being confused with the remain
 | Direct socket ownership | Repository-wide call-site audit found no application-lifespan construction of the legacy two-socket Cash-Future collector or generic `LiveMarketDataFeed`/`MarketDataEngine` fallback; active Box Spread, IV, Synthetic, Calendar and Cash-Future startup paths use shared-manager adapters. | External/manual invocation cannot be proven absent from repository source. Preserve dormant compatibility classes until owner confirms no external caller or explicitly authorizes retirement. |
 | Fault injection / soak | Deterministic unit and integration regressions cover generation races, simultaneous lane recovery, delayed events, queue overflow, shutdown fencing and route preservation. | Complete transport fault matrix and representative soak with latency/memory/queue high-water evidence. |
 
-A full backend pass is necessary but does not by itself satisfy the transport fault matrix, direct-owner inventory, or Cloudflare build gate. No item is marked complete without exact evidence. Cloudflare's failed build log remains external to the available GitHub connection and must be inspected in its dashboard before merge.
+A full backend pass is necessary but does not by itself satisfy the transport fault matrix, direct-owner inventory, broker entitlement confirmation, or representative production soak. No item is marked complete without exact evidence. The frontend is hosted from the VPS; frontend build/deployment is outside this backend market-data PR. No Cloudflare build, Workers, Pages, OpenNext, or Wrangler gate is required for PR #754.
 ## Remaining implementation phases
 
 1. **Three-lane ownership and distribution**
@@ -205,3 +205,11 @@ The lifecycle entry points now validate the complete broker instrument identity 
 - Angel One and Shoonya normalizers populate source and receive clocks for standalone consumers. The common Angel manager overwrites the receive clock with the ingress clock captured before raw callback fan-out, then the shared latest-snapshot cache persists all three clocks and warm-start replay restores them.
 - Existing consumers remain source-compatible because the new field is optional; direct synthetic/test records may omit it until they pass through a provider normalizer.
 - Regression tests cover both provider normalizers, missing-source timestamp behavior, validation, common-manager stamping, cache persistence and warm replay.
+
+
+## Deployment boundary — VPS frontend
+
+- The frontend is served from the VPS using the standard Next.js runtime; it is not deployed through Cloudflare Workers or Pages.
+- PR #754 changes backend market-data ingestion, allocation, lifecycle, and regression tests only. It does not change frontend deployment, reverse-proxy configuration, backend service deployment, or VPS state.
+- Frontend deployment cleanup belongs in its own explicitly scoped change. It must preserve the existing VPS Next.js start/build process and the frontend-to-backend WebSocket origin contract.
+- CI for this PR is GitHub Actions backend/integration/targeted-feed validation. External Cloudflare or Vercel deployment status is not an acceptance gate for this PR.
