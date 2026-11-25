@@ -23,6 +23,7 @@ class IVEarlyEntryAlertEngine:
         self, *, sampler: Any, spot: Any, expiry: str, now: datetime, now_ns: int,
         underlying: str = "NIFTY", strike_step: float = 50.0,
         max_consolidation_points: float = 55.0, wall_tolerance_points: float = 15.0,
+        spot_sync_tolerance_points: float = 5.0,
     ) -> dict[str, Any]:
         if now.tzinfo is None:
             raise ValueError("alert engine requires timezone-aware datetime")
@@ -44,7 +45,7 @@ class IVEarlyEntryAlertEngine:
                 underlying=underlying,
             )
         if not expiry:
-            return {"state": "WATCH", "reason": "WAITING_FOR_WEEKLY_EXPIRY", "signals_allowed": False}
+            return {"state": "WATCH", "reason": "WAITING_FOR_EXPIRY", "signals_allowed": False}
         snapshot = sampler.snapshot()
         if snapshot.get("status") != "LIVE":
             return {"state": "WATCH", "reason": "SAMPLER_NOT_LIVE", "signals_allowed": False}
@@ -93,6 +94,7 @@ class IVEarlyEntryAlertEngine:
                     now_ns=now_ns, expiry=expiry, bars=bars, ce=ce, pe=pe,
                     target=token_rows.get(pair[target_type], ()), direction=direction,
                     underlying=underlying, max_consolidation_points=max_consolidation_points,
+                    spot_sync_tolerance_points=spot_sync_tolerance_points,
                     live_ce=live_ce, live_pe=live_pe, live_target=live_target,
                 )
                 if result.candidate is not None:
@@ -132,6 +134,7 @@ class IVEarlyEntryAlertEngine:
                 ce_wall_history=ce_wall, pe_wall_history=pe_wall,
                 entry_quote=entry_quote, direction=direction,
                 underlying=underlying, wall_tolerance_points=wall_tolerance_points,
+                spot_sync_tolerance_points=spot_sync_tolerance_points,
             )
             if result.candidate is not None:
                 candidates.append(result.candidate)
