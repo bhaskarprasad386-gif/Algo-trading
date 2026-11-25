@@ -230,9 +230,9 @@ def test_offmarket_vps_verification_is_read_only_and_has_no_deploy_or_restart_st
 
     remote = workflow.split("REMOTE_SCRIPT=$(cat <<'REMOTE'", 1)[1].split("\n          REMOTE", 1)[0]
     mutating_commands = re.compile(
-        r"(?im)^\\s*(?:systemctl\\s+(?:restart|stop|disable|enable)|"
-        r"git\\s+(?:pull|checkout|reset)|alembic\\s+upgrade|"
-        r"(?:DROP|DELETE|INSERT|UPDATE)\\s+(?:TABLE|FROM|INTO|[A-Z_]+))"
+        r"(?im)^\s*(?:systemctl\s+(?:restart|stop|disable|enable)|"
+        r"git\s+(?:pull|checkout|reset)|alembic\s+upgrade|"
+        r"(?:DROP|DELETE|INSERT|UPDATE)\s+(?:TABLE|FROM|INTO|[A-Z_]+))"
     )
     assert mutating_commands.search(remote) is None
 
@@ -251,7 +251,6 @@ def test_offmarket_remote_verification_has_one_bounded_ssh_execution():
         / "offmarket-runtime-verification.yml"
     ).read_text()
 
-    executions = re.findall(r"(?m)^\\s*if printf '%s\\\\n' \\"\\$REMOTE_SCRIPT\\" \\| timeout 150 ssh", workflow)
-    assert len(executions) == 1
+    assert workflow.count("timeout 150 ssh") == 1
     assert "'timeout 120s bash -s'" in workflow
     assert "VPS_SSH_ATTEMPT=" not in workflow
