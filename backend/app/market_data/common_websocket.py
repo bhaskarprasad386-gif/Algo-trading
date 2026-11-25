@@ -2183,10 +2183,13 @@ class CommonWebSocketManager:
                                     (group, incoming_exchange_type)
                                 ] = incoming_timestamp_ns
                             self._last_exchange_tick_received_at[incoming_exchange_type] = time.monotonic()
-                for callback in callbacks:
+                callback_owners = [
+                    name for name, callback_key in matching
+                    if callback_key == key and self._record_callbacks.get(name) is not None
+                ]
+                for callback_owner, callback in zip(callback_owners, callbacks):
                     if not self._is_current_data_generation(group, generation):
                         break
-                    callback_owner = next((name for name, _ in matching if self._record_callbacks.get(name) is callback and _ == key), "unknown")
                     self._invoke_consumer_callback((callback_owner,), "normalized", callback, record)
                     with self._lock:
                         generation_retired = (
