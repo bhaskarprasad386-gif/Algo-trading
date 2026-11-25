@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
-import { isCurrentRecoveryResponse, isCurrentPagePushRequest, mergeUniqueAlerts, freshEarlyEntryAlerts } from "@/lib/page-push-recovery.mjs";
+import { isCurrentRecoveryResponse, isCurrentPagePushRequest, mergeUniqueAlerts, freshEarlyEntryAlerts, runtimeSpotPrice } from "@/lib/page-push-recovery.mjs";
 
 type Row = Record<string, unknown>;
 type EarlyAlert = { id: number; underlying?: string; observed_at_ns_text?: string; strategy: string; expiry: string; strike: number; direction: string; option_type: string; state: string; observed_at_ns: number; spot: number; premium?: number | null; iv_change_points?: number | null; volume_ratio?: number | null; reason?: string; delivery_status?: string; metadata?: Row };
@@ -658,10 +658,7 @@ export default function IVSkewFlipPage() {
       const bankExpiry=String(bankPushed?.option_feed?.expiry??"").trim();
       const bankMetrics=Array.isArray(bankPushed?.sampler?.live_metrics)?bankPushed!.sampler!.live_metrics as Row[]:[];
       if(bankExpiry&&bankMetrics.length){
-        const spotState=pushedRuntime.spot_feed as Row|undefined;
-        const spotMap=spotState?.spot&&typeof spotState.spot==="object"?spotState.spot as Row:{};
-        const bankSpotState=spotMap.BANKNIFTY&&typeof spotMap.BANKNIFTY==="object"?spotMap.BANKNIFTY as Row:{};
-        const observations:IvChartObservation[]=bankMetrics.filter(item=>item.iv_source==="ANGEL_ONE"&&item.iv_live===true&&n(item.iv)!==null&&n(item.source_timestamp_ns)!==null&&n(item.source_timestamp_ns)!>0).map(item=>({token:String(item.token??""),strike:n(item.strike)??undefined,option_type:String(item.option_type??""),timestamp_ns:n(item.source_timestamp_ns)??undefined,spot_timestamp_ns:n(item.spot_timestamp_ns)??undefined,spot_price:n(bankSpotState.price),iv:n(item.iv)})).filter(item=>Boolean(item.token)&&item.strike!==undefined&&item.timestamp_ns!==undefined&&Boolean(item.option_type));
+        const observations:IvChartObservation[]=bankMetrics.filter(item=>item.iv_source==="ANGEL_ONE"&&item.iv_live===true&&n(item.iv)!==null&&n(item.source_timestamp_ns)!==null&&n(item.source_timestamp_ns)!>0).map(item=>({token:String(item.token??""),strike:n(item.strike)??undefined,option_type:String(item.option_type??""),timestamp_ns:n(item.source_timestamp_ns)??undefined,spot_timestamp_ns:n(item.spot_timestamp_ns)??undefined,spot_price:runtimeSpotPrice(pushedRuntime,"BANKNIFTY"),iv:n(item.iv)})).filter(item=>Boolean(item.token)&&item.strike!==undefined&&item.timestamp_ns!==undefined&&Boolean(item.option_type));
         if(observations.length){
           const cutoff=Date.now()*1_000_000-1_800_000_000_000;
           setBankChartHistory(current=>{
@@ -679,7 +676,6 @@ export default function IVSkewFlipPage() {
       const sampler=weekly?.sampler;
       const liveMetrics=Array.isArray(sampler?.live_metrics)?sampler!.live_metrics as Row[]:[];
       if(weeklyExpiry&&liveMetrics.length){
-        const spotState=pushedRuntime.spot_feed as Row|undefined;
         const pushedObservations:IvChartObservation[]=liveMetrics
           .filter(item=>item.iv_live===true&&n(item.iv)!==null&&n(item.source_timestamp_ns)!==null&&n(item.source_timestamp_ns)!>0)
           .map(item=>({
@@ -688,7 +684,7 @@ export default function IVSkewFlipPage() {
             option_type:String(item.option_type??""),
             timestamp_ns:n(item.source_timestamp_ns)??undefined,
             spot_timestamp_ns:n(item.spot_timestamp_ns)??undefined,
-            spot_price:n(spotState?.price),
+            spot_price:runtimeSpotPrice(pushedRuntime,"NIFTY"),
             iv:n(item.iv),
           }))
           .filter(item=>Boolean(item.token)&&item.strike!==undefined&&item.timestamp_ns!==undefined&&Boolean(item.option_type));
