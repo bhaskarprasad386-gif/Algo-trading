@@ -117,10 +117,10 @@ class AngelShardCallbackAdapter:
         if not batch.invocations:
             return True
         with self._lock:
-            if self._closed:
-                return False
             if generation != self._generation:
                 self._stale += 1
+                return False
+            if self._closed:
                 return False
             try:
                 self._queue.put_nowait(batch)
