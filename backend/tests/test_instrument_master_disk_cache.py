@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -54,7 +55,7 @@ def test_successful_official_download_is_atomically_persisted(isolated_master_ca
     # catches incomplete or corrupted writes, not just a schema number change.
     assert payload["schema_version"] == 2
     assert payload["instruments"] == rows
-    assert payload["content_sha256"] == instruments_module.hashlib.sha256(
+    assert payload["content_sha256"] == hashlib.sha256(
         json.dumps(
             rows,
             sort_keys=True,
