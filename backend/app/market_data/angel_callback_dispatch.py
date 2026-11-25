@@ -9,7 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
-from threading import Event, Lock, Thread
+from threading import Event, Lock, Thread, current_thread
 from time import monotonic
 from typing import Any, Callable, Iterable
 
@@ -195,6 +195,17 @@ class AngelShardCallbackAdapter:
             if not drain:
                 self._generation += 1
             thread = self._thread
+            called_from_worker = thread is current_thread()
+            if called_from_worker:
+                # A consumer may synchronously trigger manager shutdown from
+                # inside its own callback. Joining the current worker would
+                # raise RuntimeError (and can abort socket shutdown). Self-stop
+                # cannot wait for a drain, so fail closed and let _run observe
+                # the generation fence immediately after this invocation.
+                self._generation += 1
+                self._discard_pending_locked()
+                self._stop.set()
+                return
         if not drain:
             discarded = 0
             while True:
