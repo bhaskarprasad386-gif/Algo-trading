@@ -152,3 +152,8 @@ The three-lane contract forbids cross-lane co-location: Socket 1 remains NIFTY-o
 ### Callback shutdown deadline fencing — 2026-11-25
 
 A final callback-adapter review found that graceful `stop(drain=True)` could exceed its deadline semantically: after the join budget expired, the worker loop still drained queued batches and could continue the remainder of a dequeued batch after a caller had already received a timeout. The adapter now advances its generation and discards pending batches when the graceful shutdown budget is exhausted. A callback already executing remains non-cancellable, but every subsequent invocation is fenced. A deterministic regression test covers this case.
+
+
+### Locked owner descriptor validation — 2026-11-25
+
+The lifecycle entry points now validate the complete broker instrument identity before registry mutation: spot ownership accepts only the exact NSE NIFTY/BANKNIFTY index descriptors (including NSE key exchange/segment and matching symbols); futures ownership and rotation require NFO on both descriptor and instrument key. This prevents a correctly named underlying with a wrong instrument kind or exchange key from being routed into a reserved lane.
