@@ -46,6 +46,9 @@ class FakeOptionFeed:
     def snapshot(self):
         return {"status": "LIVE" if self.started else "STOPPED"}
 
+    def resolved_universe(self):
+        return self.universe
+
     def stop(self):
         self.started = False
 
