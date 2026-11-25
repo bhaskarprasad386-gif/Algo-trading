@@ -1961,6 +1961,10 @@ class CommonWebSocketManager:
                         self._last_raw_frame_at_by_exchange_type[(group, exchange_type)] = frame_at
             if not matching:
                 self._unmatched_frames += 1
+            # Registry route membership is set-backed. Normalize callback order
+            # so fan-out is deterministic across processes and a generation fence
+            # always has the same owner boundary to protect.
+            matching = tuple(sorted(matching, key=lambda item: item[0]))
             raw_callbacks = [self._callbacks.get(name) for name, _ in matching]
             record_callbacks = [(self._record_callbacks.get(name), key) for name, key in matching]
             record_observers = [(self._record_observers.get(name), key) for name, key in matching]
@@ -2119,11 +2123,18 @@ class CommonWebSocketManager:
                         break
                     callback(record)
                     with self._lock:
-                        if group not in self._sockets or (generation is not None and self._socket_generation.get(group) != generation):
-                            break
-                        self._normalized_records_delivered += 1
-                        self._last_data_at[group] = time.monotonic()
-                        self._last_successful_delivery_at[group] = self._last_data_at[group]
+                        generation_retired = (
+                            group not in self._sockets
+                            or self._socket_generation.get(group) != generation
+                        )
+                        if not generation_retired:
+                            self._normalized_records_delivered += 1
+                            self._last_data_at[group] = time.monotonic()
+                            self._last_successful_delivery_at[group] = self._last_data_at[group]
+                    if generation_retired:
+                        # Stop the entire frame fan-out, including remaining
+                        # owners and observers, once the originating socket retires.
+                        return
                 for observer in observers_by_key.get(key, ()):
                     if not self._is_current_data_generation(group, generation):
                         break
