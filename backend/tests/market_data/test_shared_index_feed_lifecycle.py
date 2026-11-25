@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 from app.market_data.shared_index_feed_lifecycle import SharedIndexFeedLifecycle
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
