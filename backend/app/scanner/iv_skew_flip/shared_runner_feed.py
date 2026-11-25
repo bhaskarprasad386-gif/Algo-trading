@@ -213,17 +213,14 @@ class IVSharedRunnerOptionFeedAdapter:
         with self._lock:
             return self._universe
 
-    def latest_quotes(self) -> tuple[OptionQuote, ...]:
-        with self._lock:
-            universe = self._universe
-            started = self._started
-        if not started or universe is None:
-            return ()
-        requested = {str(item.token) for item in universe.contracts}
-        result = []
+    def _latest_rows_by_token(self, universe: Any) -> dict[str, dict[str, Any]]:
+        """Return one newest, identity-matched shared quote per requested token."""
+        expected = {str(item.token): item for item in universe.contracts}
+        latest: dict[str, dict[str, Any]] = {}
         for row in self.shared_runner.state.records_snapshot():
             token = str(row.get("token") or "")
-            if token not in requested or str(row.get("instrument_type") or "").lower() != "option":
+            contract = expected.get(token)
+            if contract is None or str(row.get("instrument_type") or "").lower() != "option":
                 continue
             if str(row.get("underlying") or "").upper() != universe.underlying:
                 continue
@@ -235,21 +232,43 @@ class IVSharedRunnerOptionFeedAdapter:
             if (
                 isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp <= 0
                 or isinstance(strike, bool) or not isinstance(strike, (int, float))
-                or side not in {"CE", "PE"}
+                or float(strike) != float(contract.strike)
+                or side != str(contract.option_type).upper()
             ):
+                continue
+            previous = latest.get(token)
+            if previous is None or timestamp > previous["timestamp_ns"]:
+                latest[token] = dict(row)
+        return latest
+
+    def latest_quotes(self) -> tuple[OptionQuote, ...]:
+        with self._lock:
+            universe = self._universe
+            started = self._started
+        if not started or universe is None:
+            return ()
+        now = self.clock_ns()
+        latest = self._latest_rows_by_token(universe)
+        result = []
+        for contract in universe.contracts:
+            row = latest.get(str(contract.token))
+            if row is None:
+                continue
+            timestamp = row["timestamp_ns"]
+            if now - timestamp < -1_000_000_000 or now - timestamp > self.max_age_ns:
                 continue
             result.append(OptionQuote(
                 underlying=universe.underlying,
                 expiry=universe.expiry,
-                strike=float(strike),
-                option_type=side,
+                strike=float(contract.strike),
+                option_type=str(contract.option_type).upper(),
                 timestamp_ns=timestamp,
                 ltp=row.get("ltp"),
                 bid=row.get("bid"),
                 ask=row.get("ask"),
                 oi=row.get("oi"),
                 volume=row.get("volume"),
-                token=token,
+                token=str(contract.token),
                 bid_qty=row.get("bid_qty"),
                 ask_qty=row.get("ask_qty"),
             ))
@@ -263,19 +282,15 @@ class IVSharedRunnerOptionFeedAdapter:
         if universe is None:
             return {"status": "STOPPED" if not started else "WAITING_FOR_SHARED_RUNNER", "source": "shared-index-market-data"}
         requested = {str(item.token) for item in universe.contracts}
-        rows = [
-            row for row in self.shared_runner.state.records_snapshot()
-            if str(row.get("token") or "") in requested
-            and str(row.get("underlying") or "").upper() == universe.underlying
-            and str(row.get("expiry") or "")[:10] == universe.expiry[:10]
-        ]
-        fresh = sum(
-            1 for row in rows
-            if isinstance(row.get("timestamp_ns"), int)
-            and -1_000_000_000 <= now - row["timestamp_ns"] <= self.max_age_ns
-        )
+        latest = self._latest_rows_by_token(universe)
+        fresh_tokens = {
+            token for token, row in latest.items()
+            if -1_000_000_000 <= now - row["timestamp_ns"] <= self.max_age_ns
+        }
         expected = len(requested)
-        status = "STOPPED" if not started else "LIVE" if fresh == expected else "PARTIAL" if fresh else "WAITING_FOR_TICKS" if not rows else "STALE"
+        fresh = len(fresh_tokens)
+        missing_tokens = sorted(requested - fresh_tokens)
+        status = "STOPPED" if not started else "LIVE" if fresh == expected else "PARTIAL" if fresh else "WAITING_FOR_TICKS" if not latest else "STALE"
         return {
             "status": status,
             "source": "shared-index-market-data",
@@ -283,7 +298,8 @@ class IVSharedRunnerOptionFeedAdapter:
             "expiry": universe.expiry,
             "expected_contracts": expected,
             "fresh_contracts": fresh,
-            "missing_contracts": max(0, expected - fresh),
+            "missing_contracts": len(missing_tokens),
+            "missing_tokens": missing_tokens,
             "atm_strike": universe.atm_strike,
             "strikes": list(universe.strikes),
             "tokens": sorted(requested),
