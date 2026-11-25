@@ -195,6 +195,25 @@ class IVSharedRunnerOptionFeedAdapter:
                 f"SHARED_RUNNER_EXPIRY_MISMATCH: expected {universe.expiry}, "
                 "shared runner has a different active expiry"
             )
+        identity_mismatches = []
+        for contract in universe.contracts:
+            descriptor = active[str(contract.token)]
+            descriptor_strike = getattr(descriptor, "strike", None)
+            descriptor_side = str(getattr(descriptor, "option_type", "")).upper()
+            descriptor_lot = getattr(descriptor, "lot_size", None)
+            if (
+                descriptor_strike is None
+                or float(descriptor_strike) != float(contract.strike)
+                or descriptor_side != str(contract.option_type).upper()
+                or descriptor_lot is None
+                or int(descriptor_lot) != int(contract.lot_size)
+            ):
+                identity_mismatches.append(str(contract.token))
+        if identity_mismatches:
+            raise RuntimeError(
+                "SHARED_RUNNER_CONTRACT_IDENTITY_MISMATCH: token metadata differs "
+                f"for {len(identity_mismatches)} requested contracts"
+            )
         with self._lock:
             self._universe = universe
             self._started = True
