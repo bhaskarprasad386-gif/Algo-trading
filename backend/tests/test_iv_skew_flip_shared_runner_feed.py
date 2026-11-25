@@ -91,6 +91,9 @@ def make_descriptors(universe):
             key=SimpleNamespace(token=contract.token),
             underlying=universe.underlying,
             expiry=universe.expiry,
+            strike=contract.strike,
+            option_type=contract.option_type,
+            lot_size=contract.lot_size,
         )
         for contract in universe.contracts
     ]
@@ -222,3 +225,20 @@ def test_shared_runner_option_adapter_rejects_wrong_strike_and_stale_contract_ti
     assert snapshot["fresh_contracts"] == 4
     assert snapshot["missing_contracts"] == 2
     assert len(adapter.latest_quotes()) == 4
+
+
+def test_shared_runner_option_adapter_rejects_descriptor_token_with_wrong_contract_metadata():
+    now = time_ns()
+    universe = make_universe()
+    descriptors = make_descriptors(universe)
+    descriptors[0].strike += 100.0
+    runner = FakeSharedRunner(make_records(universe, now), descriptors)
+    adapter = IVSharedRunnerOptionFeedAdapter(
+        shared_runner=runner, stream_id="BANKNIFTY_MONTHLY",
+        clock_ns=lambda: now,
+    )
+
+    with pytest.raises(RuntimeError, match="CONTRACT_IDENTITY_MISMATCH"):
+        adapter.start(universe)
+    assert adapter.latest_quotes() == ()
+    assert runner.stop_calls == 0
