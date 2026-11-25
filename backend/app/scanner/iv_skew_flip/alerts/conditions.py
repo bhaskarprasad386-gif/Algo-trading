@@ -175,6 +175,7 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar], un
                 "midpoint_iv": {"required_source": "BID_ASK_MIDPOINT", "actual": [row.iv_input for row in live_rows], "passed": True},
                 "market_depth": {"required": "positive bid/ask; ask >= bid", "passed": True},
                 "same_strike_expiry": {"strike": live_target.strike, "expiry": expiry, "passed": True},
+                "spot_sync": {"threshold_max_points": spot_sync_tolerance_points, "actual_max_points": max(abs(live_ce.spot_price-live_pe.spot_price), abs(live_target.spot_price-live_ce.spot_price)), "passed": max(abs(live_ce.spot_price-live_pe.spot_price), abs(live_target.spot_price-live_ce.spot_price)) <= spot_sync_tolerance_points},
             },
             "live_quotes": {
                 "ce": {"bid": live_ce.bid, "ask": live_ce.ask, "iv": live_ce.iv, "oi": live_ce.oi, "volume": live_ce.volume},
@@ -308,6 +309,7 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
                 "change_timestamps_ns": {"wall_source": latest.source_timestamp_ns, "wall_oi": latest.oi_timestamp_ns, "wall_spot": latest.spot_timestamp_ns, "entry_quote": entry_quote.source_timestamp_ns, "entry_spot": entry_quote.spot_timestamp_ns, "entry_oi": entry_quote.oi_timestamp_ns, "rejection_candle": current.timestamp_ns},
                 "wall_history_timestamps_ns": [{"quote": row.source_timestamp_ns, "oi": row.oi_timestamp_ns, "spot": row.spot_timestamp_ns} for row in wall_rows],
                 "same_expiry_contract": {"expiry": expiry, "strike": wall, "option_type": option_type, "passed": True},
+                "spot_sync": {"threshold_max_points": spot_sync_tolerance_points, "actual_points": abs(entry_quote.spot_price-latest.spot_price), "passed": abs(entry_quote.spot_price-latest.spot_price) <= spot_sync_tolerance_points},
             },
             "evaluated_at_ns": now_ns,
         },
