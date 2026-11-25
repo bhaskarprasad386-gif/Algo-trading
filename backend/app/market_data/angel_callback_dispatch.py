@@ -192,10 +192,10 @@ class AngelShardCallbackAdapter:
             # A draining stop rejects new publishes via _closed but preserves
             # the active generation so already-accepted FIFO batches can run.
             # A non-draining stop retires the generation and fences queued work.
-            if not drain:
-                self._generation += 1
             thread = self._thread
             called_from_worker = thread is current_thread()
+            if not drain and not called_from_worker:
+                self._generation += 1
             if called_from_worker:
                 # A consumer may synchronously trigger manager shutdown from
                 # inside its own callback. Joining the current worker would
