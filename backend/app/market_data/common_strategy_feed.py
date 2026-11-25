@@ -69,6 +69,13 @@ def _record_from_snapshot(descriptor: InstrumentDescriptor, snapshot: dict[str, 
             symbol=descriptor.symbol,
             instrument_type=instrument_type,
             timestamp_ns=timestamp_ns,
+            received_at_monotonic_ns=(
+                snapshot.get("received_at_monotonic_ns")
+                if isinstance(snapshot.get("received_at_monotonic_ns"), int)
+                and not isinstance(snapshot.get("received_at_monotonic_ns"), bool)
+                and snapshot.get("received_at_monotonic_ns") >= 0
+                else None
+            ),
             timeframe=str(snapshot.get("timeframe") or "1s"),
             ltp=snapshot.get("ltp"),
             bid=snapshot.get("bid"),
