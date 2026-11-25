@@ -6,7 +6,7 @@ payload while emitting one immutable strategy-neutral MarketDataRecord.
 from __future__ import annotations
 
 from math import isfinite
-from time import time_ns
+from time import monotonic_ns, time_ns
 from typing import Any, Mapping
 
 from .contracts import InstrumentKey, InstrumentType, MarketDataRecord, OptionType
@@ -183,6 +183,7 @@ class AngelOneTickNormalizer:
             symbol=descriptor.symbol,
             instrument_type=instrument_type,
             timestamp_ns=self._timestamp_ns(payload),
+            received_at_monotonic_ns=monotonic_ns(),
             timeframe="1s",
             ltp=self._price(payload, "last_traded_price", "ltp", "lastTradedPrice"),
             bid=bid,
