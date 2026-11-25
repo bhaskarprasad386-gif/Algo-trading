@@ -360,3 +360,22 @@ def test_shared_runner_spot_adapter_never_rewinds_to_an_older_cached_tick():
 
     assert adapter.spot_snapshot("NIFTY").price == 24000.0
     assert adapter.spot_snapshot("BANKNIFTY").price == 58125.0
+
+def test_shared_runner_spot_adapter_stop_disables_signal_eligibility():
+    now = time_ns()
+    universe = make_universe()
+    runner = FakeSharedRunner(make_records(universe, now), make_descriptors(universe))
+    adapter = IVSharedRunnerSpotFeedAdapter(shared_runner=runner, clock_ns=lambda: now)
+    adapter.start(object(), ("NIFTY", "BANKNIFTY"))
+
+    assert adapter.spot_snapshot("NIFTY") is not None
+    adapter.stop()
+
+    assert adapter.spot_snapshot("NIFTY") is None
+    stopped = adapter.snapshot()
+    assert stopped["status"] == "STOPPED"
+    assert stopped["signals_allowed"] is False
+    assert stopped["spot"]["NIFTY"]["fresh"] is False
+    # Last-known values remain available for diagnostics, not for live signals.
+    assert stopped["spot"]["NIFTY"]["price"] == 24000.0
+    assert runner.stop_calls == 0
