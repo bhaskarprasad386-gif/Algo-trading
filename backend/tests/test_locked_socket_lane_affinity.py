@@ -52,3 +52,27 @@ def test_wrong_exchange_instruments_do_not_inherit_locked_lane_affinity():
     assert wrong_bank_spot.preferred_socket_lane is None
     assert wrong_nifty_option.preferred_socket_lane is None
     assert wrong_bank_future.preferred_socket_lane is None
+
+
+
+def test_mismatched_canonical_key_exchange_or_segment_never_inherits_locked_lane():
+    valid_spot = descriptor("index", "NIFTY")
+    valid_option = descriptor("option", "NIFTY", "WEEKLY")
+    valid_future = descriptor("future", "BANKNIFTY")
+
+    wrong_spot_key = replace(
+        valid_spot,
+        key=InstrumentKey("BSE", "BSE", valid_spot.key.token),
+    )
+    wrong_option_segment = replace(
+        valid_option,
+        key=InstrumentKey("NFO", "BFO", valid_option.key.token),
+    )
+    wrong_future_key = replace(
+        valid_future,
+        key=InstrumentKey("NSE", "NSE", valid_future.key.token),
+    )
+
+    assert wrong_spot_key.preferred_socket_lane is None
+    assert wrong_option_segment.preferred_socket_lane is None
+    assert wrong_future_key.preferred_socket_lane is None
