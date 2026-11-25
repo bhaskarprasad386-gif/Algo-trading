@@ -23,6 +23,9 @@ def test_classify_journal_priorities() -> None:
     assert agent.classify(0) == "CRITICAL"
     assert agent.classify(3) == "ERROR"
     assert agent.classify(4) == "WARNING"
+    # loguru records arrive via stdout and journald labels them PRIORITY=6.
+    assert agent.classify(6, "2026-11-26 | ERROR    | app.main:run:10 - failed") == "ERROR"
+    assert agent.classify(6, "normal stdout info") is None
 
 
 def test_database_initializes_with_empty_event_store(tmp_path: Path, monkeypatch) -> None:
