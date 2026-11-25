@@ -6,7 +6,6 @@ and never borrows Box Spread's tracker or subscription lifecycle.
 from __future__ import annotations
 
 from math import isfinite
-from queue import Empty, Full, Queue
 from threading import Event, RLock, Thread
 from time import time_ns
 from datetime import datetime, timezone
@@ -55,7 +54,8 @@ class IVSpotFeedAdapter:
         self._started = False
         # Shared-feed callbacks must never perform database I/O. Keep only the
         # newest bounded spot observations and persist them on an IV-owned worker.
-        self._persist_queue: Queue[tuple[str, SpotSnapshot]] = Queue(maxsize=2)
+        self._persist_pending: dict[str, SpotSnapshot] = {}
+        self._persist_wakeup = Event()
         self._persist_stop = Event()
         self._persist_thread: Thread | None = None
         if self._persist_last_price:
@@ -226,45 +226,39 @@ class IVSpotFeedAdapter:
             worker.start()
 
     def _enqueue_persistence(self, symbol: str, snapshot: SpotSnapshot) -> None:
-        try:
-            self._persist_queue.put_nowait((symbol, snapshot))
-        except Full:
-            # Persistence is best-effort and coalesced under load. Never let a
-            # slow database back-pressure the shared WebSocket callback.
-            try:
-                self._persist_queue.get_nowait()
-                self._persist_queue.task_done()
-            except Empty:
-                pass
-            try:
-                self._persist_queue.put_nowait((symbol, snapshot))
-            except Full:
-                pass
+        # At most one pending latest-value write per configured index. This
+        # prevents a busy NIFTY stream from evicting BANKNIFTY's last spot.
+        with self._lock:
+            self._persist_pending[symbol] = snapshot
+            self._persist_wakeup.set()
 
     def _run_persistence(self) -> None:
-        while not self._persist_stop.is_set() or not self._persist_queue.empty():
-            try:
-                symbol, snapshot = self._persist_queue.get(timeout=0.1)
-            except Empty:
-                continue
-            try:
-                with SessionLocal() as db:
-                    db.merge(IVSpotLastPrice(
-                        symbol=symbol, price=snapshot.price,
-                        timestamp_ns=snapshot.timestamp_ns,
-                    ))
-                    db.merge(IVSpotObservation(
-                        underlying=symbol,
-                        source_timestamp_ns=snapshot.timestamp_ns,
-                        price=snapshot.price,
-                        received_at_ns=snapshot.received_at_ns or snapshot.timestamp_ns,
-                    ))
-                    db.commit()
-            except Exception:
-                # Live in-memory spot remains usable if persistence is degraded.
-                pass
-            finally:
-                self._persist_queue.task_done()
+        while True:
+            self._persist_wakeup.wait(timeout=0.1)
+            with self._lock:
+                pending = tuple(self._persist_pending.items())
+                self._persist_pending.clear()
+                self._persist_wakeup.clear()
+                stopping = self._persist_stop.is_set()
+            if not pending and stopping:
+                break
+            for symbol, snapshot in pending:
+                try:
+                    with SessionLocal() as db:
+                        db.merge(IVSpotLastPrice(
+                            symbol=symbol, price=snapshot.price,
+                            timestamp_ns=snapshot.timestamp_ns,
+                        ))
+                        db.merge(IVSpotObservation(
+                            underlying=symbol,
+                            source_timestamp_ns=snapshot.timestamp_ns,
+                            price=snapshot.price,
+                            received_at_ns=snapshot.received_at_ns or snapshot.timestamp_ns,
+                        ))
+                        db.commit()
+                except Exception:
+                    # Live in-memory spot remains usable if persistence is degraded.
+                    pass
 
     def _stop_persistence_worker(self) -> None:
         with self._lock:
@@ -272,6 +266,7 @@ class IVSpotFeedAdapter:
             if worker is None:
                 return
             self._persist_stop.set()
+            self._persist_wakeup.set()
         worker.join(timeout=2.0)
         with self._lock:
             if not worker.is_alive():
