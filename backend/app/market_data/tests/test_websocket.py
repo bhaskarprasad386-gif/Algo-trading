@@ -728,3 +728,43 @@ def test_control_error_callback_is_observable_and_never_authenticates(monkeypatc
     assert observed[0]["errorCode"] == "E1001"
     assert client.health["subscription_response_state"] == "REJECTED"
     client.close()
+
+
+
+def test_sdk_transport_heartbeat_callbacks_are_observable_without_claiming_feed_health():
+    calls = {"ping": 0, "pong": 0}
+
+    class FakeWebSocketApp:
+        def __init__(self, url, **kwargs):
+            self.callbacks = kwargs
+
+        def run_forever(self, **kwargs):
+            self.callbacks["on_open"](self)
+            self.callbacks["on_ping"](self, b"probe")
+            self.callbacks["on_pong"](self, b"probe")
+
+    monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", FakeWebSocketApp)
+    sdk_socket = SimpleNamespace(
+        ROOT_URI="wss://smartapisocket.angelone.in/smart-stream",
+        auth_token="jwt",
+        api_key="api-key",
+        client_code="client",
+        feed_token="feed",
+        _lock=__import__("threading").Lock(),
+        _on_open=lambda *args: None,
+        _on_error=lambda *args: None,
+        _on_close=lambda *args: None,
+        _on_data=lambda *args: None,
+        _on_ping=lambda *args: calls.__setitem__("ping", calls["ping"] + 1),
+        _on_pong=lambda *args: calls.__setitem__("pong", calls["pong"] + 1),
+    )
+
+    websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
+
+    assert calls == {"ping": 1, "pong": 1}
+    assert sdk_socket._ping_count == 1
+    assert sdk_socket._pong_count == 1
+    assert sdk_socket._last_ping_at_monotonic_ns > 0
+    assert sdk_socket._last_pong_at_monotonic_ns > 0
+    # Heartbeat observations are deliberately not an authentication,
+    # subscription-acknowledgement, or consumer-delivery signal.
