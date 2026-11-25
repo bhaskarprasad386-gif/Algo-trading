@@ -975,6 +975,14 @@ def test_coalesced_close_reconcile_failure_keeps_group_pending_until_supervisor_
         return Thread()
 
     manager._close_socket_tracked = defer_close
+    # The recovery supervisor intentionally sleeps when the desired registry
+    # is empty; retain real intent so this test exercises pending-group draining.
+    recovery_key = InstrumentKey("NSE", "NSE", "RECOVERY-SUPERVISOR-INTENT")
+    manager.registry.register(InstrumentDescriptor(
+        key=recovery_key, symbol="NIFTY", instrument_type="index",
+        exchange="NSE", segment="NSE", underlying="NIFTY",
+    ))
+    manager.registry.subscribe("recovery-supervisor-test", recovery_key, mode=1)
     reconcile_attempts = []
 
     def fail_first_reconcile():
