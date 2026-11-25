@@ -529,22 +529,23 @@ export default function HomePage() {
   });
   const sharedRunnerEnabled = sharedRunner?.enabled === true;
   const sharedRunnerReady = sharedRunner?.live_data_ready === true;
+  const sharedRunnerUnavailable = !sharedRunner || sharedRunner.state === "UNAVAILABLE" || sharedRunner.state === "NOT_INITIALIZED";
   const sharedRunnerSampleAge = sharedRunnerLastSuccessAt == null ? null : Math.max(0, (Date.now() - sharedRunnerLastSuccessAt) / 1000);
-  const sharedRunnerStatus = sharedRunnerFetchFailed && sharedRunnerSampleAge != null ? "LAST KNOWN • HEALTH FETCH FAILED" : !sharedRunner ? "CHECKING" : !sharedRunnerEnabled ? "STOPPED" : sharedRunnerReady ? "LIVE DATA READY" : sharedRunner.initial_option_bootstrap_done ? (effectiveMarketSession === "CLOSED" ? "RUNNING • MARKET CLOSED" : "RUNNING • FEED NOT READY") : "RUNNING • BOOTSTRAPPING";
+  const sharedRunnerStatus = sharedRunnerFetchFailed && sharedRunnerSampleAge != null ? "LAST KNOWN • HEALTH FETCH FAILED" : !sharedRunner ? "CHECKING" : sharedRunner.state === "UNAVAILABLE" ? "UNAVAILABLE" : sharedRunner.state === "NOT_INITIALIZED" ? "NOT INITIALIZED" : !sharedRunnerEnabled ? "STOPPED" : sharedRunnerReady ? "LIVE DATA READY" : sharedRunner.initial_option_bootstrap_done ? (effectiveMarketSession === "CLOSED" ? "RUNNING • MARKET CLOSED" : "RUNNING • FEED NOT READY") : "RUNNING • BOOTSTRAPPING";
   const sharedFeedGroups = sharedRunner?.feed_health_by_group ?? {};
   const getRecordFeed = (underlying: string, kind: string) => {
     const group = sharedFeedGroups[underlying + ":" + kind] ?? null;
     const rows = Number(group?.count ?? 0);
     const fresh = Number(group?.fresh_count ?? 0);
     const maxAge = group?.max_age_seconds != null && Number.isFinite(Number(group.max_age_seconds)) ? Number(group.max_age_seconds) : null;
-    const status = !sharedRunner ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : rows === 0 ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : fresh === rows ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : fresh > 0 ? "PARTIAL / STALE" : "STALE";
+    const status = sharedRunnerUnavailable ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : rows === 0 ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : fresh === rows ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : fresh > 0 ? "PARTIAL / STALE" : "STALE";
     return { rows, fresh, maxAge, status };
   };
   const getSpotFeed = (underlying: string) => {
     const spot = sharedRunner?.latest_spots?.[underlying];
     const age = Number(spot?.age_seconds);
     const validAge = spot?.age_seconds != null && Number.isFinite(age) && age >= 0 ? age : null;
-    const status = !sharedRunner ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : !spot ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : validAge != null && validAge <= 5 ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : "STALE";
+    const status = sharedRunnerUnavailable ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : !spot ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : validAge != null && validAge <= 5 ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : "STALE";
     return { status, age: validAge, price: spot?.price != null && Number.isFinite(Number(spot.price)) ? Number(spot.price) : null };
   };
   const sharedFeedCards = [
@@ -636,7 +637,7 @@ export default function HomePage() {
               <div className="mt-2 break-words text-[11px] theme-muted">{apiDetail}</div>
             </Card>
             <Card className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
-              <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">SHARED INDEX RUNNER</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (sharedRunnerReady ? "theme-success-bg theme-success" : sharedRunnerEnabled || !sharedRunner || sharedRunnerFetchFailed ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{sharedRunnerStatus}</span></div>
+              <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">SHARED INDEX RUNNER</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (sharedRunnerReady ? "theme-success-bg theme-success" : sharedRunnerEnabled || sharedRunnerUnavailable || sharedRunnerFetchFailed ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{sharedRunnerStatus}</span></div>
               <div className="mt-2 break-words text-[11px] theme-muted">{sharedRunner?.runner || "shared-index-market-data"} • {sharedRunner?.initial_option_bootstrap_done ? "Option bootstrap complete" : "Option bootstrap pending"}</div>
               <div className="mt-1 text-[9px] theme-subtle">Last health sample: {sharedRunnerSampleAge == null ? "Not received" : sharedRunnerSampleAge.toFixed(1) + "s ago"}{sharedRunner?.last_error ? " • Start error: " + String(sharedRunner.last_error).slice(0, 140) : ""}</div>
             </Card>
