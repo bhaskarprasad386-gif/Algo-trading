@@ -2391,30 +2391,11 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
         # This downloader is isolated and never reads or mutates the Box Spread cache.
         if iv_instruments is None:
             iv_instruments = download_iv_instruments(instrument_master)
-        # Runner ON is the user's explicit activation for IV market-data analysis.
-        # Load both official index baskets, verify the complete rosters/token mappings,
-        # then subscribe only to each index's dynamically ranked top 10 constituents.
-        # If basket provenance is missing/stale, keep the IV option scanner running
-        # but fail closed for constituent pressure (no partial/guessed basket).
+        # Heavyweight pressure is a separately controlled, optional signal family.
+        # Keep it OFF here: IV's shared-runner attachment must not add NSE cash
+        # subscriptions or expand the locked spot/options/futures token universe.
         equity_baskets = {}
-        equity_pressure_error = None
-        try:
-            with SessionLocal() as db:
-                basket_records = (
-                    db.query(IVConstituentBasketVersion)
-                    .filter(IVConstituentBasketVersion.underlying.in_(("NIFTY", "BANKNIFTY")))
-                    .all()
-                )
-            equity_baskets = load_verified_runtime_baskets(
-                basket_records,
-                as_of=datetime.now(timezone.utc).date(),
-                instrument_master=instrument_master,
-                underlyings=("NIFTY", "BANKNIFTY"),
-                top_n=10,
-            )
-        except Exception as exc:
-            equity_pressure_error = f"{type(exc).__name__}: {exc}"
-            app_logger.warning("IV top-10 constituent pressure unavailable: {}", equity_pressure_error)
+        equity_pressure_error = "DISABLED_BY_SCOPE: heavyweight pressure activation remains OFF"
         # IV and Box Spread share the process-wide Angel One manager.
         # IV consumers request mode 3, while the manager enforces one global
         # three-socket budget across all registered strategy subscriptions.
