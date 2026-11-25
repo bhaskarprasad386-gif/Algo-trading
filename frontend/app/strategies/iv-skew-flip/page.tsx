@@ -7,7 +7,7 @@ import { usePagePush } from "@/components/page-push-provider";
 import { isCurrentRecoveryResponse, isCurrentPagePushRequest, mergeUniqueAlerts, freshEarlyEntryAlerts } from "@/lib/page-push-recovery.mjs";
 
 type Row = Record<string, unknown>;
-type EarlyAlert = { id: number; observed_at_ns_text?: string; strategy: string; expiry: string; strike: number; direction: string; option_type: string; state: string; observed_at_ns: number; spot: number; premium?: number | null; iv_change_points?: number | null; volume_ratio?: number | null; reason?: string; delivery_status?: string; metadata?: Row };
+type EarlyAlert = { id: number; underlying?: string; observed_at_ns_text?: string; strategy: string; expiry: string; strike: number; direction: string; option_type: string; state: string; observed_at_ns: number; spot: number; premium?: number | null; iv_change_points?: number | null; volume_ratio?: number | null; reason?: string; delivery_status?: string; metadata?: Row };
 type Chain = { symbol?: string; expiry_type?: string; option_feed?: Row; sampler?: Row; universe_tokens?: number; expiry_selection?: Row; error?: string | null; signals?: Row };
 type BasketEntry = {
   status?: string;
@@ -47,6 +47,7 @@ type Runtime = {
   telegram_configured?: boolean;
   telegram_delivery?: Row;
   early_entry_alerts?: { alerts?: EarlyAlert[]; [key: string]: unknown };
+  early_entry_alerts_by_underlying?: Record<string, Row>;
 };
 const n = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null;
 const fmt = (v: unknown, digits = 2) => n(v) === null ? "—" : (v as number).toLocaleString("en-IN", { maximumFractionDigits: digits });
@@ -418,6 +419,7 @@ export default function IVSkewFlipPage() {
   const [alertCursor,setAlertCursor]=useState<{before_observed_at_ns:string;before_id:number}|null>(null);
   const loadedOlderAlerts=useRef(false);
   const [earlyAlertLive,setEarlyAlertLive]=useState<Row|null>(null);
+  const [bankEarlyAlertLive,setBankEarlyAlertLive]=useState<Row|null>(null);
   const [alertAudioEnabled,setAlertAudioEnabled]=useState(false);
   const [alertFetchError,setAlertFetchError]=useState("");
   const seenAlertIds=useRef<Set<number>>(new Set());
@@ -464,7 +466,9 @@ export default function IVSkewFlipPage() {
             before_id:Number((body.next_cursor as Row).before_id),
           }:null);
         }
-        setEarlyAlertLive(body.live&&typeof body.live==="object"?body.live as Row:null);
+        const liveByUnderlying=body.live&&typeof body.live==="object"?body.live as Row:{};
+        setEarlyAlertLive(liveByUnderlying.NIFTY&&typeof liveByUnderlying.NIFTY==="object"?liveByUnderlying.NIFTY as Row:null);
+        setBankEarlyAlertLive(liveByUnderlying.BANKNIFTY&&typeof liveByUnderlying.BANKNIFTY==="object"?liveByUnderlying.BANKNIFTY as Row:null);
         setAlertFetchError("");
         if(alertAudioEnabled&&fresh.length)playEarlyAlertTone();
       }catch(e){if(active&&requestSequence===alertFetchSequenceRef.current)setAlertFetchError(e instanceof Error?e.message:"Alert history unavailable");}
@@ -703,7 +707,14 @@ export default function IVSkewFlipPage() {
       }
       const alertState=pushedRuntime.early_entry_alerts as Row|undefined;
       if(alertState)setEarlyAlertLive(alertState);
-      const pushedAlerts=Array.isArray(alertState?.alerts)?alertState.alerts as EarlyAlert[]:[];
+      const alertsByUnderlying=pushedRuntime.early_entry_alerts_by_underlying as Row|undefined;
+      if(alertsByUnderlying){
+        if(alertsByUnderlying.NIFTY&&typeof alertsByUnderlying.NIFTY==="object")setEarlyAlertLive(alertsByUnderlying.NIFTY as Row);
+        if(alertsByUnderlying.BANKNIFTY&&typeof alertsByUnderlying.BANKNIFTY==="object")setBankEarlyAlertLive(alertsByUnderlying.BANKNIFTY as Row);
+      }
+      const niftyAlerts=alertsByUnderlying?.NIFTY&&typeof alertsByUnderlying.NIFTY==="object"?(alertsByUnderlying.NIFTY as Row).alerts:[];
+      const bankAlerts=alertsByUnderlying?.BANKNIFTY&&typeof alertsByUnderlying.BANKNIFTY==="object"?(alertsByUnderlying.BANKNIFTY as Row).alerts:[];
+      const pushedAlerts=[...(Array.isArray(niftyAlerts)?niftyAlerts as EarlyAlert[]:[]),...(Array.isArray(bankAlerts)?bankAlerts as EarlyAlert[]:[])];
       const fresh=freshEarlyEntryAlerts(pushedAlerts,seenAlertIds.current);
       if(pushedAlerts.length){
         setEarlyAlerts(current=>{
@@ -857,7 +868,7 @@ export default function IVSkewFlipPage() {
     <section aria-label="Scanner at a glance" className="grid grid-cols-2 gap-2 sm:grid-cols-4"><Metric label="NIFTY Spot" value={fmt(niftySpot.price)} sub={`Feed age ${age(niftySpot.age_ms)}`}/><Metric label="ATM Strike" value={fmt(liveFeed.atm_strike??nifty.option_feed?.atm_strike,0)} sub={`Expiry ${String(liveFeed.expiry??"—")}`}/><Metric label="Option Chain" value={String(liveFeed.status??"WAITING")} sub={`${fmt(liveNiftySampler.contracts_live??liveNiftySampler.live_contracts,0)} live contracts`}/><Metric label="IV Data" value={String(liveNiftySampler.status??"WAITING")} sub={`Live IV ${fmt(liveNiftySampler.iv_live_count,0)} • OI ${fmt(liveNiftySampler.oi_live_count,0)}`}/></section>
     <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 space-y-3" aria-live="polite">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><h2 className="font-extrabold tracking-tight theme-text">NIFTY Weekly Early-Entry Alerts</h2><p className="mt-1 text-xs theme-muted">Strategy A: IV + volume momentum • Strategy B: OI wall rejection • event-based timing • live-data freshness guards • no clock-time window or fixed sampling cadence • source change times saved • alert-only</p></div>
+        <div><h2 className="font-extrabold tracking-tight theme-text">NIFTY Weekly + BANKNIFTY Monthly Early-Entry Alerts</h2><p className="mt-1 text-xs theme-muted">Independent per-index history, cooldown and Telegram delivery • IV + volume momentum • OI wall rejection • live-data freshness guards • alert-only, no orders</p></div>
         <div className="flex items-center gap-2">
           <span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-xs">{String(earlyAlertLive?.state??"WATCH")}</span><span className={`rounded-full border-2 px-2 py-1 text-xs font-bold ${runtime?.telegram_configured===true?"border-emerald-500/50 text-emerald-700":"border-amber-500/50 text-amber-700"}`}>Telegram {runtime?.telegram_configured===true?String((runtime.telegram_delivery as Row|undefined)?.status??"READY"):"NOT CONFIGURED"}</span>
           <button type="button" onClick={()=>setAlertAudioEnabled(v=>!v)} className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs font-bold" aria-pressed={alertAudioEnabled}>{alertAudioEnabled?"Sound ON":"Sound OFF"}</button>
@@ -874,9 +885,9 @@ export default function IVSkewFlipPage() {
         </div><p className="mt-2 text-xs theme-muted">{alert.reason??"Signal criteria met"} • IV Δ {delta(alert.iv_change_points," pt",3)} • Volume {fmt(alert.volume_ratio)}x</p>
       </div>;})() : <div className="rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface-2 p-3 text-sm theme-muted">Abhi koi active EARLY_ENTRY alert nahi hai. WATCH / stale feed ko entry signal nahi maana jayega.</div>}
       <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-xs">
-        <thead className="theme-muted"><tr>{["Time (IST)","Strategy","Contract","Direction","Spot","State","Delivery","Conditions / saved values"].map(label=><th key={label} className="border-b theme-border px-2 py-2">{label}</th>)}</tr></thead>
-        <tbody>{earlyAlerts.length===0?<tr><td colSpan={8} className="px-2 py-4 theme-muted">No saved early-entry alerts yet.</td></tr>:earlyAlerts.map(alert=>{const checks=alert.metadata?.checks&&typeof alert.metadata.checks==="object"?alert.metadata.checks as Row:{};return <tr key={alert.id} className="border-b theme-border align-top">
-          <td className="px-2 py-2 whitespace-nowrap">{sampleTime(alert.observed_at_ns)}</td><td className="px-2 py-2">{alert.strategy.replaceAll("_"," ")}</td><td className="px-2 py-2">{alert.strike} {alert.option_type}<span className="block theme-muted">{alert.expiry}</span></td><td className="px-2 py-2">{alert.direction}</td><td className="px-2 py-2">{fmt(alert.spot)}</td><td className="px-2 py-2"><span className="rounded-md border-2 border-slate-300 dark:border-slate-600 px-2 py-1">{alert.state}</span></td><td className="px-2 py-2">{alert.delivery_status??"—"}</td>
+        <thead className="theme-muted"><tr>{["Time (IST)","Index","Strategy","Contract","Direction","Spot","State","Delivery","Conditions / saved values"].map(label=><th key={label} className="border-b theme-border px-2 py-2">{label}</th>)}</tr></thead>
+        <tbody>{earlyAlerts.length===0?<tr><td colSpan={9} className="px-2 py-4 theme-muted">No saved early-entry alerts yet.</td></tr>:earlyAlerts.map(alert=>{const checks=alert.metadata?.checks&&typeof alert.metadata.checks==="object"?alert.metadata.checks as Row:{};return <tr key={alert.id} className="border-b theme-border align-top">
+          <td className="px-2 py-2 whitespace-nowrap">{sampleTime(alert.observed_at_ns)}</td><td className="px-2 py-2 font-bold">{alert.underlying??"NIFTY"}</td><td className="px-2 py-2">{alert.strategy.replaceAll("_"," ")}</td><td className="px-2 py-2">{alert.strike} {alert.option_type}<span className="block theme-muted">{alert.expiry}</span></td><td className="px-2 py-2">{alert.direction}</td><td className="px-2 py-2">{fmt(alert.spot)}</td><td className="px-2 py-2"><span className="rounded-md border-2 border-slate-300 dark:border-slate-600 px-2 py-1">{alert.state}</span></td><td className="px-2 py-2">{alert.delivery_status??"—"}</td>
           <td className="px-2 py-2"><details className="min-w-[220px]"><summary className="cursor-pointer font-bold text-blue-600">View {Object.keys(checks).length} checks</summary><div className="mt-2 space-y-2">{Object.entries(checks).map(([name,value])=>{const item=value&&typeof value==="object"?value as Row:{};return <div key={name} className="rounded border-2 border-slate-300 dark:border-slate-600 p-2"><div className="flex items-center justify-between gap-2"><b>{name.replaceAll("_"," ")}</b><span className={item.passed===true?"text-emerald-600":item.passed===false?"text-rose-600":"theme-muted"}>{item.passed===true?"PASS":item.passed===false?"FAIL":"RECORDED"}</span></div><pre className="mt-1 whitespace-pre-wrap break-words text-[10px] theme-muted">{JSON.stringify(item,null,2)}</pre></div>})}</div><pre className="mt-2 whitespace-pre-wrap break-words text-[10px] theme-muted">{JSON.stringify(alert.metadata?.live_quotes??{},null,2)}</pre></details></td>
         </tr>})}</tbody>
       </table></div>
@@ -923,6 +934,12 @@ export default function IVSkewFlipPage() {
       <IndexOiVolumeChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" chain={bank} spot={bankSpot} strikeRadius={3}/>
       <IndexSpotIvChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" history={bankChartHistory} spot={bankSpot} chain={bank} strikeRadius={3}/>
       <SignalSummary title="BANKNIFTY" chain={bank} spot={bankSpot}/>
+      <div className="rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface-2 p-3 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-sm theme-text">BANKNIFTY Monthly Early-Entry Alerts</b><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-xs">{String(bankEarlyAlertLive?.state??"WATCH")}</span></div>
+        <p className="text-xs theme-muted">BANKNIFTY-specific 100-point strike grid and strike-scaled consolidation / wall-distance gates. Pilot thresholds; validate forward outcomes before treating alerts as calibrated.</p>
+        {earlyAlerts.find(row=>row.underlying==="BANKNIFTY"&&row.state==="EARLY_ENTRY") ? (()=>{const alert=earlyAlerts.find(row=>row.underlying==="BANKNIFTY"&&row.state==="EARLY_ENTRY")!;return <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm"><b className="text-emerald-700">BANKNIFTY EARLY ENTRY • {alert.direction}</b><div className="mt-1">{alert.strike} {alert.option_type} • Expiry {alert.expiry} • Spot {fmt(alert.spot)} • Premium {fmt(alert.premium)}</div><p className="mt-1 text-xs theme-muted">{alert.strategy.replaceAll("_"," ")} • {alert.reason}</p></div>;})() : <p className="text-xs theme-muted">{String(bankEarlyAlertLive?.reason??"No active BANKNIFTY early-entry alert. Waiting for complete fresh history and all validation gates.")}</p>}
+        <div className="text-xs theme-muted">Telegram {runtime?.telegram_configured===true?String((runtime.telegram_delivery as Row|undefined)?.status??"READY"):"NOT CONFIGURED"} • orders disabled</div>
+      </div>
     </section>
     <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold theme-text">BANKNIFTY Spot Feed Diagnostics</h3><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-1 text-xs">{String(spotFeed.status??"WAITING")}</span></div>
