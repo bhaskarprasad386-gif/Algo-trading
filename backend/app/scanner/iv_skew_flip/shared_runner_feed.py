@@ -15,6 +15,23 @@ from .engine import OptionQuote
 from .sampler import SpotSnapshot
 
 
+def _shared_runner_health(shared_runner: Any) -> dict[str, Any]:
+    """Read current shared-runner health; cached quotes do not prove liveness."""
+    health = getattr(shared_runner, "health_snapshot", None)
+    try:
+        snapshot = health() if callable(health) else shared_runner.snapshot()
+    except Exception:
+        return {}
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
+def _shared_runner_ready(shared_runner: Any, *, require_options: bool = False) -> bool:
+    status = _shared_runner_health(shared_runner)
+    return bool(status.get("enabled") and (
+        not require_options or status.get("initial_option_bootstrap_done")
+    ))
+
+
 class IVSharedRunnerSpotFeedAdapter:
     """Read NIFTY/BANKNIFTY spot ticks from SharedIndexMarketDataRunner state."""
 
@@ -42,9 +59,7 @@ class IVSharedRunnerSpotFeedAdapter:
         selected = {str(item).strip().upper() for item in symbols}
         if selected != set(self.DEFAULT_SYMBOLS):
             raise ValueError("IV shared spot adapter is locked to NIFTY and BANKNIFTY")
-        health = getattr(self.shared_runner, "health_snapshot", None)
-        runner_status = health() if callable(health) else self.shared_runner.snapshot()
-        if not runner_status.get("enabled"):
+        if not _shared_runner_ready(self.shared_runner):
             raise RuntimeError("SHARED_RUNNER_NOT_READY: shared index market data is not running")
         with self._lock:
             self._started = True
@@ -62,6 +77,9 @@ class IVSharedRunnerSpotFeedAdapter:
         return records() if callable(records) else []
 
     def _refresh_last(self) -> None:
+        # Retained records are display-only while the shared transport is down.
+        if not _shared_runner_ready(self.shared_runner):
+            return
         updates: dict[str, SpotSnapshot] = {}
         for row in self._records():
             if str(row.get("instrument_type") or "").lower() != "index":
@@ -75,10 +93,16 @@ class IVSharedRunnerSpotFeedAdapter:
                 continue
             if isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
                 continue
-            updates[symbol] = SpotSnapshot(float(price), timestamp, timestamp)
+            candidate = SpotSnapshot(float(price), timestamp, timestamp)
+            previous = updates.get(symbol)
+            if previous is None or timestamp > previous.timestamp_ns:
+                updates[symbol] = candidate
         if updates:
             with self._lock:
-                self._last.update(updates)
+                for symbol, candidate in updates.items():
+                    previous = self._last.get(symbol)
+                    if previous is None or candidate.timestamp_ns > previous.timestamp_ns:
+                        self._last[symbol] = candidate
 
     def last_spot_snapshot(self, symbol: str) -> SpotSnapshot | None:
         self._refresh_last()
@@ -86,6 +110,8 @@ class IVSharedRunnerSpotFeedAdapter:
             return self._last.get(str(symbol).strip().upper())
 
     def spot_snapshot(self, symbol: str, *, now_ns: int | None = None) -> SpotSnapshot | None:
+        if not _shared_runner_ready(self.shared_runner):
+            return None
         quote = self.last_spot_snapshot(symbol)
         if quote is None:
             return None
@@ -96,7 +122,9 @@ class IVSharedRunnerSpotFeedAdapter:
         return quote
 
     def snapshot(self, *, transport_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
-        self._refresh_last()
+        runner_ready = _shared_runner_ready(self.shared_runner)
+        if runner_ready:
+            self._refresh_last()
         now = self.clock_ns()
         with self._lock:
             latest = dict(self._last)
@@ -106,7 +134,8 @@ class IVSharedRunnerSpotFeedAdapter:
         for symbol in self.DEFAULT_SYMBOLS:
             quote = latest.get(symbol)
             age_ns = None if quote is None else now - quote.timestamp_ns
-            fresh = quote is not None and age_ns is not None and -1_000_000_000 <= age_ns <= self.max_age_ns
+            fresh = (runner_ready and quote is not None and age_ns is not None
+                     and -1_000_000_000 <= age_ns <= self.max_age_ns)
             if fresh:
                 fresh_count += 1
             spot[symbol] = {
@@ -120,9 +149,12 @@ class IVSharedRunnerSpotFeedAdapter:
                 "age_ms": None if age_ns is None else round(max(0, age_ns) / 1_000_000, 2),
                 "source_age_ms": None if age_ns is None else round(max(0, age_ns) / 1_000_000, 2),
                 "fresh": fresh,
-                "quote_status": "LIVE" if fresh else "LAST_KNOWN_STALE" if quote is not None else "WAITING_FOR_TICK",
+                "quote_status": ("LIVE" if fresh else "SHARED_RUNNER_UNAVAILABLE" if not runner_ready
+                                 else "LAST_KNOWN_STALE" if quote is not None else "WAITING_FOR_TICK"),
             }
-        status = "STOPPED" if not started else "LIVE" if fresh_count == 2 else "PARTIAL" if fresh_count else "STALE" if any(latest.values()) else "WAITING_FOR_TICKS"
+        status = ("STOPPED" if not started else "WAITING_FOR_SHARED_RUNNER" if not runner_ready
+                  else "LIVE" if fresh_count == 2 else "PARTIAL" if fresh_count
+                  else "STALE" if any(latest.values()) else "WAITING_FOR_TICKS")
         return {
             "status": status,
             "source": "shared-index-market-data",
@@ -174,9 +206,7 @@ class IVSharedRunnerOptionFeedAdapter:
             self._universe = None
         if universe is None or not getattr(universe, "contracts", None):
             raise ValueError("a resolved IV option universe is required")
-        health = getattr(self.shared_runner, "health_snapshot", None)
-        runner_status = health() if callable(health) else self.shared_runner.snapshot()
-        if not runner_status.get("enabled") or not runner_status.get("initial_option_bootstrap_done"):
+        if not _shared_runner_ready(self.shared_runner, require_options=True):
             raise RuntimeError("SHARED_RUNNER_NOT_READY: shared index options are not live")
         descriptors = self._active_descriptors()
         active = {
@@ -271,6 +301,8 @@ class IVSharedRunnerOptionFeedAdapter:
             started = self._started
         if not started or universe is None:
             return ()
+        if not _shared_runner_ready(self.shared_runner, require_options=True):
+            return ()
         now = self.clock_ns()
         latest = self._latest_rows_by_token(universe)
         result = []
@@ -305,6 +337,11 @@ class IVSharedRunnerOptionFeedAdapter:
             started = self._started
         if universe is None:
             return {"status": "STOPPED" if not started else "WAITING_FOR_SHARED_RUNNER", "source": "shared-index-market-data"}
+        if not started:
+            return {"status": "STOPPED", "source": "shared-index-market-data", "underlying": universe.underlying, "expiry": universe.expiry, "expected_contracts": len(universe.contracts), "fresh_contracts": 0, "missing_contracts": len(universe.contracts), "missing_tokens": sorted(str(item.token) for item in universe.contracts), "owns_subscriptions": False}
+        if not _shared_runner_ready(self.shared_runner, require_options=True):
+            tokens = sorted(str(item.token) for item in universe.contracts)
+            return {"status": "WAITING_FOR_SHARED_RUNNER", "source": "shared-index-market-data", "underlying": universe.underlying, "expiry": universe.expiry, "expected_contracts": len(tokens), "fresh_contracts": 0, "missing_contracts": len(tokens), "missing_tokens": tokens, "atm_strike": universe.atm_strike, "strikes": list(universe.strikes), "tokens": tokens, "owns_subscriptions": False}
         requested = {str(item.token) for item in universe.contracts}
         latest = self._latest_rows_by_token(universe)
         fresh_tokens = {
