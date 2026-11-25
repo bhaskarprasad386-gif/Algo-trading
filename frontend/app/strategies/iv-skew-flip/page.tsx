@@ -466,8 +466,8 @@ export default function IVSkewFlipPage() {
             before_id:Number((body.next_cursor as Row).before_id),
           }:null);
         }
-        const liveByUnderlying=body.live&&typeof body.live==="object"?body.live as Row:{};
-        setEarlyAlertLive(liveByUnderlying.NIFTY&&typeof liveByUnderlying.NIFTY==="object"?liveByUnderlying.NIFTY as Row:null);
+        const liveByUnderlying=body.live_by_underlying&&typeof body.live_by_underlying==="object"?body.live_by_underlying as Row:{};
+        setEarlyAlertLive(body.live&&typeof body.live==="object"?body.live as Row:null);
         setBankEarlyAlertLive(liveByUnderlying.BANKNIFTY&&typeof liveByUnderlying.BANKNIFTY==="object"?liveByUnderlying.BANKNIFTY as Row:null);
         setAlertFetchError("");
         if(alertAudioEnabled&&fresh.length)playEarlyAlertTone();
