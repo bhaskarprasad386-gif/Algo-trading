@@ -15,6 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Check VPS deployment state
         env:
           VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
@@ -25,25 +28,16 @@ jobs:
           printf '%s' "$VPS_KEY" | base64 --decode > /tmp/vps_key
           chmod 600 /tmp/vps_key
           mkdir -p ~/.ssh
-          # Retry host-key discovery and report failures instead of silently
-          # aborting before the remote probe and evidence upload.
-          keyscan_ok=0
-          for attempt in 1 2 3; do
-            if timeout 8 ssh-keyscan -T 5 -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/tmp/vps-keyscan.err; then
-              keyscan_ok=1
-              break
-            fi
-            sleep 2
-          done
-          if [ "$keyscan_ok" -ne 1 ]; then
-            echo "VPS_SSH_KEYSCAN=FAILED"
-            echo "VPS_SSH_KEYSCAN_ERROR=$(tr '\n' ' ' < /tmp/vps-keyscan.err | cut -c1-500)"
+          export VPS_SSH_PORT=22
+          export VPS_KNOWN_HOSTS_FILE="$HOME/.ssh/known_hosts"
+          export VPS_HEALTH_EVIDENCE_FILE=/tmp/vps-health-probe.txt
+          # Record local keyscan/TCP evidence before any remote SSH command can fail.
+          if ! bash deploy/vps-ssh-keyscan.sh; then
             exit 1
           fi
-          echo "VPS_SSH_KEYSCAN=OK"
 
           set +e
-          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' 2> >(tee /tmp/vps-ssh-stderr.txt >&2) | tee /tmp/vps-health-probe.txt
+          ssh -i /tmp/vps_key -p "$VPS_SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' 2> >(tee /tmp/vps-ssh-stderr.txt | tee -a /tmp/vps-health-probe.txt >&2) | tee -a /tmp/vps-health-probe.txt
           set -u
           echo "=== HOST ==="
           echo "HOST=$(hostname)"
