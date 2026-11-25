@@ -1580,6 +1580,10 @@ def test_snapshot_exposes_safe_per_socket_lifecycle_health():
                 "last_error": "ConnectionResetError: simulated",
                 "transport_thread_alive": True,
                 "transport_close_timed_out": True,
+                "heartbeat_state": "RESPONSIVE",
+                "last_pong_age_seconds": 0.25,
+                "ping_interval_seconds": 20,
+                "ping_timeout_seconds": 10,
                 "auth_token": "must-not-leak",
             }
 
@@ -1594,6 +1598,10 @@ def test_snapshot_exposes_safe_per_socket_lifecycle_health():
         assert health["last_error"] == "ConnectionResetError: simulated"
         assert health["transport_thread_alive"] is True
         assert health["transport_close_timed_out"] is True
+        assert health["heartbeat_state"] == "RESPONSIVE"
+        assert health["last_pong_age_seconds"] == 0.25
+        assert health["ping_interval_seconds"] == 20
+        assert health["ping_timeout_seconds"] == 10
         assert "auth_token" not in health
     finally:
         manager.close()
