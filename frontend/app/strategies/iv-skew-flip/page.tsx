@@ -151,7 +151,7 @@ function SignalSummary({ title, chain, spot }: { title: string; chain: Chain; sp
     <Metric label="Gamma Blast" value={status("GAMMA_BLAST")} sub={String(feed.status ?? "WAITING")} />
   </div>;
 }
-function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot: Row }) {
+function OptionChain({ title, chain, spot, strikeRadius = 5 }: { title: string; chain: Chain; spot: Row; strikeRadius?: number }) {
   const feed = chain.option_feed ?? {};
   const sampler = chain.sampler ?? {};
   const quotes = Array.isArray(feed.quotes) ? feed.quotes as Row[] : [];
@@ -173,7 +173,7 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
   const feedAtm = n(feed.atm_strike);
   const atmTarget = spotPrice ?? feedAtm;
   const atmIndex = allStrikes.length ? atmTarget === null ? Math.floor(allStrikes.length / 2) : allStrikes.reduce((best,x,i)=>Math.abs(x-atmTarget)<Math.abs(allStrikes[best]-atmTarget)||(Math.abs(x-atmTarget)===Math.abs(allStrikes[best]-atmTarget)&&x>allStrikes[best])?i:best,0) : -1;
-  const strikes = atmIndex < 0 ? [] : allStrikes.slice(Math.max(0,atmIndex-5),atmIndex+6);
+  const strikes = atmIndex < 0 ? [] : allStrikes.slice(Math.max(0,atmIndex-strikeRadius),atmIndex+strikeRadius+1);
   const optionSide = (value: unknown) => {
     const side = String(value ?? "").trim().toUpperCase();
     return side === "CE" || side === "CALL" ? "CE" : side === "PE" || side === "PUT" ? "PE" : "";
@@ -189,7 +189,7 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
   const quoteTitle=(x:Row,field:string)=>n(x[field])===null?"No broker quote received":`Broker ${field.toUpperCase()} • ${x.fresh===true?"LIVE":`last received ${age(x.age_ms)} ago; may be stale`}`;
   return <section className="overflow-hidden rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface">
     <div className="flex flex-wrap items-center justify-between gap-3 border-b theme-border p-3 sm:p-4">
-      <div><h2 className="text-lg font-bold theme-text">{title} Option Chain</h2><p className="text-xs theme-muted mt-1">{String(feed.expiry_type ?? chain.expiry_type ?? "—")} • Expiry {String(feed.expiry ?? "—")} • ATM {fmt(strikes[5] ?? (atmIndex>=0?allStrikes[atmIndex]:null),0)} • −5 to +5 strikes ({strikes.length}/11)</p><p className="mt-1 text-[11px] theme-muted">Sampler: {String(sampler.status ?? "WAITING")} • Last sample: {sampleTime(sampler.sampled_at_ns)} • Persisted history: {String(sampler.history_persistence ?? "UNKNOWN")} ({fmt(sampler.history_persisted_count,0)} rows)</p>{Boolean(sampler.history_persistence_error) && <p className="mt-1 text-[11px] text-amber-600">History save error: {String(sampler.history_persistence_error)}</p>}{Boolean(sampler.reason) && <p className="mt-1 text-[11px] text-amber-600">Sampler reason: {String(sampler.reason)}</p>}</div>
+      <div><h2 className="text-lg font-bold theme-text">{title} Option Chain</h2><p className="text-xs theme-muted mt-1">{String(feed.expiry_type ?? chain.expiry_type ?? "—")} • Expiry {String(feed.expiry ?? "—")} • ATM {fmt(strikes[5] ?? (atmIndex>=0?allStrikes[atmIndex]:null),0)} • −{strikeRadius} to +{strikeRadius} strikes ({strikes.length}/{strikeRadius*2+1})</p><p className="mt-1 text-[11px] theme-muted">Sampler: {String(sampler.status ?? "WAITING")} • Last sample: {sampleTime(sampler.sampled_at_ns)} • Persisted history: {String(sampler.history_persistence ?? "UNKNOWN")} ({fmt(sampler.history_persisted_count,0)} rows)</p>{Boolean(sampler.history_persistence_error) && <p className="mt-1 text-[11px] text-amber-600">History save error: {String(sampler.history_persistence_error)}</p>}{Boolean(sampler.reason) && <p className="mt-1 text-[11px] text-amber-600">Sampler reason: {String(sampler.reason)}</p>}</div>
       <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-2 py-1">Feed: {String(spotFeed)}</span><span className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-2 py-1">Contracts: {fmt(feed.received_contracts,0)}/{fmt(feed.expected_contracts,0)}</span><span className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-2 py-1">Angel One IV: {fmt(metrics.filter(x=>x.iv_source==="ANGEL_ONE"&&n(x.iv)!==null).length,0)} • OI LIVE: {fmt(sampler.oi_live_count,0)} • OI LAST: {fmt(sampler.oi_stale_count,0)}</span></div>
     </div>
     {chain.error && <div className="m-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-600">{chain.error}</div>}
@@ -230,7 +230,7 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
 }
 
 type OiVolumeRow = { strike: number; pe?: Row; ce?: Row };
-function IndexOiVolumeChart({ symbol, title, chain, spot }: { symbol: string; title: string; chain: Chain; spot: Row }) {
+function IndexOiVolumeChart({ symbol, title, chain, spot, strikeRadius = 5 }: { symbol: string; title: string; chain: Chain; spot: Row; strikeRadius?: number }) {
   const feed = chain.option_feed ?? {};
   const sampler = chain.sampler ?? {};
   const metrics = Array.isArray(sampler.live_metrics) ? sampler.live_metrics as Row[] : [];
@@ -246,7 +246,7 @@ function IndexOiVolumeChart({ symbol, title, chain, spot }: { symbol: string; ti
   const spotPrice = n(spot.price);
   const atmTarget = spotPrice ?? n(feed.atm_strike);
   const atmIndex = allStrikes.length ? atmTarget === null ? -1 : allStrikes.reduce((best,x,i)=>Math.abs(x-atmTarget)<Math.abs(allStrikes[best]-atmTarget) || (Math.abs(x-atmTarget)===Math.abs(allStrikes[best]-atmTarget)&&x>allStrikes[best])?i:best,0) : -1;
-  const strikes = atmIndex < 0 ? [] : allStrikes.slice(Math.max(0,atmIndex-5),atmIndex+6);
+  const strikes = atmIndex < 0 ? [] : allStrikes.slice(Math.max(0,atmIndex-strikeRadius),atmIndex+strikeRadius+1);
   const byKey = new Map(eligible.map(item=>[`${item.strike}:${String(item.option_type).toUpperCase()}`,item]));
   const rows: OiVolumeRow[] = strikes.map(strike=>({strike,pe:byKey.get(`${strike}:PE`),ce:byKey.get(`${strike}:CE`)}));
   const oiValues = eligible.map(item=>n(item.oi)).filter((v):v is number=>v!==null);
@@ -311,7 +311,7 @@ function IndexOiVolumeChart({ symbol, title, chain, spot }: { symbol: string; ti
 }
 
 type IvChartObservation = { token?: string; strike?: number; option_type?: string; timestamp_ns?: number; spot_timestamp_ns?: number; spot_price?: number | null; iv?: number | null };
-function IndexSpotIvChart({ symbol, title, history, spot, chain }: { symbol: string; title: string; history: Row | null; spot: Row; chain: Chain }) {
+function IndexSpotIvChart({ symbol, title, history, spot, chain, strikeRadius = 5 }: { symbol: string; title: string; history: Row | null; spot: Row; chain: Chain; strikeRadius?: number }) {
   const [chartZoom,setChartZoom]=useState(1);
   const [seriesVisibility,setSeriesVisibility]=useState<Record<string,boolean>>({});
   const observations=Array.isArray(history?.observations)?history!.observations as IvChartObservation[]:[];
@@ -327,7 +327,7 @@ function IndexSpotIvChart({ symbol, title, history, spot, chain }: { symbol: str
   const listed=[...new Set([...feedStrikes,...persistedStrikes])].sort((a,b)=>a-b);
   const spotPrice=n(spot.price)??n(feed.atm_strike);
   const atmIndex=listed.length?(spotPrice!==null?listed.reduce((best,value,index)=>Math.abs(value-spotPrice)<Math.abs(listed[best]-spotPrice)||(Math.abs(value-spotPrice)===Math.abs(listed[best]-spotPrice)&&value>listed[best])?index:best,0):Math.floor(listed.length/2)):-1;
-  const selectedStrikes=atmIndex<0?[]:listed.slice(Math.max(0,atmIndex-5),atmIndex+6);
+  const selectedStrikes=atmIndex<0?[]:listed.slice(Math.max(0,atmIndex-strikeRadius),atmIndex+strikeRadius+1);
   const selectedSet=new Set(selectedStrikes);
   const feedExpiry=String(feed.expiry??"").trim();
   const historyExpiry=String(history?.expiry??"").trim();
@@ -375,8 +375,8 @@ function IndexSpotIvChart({ symbol, title, history, spot, chain }: { symbol: str
   const palette=["#0f766e","#2563eb","#9333ea","#c2410c","#0891b2","#be123c","#4d7c0f","#7c3aed"];
   const colorFor=(strike:number,kind:string)=>{const idx=strikes.indexOf(strike);return palette[(idx*2+(kind==="PE"?1:0))%palette.length]};
   return <section className="space-y-4 rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 shadow-sm">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-extrabold tracking-tight theme-text">{title} • Spot + IV Time Series</h2><p className="mt-1 text-xs font-semibold theme-muted">ATM ±5 strikes • live + saved broker history • dual Y-axis</p></div><div className="flex flex-wrap items-center gap-2"><div className="flex items-center gap-1 rounded-lg border-2 border-slate-300 dark:border-slate-600 p-1"><button type="button" onClick={()=>setChartZoom(value=>Math.max(1,value/1.25))} disabled={chartZoom<=1} className="rounded-md px-3 py-1.5 text-sm font-extrabold theme-text disabled:opacity-40" aria-label="Zoom out">−</button><span className="min-w-[48px] text-center text-xs font-bold theme-text">{chartZoom.toFixed(2)}×</span><button type="button" onClick={()=>setChartZoom(value=>Math.min(4,value*1.25))} disabled={chartZoom>=4} className="rounded-md px-3 py-1.5 text-sm font-extrabold theme-text disabled:opacity-40" aria-label="Zoom in">+</button><button type="button" onClick={()=>setChartZoom(1)} className="rounded-md px-2 py-1.5 text-[11px] font-bold theme-text">Reset</button></div><span className={`rounded-full border-2 px-3 py-1.5 text-[10px] font-bold ${live?"border-emerald-500/50 text-emerald-700":"border-slate-300 dark:border-slate-600 theme-muted"}`}>{live?"LIVE • ≤5s":valid.length?"SAVED DATA":"NO DATA"} • {valid.length}</span></div></div>
-    <p className="text-[11px] theme-muted">Expiry {expiry||"—"} • Saved rows {allValid.length} • Displayed strikes {selectedStrikes.length}/11 • Latest observation {latest?sampleTime(latest):"—"} • Age {latestAgeSeconds===null?"—":latestAgeSeconds<60?`${latestAgeSeconds.toFixed(1)}s`:latestAgeSeconds<3600?`${(latestAgeSeconds/60).toFixed(1)}m`:`${(latestAgeSeconds/3600).toFixed(1)}h`} • {String(history?.data_status??"UNKNOWN")}{expiryMismatch?" • EXPIRY MISMATCH — chart suppressed":""}</p>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-extrabold tracking-tight theme-text">{title} • Spot + IV Time Series</h2><p className="mt-1 text-xs font-semibold theme-muted">ATM ±{strikeRadius} strikes • live + saved broker history • dual Y-axis</p></div><div className="flex flex-wrap items-center gap-2"><div className="flex items-center gap-1 rounded-lg border-2 border-slate-300 dark:border-slate-600 p-1"><button type="button" onClick={()=>setChartZoom(value=>Math.max(1,value/1.25))} disabled={chartZoom<=1} className="rounded-md px-3 py-1.5 text-sm font-extrabold theme-text disabled:opacity-40" aria-label="Zoom out">−</button><span className="min-w-[48px] text-center text-xs font-bold theme-text">{chartZoom.toFixed(2)}×</span><button type="button" onClick={()=>setChartZoom(value=>Math.min(4,value*1.25))} disabled={chartZoom>=4} className="rounded-md px-3 py-1.5 text-sm font-extrabold theme-text disabled:opacity-40" aria-label="Zoom in">+</button><button type="button" onClick={()=>setChartZoom(1)} className="rounded-md px-2 py-1.5 text-[11px] font-bold theme-text">Reset</button></div><span className={`rounded-full border-2 px-3 py-1.5 text-[10px] font-bold ${live?"border-emerald-500/50 text-emerald-700":"border-slate-300 dark:border-slate-600 theme-muted"}`}>{live?"LIVE • ≤5s":valid.length?"SAVED DATA":"NO DATA"} • {valid.length}</span></div></div>
+    <p className="text-[11px] theme-muted">Expiry {expiry||"—"} • Saved rows {allValid.length} • Displayed strikes {selectedStrikes.length}/{strikeRadius*2+1} • Latest observation {latest?sampleTime(latest):"—"} • Age {latestAgeSeconds===null?"—":latestAgeSeconds<60?`${latestAgeSeconds.toFixed(1)}s`:latestAgeSeconds<3600?`${(latestAgeSeconds/60).toFixed(1)}m`:`${(latestAgeSeconds/3600).toFixed(1)}h`} • {String(history?.data_status??"UNKNOWN")}{expiryMismatch?" • EXPIRY MISMATCH — chart suppressed":""}</p>
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-extrabold theme-text">Chart lines • select Call / Put series</span><span className="text-[10px] theme-muted">{selectedSeriesCount}/{ordered.length} visible</span></div>
       <div className="flex flex-wrap gap-2">{selectedStrikes.flatMap(strike=>["CE","PE"].map(kind=>{const key=`${strike}:${kind}`;const checked=seriesVisibility[key]!==false;const exists=groups.has(key);return <label key={key} className={`inline-flex items-center gap-1.5 rounded-lg border-2 border-slate-300 dark:border-slate-600 px-2 py-1.5 text-[10px] ${exists?"theme-text":"theme-muted opacity-60"}`}><input type="checkbox" checked={checked} onChange={()=>toggleSeries(key)} disabled={!exists} className="accent-blue-600"/><span>{fmt(strike,0)} {kind==="CE"?"CALL":"PUT"}</span></label>}))}</div>
@@ -903,9 +903,9 @@ export default function IVSkewFlipPage() {
         <Metric label="Spot Age" value={age(bankSpot.age_ms)} sub={`Source age ${age(bankSpot.source_age_ms)}`}/>
       </div>
       <div className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs theme-muted">Expiry selection date: {String(bank.expiry_selection?.selection_date??"—")} • Selected: {String(bank.expiry_selection?.selected_expiry??"—")} • Master candidates: {Array.isArray(bank.expiry_selection?.available_expiries)?(bank.expiry_selection!.available_expiries as string[]).join(", "):"Waiting for instrument-master diagnostics"} • Contracts: {fmt(bank.universe_tokens,0)} • Last broker snapshot: {sampleTime(bankDurableHistory?.snapshot_at_ns)}</div>
-      <OptionChain title="BANKNIFTY Monthly" chain={bank} spot={bankSpot}/>
-      <IndexOiVolumeChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" chain={bank} spot={bankSpot}/>
-      <IndexSpotIvChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" history={bankChartHistory} spot={bankSpot} chain={bank}/>
+      <OptionChain title="BANKNIFTY Monthly" chain={bank} spot={bankSpot} strikeRadius={3}/>
+      <IndexOiVolumeChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" chain={bank} spot={bankSpot} strikeRadius={3}/>
+      <IndexSpotIvChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" history={bankChartHistory} spot={bankSpot} chain={bank} strikeRadius={3}/>
       <SignalSummary title="BANKNIFTY" chain={bank} spot={bankSpot}/>
     </section>
     <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 space-y-3">
