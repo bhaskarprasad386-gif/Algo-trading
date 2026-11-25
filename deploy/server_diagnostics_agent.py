@@ -67,17 +67,30 @@ def state_set(db: sqlite3.Connection, key: str, value: str) -> None:
     db.execute("INSERT INTO collector_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
 
 
-def classify(priority: int) -> str:
-    return "CRITICAL" if priority <= 2 else "ERROR" if priority == 3 else "WARNING"
+def classify(priority: int, message: str = "") -> str | None:
+    # loguru writes to stdout; journald labels stdout as INFO even when the
+    # embedded application level is ERROR/WARNING. Inspect the structured line.
+    match = re.search(r"\|\s*(CRITICAL|ERROR|WARNING)\s*\|", message, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    if priority <= 2:
+        return "CRITICAL"
+    if priority == 3:
+        return "ERROR"
+    if priority == 4:
+        return "WARNING"
+    return None
 
 
 def collect_once(db: sqlite3.Connection) -> None:
     cursor = state_get(db, "journal_cursor")
-    command = ["journalctl", "--unit", UNIT, "--no-pager", "--output=json", "--lines=500"]
+    command = ["journalctl", "--unit", UNIT, "--no-pager", "--output=json"]
     if cursor:
+        # Do not cap incremental reads: advancing the cursor after a capped
+        # response could silently skip a burst containing more than N events.
         command.extend(["--after-cursor", cursor])
     else:
-        command.extend(["--since", "7 days ago"])
+        command.extend(["--since", "7 days ago", "--lines=3000"])
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=12, check=False)
     except (OSError, subprocess.TimeoutExpired):
@@ -99,18 +112,19 @@ def collect_once(db: sqlite3.Connection) -> None:
                 priority = int(item.get("PRIORITY", 6))
             except (TypeError, ValueError):
                 priority = 6
-            if priority > 4:
-                continue
             try:
                 stamp = datetime.fromtimestamp(int(item.get("__REALTIME_TIMESTAMP")) / 1_000_000, tz=timezone.utc).isoformat()
             except (TypeError, ValueError, OSError):
                 stamp = datetime.now(timezone.utc).isoformat()
             message = sanitize(item.get("MESSAGE", ""))
+            severity = classify(priority, message)
+            if severity is None:
+                continue
             component = sanitize(item.get("SYSLOG_IDENTIFIER") or item.get("_COMM") or UNIT, 120)
             identity = str(raw_cursor or hashlib.sha256((stamp + component + message).encode()).hexdigest())
             db.execute(
                 "INSERT OR IGNORE INTO events(event_id,cursor,timestamp,severity,component,message,source,inserted_at) VALUES(?,?,?,?,?,?,?,?)",
-                (identity, str(raw_cursor or ""), stamp, classify(priority), component, message, "systemd-journal", time.time()),
+                (identity, str(raw_cursor or ""), stamp, severity, component, message, "systemd-journal", time.time()),
             )
         if newest_cursor:
             state_set(db, "journal_cursor", newest_cursor)
