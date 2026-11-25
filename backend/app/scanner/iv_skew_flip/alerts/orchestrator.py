@@ -162,6 +162,7 @@ class IVEarlyEntryAlertEngine:
         )
         result = {
             "state": state, "underlying": underlying, "expiry": expiry,
+            "calibration_status": "PILOT" if underlying == "BANKNIFTY" else "ESTABLISHED_NIFTY_RULESET",
             "signals_allowed": state == "EARLY_ENTRY",
             "accepted_alerts": persisted,
             "alerts": latest_alerts,
