@@ -38,3 +38,12 @@ export function freshEarlyEntryAlerts(alerts, seenIds) {
 export function shouldAllowBoxSpreadEdgeTimingRestRefresh(pagePushStatus, eventDriven = false) {
   return pagePushStatus !== "LIVE" || eventDriven === true;
 }
+
+
+/** Read an index's spot price from the authoritative IV runtime snapshot. */
+export function runtimeSpotPrice(runtime, underlying) {
+  const symbol = String(underlying ?? "").trim().toUpperCase();
+  if (symbol !== "NIFTY" && symbol !== "BANKNIFTY") return null;
+  const spot = runtime?.spot_feed?.spot?.[symbol]?.price;
+  return typeof spot === "number" && Number.isFinite(spot) ? spot : null;
+}
