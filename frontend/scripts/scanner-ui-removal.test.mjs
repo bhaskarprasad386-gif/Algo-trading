@@ -80,3 +80,19 @@ test("Box Spread depth-shadow state updater remains explicitly typed", async () 
   assert.ok(workspace.includes("const [boxDepthShadow, setBoxDepthShadow] = useState<Record<string, unknown> | null>(null);"), "Box Spread depth-shadow state must not be untyped");
   assert.ok(workspace.includes("setBoxDepthShadow(current =>"), "depth-shadow state updates should use typed updater");
 });
+
+test("IV runtime REMOVE clears both NIFTY and BANKNIFTY live/chart state", async () => {
+  const page = await read("app/strategies/iv-skew-flip/page.tsx");
+  const removeStart = page.indexOf('if(removedKeys.includes("runtime")){');
+  assert.notEqual(removeStart, -1, "IV runtime REMOVE handler must exist");
+  const removeEnd = page.indexOf("\n      }", removeStart);
+  assert.notEqual(removeEnd, -1, "IV runtime REMOVE handler must close");
+  const handler = page.slice(removeStart, removeEnd);
+  for (const setter of [
+    "setRuntime(null)",
+    "setChartHistory(null)",
+    "setBankChartHistory(null)",
+    "setEarlyAlertLive(null)",
+    "setBankEarlyAlertLive(null)",
+  ]) assert.ok(handler.includes(setter), setter + " must clear stale per-index runtime state");
+});
