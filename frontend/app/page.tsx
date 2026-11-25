@@ -671,7 +671,7 @@ export default function HomePage() {
             </div>
           </div>
           <p className="px-1 text-[9px] leading-4 theme-subtle">Socket status reports transport and heartbeat only; it does not prove broker authentication or fresh market quotes. Each feed above is labelled by its actual source and contract family. Market-closed periods are not incorrectly treated as expected live ticks.</p>
-        </section>>
+        </section>
         </div>
 
       </div>
