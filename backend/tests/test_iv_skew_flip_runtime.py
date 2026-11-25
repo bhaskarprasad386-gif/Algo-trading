@@ -96,7 +96,7 @@ def make_rows(symbol, expiry, base, step):
                 "name": symbol,
                 "expiry": expiry,
                 "symbol": f"{symbol}{expiry}{int(strike)}{side}",
-                "token": f"{symbol}-{int(strike)}-{side}",
+                "token": f"{symbol}-{expiry}-{int(strike)}-{side}",
                 "lotsize": "25",
                 "strike": str(int(strike * 100)),
             })
@@ -168,9 +168,11 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
     rows = (
         make_rows("NIFTY", "12NOV2026", 100, 10)
         + make_rows("NIFTY", "26NOV2026", 100, 10)
-        + make_rows("BANKNIFTY", "26NOV2026", 200, 10)
+        + make_rows("BANKNIFTY", "26NOV2026", 900, 100)
     )
     spot = FakeSpotFeed()
+    spot.prices["BANKNIFTY"] = SpotSnapshot(900.0, 10_000_000_000)
+    spot.last_prices["BANKNIFTY"] = spot.prices["BANKNIFTY"]
     created = {}
 
     def factory(symbol):
@@ -216,10 +218,10 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
     # NIFTY's already-resolved weekly universe must remain unchanged.
     weekly_after_move = created["NIFTY_WEEKLY"].universe
     previous_bank_sampler = runtime._samplers["BANKNIFTY_MONTHLY"]
-    spot.prices["BANKNIFTY"] = SpotSnapshot(900.0, 12_000_000_000)
+    spot.prices["BANKNIFTY"] = SpotSnapshot(1000.0, 12_000_000_000)
     spot.last_prices["BANKNIFTY"] = spot.prices["BANKNIFTY"]
     runtime.refresh_once()
-    assert created["BANKNIFTY_MONTHLY"].universe.atm_strike == 900.0
+    assert created["BANKNIFTY_MONTHLY"].universe.atm_strike == 1000.0
     assert len(created["BANKNIFTY_MONTHLY"].universe.contracts) == 14
     assert len(created["BANKNIFTY_MONTHLY"].universe.strikes) == 7
     assert runtime._samplers["BANKNIFTY_MONTHLY"].inherited_from is previous_bank_sampler
