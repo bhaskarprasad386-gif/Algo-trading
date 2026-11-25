@@ -157,6 +157,47 @@ class InstrumentRegistry:
         mode = max((modes.get(c, 1) for c in consumers), default=1)
         return Subscription(key, consumers, mode)
 
+    def snapshot_consumer(self, consumer: str) -> dict[InstrumentKey, int]:
+        """Return the exact per-instrument modes owned by one consumer."""
+        consumer = self._normalize_consumer(consumer)
+        with self._lock:
+            return {
+                key: modes[consumer]
+                for key, modes in self._consumer_modes.items()
+                if consumer in modes
+            }
+
+    def restore_consumer(
+        self,
+        consumer: str,
+        subscriptions: dict[InstrumentKey, int],
+    ) -> None:
+        """Atomically restore one consumer without changing other owners."""
+        consumer = self._normalize_consumer(consumer)
+        if not isinstance(subscriptions, dict):
+            raise TypeError("subscriptions must be a mapping of instrument keys to modes")
+        validated: dict[InstrumentKey, int] = {}
+        for key, mode in subscriptions.items():
+            if not isinstance(key, InstrumentKey):
+                raise TypeError("subscription snapshot keys must be InstrumentKey values")
+            validated[key] = self._validate_mode(mode)
+        with self._lock:
+            missing = set(validated) - self._instruments.keys()
+            if missing:
+                raise KeyError("cannot restore subscriptions for unregistered instruments")
+            for key in tuple(self._consumer_modes):
+                modes = self._consumer_modes[key]
+                modes.pop(consumer, None)
+                consumers = self._consumers.get(key)
+                if consumers is not None:
+                    consumers.discard(consumer)
+                    if not consumers:
+                        self._consumers.pop(key, None)
+                        self._consumer_modes.pop(key, None)
+            for key, mode in validated.items():
+                self._consumers.setdefault(key, set()).add(consumer)
+                self._consumer_modes.setdefault(key, {})[consumer] = mode
+
     def get(self, key: InstrumentKey) -> InstrumentDescriptor | None:
         with self._lock:
             return self._instruments.get(key)
