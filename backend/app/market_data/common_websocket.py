@@ -324,13 +324,16 @@ class CommonWebSocketManager:
             "exchange_timestamp_ms", "timestamp", "feed_time",
         ):
             value = payload.get(name)
-            if value is None:
+            if value is None or isinstance(value, bool):
                 continue
             try:
                 number = float(value)
             except (TypeError, ValueError, OverflowError):
                 continue
-            if isfinite(number):
+            # A provider timestamp must be a real positive epoch value. Treat
+            # zero/negative/sentinel values as missing so the normalizer's local
+            # fallback can never be mistaken for exchange-time freshness.
+            if isfinite(number) and number > 0:
                 return True
         return False
 
@@ -1099,11 +1102,23 @@ class CommonWebSocketManager:
                             and self._socket_generation.get(group) == generation
                         )
                     if not is_current_after_connect:
-                        close_worker = self._close_socket_tracked(
-                            socket, group=group, generation=generation,
-                            reason="late_connect_success",
-                            on_finished=lambda: self._reconcile_after_retirement(group),
-                        )
+                        # Recovery may already have retired this exact generation
+                        # while its connect() call was still blocked. In that case
+                        # its retirement watcher owns the close barrier and the
+                        # single post-retirement reconcile; registering a second
+                        # close for the same generation would double-reconcile.
+                        with self._lock:
+                            retirement_already_tracked = any(
+                                item.get("group") == f"{group.mode}:{group.shard}"
+                                and item.get("generation") == generation
+                                for item in self._retired_transports.values()
+                            )
+                        if not retirement_already_tracked:
+                            self._close_socket_tracked(
+                                socket, group=group, generation=generation,
+                                reason="late_connect_success",
+                                on_finished=lambda: self._reconcile_after_retirement(group),
+                            )
                         return
             except Exception as exc:
                 failure["exception"] = exc

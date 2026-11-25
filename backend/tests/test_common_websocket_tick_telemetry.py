@@ -183,3 +183,27 @@ def test_angel_observer_only_consumer_is_a_valid_route_and_can_unregister():
     manager._on_data(group, {"token": "456", "exchange_type": 1}, generation=4)
     assert len(observed) == 1
     assert manager.snapshot()["missing_callback_routes"] == 1
+
+
+
+def test_provider_timestamp_validation_rejects_boolean_zero_negative_and_nonfinite_values():
+    for payload in (
+        {"timestamp_ns": True},
+        {"timestamp_ns": 0},
+        {"timestamp_ns": -1},
+        {"timestamp_ns": "0"},
+        {"timestamp_ns": "-123"},
+        {"timestamp_ns": "nan"},
+        {"timestamp_ns": "inf"},
+        {"timestamp_ns": "not-a-timestamp"},
+    ):
+        assert CommonWebSocketManager._has_provider_timestamp(payload) is False
+
+
+def test_provider_timestamp_validation_accepts_positive_finite_epoch_values():
+    for payload in (
+        {"timestamp_ns": 1},
+        {"timestamp_ns": "1792386000000000000"},
+        {"exchange_timestamp_ms": 1792386000000},
+    ):
+        assert CommonWebSocketManager._has_provider_timestamp(payload) is True

@@ -22,7 +22,7 @@ from app.core.logger import app_logger
 from app.core.daemon_worker import run_blocking_daemon
 from app.core.diagnostics import runtime_diagnostics
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
-from app.core.database import engine, Base, SessionLocal, check_database
+from app.core.database import engine, Base, SessionLocal, check_database, database_pool_snapshot
 from app.core.schema_migrations import run_schema_migrations
 from app.core.iv_basket_guards import install_iv_basket_immutability_guards
 from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
@@ -3093,8 +3093,8 @@ def health_check():
             context={"event": "health_check"},
         )
         app_logger.error(f"Health check database failure: {exc}")
-        return {"status": "degraded", "app": settings.app_name, "version": "0.1.0", "database": "Disconnected"}
-    return {"status": "ok", "app": settings.app_name, "version": "0.1.0", "database": "Connected"}
+        return {"status": "degraded", "app": settings.app_name, "version": "0.1.0", "database": "Disconnected", "database_pool": database_pool_snapshot()}
+    return {"status": "ok", "app": settings.app_name, "version": "0.1.0", "database": "Connected", "database_pool": database_pool_snapshot()}
 
 
 

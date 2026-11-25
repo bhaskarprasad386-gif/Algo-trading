@@ -192,7 +192,15 @@ class AngelShardCallbackAdapter:
                             kind_metrics = self._callback_kind_metrics.setdefault(
                                 str(invocation.callback_kind),
                                 {"attempts": 0, "errors": 0, "slow": 0,
+                                 "queue_wait_total_ns": 0, "queue_wait_max_ns": 0,
                                  "duration_total_ns": 0, "duration_max_ns": 0},
+                            )
+                            # Batch wait is shared by its FIFO invocations. Attribute
+                            # it to each consumer kind so queue pressure can be
+                            # correlated with the same kind-level duration/error data.
+                            kind_metrics["queue_wait_total_ns"] += queue_wait_ns
+                            kind_metrics["queue_wait_max_ns"] = max(
+                                kind_metrics["queue_wait_max_ns"], queue_wait_ns
                             )
                             kind_metrics["attempts"] += 1
                             kind_metrics["duration_total_ns"] += callback_duration_ns
