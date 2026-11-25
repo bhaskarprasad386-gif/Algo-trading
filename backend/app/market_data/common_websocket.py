@@ -243,6 +243,8 @@ class CommonWebSocketManager:
         # Track sockets waiting for broker-wide connect admission so reconcile
         # does not mistake a queued handshake for a confirmed disconnect.
         self._connect_pending_generation: dict[SocketGroup, int] = {}
+        # Preserve an exact generation retirement claim until its connect worker exits.
+        self._connect_retirement_claims: set[tuple[SocketGroup, int]] = set()
         self._silent_feed_timeout_seconds = 30.0
         # A broker handshake can fail without firing on_error/on_close, leaving
         # MarketDataWebSocket.connecting stuck True forever. Bound that state.
@@ -1102,23 +1104,13 @@ class CommonWebSocketManager:
                             and self._socket_generation.get(group) == generation
                         )
                     if not is_current_after_connect:
-                        # Recovery may already have retired this exact generation
-                        # while its connect() call was still blocked. In that case
-                        # its retirement watcher owns the close barrier and the
-                        # single post-retirement reconcile; registering a second
-                        # close for the same generation would double-reconcile.
-                        with self._lock:
-                            retirement_already_tracked = any(
-                                item.get("group") == f"{group.mode}:{group.shard}"
-                                and item.get("generation") == generation
-                                for item in self._retired_transports.values()
-                            )
-                        if not retirement_already_tracked:
-                            self._close_socket_tracked(
-                                socket, group=group, generation=generation,
-                                reason="late_connect_success",
-                                on_finished=lambda: self._reconcile_after_retirement(group),
-                            )
+                        # Claiming retirement is atomic and remains visible after
+                        # the watcher removes its active record.
+                        self._close_socket_tracked(
+                            socket, group=group, generation=generation,
+                            reason="late_connect_success",
+                            on_finished=lambda: self._reconcile_after_retirement(group),
+                        )
                         return
             except Exception as exc:
                 failure["exception"] = exc
@@ -1189,6 +1181,7 @@ class CommonWebSocketManager:
                 with self._lock:
                     if self._connect_pending_generation.get(group) == generation:
                         self._connect_pending_generation.pop(group, None)
+                    self._connect_retirement_claims.discard((group, generation))
                 completed.set()
 
         worker = Thread(
@@ -2365,7 +2358,13 @@ class CommonWebSocketManager:
     ) -> Thread:
         """Register retirement before waiting, so concurrent reconciles see the slot occupied."""
         key = f"{group.mode}:{group.shard}:{generation if generation is not None else 'unknown'}:{reason}:{time.time_ns()}"
+        connect_identity = (group, generation) if generation is not None else None
         with self._lock:
+            if connect_identity is not None and self._connect_pending_generation.get(group) == generation:
+                if connect_identity in self._connect_retirement_claims:
+                    # The first retirement owns close completion and its callback.
+                    return Thread(name="common-ws-close-already-retired")
+                self._connect_retirement_claims.add(connect_identity)
             self._retired_transports[key] = {
                 "group": f"{group.mode}:{group.shard}",
                 "generation": generation,
@@ -2374,9 +2373,16 @@ class CommonWebSocketManager:
                 "close_worker_alive": True,
                 "last_observed_at": time.time(),
             }
-        worker = self._close_socket_bounded(
-            socket, timeout=timeout, group=group, generation=generation, reason=reason
-        )
+        try:
+            worker = self._close_socket_bounded(
+                socket, timeout=timeout, group=group, generation=generation, reason=reason
+            )
+        except Exception:
+            with self._lock:
+                self._retired_transports.pop(key, None)
+                if connect_identity is not None:
+                    self._connect_retirement_claims.discard(connect_identity)
+            raise
         # Bounded close may finish between the caller's first liveness check
         # and watcher registration. Own completion in this helper and guard it
         # exactly once so fast-close and watcher paths cannot double-reconcile.
