@@ -230,9 +230,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path == "/health":
+            try:
+                db = connect_db()
+                db.execute("SELECT 1").fetchone()
+                db.close()
+                database_ok = True
+            except Exception:
+                database_ok = False
             with _API_STATUS_LOCK:
                 api_status = dict(_API_STATUS)
-            self._json(200, {"status": "ok", "service": "algo-diagnostics-agent", "source_unit": UNIT, "api_process_reachable": api_status["reachable"], "api_last_success_at": api_status["last_success_at"], "server_time": datetime.now(timezone.utc).isoformat()})
+            self._json(200 if database_ok else 503, {"status": "ok" if database_ok else "degraded", "service": "algo-diagnostics-agent", "database_ok": database_ok, "source_unit": UNIT, "api_process_reachable": api_status["reachable"], "api_last_success_at": api_status["last_success_at"], "server_time": datetime.now(timezone.utc).isoformat()})
             return
         if parsed.path != "/api/errors":
             self._json(404, {"status": "not_found"})
