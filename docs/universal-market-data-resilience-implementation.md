@@ -129,3 +129,16 @@ The live CommonWebSocketManager allocator now consumes InstrumentDescriptor.pref
 - snapshot() uses the same preferred-lane calculation as live reconcile, so reported required groups and roster locations cannot silently fall back to the legacy allocator.
 
 This is a guarded allocator integration, not a production activation claim. The explicit capacity trade-off remains: with all three locked lanes occupied, other unclassified instrument universes cannot be added to this same three-session manager without a separately designed compatible allocation policy. The next acceptance step is exact-head CI and runtime consumer inventory validation; no merge, production activation, or VPS work is authorized.
+
+
+
+## Allocator boundary and recovery follow-up — 2026-11-25
+
+The deep review added four fail-closed safeguards after the live allocator integration:
+
+- Pinned instruments are subject to the same per-socket token ceiling as adaptive placements. A locked lane that exceeds the configured 1,000-token software cap is rejected before assignments, routes, or sockets are committed; it is not split into a second shard because that would violate the dedicated-lane contract.
+- A broker exchange/token pair must resolve to one canonical instrument descriptor. Even two descriptors that happen to classify to the same preferred lane are rejected rather than allowing one broker frame to fan out to distinct instrument identities.
+- Diagnostic snapshots tolerate incomplete/placeholder subscription views during recovery. A monitoring read must not crash the recovery supervisor or consume pending failure groups.
+- Recovery compares the full instrument-to-lane assignment plan as well as the physical socket-group set. A stale lane plan can therefore trigger reconciliation even when the same three physical group identities still exist.
+
+These checks do not implement failover redistribution. They protect the strict preferred topology while failover/recovery policy is designed and tested separately.
