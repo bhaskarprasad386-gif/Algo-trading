@@ -1083,3 +1083,34 @@ def test_recovery_supervisor_does_not_acknowledge_failures_added_during_reconcil
     assert manager.snapshot()["failure_recovery_pending_groups"] == []
     assert len(reconcile_calls) >= 2
     manager.close()
+
+
+def test_failure_recovery_keeps_same_shard_distinct_across_subscription_modes():
+    manager = CommonWebSocketManager()
+    groups = (SocketGroup(1, 0), SocketGroup(2, 0))
+    sockets = (BlockingSocket(), BlockingSocket())
+    retired = {}
+
+    for group, socket in zip(groups, sockets):
+        manager._sockets[group] = socket
+        manager._socket_generation[group] = 4
+        manager._socket_generation_counter[group] = 4
+        manager._socket_tokens[group] = {(1, f"mode-{group.mode}")}
+
+    def defer_close(socket, **kwargs):
+        retired[kwargs["group"]] = kwargs.get("on_finished")
+        return Thread()
+
+    manager._close_socket_tracked = defer_close
+    manager.recover_disconnected = lambda **_kwargs: 0
+    manager._reconcile = lambda: None
+
+    manager._schedule_socket_failure_recovery(groups[0], sockets[0], 4, "mode one failed")
+    manager._schedule_socket_failure_recovery(groups[1], sockets[1], 4, "mode two failed")
+
+    state = manager.snapshot()
+    assert set(retired) == set(groups)
+    assert state["failure_recovery_groups"] == ["1:0", "2:0"]
+    assert state["failure_recovery_pending_groups"] == ["2:0"]
+    assert manager._sockets == {}
+    manager.close()
