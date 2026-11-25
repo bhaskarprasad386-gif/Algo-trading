@@ -1845,11 +1845,19 @@ class CommonWebSocketManager:
 
     def _on_data(self, group: SocketGroup, message: Any, generation: int | None = None) -> None:
         with self._lock:
-            # Reject callbacks from an older socket after recovery has replaced
-            # or removed that group. Never let an orphan socket inflate telemetry.
-            if generation is not None and self._socket_generation.get(group) != generation:
-                return
+            # Direct/internal callers may omit a generation. Bind them to the
+            # socket generation observed at entry so a callback that triggers
+            # recovery cannot keep fanning out to later consumers on a new socket.
             if group not in self._sockets:
+                return
+            current_generation = self._socket_generation.get(group)
+            if generation is None:
+                generation = current_generation
+            elif current_generation != generation:
+                # Reject callbacks from an older socket after recovery has
+                # replaced or removed that group. Never inflate orphan telemetry.
+                return
+            if generation is None:
                 return
             self._raw_frames_received += 1
             received_monotonic_ns = time.monotonic_ns()
