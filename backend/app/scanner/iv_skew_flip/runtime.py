@@ -31,6 +31,7 @@ from .feed import IVSkewFlipFeedAdapter
 from .instruments import download_iv_instruments
 from .sampler import IVOneSecondSampler
 from .spot_feed import IVSpotFeedAdapter
+from .shared_runner_feed import IVSharedRunnerOptionFeedAdapter, IVSharedRunnerSpotFeedAdapter
 from .alerts import AlertCooldownStore, IVEarlyEntryAlertEngine
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from .universe import resolve_option_universe
@@ -89,27 +90,32 @@ class IVSkewFlipRuntime:
         equity_pressure_unavailable_reason: str | None = None,
         future_feed: IVIndexFutureFeedAdapter | None = None,
         feed_manager: Any | None = None,
+        shared_runner: Any | None = None,
         close_feed_manager: bool = False,
     ) -> None:
         if refresh_seconds < 1.0 or refresh_seconds > 3.0:
             raise ValueError("universe refresh cadence must be between 1 and 3 seconds")
         self.instrument_master = instrument_master
         self.feed_manager = feed_manager
+        self.shared_runner = shared_runner
         # A manager injected by the application may be shared with other
         # scanners. Only close managers whose lifecycle this runtime owns.
         self.close_feed_manager = bool(close_feed_manager)
-        # Production injects the process-wide manager shared with Box Spread.
-        # All IV consumers use mode 3; socket admission and the three-socket
-        # budget are enforced globally by that manager.
-        self.spot_feed = spot_feed or IVSpotFeedAdapter(
-            feed=CommonStrategyMarketFeed(
-                "iv-skew-flip-spot", manager=feed_manager, mode=3,
-            ) if feed_manager is not None else None,
-            clock_ns=clock_ns,
-            # Preserve the durable last-known spot display when using an
-            # injected dedicated feed adapter.
-            persist_last_price=True if feed_manager is not None else None,
-        )
+        # Production attaches to the already-running shared index runner. The
+        # compatibility path remains available for isolated tests/tools, but
+        # production IV never registers duplicate market-data consumers.
+        if shared_runner is not None:
+            self.spot_feed = spot_feed or IVSharedRunnerSpotFeedAdapter(
+                shared_runner=shared_runner, clock_ns=clock_ns,
+            )
+        else:
+            self.spot_feed = spot_feed or IVSpotFeedAdapter(
+                feed=CommonStrategyMarketFeed(
+                    "iv-skew-flip-spot", manager=feed_manager, mode=3,
+                ) if feed_manager is not None else None,
+                clock_ns=clock_ns,
+                persist_last_price=True if feed_manager is not None else None,
+            )
         self.future_feed = future_feed or IVIndexFutureFeedAdapter(
             feed=CommonStrategyMarketFeed(
                 "iv-skew-flip-index-futures", manager=feed_manager, mode=3,
@@ -120,12 +126,18 @@ class IVSkewFlipRuntime:
         self._basis_histories: dict[str, BasisHistory] = {}
         self._basis_analysis: dict[str, dict[str, Any]] = {}
         self.option_feed_factory = option_feed_factory or (
-            lambda symbol: IVSkewFlipFeedAdapter(
-                feed=CommonStrategyMarketFeed(
-                    f"iv-skew-flip-{symbol.lower()}", manager=feed_manager, mode=3,
-                ) if feed_manager is not None else None,
-                consumer=f"iv-skew-flip-{symbol.lower()}",
-                clock_ns=clock_ns,
+            (
+                lambda stream_id: IVSharedRunnerOptionFeedAdapter(
+                    shared_runner=shared_runner, stream_id=stream_id, clock_ns=clock_ns,
+                )
+            ) if shared_runner is not None else (
+                lambda stream_id: IVSkewFlipFeedAdapter(
+                    feed=CommonStrategyMarketFeed(
+                        f"iv-skew-flip-{stream_id.lower()}", manager=feed_manager, mode=3,
+                    ) if feed_manager is not None else None,
+                    consumer=f"iv-skew-flip-{stream_id.lower()}",
+                    clock_ns=clock_ns,
+                )
             )
         )
         self.clock_ns = clock_ns
@@ -1092,20 +1104,36 @@ class IVSkewFlipRuntime:
             "orders_enabled": False,
             "market_data_connection": (
                 {
-                    "isolation": "SHARED_PROCESS_MANAGER",
+                    "isolation": "SHARED_INDEX_MARKET_DATA_RUNNER",
+                    "runner": (
+                        self.shared_runner.snapshot()
+                        if self.shared_runner is not None else None
+                    ),
                     "manager_owner": "APPLICATION",
                     "manager": manager_snapshot,
                     "socket_mode": 3,
                     "global_socket_limit": 3,
-                    "owns_manager": self.close_feed_manager,
+                    "iv_owns_subscriptions": False,
+                    "iv_owns_shared_runner": False,
                 }
-                if self.feed_manager is not None
-                else {
-                    "isolation": "COMMON_FEED_ADAPTER",
-                    "socket_mode": 1,
-                    "global_socket_limit": None,
-                    "owns_manager": False,
-                }
+                if self.shared_runner is not None
+                else (
+                    {
+                        "isolation": "SHARED_PROCESS_MANAGER",
+                        "manager_owner": "APPLICATION",
+                        "manager": manager_snapshot,
+                        "socket_mode": 3,
+                        "global_socket_limit": 3,
+                        "owns_manager": self.close_feed_manager,
+                    }
+                    if self.feed_manager is not None
+                    else {
+                        "isolation": "COMMON_FEED_ADAPTER",
+                        "socket_mode": 1,
+                        "global_socket_limit": None,
+                        "owns_manager": False,
+                    }
+                )
             ),
             "refresh_seconds": self.refresh_seconds,
             "signal_evaluation_seconds": self.evaluation_seconds,
