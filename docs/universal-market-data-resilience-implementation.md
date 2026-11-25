@@ -84,7 +84,7 @@ This audit distinguishes a class that can open sockets from a production lifecyc
 - The live Cash-Future task is gated by `LIVE_CASH_FUTURE_DATA_ENABLED` and instantiates `LiveCashFutureCommonRunner`. That runner obtains `shared_common_manager()` and subscribes through the common registry; it is not the legacy two-socket collector.
 - Calendar Spread is gated by `LIVE_CALENDAR_SPREAD_DATA_ENABLED` and starts `LiveCalendarSpreadOneSecondCollector`, which uses the common strategy feed.
 - Synthetic and Box Spread have separate feature-flagged supervised tasks. Their underlying/option data paths use common-feed adapters; strategy logic remains separate.
-- IV Skew Flip creates distinct consumer adapters, including mode-3 spot/options and mode-1 equity/futures feeds. Those mode differences are real allocator inputs and cannot be collapsed by a naive lane-only key.
+- IV Skew Flip creates distinct consumer adapters with mixed requested modes: its option feed defaults to mode 3, while its spot, index-futures, and equity feeds default to mode 1. The locked shared-index spot/futures owners request mode 3; where the same canonical instrument is shared, registry mode aggregation selects the maximum mode. The equity universe remains mode 1 and can create additional `(mode, shard)` physical groups. These mode differences are real allocator inputs and cannot be collapsed by a naive lane-only key. A three-socket global cap can therefore reject a combined live subscription plan when the equity universe is active; this compatibility gate remains unresolved and must be tested against the exact runtime descriptor set before production activation.
 - Other common-feed consumers found include commodity recording, Box Spread depth/shadow, calendar, and generic strategy runtime registrations. They must remain independent owners when allocation changes.
 
 ### Direct-socket inventory and unresolved owners
@@ -92,6 +92,13 @@ This audit distinguishes a class that can open sockets from a production lifecyc
 - `backend/app/market_data/live_cash_future_stream.py` still contains a legacy collector that directly creates two sockets (NSE and NFO). The application lifespan path inspected above starts `LiveCashFutureCommonRunner`, not this legacy collector. Its remaining references include health reporting/imports and a dedicated verification workflow; do not delete or migrate it until every external/manual invocation is ruled out.
 - `backend/app/market_data/engine.py` still has a generic fallback that constructs `MarketDataWebSocket()`. The current search did not establish a production lifespan activation path for that fallback. Keep it out of the common-feed migration until a concrete runtime caller is identified.
 - `live_synthetic_stream.py` retains a socket-factory fallback for explicitly injected/non-shared operation; its common-manager path disables private reconnect and delegates recovery to the shared manager.
+
+### Application startup and mixed-mode compatibility — 2026-11-25
+
+- `backend/app/main.py` constructs the shared-index runner at module initialization and starts `_shared_index_market_data_recovery_loop()` from application lifespan. This is an active startup path, not merely a diagnostic object.
+- The same lifespan starts the IV recovery loop unconditionally; that loop respects the persisted IV Scanner ON/OFF control before creating `IVSkewFlipRuntime`. Cash-Future, Calendar Spread, Synthetic, and Box Spread remain feature-flagged lifecycle tasks and use common-feed adapters in their active paths.
+- The IV mode inventory was corrected from source: option feed mode 3; spot feed mode 1; index-futures feed mode 1; equity feed mode 1. Shared-index spot/options/futures owners request mode 3. Registry mode aggregation promotes a shared instrument to the maximum requested mode, but distinct equity instruments retain mode 1.
+- Because physical socket identity is `(mode, shard)`, an active equity universe may require additional mode-1 groups alongside the locked mode-3 lanes. The global three-session cap correctly fails closed rather than silently mixing those instruments into a locked lane. This is a real production-compatibility blocker, not a test-only concern. Do not change IV feed modes or disable equity pressure as a workaround without a separately approved behavior decision; first derive the complete runtime descriptor plan and prove whether the active selected equity basket can fit within the three-session budget.
 
 ### Allocator constraints confirmed
 
