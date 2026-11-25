@@ -219,7 +219,7 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     if any(row.expiry != expiry for row in wall_rows):
         return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_EXPIRY_MISMATCH",))
     for row in wall_rows:
-        if _structurally_valid(row):
+        if _structurally_valid(row, underlying):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_WALL_OBSERVATION",))
     event_keys = [(row.source_timestamp_ns, int(row.oi_timestamp_ns or 0)) for row in wall_rows]
     if any(b <= a for a, b in zip(event_keys, event_keys[1:])):
