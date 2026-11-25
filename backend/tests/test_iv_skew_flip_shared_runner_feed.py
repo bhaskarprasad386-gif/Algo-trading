@@ -242,3 +242,26 @@ def test_shared_runner_option_adapter_rejects_descriptor_token_with_wrong_contra
         adapter.start(universe)
     assert adapter.latest_quotes() == ()
     assert runner.stop_calls == 0
+
+
+def test_shared_runner_option_adapter_recovers_after_quote_gap_without_resubscription():
+    now = time_ns()
+    universe = make_universe()
+    runner = FakeSharedRunner(make_records(universe, now), make_descriptors(universe))
+    adapter = IVSharedRunnerOptionFeedAdapter(
+        shared_runner=runner, stream_id="BANKNIFTY_MONTHLY",
+        clock_ns=lambda: now + 20_000_000_000,
+        max_quote_age_seconds=5.0,
+    )
+    adapter.start(universe)
+
+    # Simulate a shared transport gap: all retained records are now stale.
+    assert adapter.snapshot(now_ns=now + 20_000_000_000)["status"] == "STALE"
+    assert adapter.latest_quotes() == ()
+
+    # Shared runner reconnects and publishes fresh records. The IV adapter is
+    # a read-only view, so it recovers from the new state without start()/stop().
+    runner.state.records = make_records(universe, now + 21_000_000_000)
+    assert adapter.snapshot(now_ns=now + 21_000_000_000)["status"] == "LIVE"
+    assert len(adapter.latest_quotes()) == 6
+    assert runner.stop_calls == 0
