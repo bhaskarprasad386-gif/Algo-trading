@@ -202,9 +202,12 @@ class AngelShardCallbackAdapter:
                 # raise RuntimeError (and can abort socket shutdown). Self-stop
                 # cannot wait for a drain, so fail closed and let _run observe
                 # the generation fence immediately after this invocation.
-                self._generation += 1
-                self._discard_pending_locked()
-                self._stop.set()
+                # Repeated self-stop calls are idempotent once the worker has
+                # already been told to exit; do not advance the fence twice.
+                if not self._stop.is_set():
+                    self._generation += 1
+                    self._discard_pending_locked()
+                    self._stop.set()
                 return
         if not drain:
             discarded = 0
