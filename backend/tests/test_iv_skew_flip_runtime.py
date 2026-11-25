@@ -115,6 +115,10 @@ def test_broker_snapshot_context_resolves_each_active_underlying_independently()
         + make_rows("BANKNIFTY", "26NOV2026", 200, 100)
     )
     spot = FakeSpotFeed()
+    # This fixture's BANKNIFTY ladder starts at 100 because negative strikes
+    # are invalid; place spot near the middle so ATM +/- 3 is representable.
+    spot.prices["BANKNIFTY"] = SpotSnapshot(700.0, 10_000_000_000)
+    spot.last_prices["BANKNIFTY"] = spot.prices["BANKNIFTY"]
     created = {}
 
     runtime = IVSkewFlipRuntime(
@@ -816,9 +820,13 @@ def test_nifty_weekly_and_banknifty_monthly_keep_tomorrows_expiry_then_roll_afte
         + make_rows("BANKNIFTY", "29DEC2026", 200, 100)
     )
     created = {}
+    spot = FakeSpotFeed()
+    # Keep the synthetic spot inside the positive BANKNIFTY strike ladder.
+    spot.prices["BANKNIFTY"] = SpotSnapshot(700.0, 10_000_000_000)
+    spot.last_prices["BANKNIFTY"] = spot.prices["BANKNIFTY"]
     runtime = IVSkewFlipRuntime(
         instrument_master=FakeMaster(rows),
-        spot_feed=FakeSpotFeed(),
+        spot_feed=spot,
         option_feed_factory=lambda stream_id: created.setdefault(
             stream_id, FakeOptionFeed(stream_id)
         ),
