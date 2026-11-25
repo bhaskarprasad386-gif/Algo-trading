@@ -1950,6 +1950,8 @@ class CommonWebSocketManager:
             try:
                 callback(message)
                 with self._lock:
+                    if group not in self._sockets or (generation is not None and self._socket_generation.get(group) != generation):
+                        continue
                     self._raw_callback_successes += 1
                     self._last_data_at[group] = time.monotonic()
                     self._last_successful_delivery_at[group] = self._last_data_at[group]
@@ -2057,6 +2059,8 @@ class CommonWebSocketManager:
                         break
                     callback(record)
                     with self._lock:
+                        if group not in self._sockets or (generation is not None and self._socket_generation.get(group) != generation):
+                            break
                         self._normalized_records_delivered += 1
                         self._last_data_at[group] = time.monotonic()
                         self._last_successful_delivery_at[group] = self._last_data_at[group]
