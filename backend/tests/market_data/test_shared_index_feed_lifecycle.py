@@ -1,3 +1,4 @@
+import pytest
 from app.market_data.shared_index_feed_lifecycle import SharedIndexFeedLifecycle
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
 from app.market_data.contracts import InstrumentKey, MarketDataRecord, InstrumentType
@@ -740,3 +741,26 @@ def test_stop_waits_for_inflight_option_rotation_then_clears_all_owner_keys():
     assert lifecycle.snapshot()["futures_active"] is False
     assert manager.registry.active_keys() == ()
     assert manager.registry.subscriptions() == ()
+
+
+
+def test_spot_start_rejects_non_index_or_wrong_exchange_descriptors_before_registry_mutation():
+    manager = CommonWebSocketManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    nifty = descriptor("NIFTY", token="SPOT-WRONG-KIND")
+    bank = descriptor("BANKNIFTY", token="SPOT-WRONG-EXCHANGE")
+    wrong_kind = replace(nifty, instrument_type="future")
+    wrong_exchange = replace(
+        bank,
+        exchange="BSE",
+        segment="BSE",
+        key=InstrumentKey("BSE", "BSE", bank.key.token),
+    )
+
+    with pytest.raises(ValueError, match="NSE index instruments"):
+        lifecycle.start_spot((wrong_kind, wrong_exchange))
+
+    assert manager.registry.subscriptions() == ()
+    assert manager.registry.get(wrong_kind.key) is None
+    assert manager.registry.get(wrong_exchange.key) is None
+    manager.close()
