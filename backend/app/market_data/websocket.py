@@ -100,6 +100,25 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
     original_error = getattr(socket, "_on_error", None)
     original_close = getattr(socket, "_on_close", None)
     original_data = getattr(socket, "_on_data", None)
+    original_ping = getattr(socket, "_on_ping", None)
+    original_pong = getattr(socket, "_on_pong", None)
+
+    # Expose heartbeat observations separately from socket-open and market-data
+    # delivery. A pong proves control-frame responsiveness, not subscription health.
+    def observe_heartbeat(kind, original):
+        def callback(wsapp, *details):
+            with socket._lock:
+                counter = f"_{kind}_count"
+                timestamp = f"_last_{kind}_at_monotonic_ns"
+                setattr(socket, counter, getattr(socket, counter, 0) + 1)
+                setattr(socket, timestamp, time.monotonic_ns())
+            if callable(original):
+                return original(wsapp, *details)
+            return None
+        return callback
+
+    socket._on_ping = observe_heartbeat("ping", original_ping)
+    socket._on_pong = observe_heartbeat("pong", original_pong)
 
     # websocket-client invokes on_close(wsapp, close_status_code, close_msg),
     # while some SmartWebSocketV2 releases define _on_close(self, wsapp).
@@ -254,6 +273,10 @@ class MarketDataWebSocket:
                 "subscription_response_state": self._subscription_response_state,
                 "subscription_rejection_count": self._subscription_rejection_count,
                 "last_subscription_response": dict(self._last_subscription_response) if self._last_subscription_response else None,
+                "ping_count": getattr(self.websocket, "_ping_count", 0) if self.websocket is not None else 0,
+                "pong_count": getattr(self.websocket, "_pong_count", 0) if self.websocket is not None else 0,
+                "last_ping_at_monotonic_ns": getattr(self.websocket, "_last_ping_at_monotonic_ns", None) if self.websocket is not None else None,
+                "last_pong_at_monotonic_ns": getattr(self.websocket, "_last_pong_at_monotonic_ns", None) if self.websocket is not None else None,
             }
 
     @property
