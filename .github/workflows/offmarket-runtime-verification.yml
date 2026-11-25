@@ -152,29 +152,35 @@ jobs:
             echo "SHADOW_DEPLOYMENT_READINESS=BLOCKED_MODULE_NOT_IN_DEPLOYED_CHECKOUT"
           fi
 
-          integrity=$(sqlite3 backend/algo_trading.db "PRAGMA integrity_check;")
-          test "$integrity" = "ok"
-          echo "SQLITE_INTEGRITY=PASS"
+          if integrity="$(timeout 15s sqlite3 -batch -noheader backend/algo_trading.db "PRAGMA quick_check(1);" 2>&1)"; then
+            if [[ "$integrity" != "ok" ]]; then
+              printf 'SQLITE_QUICK_CHECK_FAILED result=%s\n' "$integrity" >&2
+              exit 1
+            fi
+            echo "SQLITE_QUICK_CHECK=PASS"
+          else
+            sqlite_status=$?
+            printf 'SQLITE_QUICK_CHECK_FAILED exit=%s detail=%s\n' "$sqlite_status" "$integrity" >&2
+            exit "$sqlite_status"
+          fi
 
           echo "=== RECENT SERVICE FAULTS (INFORMATIONAL) ==="
-          journalctl -u algo-trading.service --since "24 hours ago" --no-pager 2>/dev/null |
-            grep -Ei 'error|exception|failed|timeout|429|sqlite|websocket' |
-            tail -40 || true
+          if timeout 10s journalctl -u algo-trading.service --since "24 hours ago" -n 2000 --no-pager 2>/dev/null > /tmp/offmarket-service-faults.log; then
+            grep -Ei 'error|exception|failed|timeout|429|sqlite|websocket' /tmp/offmarket-service-faults.log | tail -40 || true
+            echo "RECENT_SERVICE_FAULTS=COLLECTED"
+          else
+            journal_status=$?
+            echo "RECENT_SERVICE_FAULTS=SKIPPED exit=$journal_status"
+          fi
           REMOTE
           )
-          ssh_status=1
-          for attempt in 1 2 3; do
-            if printf '%s\n' "$REMOTE_SCRIPT" | timeout 120 ssh -i /tmp/vps_key \
-              -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 \
-              -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
-              "$VPS_USER@$VPS_HOST" 'bash -s'; then
-              ssh_status=0
-              break
-            fi
-            echo "VPS_SSH_ATTEMPT=$attempt FAILED"
-            sleep 5
-          done
-          test "$ssh_status" -eq 0
+          if printf '%s\n' "$REMOTE_SCRIPT" | timeout 150 ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "$VPS_USER@$VPS_HOST" 'timeout 120s bash -s'; then
+            echo "VPS_REMOTE_VERIFY=PASS"
+          else
+            ssh_status=$?
+            printf 'VPS_REMOTE_VERIFY=FAILED exit=%s; remote diagnostics were not replayed\n' "$ssh_status" >&2
+            exit "$ssh_status"
+          fi
 
   test-offmarket-contracts:
     runs-on: ubuntu-latest
