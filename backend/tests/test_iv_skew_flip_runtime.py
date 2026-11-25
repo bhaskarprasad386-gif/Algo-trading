@@ -108,7 +108,10 @@ def make_rows(symbol, expiry, base, step):
 def test_broker_snapshot_context_resolves_each_active_underlying_independently():
     now = datetime(2026, 11, 25, 10, 0, tzinfo=IST)
     rows = (
-        make_rows("NIFTY", "26NOV2026", 100, 10)
+        # A single NIFTY expiry in a month is classified as monthly. Include
+        # the next weekly and month-end contracts so the weekly stream resolves.
+        make_rows("NIFTY", "03DEC2026", 100, 10)
+        + make_rows("NIFTY", "31DEC2026", 100, 10)
         + make_rows("BANKNIFTY", "26NOV2026", 200, 100)
     )
     spot = FakeSpotFeed()
@@ -133,6 +136,7 @@ def test_broker_snapshot_context_resolves_each_active_underlying_independently()
     bank_universe, bank_spot = runtime.broker_snapshot_context("BANKNIFTY_MONTHLY")
 
     assert nifty_universe.underlying == "NIFTY"
+    assert nifty_universe.expiry == "2026-12-03"
     assert bank_universe.underlying == "BANKNIFTY"
     assert len(nifty_universe.contracts) == 22
     assert len(bank_universe.contracts) == 14
@@ -222,7 +226,7 @@ def test_runtime_waits_for_fresh_spot_before_option_subscriptions(monkeypatch):
     }
     result = runtime.refresh_once()
     assert result["indices"]["NIFTY"]["universe_tokens"] == 0
-    assert result["indices"]["BANKNIFTY"]["status"] == "WAITING_FOR_SPOT"
+    assert result["indices"]["BANKNIFTY"]["option_feed"]["status"] == "WAITING_FOR_SPOT"
     assert "WAITING_FOR_SPOT" in result["option_chains"]["NIFTY_WEEKLY"]["error"]
     assert result["option_chains"]["NIFTY_MONTHLY"]["enabled"] is False
     assert result["option_chains"]["BANKNIFTY_MONTHLY"]["enabled"] is True
@@ -788,14 +792,44 @@ def test_production_feed_manager_injection_isolates_all_iv_consumers_on_one_mode
 
 
 
-def test_weekly_expiry_selection_rolls_after_1530_ist_and_stays_rolled_next_day():
-    before_close = datetime(2026, 11, 17, 15, 29, 59, tzinfo=IST)
-    at_close = datetime(2026, 11, 17, 15, 30, 0, tzinfo=IST)
+def test_expiry_selection_does_not_skip_tomorrows_expiry_after_1530():
+    before_expiry_day_close = datetime(2026, 11, 16, 15, 31, tzinfo=IST)
+    before_expiry_close = datetime(2026, 11, 17, 15, 29, 59, tzinfo=IST)
+    at_expiry_close = datetime(2026, 11, 17, 15, 30, 0, tzinfo=IST)
     next_day = datetime(2026, 11, 18, 9, 15, tzinfo=IST)
 
-    assert _universe_selection_date(before_close).isoformat() == "2026-11-17"
-    assert _universe_selection_date(at_close).isoformat() == "2026-11-18"
-    assert _universe_selection_date(next_day).isoformat() == "2026-11-18"
+    # The expiry is tomorrow, so a prior-day post-close refresh must retain it.
+    assert _universe_selection_date(
+        before_expiry_day_close, ("2026-11-17", "2026-11-24")
+    ).isoformat() == "2026-11-16"
+    # Keep today's listed expiry until the actual 15:30 IST close.
+    assert _universe_selection_date(
+        before_expiry_close, ("2026-11-17", "2026-11-24")
+    ).isoformat() == "2026-11-17"
+    # Once today's expiry has closed, select the next listed expiry.
+    assert _universe_selection_date(
+        at_expiry_close, ("2026-11-17", "2026-11-24")
+    ).isoformat() == "2026-11-18"
+    # The next day stays on the new selection date; no second roll occurs.
+    assert _universe_selection_date(
+        next_day, ("2026-11-24",)
+    ).isoformat() == "2026-11-18"
+
+
+def test_monthly_expiry_selection_rolls_only_after_current_month_expiry_close():
+    before_close = datetime(2026, 11, 24, 15, 29, 59, tzinfo=IST)
+    after_close = datetime(2026, 11, 24, 15, 30, 0, tzinfo=IST)
+    next_day = datetime(2026, 11, 25, 9, 15, tzinfo=IST)
+
+    assert _universe_selection_date(
+        before_close, ("2026-11-24", "2026-12-29")
+    ).isoformat() == "2026-11-24"
+    assert _universe_selection_date(
+        after_close, ("2026-11-24", "2026-12-29")
+    ).isoformat() == "2026-11-25"
+    assert _universe_selection_date(
+        next_day, ("2026-12-29",)
+    ).isoformat() == "2026-11-25"
 
 
 
