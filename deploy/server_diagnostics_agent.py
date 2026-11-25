@@ -27,7 +27,7 @@ STOP = threading.Event()
 
 _SECRET_PATTERNS = [
     (re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;]+"), r"\1[REDACTED]"),
-    (re.compile(r"""(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|totp|jwt)\s*[=:]\s*)['"]?[^\s,'"]+"""), r"\1[REDACTED]"),
+    (re.compile(r"""(?i)((?:api[_-]?(?:key|secret)|access[_-]?token|refresh[_-]?token|session[_-]?token|feed[_-]?token|client[_-]?id|account[_-]?(?:id|number)|uid|token|password|passwd|secret|totp|jwt)\s*[=:]\s*)['"]?[^\s,'"]+"""), r"\1[REDACTED]"),
     (re.compile(r"(?i)(\bBearer\s+)[A-Za-z0-9._~+/=-]{12,}"), r"\1[REDACTED]"),
 ]
 
