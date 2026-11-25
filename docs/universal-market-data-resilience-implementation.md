@@ -147,3 +147,8 @@ These checks do not implement failover redistribution. They protect the strict p
 ### Strict-lane outage behavior
 
 The three-lane contract forbids cross-lane co-location: Socket 1 remains NIFTY-only, Socket 2 remains BANKNIFTY-only, and Socket 3 remains NIFTY/BANKNIFTY-futures-only. Therefore failover must not temporarily migrate a failed lane's tokens onto another lane. The safe recovery behavior under this contract is to retire and recreate the failed physical session in the same `(mode, shard)` lane, preserving the other healthy sessions and restoring only that lane's token set. Any future cross-lane failover proposal would require an explicit change to the user's isolation requirement; it is not part of this implementation.
+
+
+### Callback shutdown deadline fencing — 2026-11-25
+
+A final callback-adapter review found that graceful `stop(drain=True)` could exceed its deadline semantically: after the join budget expired, the worker loop still drained queued batches and could continue the remainder of a dequeued batch after a caller had already received a timeout. The adapter now advances its generation and discards pending batches when the graceful shutdown budget is exhausted. A callback already executing remains non-cancellable, but every subsequent invocation is fenced. A deterministic regression test covers this case.
