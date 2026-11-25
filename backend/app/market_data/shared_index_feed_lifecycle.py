@@ -157,6 +157,15 @@ class SharedIndexFeedLifecycle:
         items = self._validated_descriptors(descriptors)
         if len(items) != 2 or {d.underlying for d in items} != {"NIFTY", "BANKNIFTY"}:
             raise ValueError("spot subscription must be exactly NIFTY and BANKNIFTY")
+        if any(
+            d.instrument_type != "index"
+            or d.exchange.strip().upper() != "NSE"
+            or d.segment.strip().upper() != "NSE"
+            or d.key.exchange.strip().upper() != "NSE"
+            or d.key.segment.strip().upper() != "NSE"
+            for d in items
+        ):
+            raise ValueError("spot descriptors must be NSE index instruments")
         with self._lock:
             if self._spot_started:
                 raise RuntimeError("spot subscription owner is already active")
