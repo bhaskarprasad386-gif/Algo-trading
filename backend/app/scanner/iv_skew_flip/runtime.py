@@ -659,6 +659,7 @@ class IVSkewFlipRuntime:
                     underlying=config.symbol, strike_step=strike_step,
                     max_consolidation_points=55.0 * alert_scale,
                     wall_tolerance_points=15.0 * alert_scale,
+                    spot_sync_tolerance_points=5.0 * alert_scale,
                 )
                 result = self._early_move_detectors[stream_id].update(
                     quotes=feed.latest_quotes(),
