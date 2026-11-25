@@ -1,157 +1,128 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, RefreshCw, TriangleAlert } from "lucide-react";
+import { ArrowLeft, RefreshCw, TriangleAlert, Server, WifiOff, Copy, ChevronDown } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
-import { appConfig } from "@/lib/config";
 
-type DiagnosticError = {
-  id: string;
-  time: string;
-  component: string;
-  severity: string;
-  message: string;
-  error_type?: string | null;
-  endpoint?: string | null;
-  status_code?: number | null;
-  context?: Record<string, unknown> | null;
-};
+type DiagnosticError = { id: string; time: string; component: string; severity: string; message: string; source?: string };
+type CollectorPayload = { status: string; source?: string; server_time?: string; count?: number; errors?: DiagnosticError[] };
+const CACHE_KEY = "algo.server-diagnostics.cache.v1";
+const COLLECTOR_URL = "/server-diagnostics/api/errors?limit=100";
 
 export default function ErrorsPage() {
   const [errors, setErrors] = useState<DiagnosticError[]>([]);
   const [loading, setLoading] = useState(true);
+  const [collectorReachable, setCollectorReachable] = useState<boolean | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
-  const requestControllerRef = useRef<AbortController | null>(null);
+  const [source, setSource] = useState("VPS SYSTEMD JOURNAL");
+  const [expanded, setExpanded] = useState<string[]>([]);
+  const [filter, setFilter] = useState("ALL");
+  const requestRef = useRef<AbortController | null>(null);
 
-  const loadErrors = async () => {
-    requestControllerRef.current?.abort();
+  const loadErrors = useCallback(async () => {
+    requestRef.current?.abort();
     const controller = new AbortController();
-    requestControllerRef.current = controller;
+    requestRef.current = controller;
     try {
-      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(base + "/api/v1/diagnostics/errors?limit=100", { cache: "no-store", signal: controller.signal });
-      if (!response.ok) throw new Error("diagnostics");
-      const body = await response.json();
-      if (requestControllerRef.current !== controller) return;
-      setErrors(Array.isArray(body?.errors) ? body.errors : []);
-      setLastUpdated(new Date().toISOString());
+      const response = await fetch(COLLECTOR_URL, { cache: "no-store", signal: controller.signal, headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("collector_http_" + response.status);
+      const body = (await response.json()) as CollectorPayload;
+      if (body?.status !== "ok" || !Array.isArray(body.errors)) throw new Error("collector_schema_invalid");
+      if (requestRef.current !== controller) return;
+      const receivedAt = new Date().toISOString();
+      const nextErrors = body.errors;
+      setErrors(nextErrors);
+      setLastUpdated(receivedAt);
+      setSource(body.source || "VPS SYSTEMD JOURNAL");
+      setCollectorReachable(true);
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ errors: nextErrors, lastUpdated: receivedAt, source: body.source || "VPS SYSTEMD JOURNAL" })); } catch { /* optional browser cache */ }
     } catch {
-      // Do not manufacture an application error when the diagnostics endpoint is unavailable.
-      // Aborted/superseded refreshes are intentionally silent.
+      if (controller.signal.aborted || requestRef.current !== controller) return;
+      // Preserve the last successful server response; never clear logs on fetch failure.
+      setCollectorReachable(false);
     } finally {
-      if (requestControllerRef.current === controller) {
-        requestControllerRef.current = null;
-        setLoading(false);
-      }
+      if (requestRef.current === controller) { requestRef.current = null; setLoading(false); }
     }
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | undefined;
-    const refresh = async () => {
-      await loadErrors();
-      // Diagnostics refresh is completion-driven so a slow response cannot
-      // overlap the next scheduled request.
-      if (!cancelled) timer = window.setTimeout(() => { void refresh(); }, 2000);
-    };
-    void refresh();
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-      requestControllerRef.current?.abort();
-      requestControllerRef.current = null;
-    };
   }, []);
 
-  return (
-    <div className="min-h-screen theme-bg theme-text p-1">
-      <PageTitle
-        eyebrow="System Diagnostics • Runtime"
-        title="View Errors"
-        description="Actual backend, market-feed, scanner, WebSocket and database runtime errors."
-      />
+  useEffect(() => {
+    try {
+      const cached = localStorage.getItem(CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached) as { errors?: DiagnosticError[]; lastUpdated?: string; source?: string };
+        if (Array.isArray(parsed.errors)) setErrors(parsed.errors);
+        if (parsed.lastUpdated) setLastUpdated(parsed.lastUpdated);
+        if (parsed.source) setSource(parsed.source);
+      }
+    } catch { /* ignore corrupt or unavailable cache */ }
+    let stopped = false;
+    let timer: number | undefined;
+    const refresh = async () => { await loadErrors(); if (!stopped) timer = window.setTimeout(() => void refresh(), 5000); };
+    void refresh();
+    return () => { stopped = true; if (timer !== undefined) window.clearTimeout(timer); requestRef.current?.abort(); requestRef.current = null; };
+  }, [loadErrors]);
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <Link href="/" className="inline-flex min-h-10 items-center gap-2 rounded-xl border theme-border theme-surface-2 px-3 text-[11px] font-bold theme-muted">
-          <ArrowLeft size={14} /> Command Center
-        </Link>
-        <button type="button" onClick={() => void loadErrors()} className="inline-flex min-h-10 items-center gap-2 rounded-xl theme-accent-bg px-3 text-[11px] font-bold theme-accent">
-          <RefreshCw size={14} /> Refresh
-        </button>
+  const filtered = filter === "ALL" ? errors : errors.filter((item) => item.severity.toUpperCase() === filter);
+  const counts = {
+    critical: errors.filter((item) => item.severity.toUpperCase() === "CRITICAL").length,
+    error: errors.filter((item) => item.severity.toUpperCase() === "ERROR").length,
+    warning: errors.filter((item) => item.severity.toUpperCase() === "WARNING").length,
+  };
+  const copyError = async (item: DiagnosticError) => {
+    try { await navigator.clipboard.writeText([item.time, item.severity, item.component, item.source || "", item.message].filter(Boolean).join("\n")); } catch { /* optional clipboard */ }
+  };
+
+  return (
+    <div className="min-h-screen theme-bg theme-text p-2 sm:p-4">
+      <PageTitle eyebrow="VPS • Independent System Diagnostics" title="Server Error Logs" description="Direct VPS journal history — independent from the trading API process." />
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <Link href="/" className="inline-flex min-h-11 items-center gap-2 rounded-xl border theme-border theme-surface-2 px-3 text-xs font-bold theme-muted"><ArrowLeft size={15} /> Dashboard</Link>
+        <button type="button" onClick={() => void loadErrors()} className="inline-flex min-h-11 items-center gap-2 rounded-xl theme-accent-bg px-4 text-xs font-bold theme-accent"><RefreshCw size={15} /> Refresh</button>
       </div>
 
-      <Card className="mb-4 rounded-2xl border theme-border theme-surface-2 p-4">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div>
-            <div className="text-[9px] uppercase tracking-wide theme-subtle">Runtime Errors</div>
-            <div className={errors.length ? "mt-1 text-xl font-bold theme-danger" : "mt-1 text-xl font-bold theme-success"}>{errors.length}</div>
-          </div>
-          <div>
-            <div className="text-[9px] uppercase tracking-wide theme-subtle">Status</div>
-            <div className="mt-1 text-sm font-bold">{errors.length ? "ATTENTION" : "HEALTHY"}</div>
-          </div>
-          <div>
-            <div className="text-[9px] uppercase tracking-wide theme-subtle">Refresh</div>
-            <div className="mt-1 text-sm font-bold">2s</div>
-          </div>
-          <div>
-            <div className="text-[9px] uppercase tracking-wide theme-subtle">Last Updated</div>
-            <div className="mt-1 text-[11px] font-bold">{lastUpdated ? new Date(lastUpdated).toLocaleTimeString("en-IN") : "—"}</div>
-          </div>
-        </div>
-      </Card>
-
-      {loading ? (
-        <Card className="rounded-2xl border theme-border theme-surface-2 p-8 text-center text-[11px] theme-subtle">Loading diagnostics…</Card>
-      ) : errors.length === 0 ? (
-        <Card className="rounded-2xl border theme-border theme-surface-2 p-8 text-center">
-          <div className="mx-auto grid h-12 w-12 place-items-center rounded-full theme-success-bg theme-success"><span className="h-3 w-3 rounded-full bg-[var(--app-success)]" /></div>
-          <div className="mt-3 text-[14px] font-bold theme-success">No active errors</div>
-          <div className="mt-1 text-[10px] theme-subtle">The runtime diagnostics buffer currently has no recorded errors.</div>
+      {collectorReachable === false && (
+        <Card className="mb-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3">
+          <div className="flex items-start gap-3"><WifiOff size={19} className="mt-0.5 shrink-0 text-amber-500" /><div className="min-w-0">
+            <div className="text-sm font-bold text-amber-500">VPS diagnostics collector unreachable</div>
+            <div className="mt-1 text-xs theme-muted">Showing the last successfully received server logs{lastUpdated ? " from " + new Date(lastUpdated).toLocaleString("en-IN") : " if a local cache exists"}. Logs are not being cleared.</div>
+          </div></div>
         </Card>
-      ) : (
-        <div className="space-y-3">
-          {errors.map((error) => (
-            <Card key={error.id} className="rounded-2xl border theme-border theme-surface-2 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex min-w-0 items-start gap-3">
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl theme-danger-bg theme-danger"><TriangleAlert size={17} /></span>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[12px] font-bold">{error.component || "Runtime"}</span>
-                      <span className="rounded-full theme-danger-bg px-2 py-0.5 text-[9px] font-bold theme-danger">{error.severity || "ERROR"}</span>
-                    </div>
-                    <div className="mt-1 text-[9px] theme-subtle">{new Date(error.time).toLocaleString("en-IN")}</div>
-                  </div>
-                </div>
-                <span className="text-[9px] font-mono theme-subtle">{error.id}</span>
-              </div>
-
-              <div className="mt-3 rounded-xl border theme-border px-3 py-3 text-[11px] font-semibold break-words">{error.message || "No error message supplied."}</div>
-
-              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                {[
-                  ["Type", error.error_type || "—"],
-                  ["Endpoint", error.endpoint || "—"],
-                  ["HTTP", error.status_code == null ? "—" : String(error.status_code)],
-                  ["Context", error.context && Object.keys(error.context).length ? JSON.stringify(error.context) : "—"],
-                ].map(([label, value]) => (
-                  <div key={label} className="min-w-0 rounded-xl border theme-border theme-surface-2 px-3 py-2">
-                    <div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div>
-                    <div className="mt-1 break-words text-[10px] font-semibold">{value}</div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          ))}
-        </div>
       )}
 
-      <div className="mt-4 text-[9px] theme-subtle">
-        Normal market-closed status, zero ticks, and expected runner stops are not treated as errors. Diagnostics are runtime-only and refresh automatically.
-      </div>
+      <Card className="mb-3 rounded-2xl border theme-border theme-surface-2 p-3 sm:p-4">
+        <div className="mb-3 flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-sm font-bold"><Server size={17} /> VPS COLLECTOR</div>
+          <span className={"rounded-full px-2.5 py-1 text-[10px] font-bold " + (collectorReachable === true ? "theme-success-bg theme-success" : collectorReachable === false ? "theme-danger-bg theme-danger" : "theme-surface-2 theme-muted")}>{collectorReachable === true ? "CONNECTED" : collectorReachable === false ? "UNREACHABLE" : "CONNECTING"}</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-xl theme-surface-2 p-3"><div className="text-[10px] theme-subtle">Stored events</div><div className="mt-1 text-xl font-bold tabular-nums">{errors.length}</div></div>
+          <div className="rounded-xl theme-surface-2 p-3"><div className="text-[10px] theme-subtle">Critical</div><div className="mt-1 text-xl font-bold text-red-500 tabular-nums">{counts.critical}</div></div>
+          <div className="rounded-xl theme-surface-2 p-3"><div className="text-[10px] theme-subtle">Errors</div><div className="mt-1 text-xl font-bold text-red-500 tabular-nums">{counts.error}</div></div>
+          <div className="rounded-xl theme-surface-2 p-3"><div className="text-[10px] theme-subtle">Warnings</div><div className="mt-1 text-xl font-bold text-amber-500 tabular-nums">{counts.warning}</div></div>
+        </div>
+        <div className="mt-3 flex flex-wrap justify-between gap-2 text-[10px] theme-subtle"><span>Source: {source}</span><span>Last successful sync: {lastUpdated ? new Date(lastUpdated).toLocaleTimeString("en-IN") : "Not yet received"}</span></div>
+      </Card>
+
+      <Card className="rounded-2xl border theme-border theme-surface-2 p-3 sm:p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2 text-sm font-bold"><TriangleAlert size={17} /> LATEST SERVER EVENTS</div>
+          <div className="flex flex-wrap gap-1">{["ALL", "CRITICAL", "ERROR", "WARNING"].map((value) => <button key={value} type="button" onClick={() => setFilter(value)} className={"min-h-9 rounded-lg px-2.5 text-[10px] font-bold " + (filter === value ? "theme-accent-bg theme-accent" : "theme-surface-2 theme-muted")}>{value}</button>)}</div>
+        </div>
+        {loading && errors.length === 0 ? <div className="py-10 text-center text-xs theme-subtle">Connecting to independent VPS collector…</div> :
+          filtered.length === 0 ? <div className="py-10 text-center text-xs theme-subtle">{errors.length === 0 ? "No server events received yet. Collector availability is shown above." : "No events match this filter."}</div> :
+          <div className="space-y-2">{filtered.map((item) => {
+            const isOpen = expanded.includes(item.id);
+            const severity = item.severity.toUpperCase();
+            const tone = severity === "CRITICAL" || severity === "ERROR" ? "text-red-500" : "text-amber-500";
+            return <div key={item.id} className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
+              <div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className={"text-[10px] font-extrabold " + tone}>{severity}</span><span className="break-words text-xs font-bold">{item.component}</span></div><div className="mt-1 text-[10px] theme-subtle">{item.time ? new Date(item.time).toLocaleString("en-IN") : "Timestamp unavailable"}</div></div>
+                <button type="button" onClick={() => void copyError(item)} aria-label="Copy error" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg theme-surface-2"><Copy size={14} /></button></div>
+              <div className="mt-2 break-words text-xs leading-5">{item.message}</div>
+              <div className="mt-2 flex items-center justify-between gap-2"><span className="text-[10px] theme-subtle">{item.source || "systemd-journal"}</span><button type="button" onClick={() => setExpanded((current) => isOpen ? current.filter((id) => id !== item.id) : [...current, item.id])} className="inline-flex min-h-9 items-center gap-1 text-[10px] font-bold theme-accent">{isOpen ? "Hide details" : "Details"} <ChevronDown size={13} className={isOpen ? "rotate-180" : ""} /></button></div>
+              {isOpen && <div className="mt-2 break-all rounded-lg border theme-border p-2 font-mono text-[10px] theme-muted">Event ID: {item.id}<br />Source: {item.source || "systemd-journal"}<br />Component: {item.component}</div>}
+            </div>;
+          })}</div>}
+      </Card>
+      <div className="px-1 py-3 text-[10px] leading-5 theme-subtle">Read-only diagnostics. Collector stores bounded, sanitized systemd journal events. If the collector or network path is down, this page shows the last successful browser-cached snapshot and its sync time.</div>
     </div>
   );
 }
