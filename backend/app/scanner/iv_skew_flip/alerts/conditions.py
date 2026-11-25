@@ -12,9 +12,9 @@ def _positive(value: float | int | None) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value) and value > 0
 
 
-def _structurally_valid(row: OptionObservation) -> tuple[str, ...]:
+def _structurally_valid(row: OptionObservation, underlying: str = "NIFTY") -> tuple[str, ...]:
     errors: list[str] = []
-    if not row.token or not row.expiry or row.underlying.upper() != "NIFTY": errors.append("WRONG_UNIVERSE")
+    if not row.token or not row.expiry or row.underlying.upper() != underlying.upper(): errors.append("WRONG_UNIVERSE")
     if row.option_type not in {"CE", "PE"}: errors.append("INVALID_OPTION_TYPE")
     if row.source_timestamp_ns <= 0 or row.spot_timestamp_ns <= 0: errors.append("INVALID_SOURCE_TIMESTAMP")
     if not _positive(row.spot_price): errors.append("INVALID_SPOT")
@@ -37,7 +37,7 @@ def _same_contract(rows: Sequence[OptionObservation], option_type: str) -> bool:
     )
 
 
-def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
+def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar], underlying: str = "NIFTY", max_consolidation_points: float = 55.0,
                          ce: Sequence[OptionObservation], pe: Sequence[OptionObservation],
                          target: Sequence[OptionObservation], direction: str,
                          live_ce: OptionObservation, live_pe: OptionObservation,
@@ -65,7 +65,7 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
            or b.high < max(b.open, b.close, b.low) or b.low > min(b.open, b.close, b.high)
            for b in last_bars):
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_SPOT_BAR",))
-    if max(b.high for b in last_bars)-min(b.low for b in last_bars) > 55:
+    if max(b.high for b in last_bars)-min(b.low for b in last_bars) > max_consolidation_points:
         return StrategyEvaluation(AlertState.WATCH, reasons=("NOT_CONSOLIDATING",))
     if len(ce) < 2 or len(pe) < 2 or len(target) < 4:
         return StrategyEvaluation(AlertState.WATCH, reasons=("INSUFFICIENT_OPTION_HISTORY",))
@@ -87,7 +87,7 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     # Reject malformed observations before event-order checks so corrupt
     # source/OI timestamps cannot be hidden by a secondary validation result.
     for series in (ce3, pe3, tgt):
-        if any(_structurally_valid(row) for row in series):
+        if any(_structurally_valid(row, underlying) for row in series):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_HISTORICAL_OBSERVATION",))
         if any(row.source_timestamp_ns > now_ns or row.spot_timestamp_ns > now_ns
                or row.oi_timestamp_ns is None or row.oi_timestamp_ns > now_ns for row in series):
@@ -102,7 +102,7 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         if any(b <= a for a, b in zip(event_keys, event_keys[1:])):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_OBSERVATION_ORDER",))
     for row, history in ((live_ce, ce3), (live_pe, pe3), (live_target, tgt)):
-        if _structurally_valid(row):
+        if _structurally_valid(row, underlying):
             return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_LIVE_OBSERVATION",))
         if (row.source_timestamp_ns > now_ns or row.spot_timestamp_ns > now_ns
                 or row.oi_timestamp_ns is None or row.oi_timestamp_ns > now_ns):
@@ -151,7 +151,7 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     if live_target.oi is None or tgt[-1].oi is None or live_target.oi >= tgt[-1].oi:
         return StrategyEvaluation(AlertState.WATCH, reasons=("OI_NOT_DECREASING",))
     candidate = AlertCandidate(
-        "IV_VOLUME_MOMENTUM", "NIFTY", expiry, live_target.strike, direction,
+        "IV_VOLUME_MOMENTUM", underlying.upper(), expiry, live_target.strike, direction,
         "CE" if direction == "BULLISH" else "PE", AlertState.EARLY_ENTRY, now_ns,
         live_target.spot_price, float(premium_now), iv_jump,
         current_increment/baseline,
@@ -159,7 +159,7 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
         {
             "checks": {
                 "spot_bars_minimum": {"threshold": 15, "actual": len(last_bars), "passed": len(last_bars) >= 15},
-                "spot_range_points": {"threshold_max": 55, "actual": max(b.high for b in last_bars)-min(b.low for b in last_bars), "passed": max(b.high for b in last_bars)-min(b.low for b in last_bars) <= 55},
+                "spot_range_points": {"threshold_max": max_consolidation_points, "actual": max(b.high for b in last_bars)-min(b.low for b in last_bars), "passed": max(b.high for b in last_bars)-min(b.low for b in last_bars) <= max_consolidation_points},
                 "option_history": {"threshold": "CE/PE 2 each; target 4", "actual": {"ce": len(ce3), "pe": len(pe3), "target": len(tgt)}, "passed": True},
                 "change_timestamps_ns": {"ce_quote": live_ce.source_timestamp_ns, "pe_quote": live_pe.source_timestamp_ns, "target_quote": live_target.source_timestamp_ns, "ce_spot": live_ce.spot_timestamp_ns, "pe_spot": live_pe.spot_timestamp_ns, "target_spot": live_target.spot_timestamp_ns, "target_oi": live_target.oi_timestamp_ns},
                 "history_timestamps_ns": {
@@ -187,15 +187,14 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar],
     return StrategyEvaluation(AlertState.EARLY_ENTRY, candidate)
 
 
-def even_strikes(strikes: Sequence[float]) -> tuple[float, ...]:
-    """Return valid NIFTY strikes on the exchange ₹50 grid."""
-    return tuple(sorted({
-        float(s) for s in strikes
-        if _positive(s) and float(s) % 50 == 0
-    }))
+def even_strikes(strikes: Sequence[float], step: float = 50.0) -> tuple[float, ...]:
+    """Return strikes on the underlying's configured exchange strike grid."""
+    if not _positive(step):
+        raise ValueError("strike step must be positive")
+    return tuple(sorted({float(s) for s in strikes if _positive(s) and abs(float(s) / step - round(float(s) / step)) < 1e-9}))
 
 
-def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar],
+def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar], underlying: str = "NIFTY", wall_tolerance_points: float = 15.0,
                          ce_wall_history: Sequence[OptionObservation],
                          pe_wall_history: Sequence[OptionObservation],
                          entry_quote: OptionObservation,
@@ -244,10 +243,10 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     ):
         return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_OI_TIMESTAMP_NOT_ADVANCING",))
     entry_type = "CE" if direction == "BULLISH" else "PE"
-    if (entry_quote.underlying.upper() != "NIFTY" or entry_quote.option_type != entry_type
+    if (entry_quote.underlying.upper() != underlying.upper() or entry_quote.option_type != entry_type
             or entry_quote.expiry != expiry or entry_quote.strike != latest.strike):
         return StrategyEvaluation(AlertState.WATCH, reasons=("ENTRY_CONTRACT_MISMATCH",))
-    if _structurally_valid(entry_quote):
+    if _structurally_valid(entry_quote, underlying):
         return StrategyEvaluation(AlertState.WATCH, reasons=("INVALID_ENTRY_OBSERVATION",))
     if (entry_quote.source_timestamp_ns > now_ns or entry_quote.spot_timestamp_ns > now_ns
             or entry_quote.oi_timestamp_ns is None or entry_quote.oi_timestamp_ns > now_ns):
@@ -279,12 +278,12 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     wall = latest.strike
     if direction == "BEARISH":
         # Probe the CE resistance, reject it and close back below the wall.
-        near_wall = current.high >= wall and current.high-wall <= 15
+        near_wall = current.high >= wall and current.high-wall <= wall_tolerance_points
         rejection = current.close < current.open and current.close < prior.close and current.close < wall
         reason = "CE OI resistance rejected; PE early entry"
     else:
         # Probe the PE support, reject it and close back above the wall.
-        near_wall = current.low <= wall and wall-current.low <= 15
+        near_wall = current.low <= wall and wall-current.low <= wall_tolerance_points
         rejection = current.close > current.open and current.close > prior.close and current.close > wall
         reason = "PE OI support defended; CE early entry"
     if not near_wall:
@@ -292,7 +291,7 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     if not rejection:
         return StrategyEvaluation(AlertState.WATCH, reasons=("INITIAL_REJECTION_NOT_VISIBLE",))
     candidate = AlertCandidate(
-        "OI_WALL_REJECTION", "NIFTY", expiry, wall, direction,
+        "OI_WALL_REJECTION", underlying.upper(), expiry, wall, direction,
         "CE" if direction == "BULLISH" else "PE", AlertState.EARLY_ENTRY,
         now_ns, current.close, entry_quote.ask, iv_change, None, reason,
         {
@@ -304,7 +303,7 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
                 "persistent_wall": {"required_observations": 3, "actual": len(wall_rows), "strike_history": [row.strike for row in wall_rows], "passed": len(wall_rows) == 3 and len({row.strike for row in wall_rows}) == 1},
                 "wall_oi_rising": {"values": [row.oi for row in wall_rows], "passed": wall_rows[0].oi < wall_rows[1].oi < wall_rows[2].oi},
                 "wall_iv_cooling": {"threshold_max_change_points": -0.10, "actual_change_points": iv_change, "previous_iv": wall_rows[-2].iv, "live_iv": latest.iv, "passed": iv_change <= -0.10},
-                "spot_distance_to_wall": {"threshold_max_points": 15, "actual_points": (wall-current.low) if direction == "BULLISH" else (current.high-wall), "wall_strike": wall, "passed": near_wall},
+                "spot_distance_to_wall": {"threshold_max_points": wall_tolerance_points, "actual_points": (wall-current.low) if direction == "BULLISH" else (current.high-wall), "wall_strike": wall, "passed": near_wall},
                 "initial_rejection_candle": {"open": current.open, "high": current.high, "low": current.low, "close": current.close, "previous_close": prior.close, "passed": rejection},
                 "change_timestamps_ns": {"wall_source": latest.source_timestamp_ns, "wall_oi": latest.oi_timestamp_ns, "wall_spot": latest.spot_timestamp_ns, "entry_quote": entry_quote.source_timestamp_ns, "entry_spot": entry_quote.spot_timestamp_ns, "entry_oi": entry_quote.oi_timestamp_ns, "rejection_candle": current.timestamp_ns},
                 "wall_history_timestamps_ns": [{"quote": row.source_timestamp_ns, "oi": row.oi_timestamp_ns, "spot": row.spot_timestamp_ns} for row in wall_rows],
