@@ -159,12 +159,24 @@ def collect_once(db: sqlite3.Connection) -> None:
         command.extend(["--since", "7 days ago", "--lines=3000"])
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=12, check=False)
+        recovered_cursor = False
+        if result.returncode != 0 and cursor:
+            # Journal rotation can invalidate an old cursor. Replay a bounded
+            # recent window and rely on event IDs for deduplication.
+            fallback = [
+                "journalctl", "--unit", UNIT, "--no-pager", "--output=json",
+                "--since", "7 days ago", "--lines=3000",
+            ]
+            result = subprocess.run(fallback, capture_output=True, text=True, timeout=12, check=False)
+            if result.returncode not in (0, 1):
+                return
+            recovered_cursor = True
     except (OSError, subprocess.TimeoutExpired):
         return
     if result.returncode not in (0, 1):
         return
 
-    newest_cursor = cursor
+    newest_cursor = None if recovered_cursor else cursor
     with db:
         for raw in result.stdout.splitlines():
             try:
@@ -194,21 +206,32 @@ def collect_once(db: sqlite3.Connection) -> None:
             )
         if newest_cursor:
             state_set(db, "journal_cursor", newest_cursor)
+        elif recovered_cursor:
+            state_set(db, "journal_cursor", "")
         db.execute("DELETE FROM events WHERE inserted_at < ?", (time.time() - RETENTION_DAYS * 86400,))
         db.execute("DELETE FROM events WHERE event_id NOT IN (SELECT event_id FROM events ORDER BY timestamp DESC LIMIT ?)", (MAX_EVENTS,))
 
 
 def collector_loop() -> None:
-    db = connect_db()
+    db: sqlite3.Connection | None = None
     while not STOP.is_set():
         try:
+            if db is None:
+                db = connect_db()
             collect_once(db)
             collect_api_diagnostics(db)
         except Exception:
-            # Keep the collector alive; do not leak raw exception data to another log.
-            pass
+            # Recover from transient database/journal failures without terminating
+            # the independent service or leaking raw exception data.
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+                db = None
         STOP.wait(POLL_SECONDS)
-    db.close()
+    if db is not None:
+        db.close()
 
 
 class Handler(BaseHTTPRequestHandler):
