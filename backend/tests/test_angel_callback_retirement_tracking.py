@@ -779,3 +779,76 @@ def test_partial_unsubscribe_failure_invalidates_socket_but_preserves_registry_i
     state = manager.snapshot()
     assert state["socket_operation_worker_failures"] == 1
     manager.close()
+
+
+
+def test_partial_subscribe_failure_invalidates_socket_and_preserves_registry_intent():
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    key = InstrumentKey("NSE", "NSE", "IDX-PARTIAL-SUBSCRIBE")
+    manager.registry.register(InstrumentDescriptor(
+        key=key,
+        symbol="NIFTY",
+        instrument_type="index",
+        exchange="NSE",
+        segment="NSE",
+        underlying="NIFTY",
+    ))
+    manager.registry.subscribe("partial-subscribe-audit", key, mode=1)
+    socket = BlockingSocket()
+    manager._socket_call_wait_seconds = 0.2
+    manager._sockets[group] = socket
+    manager._socket_generation[group] = 1
+    manager._socket_generation_counter[group] = 1
+    manager._socket_tokens[group] = set()
+    broker_tokens = set()
+    manager._close_socket_tracked = lambda *args, **kwargs: Thread()
+
+    def partially_mutating_subscribe():
+        broker_tokens.add((manager._resolve_exchange_type(key), key.token))
+        raise RuntimeError("partial subscribe failure")
+
+    try:
+        manager._run_socket_operation_bounded(
+            socket=socket,
+            group=group,
+            operation=partially_mutating_subscribe,
+            operation_name="subscribe",
+        )
+    except RuntimeError as exc:
+        assert "partial subscribe failure" in str(exc)
+    else:
+        raise AssertionError("partial broker mutation failure must propagate")
+
+    assert group not in manager._sockets
+    assert group not in manager._socket_tokens
+    assert broker_tokens == {(manager._resolve_exchange_type(key), key.token)}
+    subscriptions = manager.registry.subscriptions()
+    assert any(item.key == key and item.mode == 1 for item in subscriptions)
+    state = manager.snapshot()
+    assert state["socket_operation_worker_failures"] == 1
+    manager.close()
+
+
+def test_late_failure_callback_from_retired_generation_cannot_recover_replacement():
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    old_socket = BlockingSocket()
+    replacement = BlockingSocket()
+    manager._sockets[group] = replacement
+    manager._socket_generation[group] = 2
+    manager._socket_generation_counter[group] = 2
+    recovery_requests = []
+    cooldown_requests = []
+    manager._schedule_socket_failure_recovery = lambda *args: recovery_requests.append(args)
+    manager._apply_broker_cooldown = lambda reason: cooldown_requests.append(reason) or True
+
+    manager._handle_socket_failure(
+        group, old_socket, 1, "429 connection limit exceeded from retired generation"
+    )
+
+    assert manager._sockets[group] is replacement
+    assert manager._socket_generation[group] == 2
+    assert recovery_requests == []
+    assert cooldown_requests == []
+    manager.close()
