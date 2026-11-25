@@ -2036,13 +2036,13 @@ class CommonWebSocketManager:
                     ):
                         self._last_tick = {
                             "exchange_type": exchange_type or self._resolve_exchange_type(key),
-                        "exchange": record.instrument.exchange,
-                        "segment": record.instrument.segment,
-                        "token": record.instrument.token,
-                        "symbol": record.symbol,
-                        "timestamp_ns": record.timestamp_ns,
-                        "ltp": record.ltp,
-                        "bid": record.bid,
+                            "exchange": record.instrument.exchange,
+                            "segment": record.instrument.segment,
+                            "token": record.instrument.token,
+                            "symbol": record.symbol,
+                            "timestamp_ns": record.timestamp_ns,
+                            "ltp": record.ltp,
+                            "bid": record.bid,
                             "ask": record.ask,
                         }
                     if record.timestamp_ns is not None:
