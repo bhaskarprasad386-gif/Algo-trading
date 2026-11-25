@@ -396,5 +396,6 @@ def test_worker_can_retire_itself_without_joining_its_own_thread():
     assert seen == ["current-callback-finished"]
     state = adapter.snapshot()
     assert state["closed"] is True
+    assert state["generation"] == 2
     assert state["callback_attempts"] == 1
     assert state["queue_depth"] == 0
