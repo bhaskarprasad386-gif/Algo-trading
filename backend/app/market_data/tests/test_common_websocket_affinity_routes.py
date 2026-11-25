@@ -30,14 +30,22 @@ class RouteSocket:
 
 
 def _descriptor(token: str, *, exchange: str = "NFO") -> InstrumentDescriptor:
+    # Only the explicit locked contract names receive a preferred lane. Generic
+    # fixtures remain adaptive so these tests continue to exercise legacy feeds.
+    if token.startswith("NIFTY"):
+        underlying, expiry_type = "NIFTY", "WEEKLY"
+    elif token.startswith("BANK"):
+        underlying, expiry_type = "BANKNIFTY", "MONTHLY"
+    else:
+        underlying, expiry_type = "OTHER", None
     return InstrumentDescriptor(
         key=InstrumentKey(exchange, exchange, token),
         symbol=f"OPT-{token}",
         instrument_type="option",
         exchange=exchange,
         segment=exchange,
-        underlying="NIFTY" if token.endswith("W") else "BANKNIFTY",
-        expiry_type="WEEKLY" if token.endswith("W") else "MONTHLY",
+        underlying=underlying,
+        expiry_type=expiry_type,
         expiry="2026-12-31",
         strike=25000.0,
         option_type="CE",
@@ -277,4 +285,79 @@ def test_subscribe_and_unsubscribe_are_serialized_as_one_registry_route_transiti
         assert manager.snapshot()["missing_socket_groups"] == []
     finally:
         release_registry_subscribe.set()
+        manager.close()
+
+
+def test_live_allocator_pins_locked_option_contracts_by_instrument_not_consumer():
+    registry = InstrumentRegistry()
+    nifty = _descriptor("NIFTY-WEEKLY-1")
+    bank = _descriptor("BANK-MONTHLY-1")
+    registry.register_many((nifty, bank))
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._recovery_interval_seconds = 60.0
+
+    try:
+        manager.subscribe("shared-index-market-data:options", (nifty.key, bank.key), mode=3)
+        assert manager._shard_assignments[3] == {
+            (2, nifty.key.token): 0,
+            (2, bank.key.token): 1,
+        }
+        snapshot = manager.snapshot()
+        roster = {item["token"]: item["socket_group"] for item in snapshot["subscription_roster"]}
+        assert roster[nifty.key.token] == "3:0"
+        assert roster[bank.key.token] == "3:1"
+        assert set(manager._route_index) == {SocketGroup(3, 0), SocketGroup(3, 1)}
+    finally:
+        manager.close()
+
+
+def test_adaptive_instruments_never_share_a_reserved_locked_lane():
+    registry = InstrumentRegistry()
+    nifty = _descriptor("NIFTY-WEEKLY-2")
+    adaptive = _descriptor("FINNIFTY-OPTION")
+    registry.register_many((nifty, adaptive))
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._recovery_interval_seconds = 60.0
+
+    try:
+        manager.subscribe("locked-options", (nifty.key,), mode=3)
+        manager.subscribe("other-index", (adaptive.key,), mode=3)
+        assert manager._shard_assignments[3] == {
+            (2, nifty.key.token): 0,
+            (2, adaptive.key.token): 1,
+        }
+        assert manager.snapshot()["subscription_roster"][0]["socket_group"] in {"3:0", "3:1"}
+        assert manager._shard_assignments[3][(2, adaptive.key.token)] != 0
+    finally:
+        manager.close()
+
+
+def test_same_broker_pair_with_locked_and_unclassified_descriptors_fails_closed():
+    registry = InstrumentRegistry()
+    locked = _descriptor("NIFTY-COLLISION")
+    # Same exchange/token pair but a different instrument key/metadata must not
+    # inherit the locked route accidentally.
+    ambiguous = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "DERIV", locked.key.token),
+        symbol="UNCLASSIFIED-COLLISION",
+        instrument_type="option",
+        exchange="NFO",
+        segment="DERIV",
+        underlying="FINNIFTY",
+        expiry="2026-12-31",
+    )
+    registry.register_many((locked, ambiguous))
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._recovery_interval_seconds = 60.0
+
+    try:
+        try:
+            manager.subscribe("locked-owner", (locked.key,), mode=3)
+            manager.subscribe("other-owner", (ambiguous.key,), mode=3)
+        except ValueError as exc:
+            assert "ambiguous broker token affinity" in str(exc)
+        else:
+            raise AssertionError("ambiguous broker token identity must fail closed")
+        assert manager.snapshot()["socket_groups"] <= 1
+    finally:
         manager.close()
