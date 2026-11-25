@@ -63,10 +63,9 @@ class AngelOneTickNormalizer:
         return None if value is None else value / self.price_scale
 
     @staticmethod
-    def _timestamp_ns(payload: Mapping[str, Any]) -> int:
+    def _timestamp_ns(payload: Mapping[str, Any], *, fallback: bool = True) -> int | None:
         # Parse integer-like timestamps without routing epoch nanoseconds through
         # float: binary64 cannot represent individual nanoseconds at this scale.
-        # Converting a 19-digit ns string to float silently shifts its value.
         for name in ("exchange_timestamp_ns", "timestamp_ns"):
             raw = payload.get(name)
             if raw is None:
@@ -82,30 +81,26 @@ class AngelOneTickNormalizer:
                 raw = payload.get(name)
                 break
         if raw is None:
-            return time_ns()
+            return time_ns() if fallback else None
         try:
-            # Preserve exact integral strings and ints; accept numeric floats
-            # only as a fallback for providers that actually send fractional data.
             text = str(raw).strip()
             integer = int(text)
         except (TypeError, ValueError, OverflowError):
             number = AngelOneTickNormalizer._finite_float(raw)
             if number is None:
-                return time_ns()
+                return time_ns() if fallback else None
             integer = int(number)
 
-        # Provider aliases are not consistent about units: SmartAPI's exchange
-        # timestamp is milliseconds, while generic timestamp/feed_time fields
-        # can be epoch seconds. Infer the epoch unit by magnitude.
+        # SmartAPI exchange_timestamp is milliseconds; generic timestamp/feed_time
+        # aliases can be seconds. Infer epoch units by magnitude.
         magnitude = abs(integer)
-        if magnitude >= 10**16:       # nanoseconds
+        if magnitude >= 10**16:
             return integer
-        if magnitude >= 10**14:       # microseconds
+        if magnitude >= 10**14:
             return integer * 1_000
-        if magnitude >= 10**11:       # milliseconds
+        if magnitude >= 10**11:
             return integer * 1_000_000
         return integer * 1_000_000_000
-
     @staticmethod
     def _depth_value(payload: Mapping[str, Any], side: str, field: str) -> Any:
         """Return the first positive, finite top-of-book value from broker depth.
@@ -183,6 +178,7 @@ class AngelOneTickNormalizer:
             symbol=descriptor.symbol,
             instrument_type=instrument_type,
             timestamp_ns=self._timestamp_ns(payload),
+            exchange_timestamp_ns=self._timestamp_ns(payload, fallback=False),
             received_at_monotonic_ns=monotonic_ns(),
             timeframe="1s",
             ltp=self._price(payload, "last_traded_price", "ltp", "lastTradedPrice"),
