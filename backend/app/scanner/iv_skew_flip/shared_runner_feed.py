@@ -165,7 +165,8 @@ class IVSharedRunnerOptionFeedAdapter:
     def start(self, universe: Any) -> dict[str, Any]:
         if universe is None or not getattr(universe, "contracts", None):
             raise ValueError("a resolved IV option universe is required")
-        runner_status = self.shared_runner.snapshot()
+        health = getattr(self.shared_runner, "health_snapshot", None)
+        runner_status = health() if callable(health) else self.shared_runner.snapshot()
         if not runner_status.get("enabled") or not runner_status.get("initial_option_bootstrap_done"):
             raise RuntimeError("SHARED_RUNNER_NOT_READY: shared index options are not live")
         descriptors = self._active_descriptors()
