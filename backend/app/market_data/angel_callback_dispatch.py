@@ -233,6 +233,14 @@ class AngelShardCallbackAdapter:
             self._stop.set()
         thread.join(timeout=max(0.0, deadline - monotonic()))
         if thread.is_alive():
+            # A graceful drain that exhausts its shutdown budget must stop
+            # dispatching the remainder of a dequeued batch as well as queued
+            # batches. The callback already executing cannot be cancelled, but
+            # advancing the generation fences every later invocation.
+            with self._lock:
+                self._generation += 1
+                self._discard_pending_locked()
+                self._stop.set()
             raise TimeoutError("Angel shard callback worker exceeded shutdown budget")
         with self._lock:
             self._thread = None
