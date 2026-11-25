@@ -2671,11 +2671,15 @@ def iv_skew_flip_option_timeseries(
     }
 
 
-def _capture_iv_broker_option_snapshot():
+def _capture_iv_broker_option_snapshot(underlying: str = "NIFTY"):
     runtime = iv_skew_flip_runtime
     if runtime is None or runtime.snapshot().get("status") != "RUNNING":
         raise RuntimeError("IV Scanner runner must be ON before broker option snapshot capture")
-    universe, spot = runtime.broker_snapshot_context("NIFTY_WEEKLY")
+    symbol = str(underlying or "").strip().upper()
+    stream_id = {"NIFTY": "NIFTY_WEEKLY", "BANKNIFTY": "BANKNIFTY_MONTHLY"}.get(symbol)
+    if stream_id is None:
+        raise ValueError("underlying must be NIFTY or BANKNIFTY")
+    universe, spot = runtime.broker_snapshot_context(stream_id)
     return capture_angelone_option_snapshot(
         universe=universe,
         spot_snapshot=spot,
@@ -2762,10 +2766,10 @@ async def _iv_option_snapshot_daily_loop():
 
 
 @app.post("/api/v1/scanner/iv-skew-flip/snapshot")
-def capture_iv_skew_flip_broker_snapshot():
-    """Manually fetch Angel One Greeks + FULL quote for the active NIFTY weekly chain."""
+def capture_iv_skew_flip_broker_snapshot(underlying: str = "NIFTY"):
+    """Manually fetch Angel One Greeks + FULL quote for the selected active IV chain."""
     try:
-        return _capture_iv_broker_option_snapshot()
+        return _capture_iv_broker_option_snapshot(underlying)
     except Exception as exc:
         app_logger.exception("Manual IV broker option snapshot failed")
         raise HTTPException(
