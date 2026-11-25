@@ -199,11 +199,10 @@ def test_close_uses_shutdown_when_abort_is_noop_and_sdk_clears_wsapp_socket():
     release = Event()
 
     class BlockingRawSocket:
-        def __init__(self):
-            self.closed = False
+        _closed = False
 
         def close(self):
-            self.closed = True
+            self._closed = True
             release.set()
 
     raw_socket = BlockingRawSocket()
@@ -230,7 +229,7 @@ def test_close_uses_shutdown_when_abort_is_noop_and_sdk_clears_wsapp_socket():
 
     client.close()
 
-    assert raw_socket.closed is True
+    assert raw_socket._closed is True
     assert low_level.sock is None
     assert not transport.is_alive()
     assert client.health["transport_close_timed_out"] is False
