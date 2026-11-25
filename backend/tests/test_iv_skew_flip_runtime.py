@@ -130,14 +130,16 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
     }
 
     first = runtime.refresh_once()
-    assert first["enabled_streams"] == ["NIFTY_WEEKLY"]
+    assert first["enabled_streams"] == ["NIFTY_WEEKLY", "BANKNIFTY_MONTHLY"]
     assert first["option_chains"]["NIFTY_WEEKLY"]["enabled"] is True
     assert first["option_chains"]["NIFTY_WEEKLY"]["universe_tokens"] == 22
     assert first["option_chains"]["NIFTY_MONTHLY"]["enabled"] is False
     assert first["option_chains"]["NIFTY_MONTHLY"]["option_feed"]["status"] == "DISABLED_BY_SCOPE"
-    assert first["option_chains"]["BANKNIFTY_MONTHLY"]["enabled"] is False
-    assert first["indices"]["BANKNIFTY"]["status"] == "DISABLED_BY_SCOPE"
-    assert set(created) == {"NIFTY_WEEKLY"}
+    assert first["option_chains"]["BANKNIFTY_MONTHLY"]["enabled"] is True
+    assert first["option_chains"]["BANKNIFTY_MONTHLY"]["universe_tokens"] == 14
+    assert first["indices"]["BANKNIFTY"]["universe_tokens"] == 14
+    assert set(created) == {"NIFTY_WEEKLY", "BANKNIFTY_MONTHLY"}
+    assert created["BANKNIFTY_MONTHLY"].universe.expiry == "2026-11-26"
     assert created["NIFTY_WEEKLY"].universe.expiry == "2026-11-12"
 
     weekly_universe = created["NIFTY_WEEKLY"].universe
@@ -171,10 +173,10 @@ def test_runtime_waits_for_fresh_spot_before_option_subscriptions(monkeypatch):
     }
     result = runtime.refresh_once()
     assert result["indices"]["NIFTY"]["universe_tokens"] == 0
-    assert result["indices"]["BANKNIFTY"]["status"] == "DISABLED_BY_SCOPE"
+    assert result["indices"]["BANKNIFTY"]["status"] == "WAITING_FOR_SPOT"
     assert "WAITING_FOR_SPOT" in result["option_chains"]["NIFTY_WEEKLY"]["error"]
     assert result["option_chains"]["NIFTY_MONTHLY"]["enabled"] is False
-    assert result["option_chains"]["BANKNIFTY_MONTHLY"]["enabled"] is False
+    assert result["option_chains"]["BANKNIFTY_MONTHLY"]["enabled"] is True
     assert all(not feed.started for feed in runtime._option_feeds.values())
 
 
@@ -206,12 +208,12 @@ def test_runtime_signal_evaluation_is_rate_limited_to_one_minute():
 
     runtime._maybe_evaluate(now, 10_000_000_000)
     runtime._maybe_evaluate(now, 69_000_000_000)
-    assert len(evaluated) == 1
-    assert evaluated[0][0] == "NIFTY_WEEKLY"
+    assert len(evaluated) == 2
+    assert {item[0] for item in evaluated} == {"NIFTY_WEEKLY", "BANKNIFTY_MONTHLY"}
 
     runtime._maybe_evaluate(now, 70_000_000_000)
-    assert len(evaluated) == 2
-    assert all(stream_id == "NIFTY_WEEKLY" for stream_id, _ in evaluated)
+    assert len(evaluated) == 4
+    assert {stream_id for stream_id, _ in evaluated} == {"NIFTY_WEEKLY", "BANKNIFTY_MONTHLY"}
 
 
 def test_runtime_clears_signal_state_when_spot_or_option_feed_is_unavailable():
