@@ -239,3 +239,10 @@ These results close the exact-head automated code-validation gate. They do not e
 - No Cloudflare, Vercel, frontend build/deploy, VPS, or reverse-proxy operation is part of PR #754 acceptance. The frontend is VPS-hosted; this PR is backend market-data scope.
 - No Shoonya credential/readiness work, strategy formula, order execution, or scanner behavior was changed as part of this gate closure.
 - PR remains draft until the external evidence above is supplied and reviewed. No merge or production activation is implied by green CI.
+
+
+## External gate execution packet — 2026-11-25
+
+Created `docs/PR_754_EXTERNAL_GATE_EVIDENCE_TEMPLATE.md` as the single evidence intake and operational runbook for the three external gates. It defines account-specific broker confirmation fields, a read-only VPS process/service inventory, production soak preconditions, per-lane metrics, controlled fault scope, no-go conditions, and a reviewer/approver record. It explicitly forbids sharing credentials or raw broker payloads and does not treat CI/off-market replay as production soak evidence.
+
+The user authorized work on the remaining external gates. Repository-side preparation is complete, but the connected GitHub capability has no access to the broker support mailbox/account entitlement records or the VPS process namespace, and no production telemetry/soak execution channel is connected in this session. Therefore no account-specific broker entitlement, host operator attestation, or production soak result is claimed. Those evidence-dependent gates remain open until the account holder/operator supplies the packet fields and raw artifacts. No production service, VPS, broker session, deployment, or trading process was started or modified from this session.
