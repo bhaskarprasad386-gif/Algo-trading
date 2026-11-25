@@ -484,3 +484,38 @@ def test_locked_affinity_is_idempotent_across_reconcile_and_partial_owner_releas
         assert set(manager._route_index) == {SocketGroup(3, 0), SocketGroup(3, 2)}
     finally:
         manager.close()
+
+
+
+def test_locked_lane_rejects_token_count_above_per_socket_limit_without_route_mutation():
+    registry = InstrumentRegistry()
+    locked = [
+        _descriptor(f"NIFTY-WEEKLY-CAP-{index:04d}")
+        for index in range(1001)
+    ]
+    registry.register_many(locked)
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._recovery_interval_seconds = 60.0
+    manager._max_tokens_per_socket = 1000
+
+    try:
+        try:
+            manager.subscribe(
+                "shared-index-market-data:options",
+                tuple(item.key for item in locked),
+                mode=3,
+            )
+        except ValueError as exc:
+            assert "locked socket lane 0 exceeds token limit" in str(exc)
+            assert "1001 instruments" in str(exc)
+        else:
+            raise AssertionError("locked lane must not exceed the per-socket token ceiling")
+
+        # Subscription intent remains retryable, but no partial allocator,
+        # route, or physical socket state may be committed.
+        assert len(registry.subscriptions()) == 1001
+        assert manager._shard_assignments == {}
+        assert manager._route_index == {}
+        assert manager._sockets == {}
+    finally:
+        manager.close()
