@@ -25,6 +25,8 @@ def test_classify_journal_priorities() -> None:
     assert agent.classify(4) == "WARNING"
     # loguru records arrive via stdout and journald labels them PRIORITY=6.
     assert agent.classify(6, "2026-11-26 | ERROR    | app.main:run:10 - failed") == "ERROR"
+    ansi = "\\x1b[31m2026-11-26 | ERROR    | app.main:run:10 - failed\\x1b[0m"
+    assert agent.classify(6, agent.sanitize(ansi)) == "ERROR"
     assert agent.classify(6, "normal stdout info") is None
 
 
