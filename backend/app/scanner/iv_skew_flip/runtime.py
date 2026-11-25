@@ -647,12 +647,19 @@ class IVSkewFlipRuntime:
                 continue
             try:
                 sampler_snapshot = sampler.snapshot()
-                if stream_id == "NIFTY_WEEKLY":
-                    expiry = sampler.configured_expiry
-                    self._early_entry_alerts.evaluate(
-                        sampler=sampler, spot=spot, expiry=expiry,
-                        now=self.clock_datetime(), now_ns=now_ns,
-                    )
+                expiry = sampler.configured_expiry
+                universe = feed.resolved_universe() if callable(getattr(feed, "resolved_universe", None)) else None
+                strike_step = float(getattr(universe, "strike_step", 50.0 if config.symbol == "NIFTY" else 100.0))
+                # BANKNIFTY alert thresholds are strike-grid scaled and clearly
+                # labelled PILOT until independent forward-outcome validation.
+                alert_scale = strike_step / 50.0
+                self._early_entry_alerts.evaluate(
+                    sampler=sampler, spot=spot, expiry=expiry,
+                    now=self.clock_datetime(), now_ns=now_ns,
+                    underlying=config.symbol, strike_step=strike_step,
+                    max_consolidation_points=55.0 * alert_scale,
+                    wall_tolerance_points=15.0 * alert_scale,
+                )
                 result = self._early_move_detectors[stream_id].update(
                     quotes=feed.latest_quotes(),
                     metrics=sampler_snapshot.get("raw_live_metrics", ()),
@@ -949,7 +956,7 @@ class IVSkewFlipRuntime:
             stamps = [format_change_time(item.get("quote")) for item in wall_history_times if isinstance(item, dict)]
             change_time_text += " • Wall history " + ",".join(stamps)
         lines = [
-            f"{emoji} <b>NIFTY WEEKLY IV EARLY ENTRY</b>",
+            f"{emoji} <b>{escape(str(payload.get('underlying') or 'NIFTY').upper())} {'WEEKLY' if str(payload.get('underlying') or 'NIFTY').upper() == 'NIFTY' else 'MONTHLY'} IV EARLY ENTRY</b>",
             f"<b>Strategy:</b> {escape(str(payload.get('strategy') or '—'))}",
             f"<b>Signal:</b> {escape(direction)} • {escape(str(payload.get('option_type') or '—'))}",
             f"<b>Contract:</b> {escape(str(payload.get('strike') or '—'))} • Expiry {escape(str(payload.get('expiry') or '—'))}",
@@ -1142,7 +1149,8 @@ class IVSkewFlipRuntime:
             "last_evaluation_ns": last_evaluation,
             "signals": signals,
             "early_move": early_move,
-            "early_entry_alerts": self._early_entry_alerts.snapshot(),
+            "early_entry_alerts": self._early_entry_alerts.snapshot("NIFTY"),
+            "early_entry_alerts_by_underlying": self._early_entry_alerts.snapshot_all(),
             "telegram_delivery": dict(self._telegram_delivery),
             "telegram_configured": bool(settings.TELEGRAM_ENABLED and str(settings.TELEGRAM_BOT_TOKEN or "").strip() and str(settings.TELEGRAM_CHAT_ID or "").strip()),
             "equity_pressure": {
