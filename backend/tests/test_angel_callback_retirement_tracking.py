@@ -1090,6 +1090,7 @@ def test_failure_recovery_keeps_same_shard_distinct_across_subscription_modes():
     groups = (SocketGroup(1, 0), SocketGroup(2, 0))
     sockets = (BlockingSocket(), BlockingSocket())
     retired = {}
+    both_retired = Event()
 
     for group, socket in zip(groups, sockets):
         manager._sockets[group] = socket
@@ -1099,6 +1100,8 @@ def test_failure_recovery_keeps_same_shard_distinct_across_subscription_modes():
 
     def defer_close(socket, **kwargs):
         retired[kwargs["group"]] = kwargs.get("on_finished")
+        if len(retired) == len(groups):
+            both_retired.set()
         return Thread()
 
     manager._close_socket_tracked = defer_close
@@ -1108,6 +1111,7 @@ def test_failure_recovery_keeps_same_shard_distinct_across_subscription_modes():
     manager._schedule_socket_failure_recovery(groups[0], sockets[0], 4, "mode one failed")
     manager._schedule_socket_failure_recovery(groups[1], sockets[1], 4, "mode two failed")
 
+    assert both_retired.wait(timeout=1.0)
     state = manager.snapshot()
     assert set(retired) == set(groups)
     assert state["failure_recovery_groups"] == ["1:0", "2:0"]
