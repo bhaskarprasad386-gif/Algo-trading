@@ -362,3 +362,66 @@ def test_same_broker_pair_with_locked_and_unclassified_descriptors_fails_closed(
         assert manager._route_index == {SocketGroup(3, 0): {(2, locked.key.token): [("locked-owner", locked.key)]}}
     finally:
         manager.close()
+
+
+def test_locked_three_lane_budget_rejects_unclassified_instruments_without_lane_mixing():
+    registry = InstrumentRegistry()
+
+    def index(token, underlying):
+        return InstrumentDescriptor(
+            key=InstrumentKey("NSE", "NSE", token),
+            symbol=underlying,
+            instrument_type="index",
+            exchange="NSE",
+            segment="NSE",
+            underlying=underlying,
+        )
+
+    def future(token, underlying):
+        return InstrumentDescriptor(
+            key=InstrumentKey("NFO", "NFO", token),
+            symbol=token,
+            instrument_type="future",
+            exchange="NFO",
+            segment="NFO",
+            underlying=underlying,
+            expiry="2026-12-31",
+        )
+
+    nifty_spot = index("NIFTY-SPOT", "NIFTY")
+    bank_spot = index("BANK-SPOT", "BANKNIFTY")
+    nifty_future = future("NIFTY-FUT", "NIFTY")
+    bank_future = future("BANK-FUT", "BANKNIFTY")
+    other_index = index("FINNIFTY-SPOT", "FINNIFTY")
+    registry.register_many((nifty_spot, bank_spot, nifty_future, bank_future, other_index))
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._recovery_interval_seconds = 60.0
+
+    try:
+        manager.subscribe("spot-owner", (nifty_spot.key, bank_spot.key), mode=3)
+        manager.subscribe("future-owner", (nifty_future.key, bank_future.key), mode=3)
+        expected = {
+            (1, nifty_spot.key.token): 0,
+            (1, bank_spot.key.token): 1,
+            (2, nifty_future.key.token): 2,
+            (2, bank_future.key.token): 2,
+        }
+        assert manager._shard_assignments[3] == expected
+        old_routes = {group: dict(routes) for group, routes in manager._route_index.items()}
+        old_sockets = set(manager._sockets)
+
+        try:
+            manager.subscribe("other-index-owner", (other_index.key,), mode=3)
+        except ValueError as exc:
+            assert "global WebSocket limit exceeded" in str(exc)
+        else:
+            raise AssertionError("unsupported instrument must not be mixed into a locked lane")
+
+        assert manager._shard_assignments[3] == expected
+        assert manager._route_index == old_routes
+        assert set(manager._sockets) == old_sockets
+        assert set(manager._route_index) == {
+            SocketGroup(3, 0), SocketGroup(3, 1), SocketGroup(3, 2),
+        }
+    finally:
+        manager.close()
