@@ -615,6 +615,8 @@ export default function IVSkewFlipPage() {
     basketFetchSequenceRef.current+=1;
     durableHistoryFetchSequenceRef.current+=1;
     chartHistoryFetchSequenceRef.current+=1;
+    bankHistoryFetchSequenceRef.current+=1;
+    bankChartHistoryFetchSequenceRef.current+=1;
     if(String(pagePushData.__event??"").toUpperCase()==="REMOVE"){
       const removedKeys=Array.isArray(pagePushData.remove_keys)
         ? pagePushData.remove_keys.filter((key):key is string=>typeof key==="string")
@@ -639,6 +641,26 @@ export default function IVSkewFlipPage() {
       // Append them locally so the chart advances over WebSocket without a
       // five-second history query; source timestamps remain capture timestamps,
       // not exchange event times, so chart data stays labelled LAST.
+      const bankPushed=pushedRuntime.option_chains?.BANKNIFTY_MONTHLY;
+      const bankExpiry=String(bankPushed?.option_feed?.expiry??"").trim();
+      const bankMetrics=Array.isArray(bankPushed?.sampler?.live_metrics)?bankPushed!.sampler!.live_metrics as Row[]:[];
+      if(bankExpiry&&bankMetrics.length){
+        const spotState=pushedRuntime.spot_feed as Row|undefined;
+        const spotMap=spotState?.spot&&typeof spotState.spot==="object"?spotState.spot as Row:{};
+        const bankSpotState=spotMap.BANKNIFTY&&typeof spotMap.BANKNIFTY==="object"?spotMap.BANKNIFTY as Row:{};
+        const observations:IvChartObservation[]=bankMetrics.filter(item=>item.iv_live===true&&n(item.iv)!==null&&n(item.source_timestamp_ns)!==null&&n(item.source_timestamp_ns)!>0).map(item=>({token:String(item.token??""),strike:n(item.strike)??undefined,option_type:String(item.option_type??""),timestamp_ns:n(item.source_timestamp_ns)??undefined,spot_timestamp_ns:n(item.spot_timestamp_ns)??undefined,spot_price:n(bankSpotState.price),iv:n(item.iv)})).filter(item=>Boolean(item.token)&&item.strike!==undefined&&item.timestamp_ns!==undefined&&Boolean(item.option_type));
+        if(observations.length){
+          const cutoff=Date.now()*1_000_000-1_800_000_000_000;
+          setBankChartHistory(current=>{
+            const sameExpiry=current?.expiry===bankExpiry;
+            const prior=sameExpiry&&Array.isArray(current?.observations)?current!.observations as IvChartObservation[]:[];
+            const merged=new Map<string,IvChartObservation>();
+            [...prior,...observations].forEach(item=>merged.set(`${item.token}:${item.timestamp_ns}`,item));
+            const rows=[...merged.values()].filter(item=>n(item.timestamp_ns)!==null&&Number(item.timestamp_ns)>=cutoff).sort((a,b)=>Number(a.timestamp_ns)-Number(b.timestamp_ns)).slice(-20000);
+            return {...(sameExpiry?current:{}),status:"ok",underlying:"BANKNIFTY",expiry:bankExpiry,window_seconds:1800,count:rows.length,observations:rows,data_status:"LAST",fallback:false,source:"iv_runtime_websocket"};
+          });
+        }
+      }
       const weekly=pushedRuntime.option_chains?.NIFTY_WEEKLY;
       const weeklyExpiry=String(weekly?.option_feed?.expiry??"").trim();
       const sampler=weekly?.sampler;
