@@ -2492,7 +2492,8 @@ def iv_early_entry_latest_alert(
     store = AlertCooldownStore(SessionLocal, cooldown_seconds=600)
     with _iv_skew_flip_runtime_lock:
         runtime = iv_skew_flip_runtime
-        live = runtime.snapshot().get("early_entry_alerts_by_underlying", {}) if runtime is not None else {}
+        live_by_underlying = runtime.snapshot().get("early_entry_alerts_by_underlying", {}) if runtime is not None else {}
+        live = live_by_underlying.get(symbol or "NIFTY")
     rows = store.latest(
         limit=page_size + 1,
         before_observed_at_ns=before_observed_at_ns,
@@ -2511,7 +2512,8 @@ def iv_early_entry_latest_alert(
         "status": "ok",
         "strategy_scope": symbol or "NIFTY_WEEKLY+BANKNIFTY_MONTHLY",
         "orders_enabled": False,
-        "live": (live.get(symbol) if symbol else live) or {"state": "WATCH", "signals_allowed": False, "reason": "IV_RUNTIME_STOPPED"},
+        "live": live or {"state": "WATCH", "signals_allowed": False, "reason": "IV_RUNTIME_STOPPED"},
+        "live_by_underlying": live_by_underlying,
         "alerts": alerts,
         "has_more": has_more,
         "next_cursor": next_cursor,
