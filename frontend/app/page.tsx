@@ -444,7 +444,7 @@ export default function HomePage() {
     let timer: number | undefined;
     const loadSharedRunner = async () => {
       try {
-        const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
         const response = await fetch(base + "/api/v1/market-data/shared-index-runner/health", {
           cache: "no-store",
           signal: AbortSignal.timeout(3000),
@@ -508,6 +508,49 @@ export default function HomePage() {
     return () => window.clearTimeout(timer);
   }, [liveFeedAlertKey]);
 
+  const sharedLifecycle = sharedRunner?.lifecycle ?? {};
+  const sharedWebSocket = sharedLifecycle?.shared_websocket ?? {};
+  const socketHealthByGroup = sharedWebSocket?.socket_health_by_group ?? {};
+  const socketRoster = Array.isArray(sharedWebSocket?.subscription_roster) ? sharedWebSocket.subscription_roster : [];
+  const requiredSocketIds: string[] = Array.isArray(sharedWebSocket?.required_socket_groups) ? sharedWebSocket.required_socket_groups.map(String) : [];
+  const actualSocketIds = Object.keys(socketHealthByGroup);
+  const sharedSocketIds = Array.from(new Set([...requiredSocketIds, ...actualSocketIds])).sort().slice(0, 3);
+  const sharedSocketCards = Array.from({ length: 3 }, (_, index) => {
+    const group = sharedSocketIds[index] ?? null;
+    const health = group ? socketHealthByGroup[group] ?? null : null;
+    const subscriptions = group ? socketRoster.filter((item: any) => String(item.socket_group) === group) : [];
+    const consumers = Array.from(new Set(subscriptions.flatMap((item: any) => Array.isArray(item.consumer) ? item.consumer : [])));
+    const connected = health?.connected === true && health?.stopping !== true;
+    const status = !group ? "NOT ASSIGNED" : !health ? "MISSING" : health.stopping ? "STOPPING" : health.connecting ? "CONNECTING" : connected ? "CONNECTED" : "DISCONNECTED";
+    return { label: "SOCKET " + (index + 1), group: group ?? "No required group", status, heartbeat: health?.heartbeat_state ? String(health.heartbeat_state) : "UNKNOWN", pongAge: Number.isFinite(Number(health?.last_pong_age_seconds)) ? Number(health.last_pong_age_seconds) : null, reconnects: Number(health?.reconnect_count ?? 0), errors: Number(health?.error_count ?? 0), subscriptions: subscriptions.length, consumers: consumers.slice(0, 3).join(" • ") || "No active consumer roster" };
+  });
+  const sharedRunnerEnabled = sharedRunner?.enabled === true;
+  const sharedRunnerReady = sharedRunner?.live_data_ready === true;
+  const sharedRunnerSampleAge = sharedRunnerLastSuccessAt == null ? null : Math.max(0, (Date.now() - sharedRunnerLastSuccessAt) / 1000);
+  const sharedRunnerStatus = sharedRunnerFetchFailed && sharedRunnerSampleAge != null ? "LAST KNOWN • API UNREACHABLE" : !sharedRunner ? "CHECKING" : !sharedRunnerEnabled ? "STOPPED" : sharedRunnerReady ? "LIVE DATA READY" : sharedRunner.initial_option_bootstrap_done ? (effectiveMarketSession === "CLOSED" ? "RUNNING • MARKET CLOSED" : "RUNNING • FEED NOT READY") : "RUNNING • BOOTSTRAPPING";
+  const sharedRecords: any[] = Array.isArray(sharedRunner?.records) ? sharedRunner.records : [];
+  const getRecordFeed = (underlying: string, kind: string) => {
+    const rows = sharedRecords.filter((item) => String(item.underlying ?? "").toUpperCase() === underlying && String(item.instrument_type ?? "").toLowerCase() === kind);
+    const fresh = rows.filter((item) => item.fresh === true).length;
+    const ages = rows.map((item) => Number(item.feed_age_seconds)).filter((age) => Number.isFinite(age) && age >= 0);
+    const maxAge = ages.length ? Math.max(...ages) : null;
+    const status = !sharedRunner ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : rows.length === 0 ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : fresh === rows.length ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : fresh > 0 ? "PARTIAL / STALE" : "STALE";
+    return { rows: rows.length, fresh, maxAge, status };
+  };
+  const getSpotFeed = (underlying: string) => {
+    const spot = sharedRunner?.latest_spots?.[underlying];
+    const age = Number(spot?.age_seconds);
+    const validAge = Number.isFinite(age) && age >= 0 ? age : null;
+    const status = !sharedRunner ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : !spot ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : validAge != null && validAge <= 5 ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : "STALE";
+    return { status, age: validAge, price: Number.isFinite(Number(spot?.price)) ? Number(spot.price) : null };
+  };
+  const sharedFeedCards = [
+    { label: "NIFTY SPOT", detail: "NSE index spot", ...getSpotFeed("NIFTY") },
+    { label: "BANKNIFTY SPOT", detail: "NSE index spot", ...getSpotFeed("BANKNIFTY") },
+    { label: "NIFTY WEEKLY OPTIONS", detail: "NFO • CE + PE chain", ...getRecordFeed("NIFTY", "option") },
+    { label: "BANKNIFTY MONTHLY OPTIONS", detail: "NFO • CE + PE chain", ...getRecordFeed("BANKNIFTY", "option") },
+    { label: "NIFTY + BANKNIFTY FUTURES", detail: "NFO • index futures", ...getRecordFeed("NIFTY", "future"), extra: getRecordFeed("BANKNIFTY", "future") },
+  ];
   const scannerStatus = [
     { label: "Positive Net-Gap Signals (max 50)", value: snapshot.opportunities.toLocaleString("en-IN") },
     { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
