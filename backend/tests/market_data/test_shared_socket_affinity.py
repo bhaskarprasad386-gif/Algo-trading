@@ -111,3 +111,33 @@ def test_plan_rejects_non_integer_or_non_positive_exchange_type(exchange):
     with pytest.raises(ValueError, match="positive integer exchange type"):
         planner.plan({NIFTY: AffinitySlot(3, 0)}, {NIFTY: {(exchange, "tok")}})
     assert planner.snapshot()["owners"] == {}
+
+def test_locked_futures_owner_keeps_nifty_and_banknifty_contracts_together_on_lane_two():
+    planner = ConsumerSocketAffinity()
+    slots = planner.locked_slots(mode=3)
+    nifty_future_tokens = tokens(800, 2, exchange=2)
+    banknifty_future_tokens = tokens(900, 2, exchange=2)
+    plan = planner.plan(
+        slots,
+        {
+            NIFTY: tokens(100, 2),
+            BANK: tokens(200, 2),
+            FUTURES: nifty_future_tokens | banknifty_future_tokens,
+        },
+    )
+
+    assert plan.owner_slots[FUTURES] == AffinitySlot(3, 2)
+    assert plan.owner_tokens[FUTURES] == frozenset(
+        nifty_future_tokens | banknifty_future_tokens
+    )
+    planner.commit(plan)
+    snapshot = planner.snapshot()
+    assert snapshot["owners"][FUTURES]["token_count"] == 4
+    assert snapshot["socket_groups"] == [(3, 0), (3, 1), (3, 2)]
+
+
+def test_locked_lane_owner_contract_is_exactly_spot_options_and_futures_consumers():
+    assert set(ConsumerSocketAffinity.LOCKED_OWNERS) == {
+        "nifty", "banknifty", "futures",
+    }
+    assert "options" not in ConsumerSocketAffinity.LOCKED_OWNERS
