@@ -108,7 +108,10 @@ def make_rows(symbol, expiry, base, step):
 def test_broker_snapshot_context_resolves_each_active_underlying_independently():
     now = datetime(2026, 11, 25, 10, 0, tzinfo=IST)
     rows = (
-        make_rows("NIFTY", "26NOV2026", 100, 10)
+        # A single listed NIFTY expiry in a month is classified as that month's
+        # monthly contract. Supply the next weekly plus its month-end contract.
+        make_rows("NIFTY", "03DEC2026", 100, 10)
+        + make_rows("NIFTY", "31DEC2026", 100, 10)
         + make_rows("BANKNIFTY", "26NOV2026", 200, 100)
     )
     spot = FakeSpotFeed()
@@ -133,6 +136,7 @@ def test_broker_snapshot_context_resolves_each_active_underlying_independently()
     bank_universe, bank_spot = runtime.broker_snapshot_context("BANKNIFTY_MONTHLY")
 
     assert nifty_universe.underlying == "NIFTY"
+    assert nifty_universe.expiry == "2026-12-03"
     assert bank_universe.underlying == "BANKNIFTY"
     assert len(nifty_universe.contracts) == 22
     assert len(bank_universe.contracts) == 14
