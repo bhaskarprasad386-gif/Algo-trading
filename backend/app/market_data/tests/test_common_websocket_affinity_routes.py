@@ -633,3 +633,108 @@ def test_recovery_reconciles_stale_lane_plan_even_when_group_set_is_unchanged():
         }
     finally:
         manager.close()
+
+
+
+def test_each_locked_lane_recovers_in_place_without_cross_lane_token_migration():
+    registry = InstrumentRegistry()
+    nifty_spot = InstrumentDescriptor(
+        key=InstrumentKey("NSE", "NSE", "NIFTY-SPOT-INPLACE"),
+        symbol="NIFTY",
+        instrument_type="index",
+        exchange="NSE",
+        segment="NSE",
+        underlying="NIFTY",
+    )
+    bank_spot = InstrumentDescriptor(
+        key=InstrumentKey("NSE", "NSE", "BANK-SPOT-INPLACE"),
+        symbol="BANKNIFTY",
+        instrument_type="index",
+        exchange="NSE",
+        segment="NSE",
+        underlying="BANKNIFTY",
+    )
+    nifty_option = _descriptor("NIFTY-WEEKLY-INPLACE")
+    bank_option = _descriptor("BANK-MONTHLY-INPLACE")
+
+    def future(token, underlying):
+        return InstrumentDescriptor(
+            key=InstrumentKey("NFO", "NFO", token),
+            symbol=token,
+            instrument_type="future",
+            exchange="NFO",
+            segment="NFO",
+            underlying=underlying,
+            expiry="2026-12-31",
+        )
+
+    nifty_future = future("NIFTY-FUT-INPLACE", "NIFTY")
+    bank_future = future("BANK-FUT-INPLACE", "BANKNIFTY")
+    registry.register_many((
+        nifty_spot, bank_spot, nifty_option, bank_option, nifty_future, bank_future,
+    ))
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._recovery_interval_seconds = 60.0
+    owners = (
+        ("nifty-spot", (nifty_spot.key,)),
+        ("bank-spot", (bank_spot.key,)),
+        ("options", (nifty_option.key, bank_option.key)),
+        ("futures", (nifty_future.key, bank_future.key)),
+    )
+    for owner, keys in owners:
+        manager.register_callback(owner, lambda _message: None)
+
+    try:
+        for owner, keys in owners:
+            manager.subscribe(owner, keys, mode=3)
+
+        expected_assignments = {
+            (1, nifty_spot.key.token): 0,
+            (1, bank_spot.key.token): 1,
+            (2, nifty_option.key.token): 0,
+            (2, bank_option.key.token): 1,
+            (2, nifty_future.key.token): 2,
+            (2, bank_future.key.token): 2,
+        }
+        assert manager._shard_assignments[3] == expected_assignments
+        original_sockets = dict(manager._sockets)
+
+        for failed_group in (
+            SocketGroup(3, 0),
+            SocketGroup(3, 1),
+            SocketGroup(3, 2),
+        ):
+            failed_socket = manager._sockets[failed_group]
+            with manager._lock:
+                manager._sockets.pop(failed_group)
+                manager._socket_tokens.pop(failed_group, None)
+                manager._socket_created_at.pop(failed_group, None)
+                manager._last_data_at.pop(failed_group, None)
+                manager._last_raw_frame_at_by_group.pop(failed_group, None)
+                manager._last_successful_route_at.pop(failed_group, None)
+                manager._last_successful_delivery_at.pop(failed_group, None)
+            failed_socket.close()
+
+            assert manager.recover_disconnected(min_age_seconds=0.0) == 0
+            assert set(manager._sockets) == {
+                SocketGroup(3, 0), SocketGroup(3, 1), SocketGroup(3, 2),
+            }
+            assert manager._sockets[failed_group] is not failed_socket
+            for healthy_group in set(original_sockets) - {failed_group}:
+                assert manager._sockets[healthy_group] is original_sockets[healthy_group]
+            assert manager._shard_assignments[3] == expected_assignments
+            assert manager._socket_tokens[SocketGroup(3, 0)] == {
+                (1, nifty_spot.key.token),
+                (2, nifty_option.key.token),
+            }
+            assert manager._socket_tokens[SocketGroup(3, 1)] == {
+                (1, bank_spot.key.token),
+                (2, bank_option.key.token),
+            }
+            assert manager._socket_tokens[SocketGroup(3, 2)] == {
+                (2, nifty_future.key.token),
+                (2, bank_future.key.token),
+            }
+            original_sockets[failed_group] = manager._sockets[failed_group]
+    finally:
+        manager.close()
