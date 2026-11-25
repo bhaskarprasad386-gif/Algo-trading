@@ -153,3 +153,33 @@ def test_lifecycle_transition_refreshes_cached_history_even_when_sampler_is_degr
     assert store.latest_calls == [(30, "BANKNIFTY")]
     assert engine.snapshot("BANKNIFTY")["alerts"][0]["state"] == "EXPIRED"
     assert engine.snapshot("NIFTY")["underlying"] == "NIFTY"
+
+
+
+def test_expiry_lifecycle_sweep_is_throttled_per_underlying_and_retries_after_interval():
+    now_ns = 1_800_000_000 * 1_000_000_000
+    now = datetime.fromtimestamp(now_ns / 1_000_000_000, tz=timezone.utc)
+    store = _LifecycleStore()
+    engine = IVEarlyEntryAlertEngine(store)
+    stale_spot = SimpleNamespace(
+        timestamp_ns=now_ns - 10_000_000_000,
+        price=24900.0,
+    )
+
+    for offset in (0, 1_000_000_000, 30_000_000_000):
+        sample_ns = now_ns + offset
+        engine.evaluate(
+            sampler=_NotLiveSampler(), spot=stale_spot, expiry="2026-11-19",
+            now=datetime.fromtimestamp(sample_ns / 1_000_000_000, tz=timezone.utc),
+            now_ns=sample_ns,
+        )
+
+    assert len(store.expirations) == 1
+
+    next_ns = now_ns + 60_000_000_000
+    engine.evaluate(
+        sampler=_NotLiveSampler(), spot=stale_spot, expiry="2026-11-19",
+        now=datetime.fromtimestamp(next_ns / 1_000_000_000, tz=timezone.utc),
+        now_ns=next_ns,
+    )
+    assert len(store.expirations) == 2
