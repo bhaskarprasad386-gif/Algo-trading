@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isCurrentRecoveryResponse, isCurrentPagePushRequest, mergeUniqueAlerts, freshEarlyEntryAlerts, shouldAllowBoxSpreadEdgeTimingRestRefresh } from "../lib/page-push-recovery.mjs";
+import { isCurrentRecoveryResponse, isCurrentPagePushRequest, mergeUniqueAlerts, freshEarlyEntryAlerts, shouldAllowBoxSpreadEdgeTimingRestRefresh, runtimeSpotPrice } from "../lib/page-push-recovery.mjs";
 
 test("REST recovery response applies only while its request remains current", () => {
   assert.equal(isCurrentRecoveryResponse({active:true,requestSequence:8,latestSequence:8,responseValid:true}),true);
@@ -46,4 +46,17 @@ test("manual Box Spread edge timing refresh is blocked while PagePush is live", 
   assert.equal(shouldAllowBoxSpreadEdgeTimingRestRefresh("CONNECTING"), true);
   assert.equal(shouldAllowBoxSpreadEdgeTimingRestRefresh("RECONNECTING"), true);
   assert.equal(shouldAllowBoxSpreadEdgeTimingRestRefresh("DISCONNECTED"), true);
+});
+
+
+test("IV PagePush spot extraction reads each index from its nested spot map", () => {
+  const runtime = { spot_feed: { spot: {
+    NIFTY: { price: 26125.4 },
+    BANKNIFTY: { price: 59875.2 },
+  } } };
+  assert.equal(runtimeSpotPrice(runtime, "NIFTY"), 26125.4);
+  assert.equal(runtimeSpotPrice(runtime, "BANKNIFTY"), 59875.2);
+  assert.equal(runtimeSpotPrice({ spot_feed: { spot: {} } }, "NIFTY"), null);
+  assert.equal(runtimeSpotPrice(runtime, "FINNIFTY"), null);
+  assert.equal(runtimeSpotPrice({ spot_feed: { spot: { NIFTY: { price: "26125" } } } }, "NIFTY"), null);
 });
