@@ -767,3 +767,39 @@ def test_sdk_transport_heartbeat_callbacks_are_observable_without_claiming_feed_
     assert sdk_socket._last_pong_at_monotonic_ns > 0
     # Heartbeat observations are deliberately not an authentication,
     # subscription-acknowledgement, or consumer-delivery signal.
+
+
+def test_heartbeat_health_diagnostics_distinguish_waiting_timeout_and_stale():
+    from threading import Lock
+
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.websocket = SimpleNamespace(
+        _heartbeat_lock=Lock(),
+        _last_ping_at_monotonic_ns=None,
+        _last_pong_at_monotonic_ns=None,
+    )
+    now = {"ns": 1_000_000_000}
+    monkeypatch.setattr(websocket_module.time, "monotonic_ns", lambda: now["ns"])
+
+    assert client.health["heartbeat_state"] == "AWAITING_FIRST_PING"
+    assert client.health["last_pong_age_seconds"] is None
+
+    client.websocket._last_ping_at_monotonic_ns = 1_000_000_000
+    now["ns"] = 5_000_000_000
+    assert client.health["heartbeat_state"] == "PING_SENT"
+
+    now["ns"] = 12_000_000_001
+    assert client.health["heartbeat_state"] == "PING_TIMEOUT_WINDOW"
+
+    client.websocket._last_pong_at_monotonic_ns = 12_000_000_000
+    assert client.health["heartbeat_state"] == "RESPONSIVE"
+
+    now["ns"] = 43_000_000_001
+    assert client.health["heartbeat_state"] == "STALE"
+    assert client.health["ping_interval_seconds"] == 20
+    assert client.health["ping_timeout_seconds"] == 10
+
+    # These transport diagnostics must not promote an unopened subscription
+    # into broker-accepted or market-data-ready state.
+    assert client.health["connected"] is False
+    assert client.health["subscription_response_state"] == "NOT_SENT"
