@@ -2475,8 +2475,12 @@ def iv_early_entry_latest_alert(
     limit: int = 20,
     before_observed_at_ns: int | None = None,
     before_id: int | None = None,
+    underlying: str | None = None,
 ):
-    """Read-only NIFTY Weekly alert history with stable keyset pagination."""
+    """Read-only NIFTY Weekly + BANKNIFTY Monthly alert history."""
+    symbol = str(underlying or "").strip().upper() or None
+    if symbol not in {None, "NIFTY", "BANKNIFTY"}:
+        raise HTTPException(status_code=422, detail="underlying must be NIFTY or BANKNIFTY")
     if (before_observed_at_ns is None) != (before_id is None):
         raise HTTPException(
             status_code=422,
@@ -2488,11 +2492,12 @@ def iv_early_entry_latest_alert(
     store = AlertCooldownStore(SessionLocal, cooldown_seconds=600)
     with _iv_skew_flip_runtime_lock:
         runtime = iv_skew_flip_runtime
-        live = runtime.snapshot().get("early_entry_alerts") if runtime is not None else None
+        live = runtime.snapshot().get("early_entry_alerts_by_underlying", {}) if runtime is not None else {}
     rows = store.latest(
         limit=page_size + 1,
         before_observed_at_ns=before_observed_at_ns,
         before_id=before_id,
+        underlying=symbol,
     )
     has_more = len(rows) > page_size
     alerts = rows[:page_size]
@@ -2504,9 +2509,9 @@ def iv_early_entry_latest_alert(
         }
     return {
         "status": "ok",
-        "strategy_scope": "NIFTY_WEEKLY",
+        "strategy_scope": symbol or "NIFTY_WEEKLY+BANKNIFTY_MONTHLY",
         "orders_enabled": False,
-        "live": live or {"state": "WATCH", "signals_allowed": False, "reason": "IV_RUNTIME_STOPPED"},
+        "live": (live.get(symbol) if symbol else live) or {"state": "WATCH", "signals_allowed": False, "reason": "IV_RUNTIME_STOPPED"},
         "alerts": alerts,
         "has_more": has_more,
         "next_cursor": next_cursor,
