@@ -5,9 +5,12 @@
 The existing `/api/v1/diagnostics/errors` route is process-local and its in-memory
 buffer is lost on backend restart. The dashboard cannot use it while the API is down.
 
-`algo-diagnostics.service` is an independent systemd process. It reads only the
-`algo-trading.service` journal, stores sanitized ERROR/WARNING/CRITICAL summaries
-in bounded SQLite storage, and serves read-only JSON on `127.0.0.1:8765`.
+`algo-diagnostics.service` is an independent systemd process. It reads the
+`algo-trading.service` journal and, while the API is reachable, snapshots the
+process-local `/api/v1/diagnostics/errors` ring buffer into bounded SQLite storage.
+It serves the persisted, sanitized ERROR/WARNING/CRITICAL summaries on
+`127.0.0.1:8765`. This preserves in-memory runtime diagnostics captured before an
+API outage as well as journal errors emitted while the API is down.
 It does not import the trading app, open broker sockets, call runner controls, or
 mutate scanner state.
 
@@ -38,14 +41,16 @@ route before relying on it.
 
 ## API contract and bounds
 
-- `GET /health`: independent collector health.
+- `GET /health`: independent collector and SQLite readiness, plus API process reachability.
 - `GET /api/errors?limit=1..200`: newest sanitized journal events.
 - 14-day retention, maximum 3,000 events by default.
 - Exposes event id, server timestamp, severity, component, sanitized message,
   and source only.
 
-The mobile page keeps the last successful response in component state and
-browser-local cache. A failed refresh marks the collector unreachable but never
+The dashboard and mobile error page use the independent collector, not the API
+error route. The mobile page keeps the last successful response in component state and
+browser-local cache. The collector also shows whether the trading API process is
+currently reachable separately from the collector itself. A failed refresh marks the collector unreachable but never
 replaces previous logs with an empty list. It shows the last successful sync time.
 
 ## Deployment and verification
