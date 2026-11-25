@@ -442,3 +442,30 @@ def test_supervisor_keeps_pending_failures_when_reconcile_raises():
     assert state["failure_recovery_pending_groups"] == ["1:3"]
     assert state["recovery_backoff_errors"] == 1
     manager.close()
+
+
+
+def test_supervisor_does_not_acknowledge_same_group_failure_arriving_during_reconcile():
+    manager = CommonWebSocketManager()
+    group = SocketGroup(mode=1, shard=4)
+    manager._failure_recovery_pending_groups.add(group)
+    manager._failure_recovery_pending_versions[group] = 1
+    reconciles = []
+
+    def reconcile_with_new_failure():
+        reconciles.append(1)
+        if len(reconciles) == 1:
+            # A second transport generation fails while this pass is reconciling.
+            # The snapshot from the beginning of the pass must not acknowledge it.
+            with manager._lock:
+                manager._failure_recovery_pending_versions[group] = 2
+                manager._failure_recovery_pending_groups.add(group)
+
+    manager._reconcile = reconcile_with_new_failure
+    _run_one_recovery_supervisor_iteration(manager)
+
+    state = manager.snapshot()
+    assert reconciles == [1]
+    assert state["failure_recovery_pending_groups"] == ["1:4"]
+    assert manager._failure_recovery_pending_versions[group] == 2
+    manager.close()
