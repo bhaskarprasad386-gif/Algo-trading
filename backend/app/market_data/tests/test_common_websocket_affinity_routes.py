@@ -519,3 +519,44 @@ def test_locked_lane_rejects_token_count_above_per_socket_limit_without_route_mu
         assert manager._sockets == {}
     finally:
         manager.close()
+
+
+
+def test_same_lane_broker_token_collision_between_descriptors_fails_closed():
+    registry = InstrumentRegistry()
+    locked = _descriptor("NIFTY-SAME-LANE-COLLISION")
+    alias = InstrumentDescriptor(
+        key=InstrumentKey("NFO", "DERIVATIVE", locked.key.token),
+        symbol="NIFTY-ALIAS",
+        instrument_type="option",
+        exchange="NFO",
+        segment="DERIVATIVE",
+        underlying="NIFTY",
+        expiry_type="WEEKLY",
+        expiry="2026-12-31",
+        strike=25000.0,
+        option_type="CE",
+    )
+    registry.register_many((locked, alias))
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._recovery_interval_seconds = 60.0
+
+    try:
+        try:
+            manager.subscribe("locked-owner", (locked.key,), mode=3)
+            before_routes = {group: dict(routes) for group, routes in manager._route_index.items()}
+            before_sockets = set(manager._sockets)
+            manager.subscribe("alias-owner", (alias.key,), mode=3)
+        except ValueError as exc:
+            assert "ambiguous broker token affinity" in str(exc)
+            assert "multiple instrument descriptors" in str(exc)
+        else:
+            raise AssertionError("one broker token must not fan out to distinct instrument descriptors")
+
+        assert manager._route_index == before_routes
+        assert set(manager._sockets) == before_sockets
+        assert manager._shard_assignments[3] == {
+            (2, locked.key.token): 0,
+        }
+    finally:
+        manager.close()
