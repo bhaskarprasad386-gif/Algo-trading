@@ -198,3 +198,27 @@ def test_shared_runner_option_snapshot_deduplicates_tokens_and_reports_missing_c
     assert snapshot["missing_contracts"] == 1
     assert snapshot["missing_tokens"] == [missing_token]
     assert len(adapter.latest_quotes()) == 5
+
+
+def test_shared_runner_option_adapter_rejects_wrong_strike_and_stale_contract_ticks():
+    now = time_ns()
+    universe = make_universe()
+    records = make_records(universe, now)
+    option_rows = [row for row in records if row.get("instrument_type") == "option"]
+    wrong_identity = next(row for row in option_rows if row["token"] == universe.contracts[0].token)
+    wrong_identity["strike"] = wrong_identity["strike"] + 100.0
+    stale = next(row for row in option_rows if row["token"] == universe.contracts[1].token)
+    stale["timestamp_ns"] = now - 10_000_000_000
+    runner = FakeSharedRunner(records, make_descriptors(universe))
+    adapter = IVSharedRunnerOptionFeedAdapter(
+        shared_runner=runner, stream_id="BANKNIFTY_MONTHLY",
+        clock_ns=lambda: now,
+    )
+    adapter.start(universe)
+
+    snapshot = adapter.snapshot(now_ns=now)
+    assert snapshot["status"] == "PARTIAL"
+    assert snapshot["expected_contracts"] == 6
+    assert snapshot["fresh_contracts"] == 4
+    assert snapshot["missing_contracts"] == 2
+    assert len(adapter.latest_quotes()) == 4
