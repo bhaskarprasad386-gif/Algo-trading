@@ -1646,15 +1646,22 @@ class CommonWebSocketManager:
                     continue
                 pairs_by_mode[mode].add((exchange_type, token))
             expected_socket_groups: set[SocketGroup] = set()
-            expected_assignments = self._build_shard_assignments(pairs_by_mode)
+            expected_assignments = self._build_shard_assignments(
+                pairs_by_mode, self._preferred_socket_pairs(),
+            )
             for mode, assignments in expected_assignments.items():
                 expected_socket_groups.update(
                     SocketGroup(mode=mode, shard=shard_index)
                     for shard_index in assignments.values()
                 )
-            # Compare identities, not only counts: a stale/unexpected group can
-            # make the count look complete while a required shard is missing.
-            missing_groups = set(self._sockets) != expected_socket_groups
+            # Compare both physical groups and the instrument-to-lane plan.
+            # A descriptor's expiry/underlying classification can change while
+            # the same three groups remain present; group-count-only recovery
+            # would otherwise leave tokens routed on their former lanes.
+            assignments_changed = expected_assignments != self._shard_assignments
+            missing_groups = (
+                set(self._sockets) != expected_socket_groups or assignments_changed
+            )
             # Reconciliation intentionally blocks new broker sessions while any
             # retired transport is still alive. If the only remaining issue is a
             # missing shard, don't count/re-run a recovery attempt on every
