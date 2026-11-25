@@ -219,3 +219,62 @@ def test_consumer_route_survives_missing_socket_recovery_and_replacement():
     finally:
         manager.close()
 
+
+
+def test_subscribe_and_unsubscribe_are_serialized_as_one_registry_route_transition():
+    entered_registry_subscribe = __import__("threading").Event()
+    release_registry_subscribe = __import__("threading").Event()
+    unsubscribe_started = __import__("threading").Event()
+
+    class BlockingRegistry(InstrumentRegistry):
+        def subscribe(self, consumer, key, mode=1):
+            if consumer == "racing-owner":
+                entered_registry_subscribe.set()
+                assert release_registry_subscribe.wait(timeout=2.0)
+            return super().subscribe(consumer, key, mode)
+
+    registry = BlockingRegistry()
+    item = _descriptor("SERIALIZED-MUTATION")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._recovery_interval_seconds = 60.0
+    errors = []
+
+    def subscribe_owner():
+        try:
+            manager.subscribe("racing-owner", (item.key,), mode=3)
+        except Exception as exc:
+            errors.append(exc)
+
+    def unsubscribe_owner():
+        unsubscribe_started.set()
+        try:
+            manager.unsubscribe("racing-owner", (item.key,))
+        except Exception as exc:
+            errors.append(exc)
+
+    first = __import__("threading").Thread(target=subscribe_owner, daemon=True)
+    second = __import__("threading").Thread(target=unsubscribe_owner, daemon=True)
+    try:
+        first.start()
+        assert entered_registry_subscribe.wait(timeout=1.0)
+        second.start()
+        assert unsubscribe_started.wait(timeout=1.0)
+
+        # The first mutation owns the reconciliation transaction while paused
+        # inside registry.subscribe; the second cannot partially mutate routes.
+        assert registry.subscriptions() == ()
+
+        release_registry_subscribe.set()
+        first.join(timeout=2.0)
+        second.join(timeout=2.0)
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert errors == []
+        assert registry.subscriptions() == ()
+        assert manager.snapshot()["active_instruments"] == 0
+        assert manager.snapshot()["required_socket_groups"] == []
+        assert manager.snapshot()["missing_socket_groups"] == []
+    finally:
+        release_registry_subscribe.set()
+        manager.close()
