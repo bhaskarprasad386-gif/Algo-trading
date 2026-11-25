@@ -34,7 +34,7 @@ _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 _SENSITIVE_KEYS = (
     r"x[-_]?private[-_]?key|x[-_]?api[-_]?key|api[-_]?key|private[-_]?key|"
     r"x[-_]?feed[-_]?token|feed[-_]?token|jwt[-_]?token|access[-_]?token|"
-    r"refresh[-_]?token|auth[-_]?token|password|passwd|pwd|"
+    r"refresh[-_]?token|auth[-_]?token|account[-_]?(?:id|number)|uid|password|passwd|pwd|"
     r"totp(?:[-_]?secret)?|one[-_]?time[-_]?password|otp|"
     r"client[-_]?secret|client[-_]?code|client[-_]?id|api[-_]?secret"
 )
@@ -45,7 +45,7 @@ _QUOTED_ASSIGNMENT = re.compile(
 )
 _PLAIN_ASSIGNMENT = re.compile(
     rf"(?P<prefix>\b(?:{_SENSITIVE_KEYS}|authorization)\b\s*[:=]\s*)"
-    rf"(?P<value>Bearer\s+[^,\s;}}\]]+|[^,\s;}}\]]+)",
+    rf"(?P<value>(?:Bearer|Basic)\s+[^,\s;}}\]]+|[^,\s;}}\]]+)",
     re.IGNORECASE,
 )
 
