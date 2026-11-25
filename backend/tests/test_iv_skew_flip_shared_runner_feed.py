@@ -287,3 +287,76 @@ def test_failed_banknifty_expiry_rotation_detaches_previous_shared_universe():
     assert adapter.resolved_universe() is None
     assert adapter.snapshot()["status"] == "STOPPED"
     assert runner.stop_calls == 0
+
+def test_shared_runner_disconnect_invalidates_cached_spot_quotes_until_recovery():
+    now = time_ns()
+    universe = make_universe()
+    runner = FakeSharedRunner(make_records(universe, now), make_descriptors(universe))
+    runner.enabled = True
+    runner.snapshot = lambda: {
+        "enabled": runner.enabled,
+        "initial_option_bootstrap_done": runner.enabled,
+    }
+    adapter = IVSharedRunnerSpotFeedAdapter(shared_runner=runner, clock_ns=lambda: now)
+    adapter.start(object(), ("NIFTY", "BANKNIFTY"))
+
+    assert adapter.spot_snapshot("NIFTY") is not None
+    runner.enabled = False
+    assert adapter.spot_snapshot("NIFTY") is None
+    disconnected = adapter.snapshot()
+    assert disconnected["status"] == "WAITING_FOR_SHARED_RUNNER"
+    assert disconnected["signals_allowed"] is False
+    assert disconnected["spot"]["NIFTY"]["fresh"] is False
+    assert disconnected["spot"]["BANKNIFTY"]["quote_status"] == "SHARED_RUNNER_UNAVAILABLE"
+
+    runner.enabled = True
+    assert adapter.spot_snapshot("NIFTY") is not None
+    assert adapter.snapshot()["signals_allowed"] is True
+    assert runner.stop_calls == 0
+
+
+def test_shared_runner_disconnect_invalidates_cached_option_quotes_until_recovery():
+    now = time_ns()
+    universe = make_universe()
+    runner = FakeSharedRunner(make_records(universe, now), make_descriptors(universe))
+    runner.enabled = True
+    runner.snapshot = lambda: {
+        "enabled": runner.enabled,
+        "initial_option_bootstrap_done": runner.enabled,
+    }
+    adapter = IVSharedRunnerOptionFeedAdapter(
+        shared_runner=runner, stream_id="BANKNIFTY_MONTHLY",
+        clock_ns=lambda: now,
+    )
+    adapter.start(universe)
+
+    assert len(adapter.latest_quotes()) == len(universe.contracts)
+    runner.enabled = False
+    assert adapter.latest_quotes() == ()
+    disconnected = adapter.snapshot()
+    assert disconnected["status"] == "WAITING_FOR_SHARED_RUNNER"
+    assert disconnected["fresh_contracts"] == 0
+    assert disconnected["missing_contracts"] == len(universe.contracts)
+
+    runner.enabled = True
+    assert adapter.snapshot()["status"] == "LIVE"
+    assert len(adapter.latest_quotes()) == len(universe.contracts)
+    assert runner.stop_calls == 0
+
+
+def test_shared_runner_spot_adapter_never_rewinds_to_an_older_cached_tick():
+    now = time_ns()
+    universe = make_universe()
+    records = make_records(universe, now)
+    records.extend([
+        {"instrument_type": "index", "underlying": "NIFTY",
+         "timestamp_ns": now - 1_000_000_000, "ltp": 23900.0},
+        {"instrument_type": "index", "underlying": "BANKNIFTY",
+         "timestamp_ns": now - 1_000_000_000, "ltp": 58000.0},
+    ])
+    runner = FakeSharedRunner(records, make_descriptors(universe))
+    adapter = IVSharedRunnerSpotFeedAdapter(shared_runner=runner, clock_ns=lambda: now)
+    adapter.start(object(), ("NIFTY", "BANKNIFTY"))
+
+    assert adapter.spot_snapshot("NIFTY").price == 24000.0
+    assert adapter.spot_snapshot("BANKNIFTY").price == 58125.0
