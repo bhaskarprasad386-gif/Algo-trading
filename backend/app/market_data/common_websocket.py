@@ -2027,8 +2027,8 @@ class CommonWebSocketManager:
                     raw_callbacks_by_identity[id(callback)] = (callback, [name])
                 else:
                     entry[1].append(name)
-            record_callbacks = [(self._record_callbacks.get(name), key) for name, key in matching]
-            record_observers = [(self._record_observers.get(name), key) for name, key in matching]
+            record_callbacks = [(name, self._record_callbacks.get(name), key) for name, key in matching]
+            record_observers = [(name, self._record_observers.get(name), key) for name, key in matching]
             self._missing_callback_routes += sum(
                 1 for name, _ in matching
                 if self._callbacks.get(name) is None
@@ -2070,14 +2070,14 @@ class CommonWebSocketManager:
                     context={"event": "delivery", "group": f"{group.mode}:{group.shard}", "token": token},
                 )
         observers_by_key: dict[InstrumentKey, list[Callable[..., None]]] = defaultdict(list)
-        for observer, observer_key in record_observers:
+        for observer_owner, observer, observer_key in record_observers:
             if observer is not None:
-                observers_by_key[observer_key].append(observer)
+                observers_by_key[observer_key].append((observer_owner, observer))
         callbacks_by_key: dict[InstrumentKey, list[Callable[..., None]]] = defaultdict(list)
-        for callback, callback_key in record_callbacks:
+        for callback_owner, callback, callback_key in record_callbacks:
             if callback is not None:
-                callbacks_by_key[callback_key].append(callback)
-        for key in dict.fromkeys([key for _, key in record_callbacks] + [key for _, key in record_observers]):
+                callbacks_by_key[callback_key].append((callback_owner, callback))
+        for key in dict.fromkeys([key for _, _, key in record_callbacks] + [key for _, _, key in record_observers]):
             callbacks = callbacks_by_key.get(key, ())
             if not callbacks and not observers_by_key.get(key):
                 continue
@@ -2183,11 +2183,7 @@ class CommonWebSocketManager:
                                     (group, incoming_exchange_type)
                                 ] = incoming_timestamp_ns
                             self._last_exchange_tick_received_at[incoming_exchange_type] = time.monotonic()
-                callback_owners = [
-                    name for name, callback_key in matching
-                    if callback_key == key and self._record_callbacks.get(name) is not None
-                ]
-                for callback_owner, callback in zip(callback_owners, callbacks):
+                for callback_owner, callback in callbacks:
                     if not self._is_current_data_generation(group, generation):
                         break
                     self._invoke_consumer_callback((callback_owner,), "normalized", callback, record)
@@ -2204,8 +2200,7 @@ class CommonWebSocketManager:
                         # Stop the entire frame fan-out, including remaining
                         # owners and observers, once the originating socket retires.
                         return
-                observer_names = [name for name, observer_key in matching if observer_key == key and self._record_observers.get(name) is not None]
-                for observer_name, observer in zip(observer_names, observers_by_key.get(key, ())):
+                for observer_name, observer in observers_by_key.get(key, ()):
                     if not self._is_current_data_generation(group, generation):
                         return
                     with self._lock:
