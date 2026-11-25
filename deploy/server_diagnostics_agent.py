@@ -25,6 +25,7 @@ RETENTION_DAYS = max(1, int(os.environ.get("DIAGNOSTICS_RETENTION_DAYS", "14")))
 MAX_EVENTS = max(100, int(os.environ.get("DIAGNOSTICS_MAX_EVENTS", "3000")))
 STOP = threading.Event()
 
+_ANSI_ESCAPE = re.compile(r"\\x1b\\[[0-9;]*m")
 _SECRET_PATTERNS = [
     (re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;]+"), r"\1[REDACTED]"),
     (re.compile(r"""(?i)((?:api[_-]?(?:key|secret)|access[_-]?token|refresh[_-]?token|session[_-]?token|feed[_-]?token|client[_-]?id|account[_-]?(?:id|number)|uid|token|password|passwd|secret|totp|jwt)\s*[=:]\s*)['"]?[^\s,'"]+"""), r"\1[REDACTED]"),
@@ -33,7 +34,7 @@ _SECRET_PATTERNS = [
 
 
 def sanitize(value: object, limit: int = 1200) -> str:
-    text = str(value or "")
+    text = _ANSI_ESCAPE.sub("", str(value or ""))
     for pattern, replacement in _SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
     text = "".join(ch if ch in "\n\t" or ord(ch) >= 32 else " " for ch in text)
