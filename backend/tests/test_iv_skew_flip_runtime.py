@@ -1078,3 +1078,19 @@ def test_runtime_attaches_to_shared_index_runner_without_owning_feed_lifecycle()
     assert stopped["status"] == "STOPPED"
     assert manager.close_calls == 0
     assert shared_runner.stop_calls == 0
+
+def test_shared_runner_expiry_selection_rolls_banknifty_monthly_only_after_close():
+    from app.market_data.shared_index_market_data_runner import choose_locked_expiry
+
+    rows = (
+        make_rows("BANKNIFTY", "26NOV2026", 200, 100)
+        + make_rows("BANKNIFTY", "31DEC2026", 200, 100)
+    )
+    before_close = datetime(2026, 11, 26, 15, 29, 59, tzinfo=IST)
+    at_close = datetime(2026, 11, 26, 15, 30, 0, tzinfo=IST)
+    prior_day_after_close = datetime(2026, 11, 25, 15, 31, 0, tzinfo=IST)
+
+    assert choose_locked_expiry(rows, "BANKNIFTY", now=prior_day_after_close) == "2026-11-26"
+    assert choose_locked_expiry(rows, "BANKNIFTY", now=before_close) == "2026-11-26"
+    assert choose_locked_expiry(rows, "BANKNIFTY", now=at_close) == "2026-12-31"
+
