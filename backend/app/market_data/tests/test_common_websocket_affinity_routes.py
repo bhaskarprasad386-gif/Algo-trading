@@ -67,14 +67,17 @@ def test_one_options_consumer_routes_instruments_from_multiple_socket_shards():
         )
 
         assert set(manager._route_index) == {SocketGroup(3, 0), SocketGroup(3, 1)}
-        assert manager._route_index[SocketGroup(3, 0)][(2, "BANK-M")] == [
-            ("shared-index-market-data:options", banknifty_monthly.key)
-        ] or manager._route_index[SocketGroup(3, 0)].get((2, "BANK-M")) is None
-        assert sum(len(routes) for group in manager._route_index.values() for routes in group.values()) == 2
+        group_by_token = {
+            token: group
+            for group, routes in manager._route_index.items()
+            for (_exchange_type, token) in routes
+        }
+        assert set(group_by_token) == {"BANK-M", "NIFTY-W"}
+        assert group_by_token["BANK-M"] != group_by_token["NIFTY-W"]
+        assert sum(len(routes) for routes in manager._route_index.values()) == 2
 
-        for group, token in ((SocketGroup(3, 0), "BANK-M"), (SocketGroup(3, 1), "NIFTY-W")):
-            route = manager._route_index[group]
-            pair = next(pair for pair in route if pair[1] == token)
+        for token, group in group_by_token.items():
+            pair = next(pair for pair in manager._route_index[group] if pair[1] == token)
             manager._on_data(group, {"token": token, "exchange_type": pair[0], "ltp": 10000})
 
         assert sorted(delivered) == ["BANK-M", "NIFTY-W"]
@@ -176,5 +179,42 @@ def test_route_projection_keeps_multiple_consumers_for_shared_instrument_across_
             ("observer", first.key.token),
             ("options", first.key.token),
         ]
+    finally:
+        manager.close()
+
+
+def test_consumer_route_survives_missing_socket_recovery_and_replacement():
+    registry = InstrumentRegistry()
+    items = [_descriptor("RECOVER-A"), _descriptor("RECOVER-B")]
+    registry.register_many(items)
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._max_tokens_per_socket = 1
+    manager._recovery_interval_seconds = 60.0
+    delivered = []
+    manager.register_callback("options-owner", lambda message: delivered.append(message["token"]))
+
+    try:
+        manager.subscribe("options-owner", (items[0].key, items[1].key), mode=3)
+        target_group = next(
+            group for group, routes in manager._route_index.items()
+            if (2, items[1].key.token) in routes
+        )
+        with manager._lock:
+            manager._sockets.pop(target_group)
+            manager._socket_tokens.pop(target_group, None)
+            manager._socket_created_at.pop(target_group, None)
+
+        assert target_group in manager._route_index
+        assert manager.snapshot()["missing_socket_groups"] == [f"{target_group.mode}:{target_group.shard}"]
+
+        assert manager.recover_disconnected(min_age_seconds=10.0) == 0
+        assert target_group in manager._sockets
+        assert manager.snapshot()["missing_socket_groups"] == []
+
+        manager._on_data(
+            target_group,
+            {"token": items[1].key.token, "exchange_type": 2, "ltp": 10000},
+        )
+        assert delivered == [items[1].key.token]
     finally:
         manager.close()
