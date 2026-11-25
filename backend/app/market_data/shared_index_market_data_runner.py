@@ -26,14 +26,23 @@ LOCKED = ("NIFTY", "BANKNIFTY")
 
 
 def _expiry_candidates(rows: Iterable[dict], underlying: str) -> list[date]:
-    dates = set()
+    # An option master repeats each expiry once per strike and option side.
+    # Collect distinct source strings first so a spot-triggered rotation parses
+    # only the small expiry set, never every contract row.
+    expiry_values = set()
     for row in rows:
         if (str(row.get("exch_seg", "")).strip().upper() != "NFO"
                 or str(row.get("name", "")).strip().upper() != underlying
                 or str(row.get("instrumenttype", "")).strip().upper() != "OPTIDX"):
             continue
+        value = str(row.get("expiry") or "").strip().upper()
+        if value:
+            expiry_values.add(value)
+
+    dates = set()
+    for value in expiry_values:
         try:
-            dates.add(_parse_expiry(row.get("expiry")))
+            dates.add(_parse_expiry(value))
         except (ValueError, TypeError):
             continue
     return sorted(dates)
