@@ -20,8 +20,8 @@ class _LifecycleStore:
         self.expirations.append(now)
         return 0
 
-    def invalidate_breached_oi_walls(self, *, spot, observed_at_ns):
-        self.invalidations.append((spot, observed_at_ns))
+    def invalidate_breached_oi_walls(self, *, spot, observed_at_ns, underlying=None):
+        self.invalidations.append((spot, observed_at_ns, underlying))
         return 0
 
 
@@ -64,4 +64,39 @@ def test_fresh_spot_tick_can_invalidate_oi_wall_alert():
         now=now, now_ns=now_ns,
     )
 
-    assert store.invalidations == [(24900.0, fresh_spot.timestamp_ns)]
+    assert store.invalidations == [(24900.0, fresh_spot.timestamp_ns, "NIFTY")]
+
+def test_alert_engine_keeps_nifty_and_banknifty_histories_isolated():
+    now_ns = 1_800_000_000 * 1_000_000_000
+    now = datetime.fromtimestamp(now_ns / 1_000_000_000, tz=timezone.utc)
+    store = _LifecycleStore()
+    engine = IVEarlyEntryAlertEngine(store)
+    nifty_spot = SimpleNamespace(timestamp_ns=now_ns, price=24900.0)
+    bank_spot = SimpleNamespace(timestamp_ns=now_ns, price=58100.0)
+
+    nifty = engine.evaluate(
+        sampler=_NotLiveSampler(), spot=nifty_spot, expiry="2026-11-19",
+        now=now, now_ns=now_ns, underlying="NIFTY", strike_step=50.0,
+    )
+    bank = engine.evaluate(
+        sampler=_NotLiveSampler(), spot=bank_spot, expiry="2026-11-26",
+        now=now, now_ns=now_ns, underlying="BANKNIFTY", strike_step=100.0,
+        max_consolidation_points=110.0, wall_tolerance_points=30.0,
+    )
+
+    assert nifty["reason"] == bank["reason"] == "SAMPLER_NOT_LIVE"
+    assert engine.snapshot("NIFTY")["underlying"] == "NIFTY"
+    assert engine.snapshot("BANKNIFTY")["underlying"] == "BANKNIFTY"
+    assert engine.snapshot_all().keys() == {"NIFTY", "BANKNIFTY"}
+    assert store.invalidations == [
+        (24900.0, nifty_spot.timestamp_ns, "NIFTY"),
+        (58100.0, bank_spot.timestamp_ns, "BANKNIFTY"),
+    ]
+
+
+def test_alert_strike_grid_supports_banknifty_hundred_point_contracts():
+    from app.scanner.iv_skew_flip.alerts.conditions import even_strikes
+
+    assert even_strikes([58000, 58050, 58100, 58150, 58200], 100.0) == (58000.0, 58100.0, 58200.0)
+    assert even_strikes([24900, 24950, 25000], 50.0) == (24900.0, 24950.0, 25000.0)
+
