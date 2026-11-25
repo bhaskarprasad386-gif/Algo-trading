@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-MODULE_PATH = Path(__file__).parents[1] / "server_diagnostics_agent.py"
+MODULE_PATH = Path(__file__).parents[2] / "deploy" / "server_diagnostics_agent.py"
 SPEC = importlib.util.spec_from_file_location("server_diagnostics_agent", MODULE_PATH)
 assert SPEC and SPEC.loader
 agent = importlib.util.module_from_spec(SPEC)
