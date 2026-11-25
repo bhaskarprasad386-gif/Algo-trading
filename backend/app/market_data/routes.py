@@ -22,6 +22,7 @@ _live_cash_future_runner_snapshot_provider = None
 _shoonya_snapshot_provider = None
 _shoonya_supervisor_provider = None
 _shared_index_runner_snapshot_provider = None
+_shared_index_runner_health_provider = None
 
 
 def configure_live_cash_future_runner_snapshot(provider) -> None:
@@ -46,6 +47,11 @@ def configure_shared_index_runner_snapshot(provider) -> None:
     """Configure read-only health snapshot for isolated shared index runner."""
     global _shared_index_runner_snapshot_provider
     _shared_index_runner_snapshot_provider = provider
+
+def configure_shared_index_runner_health_snapshot(provider) -> None:
+    """Configure lightweight health-only snapshot for mobile/dashboard polling."""
+    global _shared_index_runner_health_provider
+    _shared_index_runner_health_provider = provider
 
 
 class ShoonyaInstrumentInput(BaseModel):
@@ -597,6 +603,18 @@ def get_market_overview():
 def get_shared_index_runner_health():
     """Read-only health/status snapshot of the strategy-unconnected live runner."""
     provider = _shared_index_runner_snapshot_provider
+    if provider is None:
+        return {"runner": "shared-index-market-data", "enabled": False, "state": "NOT_INITIALIZED"}
+    try:
+        snapshot = provider()
+        return snapshot if isinstance(snapshot, dict) else {"runner": "shared-index-market-data", "state": "UNAVAILABLE"}
+    except Exception:
+        return {"runner": "shared-index-market-data", "state": "UNAVAILABLE"}
+
+@router.get("/shared-index-runner/health-lite")
+def get_shared_index_runner_health_lite():
+    """Bounded per-feed/socket health; excludes decorated 52-contract quote records."""
+    provider = _shared_index_runner_health_provider
     if provider is None:
         return {"runner": "shared-index-market-data", "enabled": False, "state": "NOT_INITIALIZED"}
     try:
