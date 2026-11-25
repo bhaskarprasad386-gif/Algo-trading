@@ -222,7 +222,7 @@ def test_runtime_waits_for_fresh_spot_before_option_subscriptions(monkeypatch):
     }
     result = runtime.refresh_once()
     assert result["indices"]["NIFTY"]["universe_tokens"] == 0
-    assert result["indices"]["BANKNIFTY"]["status"] == "WAITING_FOR_SPOT"
+    assert result["indices"]["BANKNIFTY"]["option_feed"]["status"] == "WAITING_FOR_SPOT"
     assert "WAITING_FOR_SPOT" in result["option_chains"]["NIFTY_WEEKLY"]["error"]
     assert result["option_chains"]["NIFTY_MONTHLY"]["enabled"] is False
     assert result["option_chains"]["BANKNIFTY_MONTHLY"]["enabled"] is True
