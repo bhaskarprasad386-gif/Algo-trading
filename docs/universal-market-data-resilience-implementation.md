@@ -19,7 +19,19 @@ Status: implementation in progress on `feat/universal-market-data-resilience`. N
 - `SharedIndexMarketDataRunner` is a specialized index runner, not yet the universal source of all strategies' market data.
 - The architecture review document identifies synchronous Angel callback fan-out as a concrete head-of-line risk and explicitly warns that ping/pong timeouts, network outages, and broker limits cannot be eliminated by software.
 
-## User-locked socket affinity contract\n\nThe dedicated three-lane universe is explicitly constrained as follows:\n\n- Lane 0 / Socket 1: NIFTY spot and NIFTY WEEKLY CE/PE options only.\n- Lane 1 / Socket 2: BANKNIFTY spot and BANKNIFTY MONTHLY CE/PE options only.\n- Lane 2 / Socket 3: NIFTY and BANKNIFTY index futures only. No FINNIFTY, MIDCPNIFTY, SENSEX, BANKEX, or other index may be placed on this lane.\n- Other expiry families are not silently coerced into a lane. Classification must come from the instrument-master expiry classifier.\n- Preferred lane metadata is distinct from temporary failover placement. Any failover implementation must retain the preferred lane and restore it only after a stable recovery window.\n\nThe source carries `expiry_type` through `InstrumentDescriptor`, exposes a deterministic `preferred_socket_lane` classifier, and the live allocator now consumes that metadata during reconcile. The allocator uses descriptor-level identity, preserves consumer route projection, and fails closed when the three-session cap cannot support isolated placement. Exact-head CI and full runtime consumer compatibility remain required before production activation.\n\n## First implementation slice
+## User-locked socket affinity contract
+
+The dedicated three-lane universe is explicitly constrained as follows:
+
+- Lane 0 / Socket 1: NIFTY spot and NIFTY WEEKLY CE/PE options only.
+- Lane 1 / Socket 2: BANKNIFTY spot and BANKNIFTY MONTHLY CE/PE options only.
+- Lane 2 / Socket 3: NIFTY and BANKNIFTY index futures only. No FINNIFTY, MIDCPNIFTY, SENSEX, BANKEX, or other index may be placed on this lane.
+- Other expiry families are not silently coerced into a lane. Classification must come from the instrument-master expiry classifier.
+- Preferred lane metadata is distinct from temporary failover placement. Any failover implementation must retain the preferred lane and restore it only after a stable recovery window.
+
+The source carries `expiry_type` through `InstrumentDescriptor`, exposes a deterministic `preferred_socket_lane` classifier, and the live allocator now consumes that metadata during reconcile. The allocator uses descriptor-level identity, preserves consumer route projection, and fails closed when the three-session cap cannot support isolated placement. Exact-head CI and full runtime consumer compatibility remain required before production activation.
+
+## First implementation slice
 
 Enable the existing bounded per-shard asynchronous callback adapter only for the process-wide shared manager. Keep the generic `CommonWebSocketManager` default synchronous for direct tests and compatibility. This moves normalization, cache publication, and strategy callbacks off the SDK transport callback thread without changing strategy calculations.
 
@@ -30,6 +42,19 @@ Acceptance:
 - Add deterministic regression coverage for the production singleton configuration.
 - Run backend CI on the exact PR head before any merge decision.
 
+## Pre-merge completion ledger — 2026-11-25
+
+This ledger prevents implemented foundations from being confused with the remaining acceptance work.
+
+| Workstream | Current evidence | Still required before merge |
+|---|---|---|
+| Three locked socket lanes | Descriptor-level affinity, consumer route projection, global three-session cap, same-lane recovery and deterministic regression coverage are present. | Final exact-head CI; prove all active consumer universes fit the locked three-session budget without hidden fourth groups. |
+| Transport liveness | Transport thread, ping/pong, raw-frame, exchange-timestamp, subscription response/rejection, successful route and consumer-delivery health are separately exposed; bounded SDK operations and recovery supervision exist. | Fault-injection coverage for API/DNS/TLS/half-open/slow SDK cases and verify no false LIVE under each failure. |
+| Canonical data pool | Canonical MarketDataRecord, bounded latest-snapshot cache, TTL/LRU limits, timestamp regression guards and warm replay exist. | Verify source exchange time versus local receive time is explicit end-to-end for every active provider; add/confirm cache pressure and malformed-data acceptance tests. |
+| Direct socket ownership | Confirmed application startup paths use the shared manager for active Box Spread, IV, Synthetic, Calendar and Cash-Future adapters. | Resolve whether the legacy two-socket Cash-Future collector and generic engine fallback have any external/manual runtime callers; do not remove them on search absence alone. |
+| Fault injection / soak | Deterministic unit and integration regressions cover generation races, simultaneous lane recovery, delayed events, queue overflow, shutdown fencing and route preservation. | Complete transport fault matrix and representative soak with latency/memory/queue high-water evidence. |
+
+A full backend pass is necessary but does not by itself satisfy the transport fault matrix, direct-owner inventory, or Cloudflare build gate. No item is marked complete without exact evidence. Cloudflare's failed build log remains external to the available GitHub connection and must be inspected in its dashboard before merge.
 ## Remaining implementation phases
 
 1. **Three-lane ownership and distribution**
