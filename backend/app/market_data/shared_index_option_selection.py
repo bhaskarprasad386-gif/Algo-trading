@@ -6,18 +6,50 @@ windows. It is data-only and deliberately does not create broker connections.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
+from functools import lru_cache
 from typing import Any, Iterable
+
+
+_MONTH_NUMBERS = {
+    "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+    "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+}
+
+
+@lru_cache(maxsize=512)
+def _parse_expiry_text(text: str) -> date:
+    """Parse normalized master expiries without the process-global _strptime lock."""
+    if len(text) == 10 and text[4] == "-":
+        return date.fromisoformat(text)
+
+    for year_width in (4, 2):
+        if len(text) < year_width + 4:
+            continue
+        day_text = text[: -(year_width + 3)]
+        month_text = text[-(year_width + 3) : -year_width]
+        year_text = text[-year_width:]
+        if (
+            len(day_text) in {1, 2}
+            and day_text.isdigit()
+            and month_text in _MONTH_NUMBERS
+            and year_text.isdigit()
+        ):
+            year = int(year_text)
+            if year_width == 2:
+                # Match datetime.strptime("%y")'s documented 1969/2068 pivot.
+                year += 2000 if year <= 68 else 1900
+            return date(year, _MONTH_NUMBERS[month_text], int(day_text))
+
+    raise ValueError("unsupported expiry format")
 
 
 def _parse_expiry(value: object) -> date:
     text = str(value or "").strip().upper()
-    for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
-    raise ValueError(f"invalid expiry: {value!r}")
+    try:
+        return _parse_expiry_text(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid expiry: {value!r}") from exc
 
 
 def _strike(value: object) -> float:
