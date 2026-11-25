@@ -163,6 +163,7 @@ class SharedIndexFeedLifecycle:
             or d.segment.strip().upper() != "NSE"
             or d.key.exchange.strip().upper() != "NSE"
             or d.key.segment.strip().upper() != "NSE"
+            or d.symbol.strip().upper() != d.underlying.strip().upper()
             for d in items
         ):
             raise ValueError("spot descriptors must be NSE index instruments")
@@ -221,7 +222,15 @@ class SharedIndexFeedLifecycle:
         items = self._validated_descriptors(descriptors)
         if len(items) != 2 or {d.underlying for d in items} != {"NIFTY", "BANKNIFTY"}:
             raise ValueError("futures subscription must be exactly NIFTY and BANKNIFTY")
-        if any(d.instrument_type != "future" or d.exchange.strip().upper() != "NFO" or d.segment.strip().upper() != "NFO" or not d.expiry for d in items):
+        if any(
+            d.instrument_type != "future"
+            or d.exchange.strip().upper() != "NFO"
+            or d.segment.strip().upper() != "NFO"
+            or d.key.exchange.strip().upper() != "NFO"
+            or d.key.segment.strip().upper() != "NFO"
+            or not d.expiry
+            for d in items
+        ):
             raise ValueError("futures descriptors must be valid NFO index futures with expiry")
         with self._lock:
             if self._futures_started:
@@ -247,8 +256,15 @@ class SharedIndexFeedLifecycle:
         items = self._validated_descriptors(descriptors)
         if len(items) != 2 or {d.underlying for d in items} != {"NIFTY", "BANKNIFTY"}:
             raise ValueError("futures subscription must be exactly NIFTY and BANKNIFTY")
-        if any(d.instrument_type != "future" or d.exchange.strip().upper() != "NFO"
-               or d.segment.strip().upper() != "NFO" or not d.expiry for d in items):
+        if any(
+            d.instrument_type != "future"
+            or d.exchange.strip().upper() != "NFO"
+            or d.segment.strip().upper() != "NFO"
+            or d.key.exchange.strip().upper() != "NFO"
+            or d.key.segment.strip().upper() != "NFO"
+            or not d.expiry
+            for d in items
+        ):
             raise ValueError("futures descriptors must be valid NFO index futures with expiry")
         new_keys = tuple(d.key for d in items)
         with self._lock:
