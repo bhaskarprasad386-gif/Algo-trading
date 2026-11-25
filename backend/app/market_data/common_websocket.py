@@ -18,7 +18,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from .contracts import InstrumentKey
-from .registry import InstrumentRegistry, Subscription
+from .registry import InstrumentDescriptor, InstrumentRegistry, Subscription
 from .shared_cache import put_market_data_record
 from .normalizer import AngelOneTickNormalizer
 from .angel_callback_dispatch import AngelShardCallbackAdapter, CallbackInvocation
@@ -518,12 +518,19 @@ class CommonWebSocketManager:
             tuple[int, tuple[int, str]], set[InstrumentDescriptor]
         ] = defaultdict(set)
         for sub in self.registry.subscriptions():
-            descriptor = self.registry.get(sub.key)
+            # snapshot() is also used by diagnostics during recovery. Keep it
+            # readable when a test double or partially initialized registry
+            # exposes a placeholder instead of a complete Subscription.
+            key = getattr(sub, "key", None)
+            mode = getattr(sub, "mode", None)
+            if key is None or mode is None:
+                continue
+            descriptor = self.registry.get(key)
             if descriptor is None:
                 continue
-            exchange_type = self._resolve_exchange_type(sub.key)
-            pair = (exchange_type, sub.key.token.strip())
-            identity = (sub.mode, pair)
+            exchange_type = self._resolve_exchange_type(key)
+            pair = (exchange_type, str(key.token).strip())
+            identity = (mode, pair)
             affinity_by_pair[identity].add(descriptor.preferred_socket_lane)
             descriptors_by_pair[identity].add(descriptor)
 
