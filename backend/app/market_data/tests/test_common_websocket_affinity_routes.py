@@ -358,6 +358,7 @@ def test_same_broker_pair_with_locked_and_unclassified_descriptors_fails_closed(
             assert "ambiguous broker token affinity" in str(exc)
         else:
             raise AssertionError("ambiguous broker token identity must fail closed")
-        assert manager.snapshot()["socket_groups"] <= 1
+        assert len(manager._sockets) == 1
+        assert manager._route_index == {SocketGroup(3, 0): {(2, locked.key.token): [("locked-owner", locked.key)]}}
     finally:
         manager.close()
