@@ -40,11 +40,15 @@ export default function HomePage() {
   const [runtimeServerTimestamp, setRuntimeServerTimestamp] = useState<string | null>(null);
   const [runtimeServerTimestampReceivedAt, setRuntimeServerTimestampReceivedAt] = useState<number | null>(null);
   const [runnerLastActivity, setRunnerLastActivity] = useState<Record<string, number>>({});
+  const [sharedRunner, setSharedRunner] = useState<any>(null);
+  const [sharedRunnerLastSuccessAt, setSharedRunnerLastSuccessAt] = useState<number | null>(null);
+  const [sharedRunnerFetchFailed, setSharedRunnerFetchFailed] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [diagnosticErrors, setDiagnosticErrors] = useState<any[]>([]);
   const [diagnosticCount, setDiagnosticCount] = useState(0);
   const [diagnosticsLastSuccessAt, setDiagnosticsLastSuccessAt] = useState<number | null>(null);
   const [diagnosticsFetchFailed, setDiagnosticsFetchFailed] = useState(false);
+  const [diagnosticsApiReachable, setDiagnosticsApiReachable] = useState<boolean | null>(null);
   const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([]);
 
   useEffect(() => {
@@ -409,27 +413,59 @@ export default function HomePage() {
     let timer: number | undefined;
     const loadDiagnosticErrors = async () => {
       try {
-        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-        const response = await fetch(base + "/api/v1/diagnostics/errors?limit=50", { cache: "no-store", signal: AbortSignal.timeout(1600) });
-        if (!response.ok) throw new Error("diagnostics");
+        const response = await fetch("/server-diagnostics/api/errors?limit=100", {
+          cache: "no-store",
+          signal: AbortSignal.timeout(2500),
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) throw new Error("independent diagnostics collector unavailable");
         const body = await response.json();
         if (!body || typeof body !== "object" || !Array.isArray(body.errors)) throw new Error("diagnostics schema incomplete");
         if (!cancelled) {
           setDiagnosticsLastSuccessAt(Date.now());
           setDiagnosticsFetchFailed(false);
-          setDiagnosticErrors(Array.isArray(body?.errors) ? body.errors : []);
-          setDiagnosticCount(Number.isFinite(Number(body?.count)) ? Number(body.count) : (Array.isArray(body?.errors) ? body.errors.length : 0));
+          setDiagnosticsApiReachable(body.api_process_reachable === true);
+          setDiagnosticErrors(body.errors);
+          setDiagnosticCount(Number.isFinite(Number(body.count)) ? Number(body.count) : body.errors.length);
         }
       } catch {
         if (!cancelled) setDiagnosticsFetchFailed(true);
-        // Do not manufacture a fake runtime error when the diagnostic endpoint is unavailable.
+        // Keep last successful server events when either the API or collector route is unavailable.
       } finally {
-        if (!cancelled) timer = window.setTimeout(() => { void loadDiagnosticErrors(); }, 2000);
+        if (!cancelled) timer = window.setTimeout(() => { void loadDiagnosticErrors(); }, 5000);
       }
     };
     void loadDiagnosticErrors();
     return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const loadSharedRunner = async () => {
+      try {
+        const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+        const response = await fetch(base + "/api/v1/market-data/shared-index-runner/health", {
+          cache: "no-store",
+          signal: AbortSignal.timeout(3000),
+        });
+        if (!response.ok) throw new Error("shared runner health unavailable");
+        const body = await response.json();
+        if (!cancelled && body && typeof body === "object") {
+          setSharedRunner(body);
+          setSharedRunnerLastSuccessAt(Date.now());
+          setSharedRunnerFetchFailed(false);
+        }
+      } catch {
+        if (!cancelled) setSharedRunnerFetchFailed(true);
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => { void loadSharedRunner(); }, 5000);
+      }
+    };
+    void loadSharedRunner();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
+  }, []);
+
 
 
   const apiLabel = apiStatus === "connected" ? "CONNECTED" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" ? "ERROR" : "CONNECTING";
