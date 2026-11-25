@@ -744,11 +744,11 @@ def test_stop_waits_for_inflight_option_rotation_then_clears_all_owner_keys():
 
 
 
+
 def test_spot_start_rejects_non_index_or_wrong_exchange_descriptors_before_registry_mutation():
-    manager = CommonWebSocketManager()
+    manager = StubManager()
     lifecycle = SharedIndexFeedLifecycle(manager=manager)
-    nifty = descriptor("NIFTY", token="SPOT-WRONG-KIND")
-    bank = descriptor("BANKNIFTY", token="SPOT-WRONG-EXCHANGE")
+    nifty, bank = _spot_descriptors()
     wrong_kind = replace(nifty, instrument_type="future")
     wrong_exchange = replace(
         bank,
@@ -763,4 +763,3 @@ def test_spot_start_rejects_non_index_or_wrong_exchange_descriptors_before_regis
     assert manager.registry.subscriptions() == ()
     assert manager.registry.get(wrong_kind.key) is None
     assert manager.registry.get(wrong_exchange.key) is None
-    manager.close()
