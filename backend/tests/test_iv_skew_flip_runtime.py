@@ -792,6 +792,49 @@ def test_production_feed_manager_injection_isolates_all_iv_consumers_on_one_mode
 
 
 
+def test_nifty_weekly_and_banknifty_monthly_keep_tomorrows_expiry_then_roll_after_close(monkeypatch):
+    import app.scanner.iv_skew_flip.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "IVOneSecondSampler", FakeSampler)
+    now = {"value": datetime(2026, 11, 23, 15, 31, tzinfo=IST)}
+    rows = (
+        make_rows("NIFTY", "24NOV2026", 100, 10)
+        + make_rows("NIFTY", "26NOV2026", 100, 10)
+        + make_rows("NIFTY", "03DEC2026", 100, 10)
+        + make_rows("NIFTY", "31DEC2026", 100, 10)
+        + make_rows("BANKNIFTY", "24NOV2026", 200, 100)
+        + make_rows("BANKNIFTY", "29DEC2026", 200, 100)
+    )
+    created = {}
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster(rows),
+        spot_feed=FakeSpotFeed(),
+        option_feed_factory=lambda stream_id: created.setdefault(
+            stream_id, FakeOptionFeed(stream_id)
+        ),
+        clock_ns=lambda: 10_000_000_000,
+        clock_datetime=lambda: now["value"],
+    )
+    runtime._rows_by_stream = {
+        stream_id: runtime._rows_for_symbol(rows, config.symbol)
+        for stream_id, config in CHAIN_CONFIGS
+    }
+
+    # It is already after 15:30 on the prior day; tomorrow's listed expiries
+    # must remain selected for both independently configured chains.
+    runtime.refresh_once()
+    assert created["NIFTY_WEEKLY"].universe.expiry == "2026-11-24"
+    assert created["BANKNIFTY_MONTHLY"].universe.expiry == "2026-11-24"
+
+    # After each actual expiry day closes, both streams move to their next
+    # eligible expiry; NIFTY remains weekly while BANKNIFTY remains monthly.
+    now["value"] = datetime(2026, 11, 24, 15, 31, tzinfo=IST)
+    runtime.refresh_once()
+    assert created["NIFTY_WEEKLY"].universe.expiry == "2026-12-03"
+    assert created["BANKNIFTY_MONTHLY"].universe.expiry == "2026-12-29"
+    runtime.stop()
+
+
 def test_expiry_selection_does_not_skip_tomorrows_expiry_after_1530():
     before_expiry_day_close = datetime(2026, 11, 16, 15, 31, tzinfo=IST)
     before_expiry_close = datetime(2026, 11, 17, 15, 29, 59, tzinfo=IST)
