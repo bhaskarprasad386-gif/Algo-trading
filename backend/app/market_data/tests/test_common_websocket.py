@@ -2570,6 +2570,8 @@ def test_old_recovery_ack_cannot_clear_newer_failure_for_same_socket_lane():
             manager._acknowledge_pending_failure_locked(group, 12)
             assert manager._failure_recovery_pending_groups == set()
             assert manager._failure_recovery_pending_versions == {}
+    finally:
+        manager.close()
 
 
 def test_old_generation_completion_cannot_clear_newer_same_lane_failure():
