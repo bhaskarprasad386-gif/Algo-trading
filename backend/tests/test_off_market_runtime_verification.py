@@ -198,3 +198,68 @@ def test_offmarket_runtime_workflow_bounds_informational_journal_scan():
 
     assert "timeout 10s journalctl" in workflow
     assert "RECENT_SERVICE_FAULTS=SKIPPED" in workflow
+
+
+
+def test_offmarket_vps_verification_is_intentionally_skipped_for_pull_requests():
+    from pathlib import Path
+
+    workflow = (
+        Path(__file__).resolve().parents[2]
+        / ".github"
+        / "workflows"
+        / "offmarket-runtime-verification.yml"
+    ).read_text()
+
+    assert "verify-vps-runtime:" in workflow
+    assert "if: github.event_name != 'pull_request'" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "schedule:" in workflow
+
+
+def test_offmarket_vps_verification_is_read_only_and_has_no_deploy_or_restart_steps():
+    from pathlib import Path
+
+    workflow = (
+        Path(__file__).resolve().parents[2]
+        / ".github"
+        / "workflows"
+        / "offmarket-runtime-verification.yml"
+    ).read_text()
+
+    remote = workflow.split("REMOTE_SCRIPT=$(cat <<'REMOTE'", 1)[1].split("\n          REMOTE", 1)[0]
+    forbidden = (
+        "systemctl restart",
+        "systemctl stop",
+        "git pull",
+        "git checkout",
+        "alembic upgrade",
+        "DROP TABLE",
+        "DELETE FROM",
+        "INSERT INTO",
+        "UPDATE ",
+        "deploy",
+    )
+    for command in forbidden:
+        assert command.lower() not in remote.lower(), f"unexpected mutating/deploy command: {command}"
+
+    assert "systemctl is-active algo-trading.service" in remote
+    assert "PRAGMA quick_check(1);" in remote
+    assert "journalctl" in remote
+
+
+def test_offmarket_remote_verification_has_one_bounded_ssh_execution():
+    from pathlib import Path
+    import re
+
+    workflow = (
+        Path(__file__).resolve().parents[2]
+        / ".github"
+        / "workflows"
+        / "offmarket-runtime-verification.yml"
+    ).read_text()
+
+    executions = re.findall(r"(?m)^\\s*if printf '%s\\\\n' \\"\\$REMOTE_SCRIPT\\" \\| timeout 150 ssh", workflow)
+    assert len(executions) == 1
+    assert "'timeout 120s bash -s'" in workflow
+    assert "VPS_SSH_ATTEMPT=" not in workflow
