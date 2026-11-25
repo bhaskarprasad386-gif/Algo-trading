@@ -688,6 +688,11 @@ class CommonWebSocketManager:
                         route_index[shard][pair].append((consumer, sub.key))
 
                 self._route_index = {group: dict(tokens) for group, tokens in route_index.items()}
+                active_instrument_keys = {sub.key for sub in self.registry.subscriptions()}
+                # Retain timestamp high-water marks only for active contracts;
+                # a long-running scanner must not accumulate every expired token.
+                for inactive_key in self._latest_provider_timestamp_ns_by_instrument.keys() - active_instrument_keys:
+                    self._latest_provider_timestamp_ns_by_instrument.pop(inactive_key, None)
                 existing = dict(self._sockets)
                 previous_tokens = {group: set(tokens) for group, tokens in self._socket_tokens.items()}
 
