@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import tempfile
@@ -69,11 +70,10 @@ class InstrumentMaster:
         path = cls._disk_cache_path()
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            if (
-                not isinstance(payload, dict)
-                or type(payload.get("schema_version")) is not int
-                or payload.get("schema_version") != 1
-            ):
+            if not isinstance(payload, dict):
+                return None
+            schema_version = payload.get("schema_version")
+            if type(schema_version) is not int or schema_version not in {1, 2}:
                 return None
             rows = payload.get("instruments")
             fetched_at = payload.get("fetched_at")
@@ -89,6 +89,16 @@ class InstrumentMaster:
                 )
             ):
                 return None
+            if schema_version == 2:
+                expected_digest = str(payload.get("content_sha256", "")).lower()
+                actual_digest = hashlib.sha256(
+                    json.dumps(
+                        rows, sort_keys=True, separators=(",", ":"),
+                        ensure_ascii=False, allow_nan=False,
+                    ).encode("utf-8")
+                ).hexdigest()
+                if len(expected_digest) != 64 or expected_digest != actual_digest:
+                    return None
             fetched = datetime.fromisoformat(str(fetched_at).replace("Z", "+00:00"))
             if fetched.tzinfo is None:
                 fetched = fetched.replace(tzinfo=timezone.utc)
@@ -100,11 +110,18 @@ class InstrumentMaster:
             return None
 
     @classmethod
-    def _write_disk_snapshot(cls, rows: List[Dict[str, Any]]) -> None:
+    def _write_disk_snapshot(
+        cls, rows: List[Dict[str, Any]], fetched_at: Optional[datetime] = None
+    ) -> None:
         path = cls._disk_cache_path()
+        canonical = json.dumps(
+            rows, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
         payload = {
-            "schema_version": 1,
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "schema_version": 2,
+            "fetched_at": (fetched_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
+            "content_sha256": hashlib.sha256(canonical).hexdigest(),
             "instruments": rows,
         }
         temp_name = None
