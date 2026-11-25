@@ -18,6 +18,10 @@ class IVEarlyEntryAlertEngine:
             "BANKNIFTY": SourceMinuteAggregator(retention_minutes=retention_minutes),
         }
         self._last_results: dict[str, dict[str, Any]] = {}
+        # Restore durable history once per underlying for the first authoritative
+        # WebSocket snapshot after a process restart, even before a new signal.
+        self._history_loaded: set[str] = set()
+        self._history_retry_after: dict[str, float] = {}
 
     def evaluate(
         self, *, sampler: Any, spot: Any, expiry: str, now: datetime, now_ns: int,
@@ -188,10 +192,33 @@ class IVEarlyEntryAlertEngine:
         if symbol not in self.aggregators:
             raise ValueError("early-entry alerts support only NIFTY and BANKNIFTY")
         stream_id = "NIFTY_WEEKLY" if symbol == "NIFTY" else "BANKNIFTY_MONTHLY"
-        return dict(self._last_results.get(stream_id, {
+        result = dict(self._last_results.get(stream_id, {
             "state": "WATCH", "underlying": symbol,
             "signals_allowed": False, "reason": "NOT_EVALUATED",
         }))
+        if symbol not in self._history_loaded:
+            from time import monotonic
+            if monotonic() >= self._history_retry_after.get(symbol, 0.0):
+                latest = getattr(self.store, "latest", None)
+                if not callable(latest):
+                    self._history_loaded.add(symbol)
+                else:
+                    try:
+                        recovered = latest(limit=30, underlying=symbol)
+                    except Exception as exc:
+                        # History recovery is observational; retry at a bounded cadence.
+                        result["history_recovery"] = "RETRY_PENDING"
+                        result["history_recovery_error"] = type(exc).__name__
+                        self._history_retry_after[symbol] = monotonic() + 5.0
+                    else:
+                        result["alerts"] = recovered
+                        result["history_recovery"] = "RESTORED"
+                        self._history_loaded.add(symbol)
+                        self._history_retry_after.pop(symbol, None)
+                        self._last_results[stream_id] = dict(result)
+            else:
+                result["history_recovery"] = "RETRY_PENDING"
+        return result
 
     def snapshot_all(self) -> dict[str, dict[str, Any]]:
         return {"NIFTY": self.snapshot("NIFTY"), "BANKNIFTY": self.snapshot("BANKNIFTY")}
