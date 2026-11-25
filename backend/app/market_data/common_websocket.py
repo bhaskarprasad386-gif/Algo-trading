@@ -779,6 +779,7 @@ class CommonWebSocketManager:
                         not connecting or connect_timed_out
                     ) and not connect_pending
                     if disconnected:
+                        retired_generation = self._socket_generation_counter.get(group, 0)
                         with self._lock:
                             if self._sockets.get(group) is socket:
                                 self._sockets.pop(group, None)
@@ -793,11 +794,12 @@ class CommonWebSocketManager:
                                 # Retirement is also a recovery lifecycle: block a
                                 # replacement while the old transport is still closing.
                                 self._failure_recovery_groups.add(group)
-                        def _resume_after_retired_close(retired_group=group):
+                                self._failure_recovery_generation_by_group[group] = retired_generation
+                        def _resume_after_retired_close(retired_group=group, failed_generation=retired_generation):
                             try:
                                 with self._reconcile_lock:
                                     with self._lock:
-                                        self._failure_recovery_groups.discard(retired_group)
+                                        self._clear_failure_recovery_group_locked(retired_group, failed_generation)
                                     self._reconcile()
                             except Exception as exc:
                                 app_logger.warning(
@@ -806,7 +808,7 @@ class CommonWebSocketManager:
                                 )
                         close_worker = self._close_socket_tracked(
                             socket, group=group,
-                            generation=self._socket_generation_counter.get(group),
+                            generation=retired_generation,
                             reason="reconcile_disconnected",
                             on_finished=_resume_after_retired_close,
                         )
@@ -814,7 +816,7 @@ class CommonWebSocketManager:
                         if close_worker.is_alive():
                             continue
                         with self._lock:
-                            self._failure_recovery_groups.discard(group)
+                            self._clear_failure_recovery_group_locked(group, retired_generation)
                 if socket is None:
                     # A timed-out close on any retired shard may still occupy
                     # one of Angel's global sessions. Do not open a replacement
@@ -1069,6 +1071,7 @@ class CommonWebSocketManager:
                     )
                     if is_current:
                         self._failure_recovery_groups.add(group)
+                        self._failure_recovery_generation_by_group[group] = generation
                         self._sockets.pop(group, None)
                         self._socket_tokens.pop(group, None)
                         self._socket_created_at.pop(group, None)
@@ -1102,12 +1105,12 @@ class CommonWebSocketManager:
                         group, type(exc).__name__, exc,
                     )
                 if is_current:
-                    def _resume_after_connect_failure(failed_group=group):
+                    def _resume_after_connect_failure(failed_group=group, failed_generation=generation):
                         # This callback can run while _reconcile is waiting for
                         # the connect result; don't acquire its lock or deadlock
                         # the caller that must receive the original exception.
                         with self._lock:
-                            self._failure_recovery_groups.discard(failed_group)
+                            self._clear_failure_recovery_group_locked(failed_group, failed_generation)
                     close_worker = self._close_socket_tracked(
                         socket, group=group, generation=generation, reason="connect_failure",
                         on_finished=_resume_after_connect_failure, timeout=0.1,
@@ -1459,16 +1462,18 @@ class CommonWebSocketManager:
                 self._socket_generation.pop(group, None)
 
         if is_current:
+            failed_generation = self._socket_generation_counter.get(group, 0)
             with self._lock:
                 self._failure_recovery_groups.add(group)
-            def _resume_after_operation_close(failed_group=group):
+                self._failure_recovery_generation_by_group[group] = failed_generation
+            def _resume_after_operation_close(failed_group=group, operation_generation=failed_generation):
                 # The current reconcile caller owns _reconcile_lock here; only
                 # clear the state marker and let the caller unwind on the error.
                 with self._lock:
-                    self._failure_recovery_groups.discard(failed_group)
+                    self._clear_failure_recovery_group_locked(failed_group, operation_generation)
             close_worker = self._close_socket_tracked(
                 socket, group=group,
-                generation=self._socket_generation_counter.get(group),
+                generation=failed_generation,
                 reason=f"socket_{operation_name}_failure",
                 on_finished=_resume_after_operation_close,
             )
