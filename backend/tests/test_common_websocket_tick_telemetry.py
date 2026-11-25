@@ -1,8 +1,20 @@
-from types import SimpleNamespace
-
 from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
-from app.market_data.contracts import InstrumentKey
+from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
 from app.market_data.registry import InstrumentDescriptor
+
+
+
+def _normalized_record(key, symbol="TEST", *, ltp=101.5, bid=101.4, ask=101.6):
+    """Return the canonical normalizer contract used by production fan-out."""
+    return MarketDataRecord(
+        instrument=key,
+        symbol=symbol,
+        instrument_type=InstrumentType.EQUITY,
+        timestamp_ns=123456789,
+        ltp=ltp,
+        bid=bid,
+        ask=ask,
+    )
 
 
 def test_common_feed_tracks_in_memory_tick_telemetry_without_persistence():
@@ -19,9 +31,7 @@ def test_common_feed_tracks_in_memory_tick_telemetry_without_persistence():
     # Model an active socket generation as the production connect callback does.
     manager._sockets[group] = object()
     manager._socket_generation[group] = 1
-    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
-        instrument=key, symbol="TEST", timestamp_ns=123456789, ltp=101.5, bid=101.4, ask=101.6,
-    )
+    manager._normalizer.normalize = lambda _descriptor, _message: _normalized_record(key)
 
     manager.register_normalized_callback("test", lambda _record: None)
 
@@ -48,9 +58,7 @@ def test_angel_normalized_observer_receives_generation_but_auth_fails_closed():
     manager._route_index = {group: {(1, "123"): [("observer", key)]}}
     manager._sockets[group] = object()
     manager._socket_generation[group] = 9
-    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
-        instrument=key, symbol="TEST", timestamp_ns=123456789, ltp=101.5, bid=101.4, ask=101.6,
-    )
+    manager._normalizer.normalize = lambda _descriptor, _message: _normalized_record(key)
     observed = []
     manager.register_normalized_observer("observer", lambda *args: observed.append(args))
 
@@ -110,9 +118,7 @@ def test_angel_observer_failure_does_not_break_legacy_normalized_callback():
     manager._route_index = {group: {(1, "123"): [("legacy", key), ("observer", key)]}}
     manager._sockets[group] = object()
     manager._socket_generation[group] = 2
-    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
-        instrument=key, symbol="TEST", timestamp_ns=123456789, ltp=101.5, bid=101.4, ask=101.6,
-    )
+    manager._normalizer.normalize = lambda _descriptor, _message: _normalized_record(key)
     delivered = []
     manager.register_normalized_callback("legacy", delivered.append)
     manager.register_normalized_observer("observer", lambda *_: (_ for _ in ()).throw(RuntimeError("observer fault")))
@@ -137,9 +143,7 @@ def test_angel_observer_keeps_all_legacy_consumers_on_same_instrument():
     manager._route_index = {group: {(1, "123"): [("first", key), ("second", key)]}}
     manager._sockets[group] = object()
     manager._socket_generation[group] = 3
-    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
-        instrument=key, symbol="TEST", timestamp_ns=123456789, ltp=101.5, bid=101.4, ask=101.6,
-    )
+    manager._normalizer.normalize = lambda _descriptor, _message: _normalized_record(key)
     first, second = [], []
     manager.register_normalized_callback("first", first.append)
     manager.register_normalized_callback("second", second.append)
@@ -166,10 +170,7 @@ def test_angel_observer_only_consumer_is_a_valid_route_and_can_unregister():
     manager._route_index = {group: {(1, "456"): [("observer-only", key)]}}
     manager._sockets[group] = object()
     manager._socket_generation[group] = 4
-    manager._normalizer.normalize = lambda _descriptor, _message: SimpleNamespace(
-        instrument=key, symbol="OBSERVER_ONLY", timestamp_ns=123456789,
-        ltp=10.0, bid=9.9, ask=10.1,
-    )
+    manager._normalizer.normalize = lambda _descriptor, _message: _normalized_record(key, "OBSERVER_ONLY", ltp=10.0, bid=9.9, ask=10.1)
     observed = []
     manager.register_normalized_observer("observer-only", lambda *args: observed.append(args))
 
