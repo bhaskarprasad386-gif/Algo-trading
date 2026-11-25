@@ -1136,3 +1136,33 @@ def test_banknifty_telegram_alert_is_identified_as_monthly_pilot(monkeypatch):
     assert "test-chat" == captured["body"]["chat_id"]
     assert captured["timeout"] == 5
 
+
+
+def test_broker_snapshot_readiness_waits_for_each_chain_and_spot_independently():
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: datetime(2026, 11, 25, 10, 0, tzinfo=IST),
+    )
+    runtime._started = True
+
+    assert runtime.broker_snapshot_ready("NIFTY_WEEKLY") is False
+    assert runtime.broker_snapshot_ready("BANKNIFTY_MONTHLY") is False
+    assert runtime.broker_snapshot_ready("NIFTY_MONTHLY") is False
+
+    nifty = FakeOptionFeed("NIFTY_WEEKLY")
+    nifty.universe = type("Universe", (), {"underlying": "NIFTY"})()
+    runtime._option_feeds["NIFTY_WEEKLY"] = nifty
+    assert runtime.broker_snapshot_ready("NIFTY_WEEKLY") is True
+    assert runtime.broker_snapshot_ready("BANKNIFTY_MONTHLY") is False
+
+    bank = FakeOptionFeed("BANKNIFTY_MONTHLY")
+    bank.universe = type("Universe", (), {"underlying": "BANKNIFTY"})()
+    runtime._option_feeds["BANKNIFTY_MONTHLY"] = bank
+    assert runtime.broker_snapshot_ready("BANKNIFTY_MONTHLY") is True
+
+    runtime._stopping = True
+    assert runtime.broker_snapshot_ready("BANKNIFTY_MONTHLY") is False
+    runtime._stopping = False
+    runtime._started = False
+    assert runtime.broker_snapshot_ready("BANKNIFTY_MONTHLY") is False

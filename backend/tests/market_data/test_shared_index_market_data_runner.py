@@ -717,3 +717,92 @@ def test_partial_master_refresh_is_rejected_and_last_good_rows_preserved():
     assert runner._master_refresh_error is not None
     assert "FUTIDX" in runner._master_refresh_error or "LookupError" in runner._master_refresh_error
     runner.stop()
+
+
+def test_real_common_manager_keeps_locked_runner_on_exactly_three_socket_lanes():
+    from app.market_data.common_websocket import CommonWebSocketManager
+
+    class Socket:
+        def __init__(self):
+            self.connected = False
+            self.connecting = False
+            self.closed = False
+        def connect(self, **_kwargs):
+            self.connected = True
+            self.connecting = False
+        def subscribe_groups(self, _groups, mode=None):
+            return None
+        def unsubscribe_groups(self, _groups):
+            return None
+        def close(self):
+            self.closed = True
+            self.connected = False
+
+    rows = _rows()
+    manager = CommonWebSocketManager(socket_factory=Socket)
+    runner = SharedIndexMarketDataRunner(
+        instrument_master=FakeMaster(rows),
+        manager=manager,
+    )
+    try:
+        started = runner.start(rows)
+        assert started["enabled"] is True
+
+        # Spot + futures startup must reserve exactly the three physical lanes;
+        # the first spot ticks then attach both option families without creating
+        # another socket or allowing a fourth lane.
+        initial_snapshot = manager.snapshot()
+        assert initial_snapshot["socket_groups"] == 3
+        assert initial_snapshot["required_socket_groups"] == ["3:0", "3:1", "3:2"]
+        spot_callback = manager._record_callbacks[runner.lifecycle.SPOT_CONSUMER]
+        import time
+        spot_callback(MarketDataRecord(
+            instrument=InstrumentKey("NSE", "NSE", "99001"),
+            symbol="NIFTY", instrument_type=InstrumentType.INDEX,
+            timestamp_ns=time.time_ns(), ltp=22000.0, underlying="NIFTY",
+        ))
+        spot_callback(MarketDataRecord(
+            instrument=InstrumentKey("NSE", "NSE", "99002"),
+            symbol="BANKNIFTY", instrument_type=InstrumentType.INDEX,
+            timestamp_ns=time.time_ns(), ltp=48000.0, underlying="BANKNIFTY",
+        ))
+
+        snapshot = manager.snapshot()
+        assert snapshot["socket_groups"] == 3
+        assert snapshot["required_socket_groups"] == ["3:0", "3:1", "3:2"]
+        assert snapshot["required_socket_group_count"] == 3
+        assert snapshot["missing_socket_groups"] == []
+        assignments = manager._shard_assignments[3]
+        roster_rows = snapshot["subscription_roster"]
+        roster = {
+            (row["instrument_type"], row["underlying"]): row["socket_group"]
+            for row in roster_rows
+        }
+        assert assignments[(1, "99001")] == 0
+        assert assignments[(1, "99002")] == 1
+        assert roster[("index", "NIFTY")] == "3:0"
+        assert roster[("index", "BANKNIFTY")] == "3:1"
+        assert all(
+            row["socket_group"] == "3:0"
+            for row in manager.snapshot()["subscription_roster"]
+            if row["instrument_type"] == "option" and row["underlying"] == "NIFTY"
+        )
+        assert all(
+            row["socket_group"] == "3:1"
+            for row in manager.snapshot()["subscription_roster"]
+            if row["instrument_type"] == "option" and row["underlying"] == "BANKNIFTY"
+        )
+        futures_rows = [row for row in roster_rows if row["instrument_type"] == "future"]
+        assert len(futures_rows) == 2
+        assert {row["underlying"] for row in futures_rows} == {"NIFTY", "BANKNIFTY"}
+        assert all(row["socket_group"] == "3:2" for row in futures_rows)
+        # Lane 2 is futures-only; no spot or option may leak into that socket.
+        assert all(
+            row["instrument_type"] == "future"
+            for row in roster_rows if row["socket_group"] == "3:2"
+        )
+        assert {row["socket_group"] for row in roster_rows} == {"3:0", "3:1", "3:2"}
+        assert snapshot["max_socket_sessions"] == 3
+    finally:
+        runner.stop()
+        manager.close()

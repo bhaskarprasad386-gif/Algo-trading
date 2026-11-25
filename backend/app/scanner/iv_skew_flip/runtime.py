@@ -1076,16 +1076,33 @@ class IVSkewFlipRuntime:
             if delay == 0.0 and monotonic() - next_run > self.refresh_seconds:
                 next_run = monotonic()
 
+    def broker_snapshot_ready(self, stream_id: str = "NIFTY_WEEKLY") -> bool:
+        """Return whether one active chain and its spot are ready for broker snapshot capture."""
+        key = str(stream_id or "").strip().upper()
+        if key not in {item[0] for item in ACTIVE_CHAIN_CONFIGS}:
+            return False
+        with self._lock:
+            if not self._started or self._stopping:
+                return False
+            feed = self._option_feeds.get(key)
+        if feed is None or feed.resolved_universe() is None:
+            return False
+        universe = feed.resolved_universe()
+        return self.spot_feed.last_spot_snapshot(universe.underlying) is not None
+
     def broker_snapshot_context(self, stream_id: str = "NIFTY_WEEKLY") -> tuple[Any, Any]:
         """Return the active IV universe and last spot observation for broker snapshots."""
+        key = str(stream_id or "").strip().upper()
         with self._lock:
-            feed = self._option_feeds.get(str(stream_id).strip().upper())
+            feed = self._option_feeds.get(key)
         if feed is None:
-            raise RuntimeError(f"IV option feed {stream_id} is not initialized")
+            raise RuntimeError(f"IV option feed {key} is not initialized")
         universe = feed.resolved_universe()
         if universe is None:
-            raise RuntimeError(f"IV option universe {stream_id} is not resolved")
+            raise RuntimeError(f"IV option universe {key} is not resolved")
         spot = self.spot_feed.last_spot_snapshot(universe.underlying)
+        if spot is None:
+            raise RuntimeError(f"IV spot feed {universe.underlying} is not ready for broker snapshot")
         return universe, spot
 
     def snapshot(self) -> dict[str, Any]:

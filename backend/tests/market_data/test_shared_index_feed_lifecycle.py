@@ -783,3 +783,52 @@ def test_futures_start_rejects_non_nfo_instrument_key_before_registry_mutation()
     assert manager.registry.subscriptions() == ()
     assert manager.registry.get(invalid.key) is None
     assert manager.registry.get(bank.key) is None
+
+
+def test_resolved_locked_spot_descriptors_attach_to_shared_lifecycle_end_to_end():
+    from app.market_data.shared_index_spot_resolver import resolve_locked_index_spot_descriptors
+
+    class Master:
+        def resolve_index_instrument(self, symbol, exchange):
+            assert exchange == "NSE"
+            return {
+                "NIFTY": {"token": "99001", "symbol": ""},
+                "BANKNIFTY": {"token": "99002", "symbol": "BANK NIFTY"},
+            }[symbol]
+
+    manager = StubManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    descriptors = resolve_locked_index_spot_descriptors(Master())
+
+    keys = lifecycle.start_spot(descriptors)
+
+    assert len(keys) == 2
+    assert set(manager.active[lifecycle.SPOT_CONSUMER]) == set(keys)
+    assert {manager.registry.get(key).symbol for key in keys} == {"NIFTY", "BANKNIFTY"}
+    assert lifecycle.snapshot()["spot_active"] is True
+    lifecycle.stop_spot()
+    assert manager.registry.subscriptions() == ()
+
+
+def test_spot_descriptor_rejection_reports_exact_identity_without_registry_mutation():
+    manager = StubManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    nifty, bank = _spot_descriptors()
+    invalid = replace(
+        bank,
+        symbol="BANK NIFTY",
+        segment="BSE",
+        key=InstrumentKey("NSE", "BSE", bank.key.token),
+    )
+
+    with pytest.raises(ValueError) as error:
+        lifecycle.start_spot((nifty, invalid))
+
+    message = str(error.value)
+    assert "invalid descriptor identities=" in message
+    assert "'symbol': 'BANK NIFTY'" in message
+    assert "'segment': 'BSE'" in message
+    assert "'key_segment': 'BSE'" in message
+    assert manager.registry.subscriptions() == ()
+    assert manager.registry.get(nifty.key) is None
+    assert manager.registry.get(invalid.key) is None

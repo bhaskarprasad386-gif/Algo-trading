@@ -719,7 +719,9 @@ async def lifespan(app: FastAPI):
         _live_calendar_spread_task = asyncio.create_task(_live_calendar_spread_loop())
     if not LIVE_SYNTHETIC_RUNNER_FORCE_DISABLED and settings.LIVE_SYNTHETIC_DATA_ENABLED and _live_synthetic_task is None:
         _live_synthetic_task = asyncio.create_task(_live_synthetic_loop())
-    if settings.LIVE_BOX_SPREAD_DATA_ENABLED and _live_box_spread_task is None:
+    # Box Spread is temporarily excluded from the shared Angel One socket budget.
+    # Keep its routes/history intact, but do not create any Box-owned live subscriptions.
+    if not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED and settings.LIVE_BOX_SPREAD_DATA_ENABLED and _live_box_spread_task is None:
         _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
     paper_rule_task = asyncio.create_task(paper_rule_monitor_loop())
     try:
@@ -1002,6 +1004,8 @@ IST = ZoneInfo("Asia/Kolkata")
 _live_synthetic_task: asyncio.Task | None = None
 # Synthetic Future runner is intentionally disabled; keep its routes/history isolated.
 LIVE_SYNTHETIC_RUNNER_FORCE_DISABLED = True
+# Temporarily keep Box Spread out of the three-session shared index topology.
+LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = True
 _live_box_spread_task: asyncio.Task | None = None
 MARKET_OPEN = time(9, 15)
 
@@ -2717,6 +2721,12 @@ async def _iv_option_snapshot_daily_loop():
                     except Exception:
                         app_logger.exception("IV %s EOD snapshot completion check failed", symbol)
                 if already_saved:
+                    continue
+                stream_id = {"NIFTY": "NIFTY_WEEKLY", "BANKNIFTY": "BANKNIFTY_MONTHLY"}[symbol]
+                # RUNNING is published before each chain's first ATM/expiry
+                # refresh attaches its option feed. Skip quietly during bootstrap
+                # instead of emitting a false failure and consuming retry time.
+                if not runtime.broker_snapshot_ready(stream_id):
                     continue
                 monotonic_now = time_module.monotonic()
                 retry_delay = 15.0 if near_close else (next_delay[symbol] or 300.0)
