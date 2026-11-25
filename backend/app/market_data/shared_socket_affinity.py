@@ -93,13 +93,16 @@ class ConsumerSocketAffinity:
         for descriptor in tuple(descriptors):
             if not isinstance(descriptor, InstrumentDescriptor):
                 raise TypeError("descriptors must contain InstrumentDescriptor values")
+            lane = descriptor.preferred_socket_lane
+            previous_lane = lane_by_key.get(descriptor.key)
+            if descriptor.key in lane_by_key and previous_lane != lane:
+                if previous_lane is not None and lane is not None:
+                    raise ValueError("broker token identity is assigned to conflicting locked lanes")
+                raise ValueError(f"conflicting lane affinity for {descriptor.key.value}")
             previous_descriptor = descriptor_by_key.get(descriptor.key)
             if previous_descriptor is not None and previous_descriptor != descriptor:
                 raise ValueError(f"conflicting descriptors for {descriptor.key.value}")
             descriptor_by_key[descriptor.key] = descriptor
-            lane = descriptor.preferred_socket_lane
-            if descriptor.key in lane_by_key and lane_by_key[descriptor.key] != lane:
-                raise ValueError(f"conflicting lane affinity for {descriptor.key.value}")
             lane_by_key[descriptor.key] = lane
             if lane is None:
                 unassigned_keys.add(descriptor.key)
