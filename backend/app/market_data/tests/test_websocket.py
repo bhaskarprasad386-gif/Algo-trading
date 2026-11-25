@@ -803,3 +803,44 @@ def test_heartbeat_health_diagnostics_distinguish_waiting_timeout_and_stale(monk
     # into broker-accepted or market-data-ready state.
     assert client.health["connected"] is False
     assert client.health["subscription_response_state"] == "NOT_SENT"
+
+
+def test_ping_pong_timeout_is_forwarded_as_transport_failure():
+    forwarded = []
+
+    class TimedOutWebSocketApp:
+        def __init__(self, url, **kwargs):
+            self.callbacks = kwargs
+
+        def run_forever(self, **kwargs):
+            self.callbacks["on_error"](self, TimeoutError("ping/pong timed out"))
+
+    websocket_module.websocket_client.WebSocketApp
+    # The transport helper must surface websocket-client's configured heartbeat
+    # timeout through the SDK's original error callback and fail the handshake.
+    original_factory = websocket_module.websocket_client.WebSocketApp
+    websocket_module.websocket_client.WebSocketApp = TimedOutWebSocketApp
+    sdk_socket = SimpleNamespace(
+        ROOT_URI="wss://smartapisocket.angelone.in/smart-stream",
+        auth_token="jwt",
+        api_key="api-key",
+        client_code="client",
+        feed_token="feed",
+        _on_open=lambda *args: None,
+        _on_error=lambda wsapp, error: forwarded.append(str(error)),
+        _on_close=lambda *args: None,
+        _on_data=lambda *args: None,
+        _on_ping=lambda *args: None,
+        _on_pong=lambda *args: None,
+    )
+    try:
+        try:
+            websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
+        except ConnectionError as exc:
+            assert "ping/pong timed out" in str(exc)
+        else:
+            raise AssertionError("heartbeat timeout must fail the transport handshake")
+    finally:
+        websocket_module.websocket_client.WebSocketApp = original_factory
+
+    assert forwarded == ["ping/pong timed out"]
