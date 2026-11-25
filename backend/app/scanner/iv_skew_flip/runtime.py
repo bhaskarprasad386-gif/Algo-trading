@@ -47,15 +47,14 @@ def _universe_selection_date(now: datetime):
     return selected_date
 
 
-# IV scanner is intentionally running only NIFTY Weekly until explicitly enabled.
-# Keep the complete registry for stable API/UI reporting, but all runtime work
-# (subscriptions, sampling, signals and refresh) uses ACTIVE_CHAIN_CONFIGS only.
+# IV scanner runs the explicitly selected NIFTY Weekly and BANKNIFTY Monthly chains.
+# NIFTY Monthly remains registered for stable API/UI reporting but is not subscribed.
 ALL_CHAIN_CONFIGS = (
     ("NIFTY_WEEKLY", DEFAULT_CONFIGS[0]),
     ("NIFTY_MONTHLY", ScannerConfig("NIFTY", "MONTHLY", 0.8, -0.8)),
     ("BANKNIFTY_MONTHLY", DEFAULT_CONFIGS[1]),
 )
-ACTIVE_CHAIN_CONFIGS = (ALL_CHAIN_CONFIGS[0],)
+ACTIVE_CHAIN_CONFIGS = (ALL_CHAIN_CONFIGS[0], ALL_CHAIN_CONFIGS[2])
 CHAIN_CONFIGS = ALL_CHAIN_CONFIGS
 
 
@@ -233,9 +232,9 @@ class IVSkewFlipRuntime:
         if any(not values for values in rows.values()):
             missing = sorted(stream_id for stream_id, values in rows.items() if not values)
             raise LookupError(f"instrument master has no NFO option contracts for streams {missing}")
-        # Resolve the sole enabled NSE index token before subscribing, so an
+        # Resolve both enabled NSE index tokens before subscribing, so an
         # invalid master cannot leave the runtime half-started.
-        for symbol in ("NIFTY",):
+        for symbol in ("NIFTY", "BANKNIFTY"):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
         # Index-future basis feed is intentionally disabled in NIFTY-Weekly-only mode.
         future_contracts: tuple[Any, ...] = ()
@@ -273,7 +272,7 @@ class IVSkewFlipRuntime:
                     ) from exc
                 raise
         try:
-            self.spot_feed.start(self.instrument_master, ("NIFTY",))
+            self.spot_feed.start(self.instrument_master, ("NIFTY", "BANKNIFTY"))
             if future_contracts:
                 self.future_feed.start(future_contracts)
         except Exception as exc:
@@ -1137,7 +1136,13 @@ class IVSkewFlipRuntime:
                     "error": errors.get("NIFTY_WEEKLY"),
                     "signals": signals.get("NIFTY_WEEKLY"),
                 },
-                "BANKNIFTY": {"status": "DISABLED_BY_SCOPE", "universe_tokens": 0, "signals_allowed": False},
+                "BANKNIFTY": {
+                    "option_feed": feeds["BANKNIFTY_MONTHLY"].snapshot() if "BANKNIFTY_MONTHLY" in feeds else {"status": "WAITING_FOR_SPOT"},
+                    "sampler": samplers["BANKNIFTY_MONTHLY"].snapshot() if "BANKNIFTY_MONTHLY" in samplers else {"status": "WAITING"},
+                    "universe_tokens": len(self._universe_tokens.get("BANKNIFTY_MONTHLY", ())),
+                    "error": errors.get("BANKNIFTY_MONTHLY"),
+                    "signals": signals.get("BANKNIFTY_MONTHLY"),
+                },
             },
             "last_refresh_ns": last_refresh,
             "last_error": errors.get("RUNTIME"),
