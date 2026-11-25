@@ -523,7 +523,7 @@ export default function HomePage() {
     const connected = health?.connected === true && health?.stopping !== true;
     const heartbeat = health?.heartbeat_state ? String(health.heartbeat_state).toUpperCase() : "UNKNOWN";
     const subscriptionRejections = Number(health?.subscription_rejection_count ?? 0);
-    const heartbeatDegraded = /STALE|TIMEOUT|FAILED|ERROR/.test(heartbeat) || health?.transport_close_timed_out === true;
+    const heartbeatDegraded = /STALE|TIMEOUT|FAILED|ERROR|DEGRADED|UNHEALTHY|NO_PONG/.test(heartbeat) || health?.transport_close_timed_out === true;
     const status = !group ? "NOT ASSIGNED" : !health ? "MISSING" : health.stopping ? "STOPPING" : health.connecting ? "CONNECTING" : connected && (heartbeatDegraded || subscriptionRejections > 0) ? "DEGRADED" : connected ? "CONNECTED" : "DISCONNECTED";
     return { label: "SOCKET " + (index + 1), group: group ?? "No required group", status, heartbeat, pongAge: health?.last_pong_age_seconds != null && Number.isFinite(Number(health.last_pong_age_seconds)) ? Number(health.last_pong_age_seconds) : null, reconnects: Number(health?.reconnect_count ?? 0), errors: Number(health?.error_count ?? 0), subscriptionRejections, subscriptions: subscriptions.length, consumers: consumers.slice(0, 3).join(" • ") || "No active consumer roster" };
   });
