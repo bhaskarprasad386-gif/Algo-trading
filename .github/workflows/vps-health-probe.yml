@@ -250,7 +250,7 @@ jobs:
           fi
 
           echo "=== LISTENING ==="
-          ss -ltn 2>/dev/null | grep -E ':(80|443|8000|8080)\\b' || true
+          ss -ltn 2>/dev/null | grep -E ':(80|443|8000|8080)([[:space:]]|$)' || true
           exit "$acceptance_status"
           REMOTE
           ssh_status=${PIPESTATUS[0]}
