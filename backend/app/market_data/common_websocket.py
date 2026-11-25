@@ -1827,6 +1827,14 @@ class CommonWebSocketManager:
                 group, socket, generation, "callback_dispatch_integrity_fault"
             ), name=f"angel-callback-fault-{group.mode}-{group.shard}-{generation}", daemon=True).start()
 
+    def _is_current_data_generation(self, group: SocketGroup, generation: int | None) -> bool:
+        """Fence deferred work from a socket generation that has since retired."""
+        with self._lock:
+            return (
+                group in self._sockets
+                and (generation is None or self._socket_generation.get(group) == generation)
+            )
+
     def _on_data(self, group: SocketGroup, message: Any, generation: int | None = None) -> None:
         with self._lock:
             # Reject callbacks from an older socket after recovery has replaced
@@ -1933,7 +1941,11 @@ class CommonWebSocketManager:
                 )
                 self._ticks_by_exchange[str(routed_exchange_type)] += 1
         for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
+            if not self._is_current_data_generation(group, generation):
+                return
             with self._lock:
+                if group not in self._sockets or (generation is not None and self._socket_generation.get(group) != generation):
+                    return
                 self._raw_callback_attempts += 1
             try:
                 callback(message)
@@ -1976,19 +1988,25 @@ class CommonWebSocketManager:
                 continue
             try:
                 record = self._normalizer.normalize(descriptor, message)
-                # Publish one latest normalized snapshot before strategy fan-out.
-                # A cache failure must never suppress live scanner callbacks.
-                try:
-                    put_market_data_record(record)
-                except Exception as cache_exc:
-                    app_logger.warning(
-                        "Common feed shared-cache publish failed exchange=%s segment=%s token=%s error=%s",
-                        record.instrument.exchange,
-                        record.instrument.segment,
-                        record.instrument.token,
-                        cache_exc,
-                    )
+                # Normalize outside the manager lock, but publish only while the
+                # originating socket generation is still current. This closes the
+                # race where a slow normalizer from a retired socket overwrites the
+                # shared latest-tick cache after its replacement has gone live.
                 with self._lock:
+                    if group not in self._sockets or (generation is not None and self._socket_generation.get(group) != generation):
+                        continue
+                    # Publish atomically with the generation fence. The cache
+                    # helper is local and must not call back into this manager.
+                    try:
+                        put_market_data_record(record)
+                    except Exception as cache_exc:
+                        app_logger.warning(
+                            "Common feed shared-cache publish failed exchange=%s segment=%s token=%s error=%s",
+                            record.instrument.exchange,
+                            record.instrument.segment,
+                            record.instrument.token,
+                            cache_exc,
+                        )
                     self._normalized_records_emitted += 1
                     self._last_tick = {
                         "exchange_type": exchange_type or self._resolve_exchange_type(key),
@@ -2035,12 +2053,16 @@ class CommonWebSocketManager:
                                 ] = incoming_timestamp_ns
                             self._last_exchange_tick_received_at[incoming_exchange_type] = time.monotonic()
                 for callback in callbacks:
+                    if not self._is_current_data_generation(group, generation):
+                        break
                     callback(record)
                     with self._lock:
                         self._normalized_records_delivered += 1
                         self._last_data_at[group] = time.monotonic()
                         self._last_successful_delivery_at[group] = self._last_data_at[group]
                 for observer in observers_by_key.get(key, ()):
+                    if not self._is_current_data_generation(group, generation):
+                        break
                     with self._lock:
                         connection_current = (
                             generation is not None
