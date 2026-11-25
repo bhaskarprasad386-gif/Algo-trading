@@ -7,7 +7,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import RLock
-from typing import Iterable
+from typing import Callable, Iterable
+
+from .contracts import InstrumentKey
+from .registry import InstrumentDescriptor
 
 @dataclass(frozen=True, order=True)
 class AffinitySlot:
@@ -24,6 +27,13 @@ class AffinitySlot:
 class AffinityPlan:
     owner_slots: dict[str, AffinitySlot]
     owner_tokens: dict[str, frozenset[tuple[int, str]]]
+
+@dataclass(frozen=True)
+class InstrumentAffinityPlan:
+    """Instrument-level placement; consumer ownership is deliberately separate."""
+
+    assignments: dict[InstrumentKey, AffinitySlot]
+    token_pairs_by_slot: dict[AffinitySlot, frozenset[tuple[int, str]]]
 
 class ConsumerSocketAffinity:
     """Opt-in lane reservations; unclaimed consumers remain adaptive."""
@@ -53,6 +63,63 @@ class ConsumerSocketAffinity:
             ConsumerSocketAffinity.LOCKED_OWNERS["banknifty"]: AffinitySlot(mode, 1),
             ConsumerSocketAffinity.LOCKED_OWNERS["futures"]: AffinitySlot(mode, 2),
         }
+
+
+    def plan_instruments(
+        self,
+        descriptors: Iterable[InstrumentDescriptor],
+        *,
+        mode: int,
+        exchange_type_resolver: Callable[[InstrumentKey], int],
+    ) -> InstrumentAffinityPlan:
+        """Plan locked lanes by instrument, never by a strategy consumer.
+
+        One consumer may own instruments on multiple lanes, including the
+        combined NIFTY-weekly/BANKNIFTY-monthly options subscription. Descriptors
+        without a locked preferred lane remain outside this reservation plan.
+        """
+        if isinstance(mode, bool) or not isinstance(mode, int) or mode not in (1, 2, 3, 4):
+            raise ValueError("mode must be one of 1, 2, 3 or 4")
+        if not callable(exchange_type_resolver):
+            raise TypeError("exchange_type_resolver must be callable")
+
+        assignments: dict[InstrumentKey, AffinitySlot] = {}
+        pairs_by_slot: dict[AffinitySlot, set[tuple[int, str]]] = {}
+        pair_slots: dict[tuple[int, str], AffinitySlot] = {}
+        for descriptor in tuple(descriptors):
+            if not isinstance(descriptor, InstrumentDescriptor):
+                raise TypeError("descriptors must contain InstrumentDescriptor values")
+            lane = descriptor.preferred_socket_lane
+            if lane is None:
+                continue
+            slot = AffinitySlot(mode, lane)
+            existing = assignments.get(descriptor.key)
+            if existing is not None and existing != slot:
+                raise ValueError(f"conflicting lane affinity for {descriptor.key.value}")
+            exchange_type = exchange_type_resolver(descriptor.key)
+            if isinstance(exchange_type, bool) or not isinstance(exchange_type, int) or exchange_type <= 0:
+                raise ValueError("exchange type resolver must return a positive integer")
+            pair = (exchange_type, str(descriptor.key.token).strip())
+            if not pair[1]:
+                raise ValueError("instrument token is required")
+            previous_slot = pair_slots.get(pair)
+            if previous_slot is not None and previous_slot != slot:
+                raise ValueError("broker token identity is assigned to conflicting locked lanes")
+            pair_slots[pair] = slot
+            assignments[descriptor.key] = slot
+            pairs_by_slot.setdefault(slot, set()).add(pair)
+
+        if len(pairs_by_slot) > self.max_sockets:
+            raise ValueError("instrument affinity plan exceeds global socket limit")
+        for slot, pairs in pairs_by_slot.items():
+            if len(pairs) > self.max_tokens_per_socket:
+                raise ValueError(f"locked lane {slot.shard} exceeds socket token capacity")
+        return InstrumentAffinityPlan(
+            assignments=dict(assignments),
+            token_pairs_by_slot={
+                slot: frozenset(pairs) for slot, pairs in pairs_by_slot.items()
+            },
+        )
 
     def plan(self, owner_slots: dict[str, AffinitySlot],
               owner_tokens: dict[str, Iterable[tuple[int, str]]]) -> AffinityPlan:
