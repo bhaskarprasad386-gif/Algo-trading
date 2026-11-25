@@ -748,7 +748,7 @@ export default function IVSkewFlipPage() {
   const bankExpiry=String((bank.option_feed??{}).expiry_type??"");
   return <main className="space-y-4 p-3 sm:p-5 theme-text">
     <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div><div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] theme-accent"><Activity size={15}/> Live Options Analytics</div><h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">IV Skew / IV Flip + Gamma Blast</h1><p className="mt-1 text-sm theme-muted">NIFTY Weekly only • Angel One broker IV + FULL quote data • other chains temporarily disabled</p></div>
+      <div><div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] theme-accent"><Activity size={15}/> Live Options Analytics</div><h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">IV Skew / IV Flip + Gamma Blast</h1><p className="mt-1 text-sm theme-muted">NIFTY Weekly + BANKNIFTY Monthly • live option quotes and model-derived IV • NIFTY Monthly remains disabled</p></div>
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={()=>void refresh().catch(e=>setError(String(e)))} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface px-3 py-2 text-sm"><RefreshCw size={15}/> Refresh</button>
         <button onClick={()=>void fetchBrokerSnapshot()} disabled={!running||snapshotBusy} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface px-3 py-2 text-sm font-bold disabled:opacity-50">{snapshotBusy?"Fetching broker…":"Fetch Broker IV + Chain"}</button>
@@ -816,7 +816,12 @@ export default function IVSkewFlipPage() {
       </div>
       <p className="text-[11px] theme-muted">Raw frame / exchange tick counters are shared-manager diagnostics, not NIFTY-only proof. IV Accepted confirms this consumer received a usable NIFTY spot record. Weekly and Monthly use the same NIFTY spot gate.</p>
     </section>
-    <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 p-3 text-sm theme-muted">NIFTY Monthly और BANKNIFTY chains फिलहाल बंद हैं। केवल NIFTY Weekly feed, sampler और signals सक्रिय हैं।</section>
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">BANKNIFTY Monthly Option Chain</h2><span className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs font-bold">{String(bank.option_feed?.status??"WAITING")}</span></div>
+      <div className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs theme-muted">Expiry selection date: {String(bank.expiry_selection?.selection_date??"—")} • Selected: {String(bank.expiry_selection?.selected_expiry??"—")} • Contracts: {fmt(bank.universe_tokens,0)} • Spot age: {age(bankSpot.age_ms)}</div>
+      <OptionChain title="BANKNIFTY Monthly" chain={bank as Chain} spot={bankSpot}/>
+      <SignalSummary title="BANKNIFTY" chain={bank as Chain} spot={bankSpot}/>
+    </section>
     <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h2 className="font-bold theme-text">Live Index Spot–Future Basis</h2><p className="mt-1 text-xs theme-muted">Future − Spot • nearest and next expiry • paired fresh broker timestamps required</p></div>
