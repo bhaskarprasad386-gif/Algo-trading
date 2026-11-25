@@ -638,7 +638,9 @@ export default function IVSkewFlipPage() {
         alertFetchSequenceRef.current+=1;
         setRuntime(null);
         setChartHistory(null);
+        setBankChartHistory(null);
         setEarlyAlertLive(null);
+        setBankEarlyAlertLive(null);
         // REMOVE is terminal for this frame. Never re-apply a runtime
         // included in the same malformed mixed REMOVE message.
         return;
