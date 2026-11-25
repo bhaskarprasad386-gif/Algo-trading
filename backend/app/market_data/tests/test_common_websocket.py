@@ -2550,3 +2550,46 @@ def test_retirement_during_normalized_callback_stops_remaining_fanout():
     finally:
         release.set()
         manager.close()
+
+
+def test_old_recovery_ack_cannot_clear_newer_failure_for_same_socket_lane():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    group = SocketGroup(3, 1)
+    try:
+        with manager._lock:
+            manager._failure_recovery_pending_groups.add(group)
+            manager._failure_recovery_pending_versions[group] = 12
+
+            # A recovery pass that captured version 11 must not acknowledge
+            # version 12, even though the set contains the same SocketGroup.
+            manager._acknowledge_pending_failure_locked(group, 11)
+
+            assert manager._failure_recovery_pending_groups == {group}
+            assert manager._failure_recovery_pending_versions == {group: 12}
+
+            manager._acknowledge_pending_failure_locked(group, 12)
+            assert manager._failure_recovery_pending_groups == set()
+            assert manager._failure_recovery_pending_versions == {}
+
+
+def test_old_generation_completion_cannot_clear_newer_same_lane_failure():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    group = SocketGroup(3, 2)
+    try:
+        with manager._lock:
+            manager._failure_recovery_groups.add(group)
+            manager._failure_recovery_generation_by_group[group] = 40
+
+            # The lane has already been recreated and failed again. A delayed
+            # completion for generation 40 must not clear generation 41.
+            manager._failure_recovery_generation_by_group[group] = 41
+            manager._clear_failure_recovery_group_locked(group, 40)
+
+            assert manager._failure_recovery_groups == {group}
+            assert manager._failure_recovery_generation_by_group == {group: 41}
+
+            manager._clear_failure_recovery_group_locked(group, 41)
+            assert manager._failure_recovery_groups == set()
+            assert manager._failure_recovery_generation_by_group == {}
+    finally:
+        manager.close()
