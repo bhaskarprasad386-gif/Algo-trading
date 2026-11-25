@@ -25,7 +25,9 @@ class IVEarlyEntryAlertEngine:
         # Expiry/session cleanup is maintenance work, not a per-tick operation.
         # Run it at most once per minute per underlying; a backward clock jump
         # triggers an immediate sweep rather than postponing cleanup indefinitely.
-        self._last_expiry_sweep_ns: dict[str, int] = {}
+        # The store sweep is global (it expires rows across both indices), so
+        # one process-wide watermark prevents duplicate NIFTY/BANKNIFTY scans.
+        self._last_expiry_sweep_ns: int | None = None
         self._expiry_sweep_interval_ns = 60_000_000_000
 
     def evaluate(
@@ -40,7 +42,7 @@ class IVEarlyEntryAlertEngine:
         if underlying not in self.aggregators:
             raise ValueError("early-entry alerts support only NIFTY and BANKNIFTY")
         aggregator = self.aggregators[underlying]
-        last_expiry_sweep_ns = self._last_expiry_sweep_ns.get(underlying)
+        last_expiry_sweep_ns = self._last_expiry_sweep_ns
         should_sweep_expiry = (
             last_expiry_sweep_ns is None
             or now_ns < last_expiry_sweep_ns
@@ -50,7 +52,7 @@ class IVEarlyEntryAlertEngine:
         if should_sweep_expiry:
             expired_count = self.store.expire_session_alerts(now=now)
             # Advance only after a successful store operation so failures are retried.
-            self._last_expiry_sweep_ns[underlying] = now_ns
+            self._last_expiry_sweep_ns = now_ns
         live_spot_stamp = int(getattr(spot, "timestamp_ns", 0) or 0)
         live_spot_price = float(getattr(spot, "price", 0) or 0)
         invalidated_count = 0
