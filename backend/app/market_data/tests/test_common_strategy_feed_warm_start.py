@@ -32,9 +32,14 @@ def test_common_strategy_feed_warm_starts_then_accepts_newer_live_tick():
         exchange="NSE", token="cache-warm-start-101", symbol="TEST-EQ",
         instrument_type="equity", segment="NSE",
     )
-    from time import time_ns
+    from time import monotonic_ns, time_ns
     base_timestamp = time_ns() - 1_000_000_000
-    cache.put(descriptor.key.value, {"timestamp_ns": base_timestamp, "ltp": 100.0}, timestamp_ns=base_timestamp)
+    receive_timestamp = monotonic_ns() - 1_000_000
+    cache.put(
+        descriptor.key.value,
+        {"timestamp_ns": base_timestamp, "received_at_monotonic_ns": receive_timestamp, "ltp": 100.0},
+        timestamp_ns=base_timestamp,
+    )
     manager = CommonWebSocketManager(socket_factory=FakeSocket)
     manager._recovery_interval_seconds = 60.0
     feed = CommonStrategyMarketFeed("cache-warm-start-test", manager=manager, warm_start=True)
@@ -42,12 +47,15 @@ def test_common_strategy_feed_warm_starts_then_accepts_newer_live_tick():
     try:
         feed.start([descriptor], received.append)
         assert [(r.timestamp_ns, r.ltp) for r in received] == [(base_timestamp, 100.0)]
+        assert received[0].received_at_monotonic_ns == receive_timestamp
         manager._on_data(SocketGroup(3, 0), {
             "token": descriptor.key.token, "exchange_type": 1,
             "timestamp_ns": base_timestamp + 1_000_000, "last_traded_price": 12345,
         })
         assert [(r.timestamp_ns, r.ltp) for r in received] == [(base_timestamp, 100.0), (base_timestamp + 1_000_000, 123.45)]
         assert cache.get(descriptor.key.value)["timestamp_ns"] == base_timestamp + 1_000_000
+        assert isinstance(received[1].received_at_monotonic_ns, int)
+        assert cache.get(descriptor.key.value)["received_at_monotonic_ns"] == received[1].received_at_monotonic_ns
 
         # A delayed broker frame must not overwrite the newer scanner snapshot.
         manager._on_data(SocketGroup(3, 0), {
