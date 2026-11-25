@@ -1254,7 +1254,7 @@ class CommonWebSocketManager:
         # callback. Keep per-group invalidation, coalesce the rest, and let the
         # shared supervisor reconcile the full desired registry.
         coalesced = False
-        pending_version = None
+        pending_version = 0
         with self._lock:
             if self._failure_recovery_worker_active:
                 pending_version = self._failure_recovery_pending_versions.get(group, 0) + 1
@@ -1277,9 +1277,9 @@ class CommonWebSocketManager:
                             self._acknowledge_pending_failure_locked(failed_group, pending_version)
                             return
                     with self._reconcile_lock:
-                        # Keep coalesced failure visible until a full registry
-                        # reconcile succeeds; the supervisor clears pending groups
-                        # after its own successful recovery pass.
+                        # Keep this generation's failure visible until a full
+                        # registry reconcile succeeds; acknowledge only the exact
+                        # pending version captured when this close was scheduled.
                         with self._lock:
                             self._clear_failure_recovery_group_locked(failed_group, generation)
                         self._reconcile()
