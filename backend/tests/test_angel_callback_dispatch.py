@@ -325,3 +325,42 @@ def test_graceful_stop_timeout_fences_remaining_invocations_in_active_batch():
     assert not worker.is_alive()
     assert seen == ["inflight"]
     assert adapter.snapshot()["callback_attempts"] == 1
+
+
+
+def test_publish_revalidates_generation_after_payload_copy_races_retirement():
+    from threading import Event, Thread
+
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    copy_entered = Event()
+    release_copy = Event()
+    seen = []
+
+    class BlockingCopy:
+        def __deepcopy__(self, memo):
+            copy_entered.set()
+            assert release_copy.wait(timeout=1.0)
+            return {"detached": True}
+
+    result = []
+    publisher = Thread(target=lambda: result.append(adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(seen.append, BlockingCopy(), "raw"),),
+    )))
+    publisher.start()
+    assert copy_entered.wait(timeout=1.0)
+
+    # Retirement while payload detachment is outside the adapter lock must
+    # prevent that old generation from publishing after the copy completes.
+    adapter.stop(timeout=1.0, drain=False)
+    release_copy.set()
+    publisher.join(timeout=1.0)
+
+    assert not publisher.is_alive()
+    assert result == [False]
+    state = adapter.snapshot()
+    assert state["queue_depth"] == 0
+    assert state["accepted_batches"] == 0
+    assert state["stale_batches"] == 1
+    assert seen == []
