@@ -769,7 +769,7 @@ def test_sdk_transport_heartbeat_callbacks_are_observable_without_claiming_feed_
     # subscription-acknowledgement, or consumer-delivery signal.
 
 
-def test_heartbeat_health_diagnostics_distinguish_waiting_timeout_and_stale():
+def test_heartbeat_health_diagnostics_distinguish_waiting_timeout_and_stale(monkeypatch):
     from threading import Lock
 
     client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
