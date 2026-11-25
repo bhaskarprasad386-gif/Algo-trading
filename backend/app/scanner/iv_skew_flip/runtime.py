@@ -89,7 +89,7 @@ class IVSkewFlipRuntime:
         equity_pressure_unavailable_reason: str | None = None,
         future_feed: IVIndexFutureFeedAdapter | None = None,
         feed_manager: Any | None = None,
-        close_feed_manager: bool = True,
+        close_feed_manager: bool = False,
     ) -> None:
         if refresh_seconds < 1.0 or refresh_seconds > 3.0:
             raise ValueError("universe refresh cadence must be between 1 and 3 seconds")
@@ -1091,10 +1091,21 @@ class IVSkewFlipRuntime:
             "consumer": "iv-skew-flip",
             "orders_enabled": False,
             "market_data_connection": (
-                {"isolation": "DEDICATED", "manager": manager_snapshot,
-                 "socket_mode": 3, "socket_limit": 1}
+                {
+                    "isolation": "SHARED_PROCESS_MANAGER",
+                    "manager_owner": "APPLICATION",
+                    "manager": manager_snapshot,
+                    "socket_mode": 3,
+                    "global_socket_limit": 3,
+                    "owns_manager": self.close_feed_manager,
+                }
                 if self.feed_manager is not None
-                else {"isolation": "SHARED_COMPATIBILITY_MODE"}
+                else {
+                    "isolation": "COMMON_FEED_ADAPTER",
+                    "socket_mode": 1,
+                    "global_socket_limit": None,
+                    "owns_manager": False,
+                }
             ),
             "refresh_seconds": self.refresh_seconds,
             "signal_evaluation_seconds": self.evaluation_seconds,
