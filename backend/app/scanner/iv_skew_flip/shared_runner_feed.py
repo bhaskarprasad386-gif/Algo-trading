@@ -167,6 +167,11 @@ class IVSharedRunnerOptionFeedAdapter:
         return tuple(getter()) if callable(getter) else ()
 
     def start(self, universe: Any) -> dict[str, Any]:
+        # A failed expiry/ATM rotation must never leave the previous universe
+        # readable. Detach first, then validate the replacement atomically.
+        with self._lock:
+            self._started = False
+            self._universe = None
         if universe is None or not getattr(universe, "contracts", None):
             raise ValueError("a resolved IV option universe is required")
         health = getattr(self.shared_runner, "health_snapshot", None)
