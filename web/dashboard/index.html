@@ -6,9 +6,9 @@
 <title>Algo Trading • Command Center</title>
 <style>
 :root{
- --bg:#070A0D;--surface:#0F1419;--card:#12171E;--card2:#0D1218;--line:#202B35;
- --text:#EAF2F8;--muted:#7F919F;--primary:#00B0FF;--profit:#00E676;--loss:#FF1744;
- --warning:#FFAB00;--purple:#8B5CF6;--shadow:0 14px 34px rgba(0,0,0,.28)
+ --bg:#07111F;--surface:#0D1B2E;--card:#0D1B2E;--card2:#091A2D;--line:#1D3552;
+ --text:#EEF5FF;--muted:#AFC0D5;--primary:#3B82F6;--profit:#22C55E;--loss:#EF4444;
+ --warning:#FBBF24;--purple:#A78BFA;--shadow:0 14px 36px rgba(0,0,0,.32)
 }
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
 button,input,select{font:inherit}button{cursor:pointer}
@@ -275,6 +275,33 @@ th{font-size:7px!important}
 .workspace-launcher{position:fixed;inset:0;background:rgba(2,6,10,.78);backdrop-filter:blur(10px);z-index:140;display:none;align-items:flex-end;justify-content:center;padding:18px}.workspace-launcher.open{display:flex}.workspace-sheet{width:min(720px,100%);background:#0b1218;border:1px solid #214052;border-radius:14px;padding:14px;box-shadow:0 28px 90px rgba(0,0,0,.6)}.workspace-sheet-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.workspace-sheet-head b{font-size:12px}.workspace-sheet-head span{font-size:9px;color:var(--muted)}.workspace-close{background:#101a22;border:1px solid var(--line);color:#b9cbd5;border-radius:7px;padding:6px 9px}.workspace-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.workspace-tile{min-height:58px;text-align:left;background:#0e171e;border:1px solid #1e303b;color:#dce8ee;border-radius:9px;padding:9px;touch-action:manipulation}.workspace-tile b{display:block;font-size:10px}.workspace-tile small{display:block;color:#718591;font-size:8px;margin-top:4px}.workspace-tile:active{transform:scale(.98);border-color:#0878ad}.ux-shortcuts{display:flex;gap:6px;overflow:auto;margin-top:8px}.ux-shortcuts button{white-space:nowrap}.mobile-nav-more{display:none}
 @media(max-width:720px){.workspace-launcher{padding:0}.workspace-sheet{border-radius:15px 15px 0 0;padding:13px 11px calc(13px + env(safe-area-inset-bottom));max-height:82vh;overflow:auto}.workspace-grid{grid-template-columns:repeat(2,1fr)}.workspace-tile{min-height:64px}.mobile-nav-more{display:block}.bottom-nav button{min-height:42px;touch-action:manipulation}}
 @media(min-width:721px){.workspace-launcher{align-items:center}.workspace-sheet{border-radius:14px}}
+
+
+/* Institutional navy terminal: final shared surface overrides for every dashboard workspace. */
+body { background:#07111F !important; color:#EEF5FF; }
+.app,.page,.content,.analyze-page,.journal-page,.hist-page,.alerts-page,.scanner-page,.strategy-page {
+  background-color:#07111F;
+}
+.sidebar,.topbar,.bottom-nav { background:#091A2D !important; border-color:#1D3552 !important; }
+.card,.market-tile,.metric,.opp,.alert-row,.health-row,.quick,.workspace-sheet,.workspace-tile,
+.modal-box,.hist-panel,.hist-kpi,.hist-commandbar,.hist-chart-wrap,.hist-detail-card,
+.analyze-title-card,.analyze-regime,.journal-kpi,.hist-command-title {
+  background-color:#0D1B2E !important; border-color:#1D3552 !important;
+}
+.market-tile,.metric,.opp,.alert-row,.health-row,.quick,.workspace-tile,
+.table-wrap,.chart,.hist-chart-wrap,.hist-table,.system-line {
+  border-color:#1D3552 !important;
+}
+.topbar { background:rgba(9,26,45,.96) !important; }
+#marketStatusStrip,.alert-list,.table-wrap,.system-line,.hist-readout {
+  background-color:#091A2D !important; border-color:#1D3552 !important;
+}
+.nav-item.active,.tab.active,.market-tabs .tab.active {
+  background:#12365B !important; border-color:#2563A6 !important; color:#EAF4FF !important;
+}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible {
+  outline:2px solid #60A5FA !important; outline-offset:2px;
+}
 
 </style>
 </head>
