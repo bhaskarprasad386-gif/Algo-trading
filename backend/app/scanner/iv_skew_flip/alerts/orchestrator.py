@@ -13,12 +13,23 @@ class IVEarlyEntryAlertEngine:
 
     def __init__(self, store: Any, *, retention_minutes: int = 390) -> None:
         self.store = store
-        self.aggregator = SourceMinuteAggregator(retention_minutes=retention_minutes)
+        self.aggregators = {
+            "NIFTY": SourceMinuteAggregator(retention_minutes=retention_minutes),
+            "BANKNIFTY": SourceMinuteAggregator(retention_minutes=retention_minutes),
+        }
         self._last_results: dict[str, dict[str, Any]] = {}
 
-    def evaluate(self, *, sampler: Any, spot: Any, expiry: str, now: datetime, now_ns: int) -> dict[str, Any]:
+    def evaluate(
+        self, *, sampler: Any, spot: Any, expiry: str, now: datetime, now_ns: int,
+        underlying: str = "NIFTY", strike_step: float = 50.0,
+        max_consolidation_points: float = 55.0, wall_tolerance_points: float = 15.0,
+    ) -> dict[str, Any]:
         if now.tzinfo is None:
             raise ValueError("alert engine requires timezone-aware datetime")
+        underlying = str(underlying).strip().upper()
+        if underlying not in self.aggregators:
+            raise ValueError("early-entry alerts support only NIFTY and BANKNIFTY")
+        aggregator = self.aggregators[underlying]
         self.store.expire_session_alerts(now=now)
         live_spot_stamp = int(getattr(spot, "timestamp_ns", 0) or 0)
         live_spot_price = float(getattr(spot, "price", 0) or 0)
@@ -30,6 +41,7 @@ class IVEarlyEntryAlertEngine:
                 and live_spot_price > 0):
             self.store.invalidate_breached_oi_walls(
                 spot=live_spot_price, observed_at_ns=live_spot_stamp,
+                underlying=underlying,
             )
         if not expiry:
             return {"state": "WATCH", "reason": "WAITING_FOR_WEEKLY_EXPIRY", "signals_allowed": False}
@@ -42,11 +54,11 @@ class IVEarlyEntryAlertEngine:
         samples = tuple(snapshot.get("live_samples", ()))
         if not samples:
             return {"state": "WATCH", "reason": "NO_LIVE_OPTION_SAMPLES", "signals_allowed": False}
-        self.aggregator.ingest(samples, spot, now_ns=now_ns)
-        bars = self.aggregator.spot_bars(now_ns=now_ns)
+        aggregator.ingest(samples, spot, now_ns=now_ns)
+        bars = aggregator.spot_bars(now_ns=now_ns)
         token_rows = {
-            token: self.aggregator.option_history(token, now_ns=now_ns)
-            for token in self.aggregator.option_tokens()
+            token: aggregator.option_history(token, now_ns=now_ns)
+            for token in aggregator.option_tokens()
         }
         current = {str(row.token): row for row in samples}
         # The same current broker sample is also present in the retained event
@@ -61,9 +73,9 @@ class IVEarlyEntryAlertEngine:
             )
         by_strike: dict[float, dict[str, str]] = {}
         for token, row in current.items():
-            if row.underlying.upper() != "NIFTY" or row.expiry != expiry:
+            if row.underlying.upper() != underlying or row.expiry != expiry:
                 continue
-            if row.option_type in {"CE", "PE"} and row.strike in even_strikes([row.strike]):
+            if row.option_type in {"CE", "PE"} and row.strike in even_strikes([row.strike], strike_step):
                 by_strike.setdefault(float(row.strike), {})[row.option_type] = token
 
         candidates: list[Any] = []
@@ -80,6 +92,7 @@ class IVEarlyEntryAlertEngine:
                 result = evaluate_strategy_a(
                     now_ns=now_ns, expiry=expiry, bars=bars, ce=ce, pe=pe,
                     target=token_rows.get(pair[target_type], ()), direction=direction,
+                    underlying=underlying, max_consolidation_points=max_consolidation_points,
                     live_ce=live_ce, live_pe=live_pe, live_target=live_target,
                 )
                 if result.candidate is not None:
@@ -95,7 +108,7 @@ class IVEarlyEntryAlertEngine:
             for token, history in token_rows.items():
                 rows = tuple(row for row in history if row.expiry == expiry
                              and row.option_type == option_type
-                             and row.strike in even_strikes([row.strike])
+                             and row.strike in even_strikes([row.strike], strike_step)
                              and row.oi is not None)
                 if len(rows) >= 3:
                     recent = rows[-3:]
@@ -118,6 +131,7 @@ class IVEarlyEntryAlertEngine:
                 now_ns=now_ns, expiry=expiry, spot_bars=bars,
                 ce_wall_history=ce_wall, pe_wall_history=pe_wall,
                 entry_quote=entry_quote, direction=direction,
+                underlying=underlying, wall_tolerance_points=wall_tolerance_points,
             )
             if result.candidate is not None:
                 candidates.append(result.candidate)
@@ -139,14 +153,15 @@ class IVEarlyEntryAlertEngine:
         # Read the durable alert rows only when a new alert was accepted.
         # The cached list is then carried by runtime snapshots so the browser
         # receives new alerts over the page WebSocket without polling every 3s.
-        previous_alerts = self._last_results.get("NIFTY_WEEKLY", {}).get("alerts", [])
+        stream_id = "NIFTY_WEEKLY" if underlying == "NIFTY" else "BANKNIFTY_MONTHLY"
+        previous_alerts = self._last_results.get(stream_id, {}).get("alerts", [])
         latest_alerts = (
-            self.store.latest(limit=30)
+            self.store.latest(limit=30, underlying=underlying)
             if any(item.get("accepted") for item in persisted)
             else previous_alerts
         )
         result = {
-            "state": state, "underlying": "NIFTY", "expiry": expiry,
+            "state": state, "underlying": underlying, "expiry": expiry,
             "signals_allowed": state == "EARLY_ENTRY",
             "accepted_alerts": persisted,
             "alerts": latest_alerts,
@@ -161,13 +176,21 @@ class IVEarlyEntryAlertEngine:
             "completed_option_contracts": len(token_rows),
             "evaluated_at_ns": now_ns,
         }
-        self._last_results["NIFTY_WEEKLY"] = result
+        self._last_results[stream_id] = result
         return result
 
-    def snapshot(self) -> dict[str, Any]:
-        return dict(self._last_results.get("NIFTY_WEEKLY", {
-            "state": "WATCH", "signals_allowed": False, "reason": "NOT_EVALUATED",
+    def snapshot(self, underlying: str = "NIFTY") -> dict[str, Any]:
+        symbol = str(underlying).strip().upper()
+        if symbol not in self.aggregators:
+            raise ValueError("early-entry alerts support only NIFTY and BANKNIFTY")
+        stream_id = "NIFTY_WEEKLY" if symbol == "NIFTY" else "BANKNIFTY_MONTHLY"
+        return dict(self._last_results.get(stream_id, {
+            "state": "WATCH", "underlying": symbol,
+            "signals_allowed": False, "reason": "NOT_EVALUATED",
         }))
+
+    def snapshot_all(self) -> dict[str, dict[str, Any]]:
+        return {"NIFTY": self.snapshot("NIFTY"), "BANKNIFTY": self.snapshot("BANKNIFTY")}
 
 
 __all__ = ["IVEarlyEntryAlertEngine"]
