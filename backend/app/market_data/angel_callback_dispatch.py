@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread, current_thread
-from time import monotonic
+from time import monotonic, monotonic_ns
 from typing import Any, Callable, Iterable
 
 
@@ -26,18 +26,22 @@ class CallbackInvocation:
 class ShardCallbackBatch:
     generation: int
     invocations: tuple[CallbackInvocation, ...]
+    enqueued_at_ns: int
 
 
 class AngelShardCallbackAdapter:
     """Bounded FIFO callback adapter; instantiate one per Angel socket shard."""
 
-    def __init__(self, *, capacity: int = 2048, poll_seconds: float = 0.05) -> None:
+    def __init__(self, *, capacity: int = 2048, poll_seconds: float = 0.05, slow_callback_seconds: float = 0.25) -> None:
         if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
             raise ValueError("capacity must be a positive integer")
         if poll_seconds <= 0:
             raise ValueError("poll_seconds must be positive")
+        if slow_callback_seconds <= 0:
+            raise ValueError("slow_callback_seconds must be positive")
         self._queue: Queue[ShardCallbackBatch] = Queue(maxsize=capacity)
         self._poll_seconds = float(poll_seconds)
+        self._slow_callback_ns = int(float(slow_callback_seconds) * 1_000_000_000)
         self._lock = Lock()
         self._stop = Event()
         self._thread: Thread | None = None
@@ -47,6 +51,11 @@ class AngelShardCallbackAdapter:
         self._discarded = self._copy_errors = 0
         self._processed = self._callback_errors = 0
         self._callback_attempts = self._callback_successes = 0
+        self._max_queue_depth = 0
+        self._queue_wait_total_ns = self._queue_wait_max_ns = 0
+        self._callback_duration_total_ns = self._callback_duration_max_ns = 0
+        self._slow_callbacks = 0
+        self._callback_kind_metrics: dict[str, dict[str, int]] = {}
         self._integrity_fault = False
         self._last_error: str | None = None
 
@@ -114,7 +123,7 @@ class AngelShardCallbackAdapter:
                         f"payload_copy: {type(exc).__name__}: {exc}"
                     )
             return False
-        batch = ShardCallbackBatch(generation, detached)
+        batch = ShardCallbackBatch(generation, detached, monotonic_ns())
         if not batch.invocations:
             return True
         with self._lock:
@@ -130,6 +139,7 @@ class AngelShardCallbackAdapter:
                 self._fail_closed_locked("queue_overflow: shard adapter retired")
                 return False
             self._accepted += 1
+            self._max_queue_depth = max(self._max_queue_depth, self._queue.qsize())
             return True
 
     def start(self) -> None:
@@ -158,29 +168,46 @@ class AngelShardCallbackAdapter:
                     if not current:
                         self._stale += 1
                 if current:
+                    queue_wait_ns = max(0, monotonic_ns() - batch.enqueued_at_ns)
+                    with self._lock:
+                        self._queue_wait_total_ns += queue_wait_ns
+                        self._queue_wait_max_ns = max(self._queue_wait_max_ns, queue_wait_ns)
                     for invocation in batch.invocations:
-                        # Retirement may race after the batch was dequeued or
-                        # while an earlier callback in this batch was running.
-                        # Revalidate immediately before each consumer invocation.
+                        # Revalidate generation immediately before each consumer invocation.
                         with self._lock:
-                            # _closed blocks new publishes. Accepted work may
-                            # still drain during graceful stop; non-draining stop
-                            # and integrity retirement advance the generation.
                             if batch.generation != self._generation:
                                 self._stale += 1
                                 break
                             self._callback_attempts += 1
+                        callback_started_ns = monotonic_ns()
+                        callback_error = None
                         try:
                             invocation.callback(invocation.payload)
                         except Exception as exc:
-                            with self._lock:
+                            callback_error = exc
+                        callback_duration_ns = max(0, monotonic_ns() - callback_started_ns)
+                        with self._lock:
+                            self._callback_duration_total_ns += callback_duration_ns
+                            self._callback_duration_max_ns = max(self._callback_duration_max_ns, callback_duration_ns)
+                            kind_metrics = self._callback_kind_metrics.setdefault(
+                                str(invocation.callback_kind),
+                                {"attempts": 0, "errors": 0, "slow": 0,
+                                 "duration_total_ns": 0, "duration_max_ns": 0},
+                            )
+                            kind_metrics["attempts"] += 1
+                            kind_metrics["duration_total_ns"] += callback_duration_ns
+                            kind_metrics["duration_max_ns"] = max(kind_metrics["duration_max_ns"], callback_duration_ns)
+                            if callback_duration_ns >= self._slow_callback_ns:
+                                self._slow_callbacks += 1
+                                kind_metrics["slow"] += 1
+                            if callback_error is not None:
                                 self._callback_errors += 1
+                                kind_metrics["errors"] += 1
                                 self._last_error = (
                                     f"{invocation.callback_kind}: "
-                                    f"{type(exc).__name__}: {exc}"
+                                    f"{type(callback_error).__name__}: {callback_error}"
                                 )[:240]
-                        else:
-                            with self._lock:
+                            else:
                                 self._callback_successes += 1
                     with self._lock:
                         self._processed += 1
@@ -269,6 +296,9 @@ class AngelShardCallbackAdapter:
                 "generation": self._generation,
                 "queue_depth": self._queue.qsize(),
                 "queue_capacity": self._queue.maxsize,
+                "queue_high_watermark": self._max_queue_depth,
+                "queue_wait_total_ns": self._queue_wait_total_ns,
+                "queue_wait_max_ns": self._queue_wait_max_ns,
                 "accepted_batches": self._accepted,
                 "processed_batches": self._processed,
                 "stale_batches": self._stale,
@@ -278,6 +308,11 @@ class AngelShardCallbackAdapter:
                 "callback_attempts": self._callback_attempts,
                 "callback_successes": self._callback_successes,
                 "callback_errors": self._callback_errors,
+                "callback_duration_total_ns": self._callback_duration_total_ns,
+                "callback_duration_max_ns": self._callback_duration_max_ns,
+                "slow_callback_threshold_ns": self._slow_callback_ns,
+                "slow_callback_count": self._slow_callbacks,
+                "callback_kind_metrics": {kind: dict(metrics) for kind, metrics in self._callback_kind_metrics.items()},
                 "integrity_fault": self._integrity_fault,
                 "delivery_status": "DEGRADED" if self._integrity_fault or self._callback_errors else "HEALTHY",
                 "last_error": self._last_error,

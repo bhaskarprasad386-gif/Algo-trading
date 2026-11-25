@@ -186,6 +186,9 @@ class CommonWebSocketManager:
         self._normalized_records_delivered = 0
         self._raw_callback_attempts = 0
         self._raw_callback_successes = 0
+        # Per-owner callback timing complements shard-level queue/worker metrics.
+        self._consumer_callback_metrics: dict[str, dict[str, dict[str, int]]] = {}
+        self._slow_consumer_callback_ns = 250_000_000
         self._missing_exchange_type_frames = 0
         self._ambiguous_token_frames = 0
         self._normalized_delivery_errors = 0
@@ -337,6 +340,38 @@ class CommonWebSocketManager:
         if not value:
             raise ValueError("consumer is required")
         return value
+
+    def _invoke_consumer_callback(
+        self, consumers: tuple[str, ...], callback_kind: str,
+        callback: Callable[..., Any], *args: Any,
+    ) -> Any:
+        """Measure one invocation while preserving its return/exception semantics.
+
+        Shared raw callback objects remain deduplicated and are attributed to the
+        sorted set of consumers that registered that exact callable.
+        """
+        owner = "|".join(sorted(set(consumers))) or "unknown"
+        started_ns = time.monotonic_ns()
+        outcome = "success"
+        try:
+            return callback(*args)
+        except Exception:
+            outcome = "error"
+            raise
+        finally:
+            duration_ns = max(0, time.monotonic_ns() - started_ns)
+            with self._lock:
+                by_kind = self._consumer_callback_metrics.setdefault(owner, {})
+                metrics = by_kind.setdefault(callback_kind, {
+                    "attempts": 0, "successes": 0, "errors": 0, "slow": 0,
+                    "duration_total_ns": 0, "duration_max_ns": 0,
+                })
+                metrics["attempts"] += 1
+                metrics["successes" if outcome == "success" else "errors"] += 1
+                metrics["duration_total_ns"] += duration_ns
+                metrics["duration_max_ns"] = max(metrics["duration_max_ns"], duration_ns)
+                if duration_ns >= self._slow_consumer_callback_ns:
+                    metrics["slow"] += 1
 
     def register_callback(self, consumer: str, callback: Callable[[dict[str, Any]], None]) -> None:
         consumer = self._consumer_name(consumer)
@@ -1982,9 +2017,18 @@ class CommonWebSocketManager:
             # so fan-out is deterministic across processes and a generation fence
             # always has the same owner boundary to protect.
             matching = tuple(sorted(matching, key=lambda item: item[0]))
-            raw_callbacks = [self._callbacks.get(name) for name, _ in matching]
-            record_callbacks = [(self._record_callbacks.get(name), key) for name, key in matching]
-            record_observers = [(self._record_observers.get(name), key) for name, key in matching]
+            raw_callbacks_by_identity: dict[int, tuple[Callable[..., Any], list[str]]] = {}
+            for name, _ in matching:
+                callback = self._callbacks.get(name)
+                if callback is None:
+                    continue
+                entry = raw_callbacks_by_identity.get(id(callback))
+                if entry is None:
+                    raw_callbacks_by_identity[id(callback)] = (callback, [name])
+                else:
+                    entry[1].append(name)
+            record_callbacks = [(name, self._record_callbacks.get(name), key) for name, key in matching]
+            record_observers = [(name, self._record_observers.get(name), key) for name, key in matching]
             self._missing_callback_routes += sum(
                 1 for name, _ in matching
                 if self._callbacks.get(name) is None
@@ -2000,7 +2044,7 @@ class CommonWebSocketManager:
                     else self._resolve_exchange_type(matching[0][1])
                 )
                 self._ticks_by_exchange[str(routed_exchange_type)] += 1
-        for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
+        for callback, callback_consumers in raw_callbacks_by_identity.values():
             if not self._is_current_data_generation(group, generation):
                 return
             with self._lock:
@@ -2008,7 +2052,7 @@ class CommonWebSocketManager:
                     return
                 self._raw_callback_attempts += 1
             try:
-                callback(message)
+                self._invoke_consumer_callback(tuple(callback_consumers), "raw", callback, message)
                 with self._lock:
                     if group not in self._sockets or (generation is not None and self._socket_generation.get(group) != generation):
                         continue
@@ -2026,14 +2070,14 @@ class CommonWebSocketManager:
                     context={"event": "delivery", "group": f"{group.mode}:{group.shard}", "token": token},
                 )
         observers_by_key: dict[InstrumentKey, list[Callable[..., None]]] = defaultdict(list)
-        for observer, observer_key in record_observers:
+        for observer_owner, observer, observer_key in record_observers:
             if observer is not None:
-                observers_by_key[observer_key].append(observer)
+                observers_by_key[observer_key].append((observer_owner, observer))
         callbacks_by_key: dict[InstrumentKey, list[Callable[..., None]]] = defaultdict(list)
-        for callback, callback_key in record_callbacks:
+        for callback_owner, callback, callback_key in record_callbacks:
             if callback is not None:
-                callbacks_by_key[callback_key].append(callback)
-        for key in dict.fromkeys([key for _, key in record_callbacks] + [key for _, key in record_observers]):
+                callbacks_by_key[callback_key].append((callback_owner, callback))
+        for key in dict.fromkeys([key for _, _, key in record_callbacks] + [key for _, _, key in record_observers]):
             callbacks = callbacks_by_key.get(key, ())
             if not callbacks and not observers_by_key.get(key):
                 continue
@@ -2139,10 +2183,10 @@ class CommonWebSocketManager:
                                     (group, incoming_exchange_type)
                                 ] = incoming_timestamp_ns
                             self._last_exchange_tick_received_at[incoming_exchange_type] = time.monotonic()
-                for callback in callbacks:
+                for callback_owner, callback in callbacks:
                     if not self._is_current_data_generation(group, generation):
                         break
-                    callback(record)
+                    self._invoke_consumer_callback((callback_owner,), "normalized", callback, record)
                     with self._lock:
                         generation_retired = (
                             group not in self._sockets
@@ -2156,7 +2200,7 @@ class CommonWebSocketManager:
                         # Stop the entire frame fan-out, including remaining
                         # owners and observers, once the originating socket retires.
                         return
-                for observer in observers_by_key.get(key, ()):
+                for observer_name, observer in observers_by_key.get(key, ()):
                     if not self._is_current_data_generation(group, generation):
                         return
                     with self._lock:
@@ -2169,7 +2213,10 @@ class CommonWebSocketManager:
                         # SmartAPI's current adapter exposes transport-open but
                         # no independently verified auth acknowledgement.
                         # Fail closed so parity workers cannot accept this quote.
-                        observer(record, group, generation or 0, False, connection_current, received_monotonic_ns)
+                        self._invoke_consumer_callback(
+                            (observer_name,), "normalized_observer", observer,
+                            record, group, generation or 0, False, connection_current, received_monotonic_ns,
+                        )
                     except Exception as observer_error:
                         with self._lock:
                             self._delivery_errors += 1
@@ -2564,6 +2611,11 @@ class CommonWebSocketManager:
                 "normalized_records_delivered": self._normalized_records_delivered,
                 "raw_callback_attempts": self._raw_callback_attempts,
                 "raw_callback_successes": self._raw_callback_successes,
+                "slow_consumer_callback_threshold_ns": self._slow_consumer_callback_ns,
+                "consumer_callback_metrics": {
+                    owner: {kind: dict(metrics) for kind, metrics in kinds.items()}
+                    for owner, kinds in self._consumer_callback_metrics.items()
+                },
                 "missing_exchange_type_frames": self._missing_exchange_type_frames,
                 "ambiguous_token_frames": self._ambiguous_token_frames,
                 "normalized_delivery_errors": self._normalized_delivery_errors,

@@ -2669,3 +2669,31 @@ def test_rejected_affinity_subscribe_rolls_back_only_the_attempted_consumer():
     shared = registry.subscriptions()[0]
     assert shared.consumers == frozenset({"existing-owner", "other-owner"})
     assert shared.mode == 3
+
+
+def test_raw_callback_latency_metrics_preserve_shared_callable_deduplication():
+    registry = InstrumentRegistry()
+    item = descriptor("callback-metrics-raw-991")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    seen = []
+
+    def shared_callback(message):
+        seen.append(message["token"])
+
+    manager.register_callback("consumer-a", shared_callback)
+    manager.register_callback("consumer-b", shared_callback)
+    try:
+        manager.subscribe("consumer-a", [item.key])
+        manager.subscribe("consumer-b", [item.key])
+        manager._on_data(SocketGroup(1, 0), {"token": item.key.token, "exchange_type": 1, "ltp": 10000})
+
+        snapshot = manager.snapshot()
+        assert seen == [item.key.token]
+        metrics = snapshot["consumer_callback_metrics"]["consumer-a|consumer-b"]["raw"]
+        assert metrics["attempts"] == 1
+        assert metrics["successes"] == 1
+        assert metrics["errors"] == 0
+        assert metrics["duration_total_ns"] >= metrics["duration_max_ns"] >= 0
+    finally:
+        manager.close()

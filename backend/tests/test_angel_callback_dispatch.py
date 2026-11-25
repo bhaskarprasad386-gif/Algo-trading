@@ -51,6 +51,7 @@ def test_per_shard_adapter_overflow_latches_integrity_fault():
     )
     state = adapter.snapshot()
     assert state["overflow_batches"] == 1
+    assert state["queue_high_watermark"] == 1
     assert state["integrity_fault"] is True
     assert state["closed"] is True
     assert state["queue_depth"] == 0
@@ -428,3 +429,70 @@ def test_repeated_worker_self_stop_is_idempotent():
     assert state["callback_attempts"] == 1
     assert state["queue_depth"] == 0
     assert state["closed"] is True
+
+
+
+def test_callback_dispatch_records_latency_and_attributes_slow_consumer_kind():
+    from time import sleep
+
+    adapter = AngelShardCallbackAdapter(capacity=2, slow_callback_seconds=0.01)
+    adapter.activate_generation(1)
+    seen = []
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(
+            CallbackInvocation(lambda value: (sleep(0.02), seen.append(value)), "slow", "normalized_record"),
+            CallbackInvocation(seen.append, "fast", "raw_tick"),
+        ),
+    )
+    adapter.stop(timeout=2.0, drain=True)
+
+    state = adapter.snapshot()
+    assert seen == ["slow", "fast"]
+    assert state["callback_attempts"] == 2
+    assert state["callback_successes"] == 2
+    assert state["slow_callback_count"] == 1
+    assert state["callback_duration_max_ns"] >= 10_000_000
+    assert state["queue_wait_max_ns"] >= 0
+    assert state["callback_kind_metrics"]["normalized_record"]["slow"] == 1
+    assert state["callback_kind_metrics"]["raw_tick"]["slow"] == 0
+
+
+def test_callback_dispatch_metrics_are_monotonic_and_queue_high_water_is_bounded():
+    from threading import Event
+
+    adapter = AngelShardCallbackAdapter(capacity=2, slow_callback_seconds=0.01)
+    adapter.activate_generation(1)
+    entered = Event()
+    release = Event()
+
+    def blocked(_value):
+        entered.set()
+        release.wait(timeout=1.0)
+
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(blocked, None, "normalized_record"),),
+    )
+    assert entered.wait(timeout=1.0)
+    assert adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, None, "normalized_record"),),
+    )
+    assert adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(lambda _: None, None, "normalized_record"),),
+    )
+    state = adapter.snapshot()
+    assert state["queue_depth"] == 2
+    assert state["queue_high_watermark"] == 2
+    assert state["queue_high_watermark"] <= state["queue_capacity"]
+
+    release.set()
+    adapter.stop(timeout=2.0, drain=True)
+    final = adapter.snapshot()
+    assert final["callback_attempts"] == 3
+    assert final["callback_duration_total_ns"] >= final["callback_duration_max_ns"]
+    assert final["queue_wait_total_ns"] >= final["queue_wait_max_ns"]
