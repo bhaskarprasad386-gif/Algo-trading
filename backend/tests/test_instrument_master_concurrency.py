@@ -1,3 +1,5 @@
+import hashlib
+import json
 import threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -108,3 +110,62 @@ def test_concurrent_refreshes_are_single_flight(monkeypatch):
     assert first.instruments == second.instruments == _rows()
     assert cls._cached_snapshot_date == today
     _reset_cache()
+
+
+
+def _write_schema_v2_snapshot(path, *, fetched_at, rows=None):
+    rows = rows or _rows()
+    digest = hashlib.sha256(
+        json.dumps(
+            rows, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    path.write_text(json.dumps({
+        "schema_version": 2,
+        "fetched_at": fetched_at.isoformat(),
+        "content_sha256": digest,
+        "instruments": rows,
+    }))
+
+
+def test_shared_master_reads_fresh_digest_verified_schema_v2_snapshot(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    cls = instruments_module.InstrumentMaster
+    path = tmp_path / "instrument_master_cache.json"
+    fetched = datetime.now(timezone.utc) - timedelta(hours=2)
+    _write_schema_v2_snapshot(path, fetched_at=fetched)
+    monkeypatch.setattr(cls, "_disk_cache_path", classmethod(lambda _cls: path))
+
+    snapshot = cls._read_disk_snapshot()
+
+    assert snapshot is not None
+    assert snapshot[0] == _rows()
+    assert snapshot[1] == fetched
+
+
+def test_shared_master_rejects_schema_v2_digest_mismatch(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    cls = instruments_module.InstrumentMaster
+    path = tmp_path / "instrument_master_cache.json"
+    _write_schema_v2_snapshot(path, fetched_at=datetime.now(timezone.utc))
+    payload = json.loads(path.read_text())
+    payload["instruments"][0]["token"] = "12345"
+    path.write_text(json.dumps(payload))
+    monkeypatch.setattr(cls, "_disk_cache_path", classmethod(lambda _cls: path))
+
+    assert cls._read_disk_snapshot() is None
+
+
+def test_shared_master_rejects_stale_schema_v2_snapshot(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    cls = instruments_module.InstrumentMaster
+    path = tmp_path / "instrument_master_cache.json"
+    fetched = datetime.now(timezone.utc) - timedelta(hours=37)
+    _write_schema_v2_snapshot(path, fetched_at=fetched)
+    monkeypatch.setattr(cls, "_disk_cache_path", classmethod(lambda _cls: path))
+
+    assert cls._read_disk_snapshot() is None
