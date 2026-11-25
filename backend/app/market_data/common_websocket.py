@@ -574,6 +574,21 @@ class CommonWebSocketManager:
             for shard_index in assignments.values():
                 occupancy[shard_index] += 1
 
+            # Locked lanes cannot spill into another shard without violating
+            # the user's three-socket topology. Enforce the same per-socket
+            # token ceiling for pinned instruments as for adaptive placement.
+            oversized_locked_lanes = {
+                lane: count
+                for lane, count in occupancy.items()
+                if lane in reserved_lanes and count > self._max_tokens_per_socket
+            }
+            if oversized_locked_lanes:
+                lane, count = sorted(oversized_locked_lanes.items())[0]
+                raise ValueError(
+                    f"locked socket lane {lane} exceeds token limit: "
+                    f"{count} instruments; maximum is {self._max_tokens_per_socket}"
+                )
+
             for pair in sorted(pairs - assignments.keys()):
                 available = next(
                     (
