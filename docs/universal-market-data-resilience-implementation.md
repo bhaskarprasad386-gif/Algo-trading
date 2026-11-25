@@ -142,3 +142,8 @@ The deep review added four fail-closed safeguards after the live allocator integ
 - Recovery compares the full instrument-to-lane assignment plan as well as the physical socket-group set. A stale lane plan can therefore trigger reconciliation even when the same three physical group identities still exist.
 
 These checks do not implement failover redistribution. They protect the strict preferred topology while failover/recovery policy is designed and tested separately.
+
+
+### Strict-lane outage behavior
+
+The three-lane contract forbids cross-lane co-location: Socket 1 remains NIFTY-only, Socket 2 remains BANKNIFTY-only, and Socket 3 remains NIFTY/BANKNIFTY-futures-only. Therefore failover must not temporarily migrate a failed lane's tokens onto another lane. The safe recovery behavior under this contract is to retire and recreate the failed physical session in the same `(mode, shard)` lane, preserving the other healthy sessions and restoring only that lane's token set. Any future cross-lane failover proposal would require an explicit change to the user's isolation requirement; it is not part of this implementation.
