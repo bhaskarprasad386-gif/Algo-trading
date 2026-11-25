@@ -5,8 +5,10 @@ Wants=systemd-journald.service
 
 [Service]
 Type=simple
-User=root
-Group=root
+DynamicUser=yes
+SupplementaryGroups=systemd-journal
+StateDirectory=algo-diagnostics
+StateDirectoryMode=0700
 Environment=PYTHONUNBUFFERED=1
 Environment=DIAGNOSTICS_HOST=127.0.0.1
 Environment=DIAGNOSTICS_PORT=8765
@@ -15,14 +17,12 @@ Environment=DIAGNOSTICS_SOURCE_UNIT=algo-trading.service
 Environment=DIAGNOSTICS_POLL_SECONDS=5
 Environment=DIAGNOSTICS_RETENTION_DAYS=14
 Environment=DIAGNOSTICS_MAX_EVENTS=3000
-ExecStartPre=/usr/bin/mkdir -p /var/lib/algo-diagnostics
 ExecStart=/usr/bin/python3 /opt/Algo-Trading/deploy/server_diagnostics_agent.py
 Restart=always
 RestartSec=2
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/algo-diagnostics
 PrivateTmp=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
