@@ -1,8 +1,9 @@
-"""Opt-in, per-shard callback dispatch adapter for Angel One.
+"""Bounded per-shard callback dispatch adapter for Angel One.
 
-This adapter is intentionally standalone. CommonWebSocketManager does not
-instantiate it unless a separately reviewed integration opts in. One adapter
-instance owns one shard's FIFO and invokes its callbacks on one worker thread.
+CommonWebSocketManager creates one adapter per active socket generation only
+when async_callback_dispatch=True. The generic manager default remains
+synchronous for compatibility; the process-wide shared strategy manager opts
+in explicitly. Each adapter owns one shard FIFO and one callback worker.
 """
 from __future__ import annotations
 
