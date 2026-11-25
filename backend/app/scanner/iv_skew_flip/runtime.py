@@ -236,7 +236,7 @@ class IVSkewFlipRuntime:
         # invalid master cannot leave the runtime half-started.
         for symbol in ("NIFTY", "BANKNIFTY"):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
-        # Index-future basis feed is intentionally disabled in NIFTY-Weekly-only mode.
+        # Index-future basis is context-only and remains disabled; active IV signals do not consume it.
         future_contracts: tuple[Any, ...] = ()
         if self.equity_pressure_enabled and self.equity_baskets:
             # One physical quote consumer for the union of both top-10 baskets.
