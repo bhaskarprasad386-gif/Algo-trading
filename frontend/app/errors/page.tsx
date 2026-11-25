@@ -6,7 +6,7 @@ import { ArrowLeft, RefreshCw, TriangleAlert, Server, WifiOff, Copy, ChevronDown
 import { Card, PageTitle } from "@/components/ui";
 
 type DiagnosticError = { id: string; time: string; component: string; severity: string; message: string; source?: string };
-type CollectorPayload = { status: string; source?: string; server_time?: string; count?: number; errors?: DiagnosticError[] };
+type CollectorPayload = { status: string; source?: string; server_time?: string; count?: number; api_process_reachable?: boolean; api_last_success_at?: string | null; errors?: DiagnosticError[] };
 const CACHE_KEY = "algo.server-diagnostics.cache.v1";
 const COLLECTOR_URL = "/server-diagnostics/api/errors?limit=100";
 
@@ -16,6 +16,8 @@ export default function ErrorsPage() {
   const [collectorReachable, setCollectorReachable] = useState<boolean | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [source, setSource] = useState("VPS SYSTEMD JOURNAL");
+  const [apiProcessReachable, setApiProcessReachable] = useState<boolean | null>(null);
+  const [apiLastSuccessAt, setApiLastSuccessAt] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string[]>([]);
   const [filter, setFilter] = useState("ALL");
   const requestRef = useRef<AbortController | null>(null);
@@ -35,8 +37,10 @@ export default function ErrorsPage() {
       setErrors(nextErrors);
       setLastUpdated(receivedAt);
       setSource(body.source || "VPS SYSTEMD JOURNAL");
+      setApiProcessReachable(body.api_process_reachable === true);
+      setApiLastSuccessAt(typeof body.api_last_success_at === "string" ? body.api_last_success_at : null);
       setCollectorReachable(true);
-      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ errors: nextErrors, lastUpdated: receivedAt, source: body.source || "VPS SYSTEMD JOURNAL" })); } catch { /* optional browser cache */ }
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ errors: nextErrors, lastUpdated: receivedAt, source: body.source || "VPS SYSTEMD JOURNAL", apiProcessReachable: body.api_process_reachable === true, apiLastSuccessAt: body.api_last_success_at ?? null })); } catch { /* optional browser cache */ }
     } catch {
       if (controller.signal.aborted || requestRef.current !== controller) return;
       // Preserve the last successful server response; never clear logs on fetch failure.
@@ -50,10 +54,12 @@ export default function ErrorsPage() {
     try {
       const cached = localStorage.getItem(CACHE_KEY);
       if (cached) {
-        const parsed = JSON.parse(cached) as { errors?: DiagnosticError[]; lastUpdated?: string; source?: string };
+        const parsed = JSON.parse(cached) as { errors?: DiagnosticError[]; lastUpdated?: string; source?: string; apiProcessReachable?: boolean; apiLastSuccessAt?: string | null };
         if (Array.isArray(parsed.errors)) setErrors(parsed.errors);
         if (parsed.lastUpdated) setLastUpdated(parsed.lastUpdated);
         if (parsed.source) setSource(parsed.source);
+        if (typeof parsed.apiProcessReachable === "boolean") setApiProcessReachable(parsed.apiProcessReachable);
+        if (typeof parsed.apiLastSuccessAt === "string") setApiLastSuccessAt(parsed.apiLastSuccessAt);
       }
     } catch { /* ignore corrupt or unavailable cache */ }
     let stopped = false;
