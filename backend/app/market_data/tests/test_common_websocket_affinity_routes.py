@@ -762,20 +762,24 @@ def test_shared_instrument_mode_upgrade_and_downgrade_preserves_only_active_rout
         assert high_group in manager._sockets
         assert low_group not in manager._sockets
         assert low_socket.closed is True
-        assert manager._route_index == {
-            high_group: {(2, item.key.token): [
-                ("high-mode-owner", item.key),
-                ("low-mode-owner", item.key),
-            ]}
-        } or manager._route_index == {
-            high_group: {(2, item.key.token): [
-                ("low-mode-owner", item.key),
-                ("high-mode-owner", item.key),
-            ]}
+        assert set(manager._route_index) == {high_group}
+        assert set(manager._route_index[high_group][(2, item.key.token)]) == {
+            ("high-mode-owner", item.key),
+            ("low-mode-owner", item.key),
         }
         upgraded = manager.snapshot()
         assert upgraded["required_socket_groups"] == ["3:0"]
         assert upgraded["socket_token_set_mismatches"] == []
+        manager._on_data(high_group, {
+            "token": item.key.token,
+            "exchange_type": 2,
+            "ltp": 12300,
+        })
+        assert set(delivered) == {
+            ("low", item.key.token),
+            ("high", item.key.token),
+        }
+        delivered.clear()
 
         manager.unsubscribe("high-mode-owner", (item.key,))
         assert low_group in manager._sockets
