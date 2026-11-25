@@ -2492,6 +2492,9 @@ def test_out_of_order_provider_tick_is_rejected_before_cache_and_consumer_fanout
         assert manager._last_tick["ltp"] == 120.0
         assert manager._last_tick["timestamp_ns"] == 1792386002000000000
         assert manager.snapshot()["normalized_records_emitted"] == 1
+
+        manager.unsubscribe("ordered-owner", [item.key])
+        assert item.key not in manager._latest_provider_timestamp_ns_by_instrument
     finally:
         manager.close()
 
