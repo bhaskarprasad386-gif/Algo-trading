@@ -1,15 +1,16 @@
-"""Opt-in, per-shard callback dispatch adapter for Angel One.
+"""Bounded per-shard callback dispatch adapter for Angel One.
 
-This adapter is intentionally standalone. CommonWebSocketManager does not
-instantiate it unless a separately reviewed integration opts in. One adapter
-instance owns one shard's FIFO and invokes its callbacks on one worker thread.
+CommonWebSocketManager creates one adapter per active socket generation only
+when async_callback_dispatch=True. The generic manager default remains
+synchronous for compatibility; the process-wide shared strategy manager opts
+in explicitly. Each adapter owns one shard FIFO and one callback worker.
 """
 from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
-from threading import Event, Lock, Thread
+from threading import Event, Lock, Thread, current_thread
 from time import monotonic
 from typing import Any, Callable, Iterable
 
@@ -90,10 +91,13 @@ class AngelShardCallbackAdapter:
         invocations: Iterable[CallbackInvocation],
     ) -> bool:
         with self._lock:
-            if self._closed:
-                return False
+            # A non-draining retirement advances the generation as well as
+            # closing the adapter. Check the generation first so late publishes
+            # are accounted as stale rather than being hidden by the closed flag.
             if generation != self._generation:
                 self._stale += 1
+                return False
+            if self._closed:
                 return False
         # Detach SDK payloads before they cross the thread boundary while
         # preserving the payload shape expected by existing consumers.
@@ -114,10 +118,10 @@ class AngelShardCallbackAdapter:
         if not batch.invocations:
             return True
         with self._lock:
-            if self._closed:
-                return False
             if generation != self._generation:
                 self._stale += 1
+                return False
+            if self._closed:
                 return False
             try:
                 self._queue.put_nowait(batch)
@@ -192,9 +196,23 @@ class AngelShardCallbackAdapter:
             # A draining stop rejects new publishes via _closed but preserves
             # the active generation so already-accepted FIFO batches can run.
             # A non-draining stop retires the generation and fences queued work.
-            if not drain:
-                self._generation += 1
             thread = self._thread
+            called_from_worker = thread is current_thread()
+            if not drain and not called_from_worker:
+                self._generation += 1
+            if called_from_worker:
+                # A consumer may synchronously trigger manager shutdown from
+                # inside its own callback. Joining the current worker would
+                # raise RuntimeError (and can abort socket shutdown). Self-stop
+                # cannot wait for a drain, so fail closed and let _run observe
+                # the generation fence immediately after this invocation.
+                # Repeated self-stop calls are idempotent once the worker has
+                # already been told to exit; do not advance the fence twice.
+                if not self._stop.is_set():
+                    self._generation += 1
+                    self._discard_pending_locked()
+                    self._stop.set()
+                return
         if not drain:
             discarded = 0
             while True:
@@ -233,6 +251,14 @@ class AngelShardCallbackAdapter:
             self._stop.set()
         thread.join(timeout=max(0.0, deadline - monotonic()))
         if thread.is_alive():
+            # A graceful drain that exhausts its shutdown budget must stop
+            # dispatching the remainder of a dequeued batch as well as queued
+            # batches. The callback already executing cannot be cancelled, but
+            # advancing the generation fences every later invocation.
+            with self._lock:
+                self._generation += 1
+                self._discard_pending_locked()
+                self._stop.set()
             raise TimeoutError("Angel shard callback worker exceeded shutdown budget")
         with self._lock:
             self._thread = None

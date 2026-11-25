@@ -84,6 +84,11 @@ class SharedIndexFeedLifecycle:
                 raise ValueError("option strike must be finite and positive")
             if not descriptor.expiry or not str(descriptor.expiry).strip():
                 raise ValueError("option expiry is required")
+            required_expiry_type = "WEEKLY" if descriptor.underlying == "NIFTY" else "MONTHLY"
+            if str(descriptor.expiry_type or "").strip().upper() != required_expiry_type:
+                raise ValueError(
+                    f"{descriptor.underlying} options must use {required_expiry_type} expiry"
+                )
             if not descriptor.symbol or not str(descriptor.symbol).strip():
                 raise ValueError("option symbol is required")
             by_underlying[descriptor.underlying].append(descriptor)
@@ -152,6 +157,16 @@ class SharedIndexFeedLifecycle:
         items = self._validated_descriptors(descriptors)
         if len(items) != 2 or {d.underlying for d in items} != {"NIFTY", "BANKNIFTY"}:
             raise ValueError("spot subscription must be exactly NIFTY and BANKNIFTY")
+        if any(
+            d.instrument_type != "index"
+            or d.exchange.strip().upper() != "NSE"
+            or d.segment.strip().upper() != "NSE"
+            or d.key.exchange.strip().upper() != "NSE"
+            or d.key.segment.strip().upper() != "NSE"
+            or d.symbol.strip().upper() != d.underlying.strip().upper()
+            for d in items
+        ):
+            raise ValueError("spot descriptors must be NSE index instruments")
         with self._lock:
             if self._spot_started:
                 raise RuntimeError("spot subscription owner is already active")
@@ -207,7 +222,15 @@ class SharedIndexFeedLifecycle:
         items = self._validated_descriptors(descriptors)
         if len(items) != 2 or {d.underlying for d in items} != {"NIFTY", "BANKNIFTY"}:
             raise ValueError("futures subscription must be exactly NIFTY and BANKNIFTY")
-        if any(d.instrument_type != "future" or d.exchange.strip().upper() != "NFO" or d.segment.strip().upper() != "NFO" or not d.expiry for d in items):
+        if any(
+            d.instrument_type != "future"
+            or d.exchange.strip().upper() != "NFO"
+            or d.segment.strip().upper() != "NFO"
+            or d.key.exchange.strip().upper() != "NFO"
+            or d.key.segment.strip().upper() != "NFO"
+            or not d.expiry
+            for d in items
+        ):
             raise ValueError("futures descriptors must be valid NFO index futures with expiry")
         with self._lock:
             if self._futures_started:
@@ -233,8 +256,15 @@ class SharedIndexFeedLifecycle:
         items = self._validated_descriptors(descriptors)
         if len(items) != 2 or {d.underlying for d in items} != {"NIFTY", "BANKNIFTY"}:
             raise ValueError("futures subscription must be exactly NIFTY and BANKNIFTY")
-        if any(d.instrument_type != "future" or d.exchange.strip().upper() != "NFO"
-               or d.segment.strip().upper() != "NFO" or not d.expiry for d in items):
+        if any(
+            d.instrument_type != "future"
+            or d.exchange.strip().upper() != "NFO"
+            or d.segment.strip().upper() != "NFO"
+            or d.key.exchange.strip().upper() != "NFO"
+            or d.key.segment.strip().upper() != "NFO"
+            or not d.expiry
+            for d in items
+        ):
             raise ValueError("futures descriptors must be valid NFO index futures with expiry")
         new_keys = tuple(d.key for d in items)
         with self._lock:

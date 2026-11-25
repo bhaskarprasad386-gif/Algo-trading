@@ -422,6 +422,7 @@ def test_supervisor_reconciles_pending_coalesced_failures_before_clearing():
     manager = CommonWebSocketManager()
     group = SocketGroup(mode=1, shard=2)
     manager._failure_recovery_pending_groups.add(group)
+    manager._failure_recovery_pending_versions[group] = 1
     reconciles = []
     manager._reconcile = lambda: reconciles.append("full-registry")
     _run_one_recovery_supervisor_iteration(manager)
@@ -434,9 +435,81 @@ def test_supervisor_keeps_pending_failures_when_reconcile_raises():
     manager = CommonWebSocketManager()
     group = SocketGroup(mode=1, shard=3)
     manager._failure_recovery_pending_groups.add(group)
+    manager._failure_recovery_pending_versions[group] = 1
     manager._reconcile = lambda: (_ for _ in ()).throw(RuntimeError("reconcile failed"))
     _run_one_recovery_supervisor_iteration(manager)
     state = manager.snapshot()
     assert state["failure_recovery_pending_groups"] == ["1:3"]
     assert state["recovery_backoff_errors"] == 1
+    manager.close()
+
+
+
+def test_supervisor_does_not_acknowledge_same_group_failure_arriving_during_reconcile():
+    manager = CommonWebSocketManager()
+    group = SocketGroup(mode=1, shard=4)
+    manager._failure_recovery_pending_groups.add(group)
+    manager._failure_recovery_pending_versions[group] = 1
+    reconciles = []
+
+    def reconcile_with_new_failure():
+        reconciles.append(1)
+        if len(reconciles) == 1:
+            # A second transport generation fails while this pass is reconciling.
+            # The snapshot from the beginning of the pass must not acknowledge it.
+            with manager._lock:
+                manager._failure_recovery_pending_versions[group] = 2
+                manager._failure_recovery_pending_groups.add(group)
+
+    manager._reconcile = reconcile_with_new_failure
+    _run_one_recovery_supervisor_iteration(manager)
+
+    state = manager.snapshot()
+    assert reconciles == [1]
+    assert state["failure_recovery_pending_groups"] == ["1:4"]
+    assert manager._failure_recovery_pending_versions[group] == 2
+    manager.close()
+
+
+
+def test_coalesced_reconcile_does_not_acknowledge_newer_same_group_failure():
+    manager = CommonWebSocketManager(socket_factory=lambda: _Socket())
+    primary = SocketGroup(mode=1, shard=0)
+    failed = SocketGroup(mode=1, shard=1)
+    primary_socket, failed_socket = _Socket(), _Socket()
+    _install_current(manager, primary, primary_socket, generation=61)
+    _install_current(manager, failed, failed_socket, generation=62)
+
+    close_callbacks = []
+    manager._close_socket_tracked = lambda _socket, **kwargs: close_callbacks.append(kwargs["on_finished"])
+    manager.recover_disconnected = lambda **_kwargs: 0
+    reconcile_calls = []
+
+    def reconcile():
+        reconcile_calls.append(True)
+        if len(reconcile_calls) == 2:
+            # A new socket generation fails on the same shard while this
+            # coalesced completion is reconciling. Its newer version must live.
+            with manager._lock:
+                manager._failure_recovery_pending_versions[failed] = 2
+                manager._failure_recovery_pending_groups.add(failed)
+
+    manager._reconcile = reconcile
+    manager._schedule_socket_failure_recovery(primary, primary_socket, 61, "primary")
+    deadline = monotonic() + 1.0
+    while len(close_callbacks) < 1 and monotonic() < deadline:
+        sleep(0.005)
+    assert len(close_callbacks) == 1
+
+    manager._schedule_socket_failure_recovery(failed, failed_socket, 62, "coalesced")
+    assert len(close_callbacks) == 2
+    assert manager._failure_recovery_pending_versions[failed] == 1
+
+    close_callbacks[0]()
+    close_callbacks[1]()
+
+    state = manager.snapshot()
+    assert reconcile_calls == [True, True]
+    assert state["failure_recovery_pending_groups"] == ["1:1"]
+    assert manager._failure_recovery_pending_versions[failed] == 2
     manager.close()

@@ -207,6 +207,7 @@ def test_supervisor_drains_coalesced_failure_groups_after_successful_recovery():
     manager._recovery_interval_seconds = 0.01
     pending = {SocketGroup(1, 1), SocketGroup(1, 2)}
     manager._failure_recovery_pending_groups.update(pending)
+    manager._failure_recovery_pending_versions.update({group: 1 for group in pending})
     recovery_succeeded = Event()
     manager.registry.subscriptions = lambda: [object()]
     # Exercise successful supervisor acknowledgement without fixture-dependent reconciliation.
@@ -778,4 +779,345 @@ def test_partial_unsubscribe_failure_invalidates_socket_but_preserves_registry_i
     assert broker_tokens == set()
     state = manager.snapshot()
     assert state["socket_operation_worker_failures"] == 1
+    manager.close()
+
+
+
+def test_partial_subscribe_failure_invalidates_socket_and_preserves_registry_intent():
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    key = InstrumentKey("NSE", "NSE", "IDX-PARTIAL-SUBSCRIBE")
+    manager.registry.register(InstrumentDescriptor(
+        key=key,
+        symbol="NIFTY",
+        instrument_type="index",
+        exchange="NSE",
+        segment="NSE",
+        underlying="NIFTY",
+    ))
+    manager.registry.subscribe("partial-subscribe-audit", key, mode=1)
+    socket = BlockingSocket()
+    manager._socket_call_wait_seconds = 0.2
+    manager._sockets[group] = socket
+    manager._socket_generation[group] = 1
+    manager._socket_generation_counter[group] = 1
+    manager._socket_tokens[group] = set()
+    broker_tokens = set()
+    manager._close_socket_tracked = lambda *args, **kwargs: Thread()
+
+    def partially_mutating_subscribe():
+        broker_tokens.add((manager._resolve_exchange_type(key), key.token))
+        raise RuntimeError("partial subscribe failure")
+
+    try:
+        manager._run_socket_operation_bounded(
+            socket=socket,
+            group=group,
+            operation=partially_mutating_subscribe,
+            operation_name="subscribe",
+        )
+    except RuntimeError as exc:
+        assert "partial subscribe failure" in str(exc)
+    else:
+        raise AssertionError("partial broker mutation failure must propagate")
+
+    assert group not in manager._sockets
+    assert group not in manager._socket_tokens
+    assert broker_tokens == {(manager._resolve_exchange_type(key), key.token)}
+    subscriptions = manager.registry.subscriptions()
+    assert any(item.key == key and item.mode == 1 for item in subscriptions)
+    state = manager.snapshot()
+    assert state["socket_operation_worker_failures"] == 1
+    manager.close()
+
+
+def test_late_failure_callback_from_retired_generation_cannot_recover_replacement():
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    old_socket = BlockingSocket()
+    replacement = BlockingSocket()
+    manager._sockets[group] = replacement
+    manager._socket_generation[group] = 2
+    manager._socket_generation_counter[group] = 2
+    recovery_requests = []
+    cooldown_requests = []
+    manager._schedule_socket_failure_recovery = lambda *args: recovery_requests.append(args)
+    manager._apply_broker_cooldown = lambda reason: cooldown_requests.append(reason) or True
+
+    manager._handle_socket_failure(
+        group, old_socket, 1, "429 connection limit exceeded from retired generation"
+    )
+
+    assert manager._sockets[group] is replacement
+    assert manager._socket_generation[group] == 2
+    assert recovery_requests == []
+    assert cooldown_requests == []
+    manager.close()
+
+
+
+def test_socket_failure_callback_waits_for_atomic_subscription_rotation():
+    manager = CommonWebSocketManager()
+    first = InstrumentDescriptor(
+        key=InstrumentKey("NSE", "NSE", "NIFTY-ROTATION-BASE"),
+        symbol="NIFTY",
+        instrument_type="index",
+        exchange="NSE",
+        segment="NSE",
+        underlying="NIFTY",
+    )
+    second = InstrumentDescriptor(
+        key=InstrumentKey("NSE", "NSE", "BANKNIFTY-ROTATION-NEXT"),
+        symbol="BANKNIFTY",
+        instrument_type="index",
+        exchange="NSE",
+        segment="NSE",
+        underlying="BANKNIFTY",
+    )
+    manager.registry.register_many((first, second))
+    manager.registry.subscribe("rotation-owner", first.key, mode=1)
+
+    group = SocketGroup(1, 0)
+    socket = BlockingSocket()
+    manager._sockets[group] = socket
+    manager._socket_generation[group] = 7
+    manager._socket_generation_counter[group] = 7
+    manager._socket_tokens[group] = {(1, first.key.token)}
+
+    rotation_entered = Event()
+    release_rotation = Event()
+    failure_finished = Event()
+    reconcile_calls = []
+
+    def blocked_reconcile():
+        reconcile_calls.append(True)
+        if len(reconcile_calls) == 1:
+            rotation_entered.set()
+            assert release_rotation.wait(timeout=2.0), "subscription reconcile must be released"
+
+    manager._reconcile = blocked_reconcile
+    manager.recover_disconnected = lambda **_kwargs: 0
+
+    def completed_close(_socket, **kwargs):
+        callback = kwargs.get("on_finished")
+        if callback:
+            callback()
+        return Thread()
+
+    manager._close_socket_tracked = completed_close
+
+    rotation_errors = []
+    rotation = Thread(
+        target=lambda: _capture_exception(
+            lambda: manager.subscribe("rotation-owner", (second.key,), mode=1),
+            rotation_errors,
+        ),
+        daemon=True,
+    )
+    failure = Thread(
+        target=lambda: (
+            manager._handle_socket_failure(group, socket, 7, "transport disconnected"),
+            failure_finished.set(),
+        ),
+        daemon=True,
+    )
+
+    rotation.start()
+    assert rotation_entered.wait(timeout=1.0), "rotation must enter its reconcile transaction"
+    failure.start()
+    time.sleep(0.05)
+
+    # Failure invalidation must not interleave with the registry/route transaction.
+    assert manager._sockets[group] is socket
+    assert manager._socket_generation[group] == 7
+    assert not failure_finished.is_set()
+
+    release_rotation.set()
+    rotation.join(timeout=2.0)
+    failure.join(timeout=2.0)
+    assert not rotation.is_alive()
+    assert not failure.is_alive()
+    assert rotation_errors == []
+    assert failure_finished.is_set()
+    assert {sub.key for sub in manager.registry.subscriptions()} == {first.key, second.key}
+
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert group not in manager._sockets
+    assert manager.snapshot()["failure_recovery_worker_active"] is False
+    assert manager.snapshot()["failure_recovery_pending_groups"] == []
+    manager.close()
+
+
+def _capture_exception(callback, errors):
+    try:
+        callback()
+    except Exception as exc:
+        errors.append(exc)
+
+
+def test_coalesced_close_reconcile_failure_keeps_group_pending_until_supervisor_success():
+    """A failed coalesced reconcile must remain queued for the recovery supervisor."""
+    manager = CommonWebSocketManager()
+    groups = [SocketGroup(1, shard) for shard in range(3)]
+    sockets = [BlockingSocket() for _ in groups]
+    deferred_closes = {}
+
+    for group, socket in zip(groups, sockets):
+        manager._sockets[group] = socket
+        manager._socket_generation[group] = 11
+        manager._socket_generation_counter[group] = 11
+        manager._socket_tokens[group] = {(1, f"lane-{group.shard}")}
+
+    def defer_close(socket, **kwargs):
+        group = kwargs["group"]
+        deferred_closes[group] = kwargs.get("on_finished")
+        return Thread()
+
+    manager._close_socket_tracked = defer_close
+    # The recovery supervisor intentionally sleeps when the desired registry
+    # is empty; retain real intent so this test exercises pending-group draining.
+    recovery_key = InstrumentKey("NSE", "NSE", "RECOVERY-SUPERVISOR-INTENT")
+    manager.registry.register(InstrumentDescriptor(
+        key=recovery_key, symbol="NIFTY", instrument_type="index",
+        exchange="NSE", segment="NSE", underlying="NIFTY",
+    ))
+    manager.registry.subscribe("recovery-supervisor-test", recovery_key, mode=1)
+    reconcile_attempts = []
+
+    def fail_first_reconcile():
+        reconcile_attempts.append(True)
+        if len(reconcile_attempts) == 1:
+            raise RuntimeError("transient coalesced reconcile failure")
+
+    manager._reconcile = fail_first_reconcile
+    manager.recover_disconnected = lambda **_kwargs: 0
+
+    # The first failure owns the recovery worker; the next two are coalesced,
+    # but each transport still receives an independent retirement callback.
+    for index in range(3):
+        manager._schedule_socket_failure_recovery(
+            groups[index], sockets[index], 11, f"lane {index} failed"
+        )
+        deadline = time.monotonic() + 1.0
+        while groups[index] not in deferred_closes and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert groups[index] in deferred_closes
+
+    assert manager.snapshot()["failure_recovery_pending_groups"] == ["1:1", "1:2"]
+
+    # Complete one coalesced close while its desired-state reconcile fails.
+    deferred_closes[groups[1]]()
+    state = manager.snapshot()
+    assert state["failure_recovery_pending_groups"] == ["1:1", "1:2"]
+    assert "1:1" not in state["failure_recovery_groups"]
+
+    # The supervisor must retry the pending desired-state reconcile and only
+    # acknowledge the captured groups after that reconcile succeeds.
+    manager._recovery_interval_seconds = 0.01
+    manager._recovery_backoff_max_seconds = 0.02
+    manager._recovery_stop.clear()
+    supervisor = Thread(target=manager._recovery_loop, daemon=True)
+    supervisor.start()
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["failure_recovery_pending_groups"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    manager._recovery_stop.set()
+    supervisor.join(timeout=1.0)
+
+    state = manager.snapshot()
+    assert state["failure_recovery_pending_groups"] == []
+    assert len(reconcile_attempts) >= 2
+
+    # Finish the other two tracked closes and ensure the primary admission
+    # lease is released only by its own completion path.
+    deferred_closes[groups[2]]()
+    deferred_closes[groups[0]]()
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert manager.snapshot()["failure_recovery_worker_active"] is False
+    manager.close()
+
+
+def test_recovery_supervisor_does_not_acknowledge_failures_added_during_reconcile():
+    manager = CommonWebSocketManager()
+    recovery_key = InstrumentKey("NSE", "NSE", "RECOVERY-CONCURRENT-INTENT")
+    manager.registry.register(InstrumentDescriptor(
+        key=recovery_key, symbol="NIFTY", instrument_type="index",
+        exchange="NSE", segment="NSE", underlying="NIFTY",
+    ))
+    manager.registry.subscribe("recovery-concurrent-test", recovery_key, mode=1)
+    first_group = SocketGroup(1, 1)
+    late_group = SocketGroup(1, 2)
+    manager._failure_recovery_pending_groups.add(first_group)
+    manager._failure_recovery_pending_versions[first_group] = 1
+    reconcile_entered = Event()
+    release_reconcile = Event()
+    reconcile_calls = []
+
+    def blocked_first_reconcile():
+        reconcile_calls.append(True)
+        if len(reconcile_calls) == 1:
+            reconcile_entered.set()
+            assert release_reconcile.wait(timeout=2.0)
+
+    manager.recover_disconnected = lambda **_kwargs: 0
+    manager._reconcile = blocked_first_reconcile
+    manager._recovery_interval_seconds = 0.01
+    manager._recovery_backoff_max_seconds = 0.02
+    manager._recovery_stop.clear()
+    supervisor = Thread(target=manager._recovery_loop, daemon=True)
+    supervisor.start()
+
+    assert reconcile_entered.wait(timeout=1.0)
+    manager._failure_recovery_pending_groups.add(late_group)
+    manager._failure_recovery_pending_versions[late_group] = 1
+    release_reconcile.set()
+
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["failure_recovery_pending_groups"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    manager._recovery_stop.set()
+    supervisor.join(timeout=1.0)
+
+    assert not supervisor.is_alive()
+    assert manager.snapshot()["failure_recovery_pending_groups"] == []
+    assert len(reconcile_calls) >= 2
+    manager.close()
+
+
+def test_failure_recovery_keeps_same_shard_distinct_across_subscription_modes():
+    manager = CommonWebSocketManager()
+    groups = (SocketGroup(1, 0), SocketGroup(2, 0))
+    sockets = (BlockingSocket(), BlockingSocket())
+    retired = {}
+    both_retired = Event()
+
+    for group, socket in zip(groups, sockets):
+        manager._sockets[group] = socket
+        manager._socket_generation[group] = 4
+        manager._socket_generation_counter[group] = 4
+        manager._socket_tokens[group] = {(1, f"mode-{group.mode}")}
+
+    def defer_close(socket, **kwargs):
+        retired[kwargs["group"]] = kwargs.get("on_finished")
+        if len(retired) == len(groups):
+            both_retired.set()
+        return Thread()
+
+    manager._close_socket_tracked = defer_close
+    manager.recover_disconnected = lambda **_kwargs: 0
+    manager._reconcile = lambda: None
+
+    manager._schedule_socket_failure_recovery(groups[0], sockets[0], 4, "mode one failed")
+    manager._schedule_socket_failure_recovery(groups[1], sockets[1], 4, "mode two failed")
+
+    assert both_retired.wait(timeout=1.0)
+    state = manager.snapshot()
+    assert set(retired) == set(groups)
+    assert state["failure_recovery_groups"] == ["1:0", "2:0"]
+    assert state["failure_recovery_pending_groups"] == ["2:0"]
+    assert manager._sockets == {}
     manager.close()

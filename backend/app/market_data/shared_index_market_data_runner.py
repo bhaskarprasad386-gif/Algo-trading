@@ -271,6 +271,7 @@ class SharedIndexMarketDataRunner:
                     instrument_type="option", segment="NFO", expiry=contract.expiry,
                     strike=contract.strike, option_type=contract.option_type,
                     lot_size=contract.lot_size, underlying=contract.underlying,
+                    expiry_type="WEEKLY" if underlying == "NIFTY" else "MONTHLY",
                 ) for contract in selected.contracts)
             with self._lock:
                 if not self._running or generation != self._run_generation or not self._bootstrap_inflight:

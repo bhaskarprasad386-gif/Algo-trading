@@ -7,7 +7,7 @@ ticks to consumer callbacks. Strategy code never opens a broker WebSocket.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, time as datetime_time
 from math import isfinite
 from threading import Event, Lock, RLock, Thread, current_thread
@@ -18,7 +18,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from .contracts import InstrumentKey
-from .registry import InstrumentRegistry, Subscription
+from .registry import InstrumentDescriptor, InstrumentRegistry, Subscription
 from .shared_cache import put_market_data_record
 from .normalizer import AngelOneTickNormalizer
 from .angel_callback_dispatch import AngelShardCallbackAdapter, CallbackInvocation
@@ -31,6 +31,10 @@ from app.core.diagnostics import runtime_diagnostics
 class SocketGroup:
     mode: int
     shard: int = 0
+
+class SubscriptionPlanRejected(ValueError):
+    """A deterministic affinity/capacity rejection raised before socket mutation."""
+
 
 
 # Broker-wide cooldown/admission also covers direct collectors.
@@ -212,6 +216,9 @@ class CommonWebSocketManager:
         # Track source timestamps independently for each Angel exchange type.
         self._latest_tick_timestamp_ns_by_exchange_type: dict[int, int] = {}
         self._latest_tick_timestamp_ns_by_group_exchange: dict[tuple[SocketGroup, int], int] = {}
+        # Provider timestamp high-water marks are per instrument, not merely
+        # per exchange: one busy option must not suppress another option's ticks.
+        self._latest_provider_timestamp_ns_by_instrument: dict[InstrumentKey, int] = {}
         self._last_exchange_tick_received_at: dict[int, float] = {}
         self._last_raw_frame_at_by_exchange_type: dict[tuple[SocketGroup, int], float] = {}
         self._socket_created_at: dict[SocketGroup, float] = {}
@@ -259,9 +266,11 @@ class CommonWebSocketManager:
         # remains the fallback, but duplicate SDK callbacks must not spawn a
         # burst of close/recovery workers for the same failed generation.
         self._failure_recovery_groups: set[SocketGroup] = set()
+        self._failure_recovery_generation_by_group: dict[SocketGroup, int] = {}
         # Globally admit at most one callback-triggered recovery worker; other shard failures are coalesced for the supervisor.
         self._failure_recovery_worker_active = False
         self._failure_recovery_pending_groups: set[SocketGroup] = set()
+        self._failure_recovery_pending_versions: dict[SocketGroup, int] = {}
         self._failure_recovery_admission_rejections = 0
         # Retired transports remain visible until their close worker actually exits.
         # Store metadata only; never retain broker frames or authentication payloads.
@@ -412,6 +421,13 @@ class CommonWebSocketManager:
                     )
 
     def subscribe(self, consumer: str, keys: list[InstrumentKey], mode: int = 1) -> tuple[Subscription, ...]:
+        # Serialize registry mutation with reconciliation. Without this outer
+        # transaction, a rejected capacity change can leave a consumer registered
+        # even though no socket/route was admitted.
+        with self._reconcile_lock:
+            return self._subscribe_serialized(consumer, keys, mode)
+
+    def _subscribe_serialized(self, consumer: str, keys: list[InstrumentKey], mode: int = 1) -> tuple[Subscription, ...]:
         consumer = self._consumer_name(consumer)
         if not keys:
             return ()
@@ -420,6 +436,7 @@ class CommonWebSocketManager:
         with self._lock:
             if self._closed:
                 raise RuntimeError("CommonWebSocketManager is closed")
+            consumer_before = self.registry.snapshot_consumer(consumer)
             before = {
                 sub.key: sub.mode
                 for sub in self.registry.subscriptions()
@@ -447,11 +464,23 @@ class CommonWebSocketManager:
                     f"consumer_subscriptions={len(after)} total_subscriptions={len(self.registry.subscriptions())}"
                 )
         self._ensure_recovery_supervisor()
-        self._reconcile()
+        try:
+            self._reconcile()
+        except SubscriptionPlanRejected:
+            # Affinity/capacity planning rejects before committing socket or
+            # route state. Restore this consumer's exact prior modes so a
+            # rejected subscribe cannot leave ghost registry ownership behind.
+            with self._lock:
+                self.registry.restore_consumer(consumer, consumer_before)
+            raise
         with self._lock:
             return tuple(sub for sub in self.registry.subscriptions() if consumer in sub.consumers)
 
     def unsubscribe(self, consumer: str, keys: list[InstrumentKey] | None = None) -> None:
+        with self._reconcile_lock:
+            self._unsubscribe_serialized(consumer, keys)
+
+    def _unsubscribe_serialized(self, consumer: str, keys: list[InstrumentKey] | None = None) -> None:
         consumer = self._consumer_name(consumer)
         with self._lock:
             before = {
@@ -478,6 +507,10 @@ class CommonWebSocketManager:
         self._reconcile()
 
     def clear_consumer(self, consumer: str) -> None:
+        with self._reconcile_lock:
+            self._clear_consumer_serialized(consumer)
+
+    def _clear_consumer_serialized(self, consumer: str) -> None:
         consumer = self._consumer_name(consumer)
         with self._lock:
             before = sum(1 for sub in self.registry.subscriptions() if consumer in sub.consumers)
@@ -494,30 +527,115 @@ class CommonWebSocketManager:
                 )
         self._reconcile()
 
+    def _preferred_socket_pairs(
+        self,
+    ) -> dict[int, dict[tuple[int, str], int]]:
+        """Return one unambiguous preferred lane for each active broker token."""
+        affinity_by_pair: dict[tuple[int, tuple[int, str]], set[int | None]] = defaultdict(set)
+        descriptors_by_pair: dict[
+            tuple[int, tuple[int, str]], set[InstrumentDescriptor]
+        ] = defaultdict(set)
+        for sub in self.registry.subscriptions():
+            # snapshot() is also used by diagnostics during recovery. Keep it
+            # readable when a test double or partially initialized registry
+            # exposes a placeholder instead of a complete Subscription.
+            key = getattr(sub, "key", None)
+            mode = getattr(sub, "mode", None)
+            if key is None or mode is None:
+                continue
+            descriptor = self.registry.get(key)
+            if descriptor is None:
+                continue
+            exchange_type = self._resolve_exchange_type(key)
+            pair = (exchange_type, str(key.token).strip())
+            identity = (mode, pair)
+            affinity_by_pair[identity].add(descriptor.preferred_socket_lane)
+            descriptors_by_pair[identity].add(descriptor)
+
+        preferred: dict[int, dict[tuple[int, str], int]] = defaultdict(dict)
+        for (mode, pair), lanes in affinity_by_pair.items():
+            if len(descriptors_by_pair[(mode, pair)]) > 1:
+                raise ValueError(
+                    "ambiguous broker token affinity: one exchange/token maps to "
+                    "multiple instrument descriptors"
+                )
+            locked_lanes = {lane for lane in lanes if lane is not None}
+            if len(locked_lanes) > 1 or (locked_lanes and None in lanes):
+                raise ValueError(
+                    "ambiguous broker token affinity: one exchange/token maps to "
+                    "conflicting locked and unclassified instruments"
+                )
+            if locked_lanes:
+                preferred[mode][pair] = next(iter(locked_lanes))
+        return preferred
+
     def _build_shard_assignments(
         self,
         pairs_by_mode: dict[int, set[tuple[int, str]]],
+        preferred_pairs_by_mode: dict[int, dict[tuple[int, str], int]] | None = None,
     ) -> dict[int, dict[tuple[int, str], int]]:
-        """Keep active pairs pinned and place only new pairs into available capacity."""
+        """Pin classified instruments to their dedicated lane and keep others separate.
+
+        A lane reservation is instrument-level: one options consumer can therefore
+        have NIFTY weekly contracts on lane 0 and BANKNIFTY monthly contracts on
+        lane 1. Unclassified instruments are never allowed to occupy a reserved
+        lane. If the remaining physical socket budget cannot hold them separately,
+        reconciliation fails closed before mutating socket or route state.
+        """
+        preferred_pairs_by_mode = preferred_pairs_by_mode or {}
         result: dict[int, dict[tuple[int, str], int]] = {}
         for mode, pairs in pairs_by_mode.items():
+            preferred = preferred_pairs_by_mode.get(mode, {})
+            if not set(preferred).issubset(pairs):
+                raise ValueError("preferred socket affinity references an inactive instrument")
+            if any(
+                isinstance(lane, bool) or not isinstance(lane, int)
+                or lane not in (0, 1, 2)
+                for lane in preferred.values()
+            ):
+                raise ValueError("locked instrument socket lane must be 0, 1, or 2")
+
+            reserved_lanes = set(preferred.values())
+            assignments = dict(preferred)
             previous = self._shard_assignments.get(mode, {})
-            assignments = {pair: previous[pair] for pair in pairs if pair in previous}
+            # Preserve adaptive placements only when they do not collide with a
+            # newly reserved locked lane. A collision is intentionally rehomed.
+            for pair in pairs - assignments.keys():
+                old_lane = previous.get(pair)
+                if old_lane is not None and old_lane not in reserved_lanes:
+                    assignments[pair] = old_lane
+
             occupancy: dict[int, int] = defaultdict(int)
             for shard_index in assignments.values():
                 occupancy[shard_index] += 1
+
+            # Locked lanes cannot spill into another shard without violating
+            # the user's three-socket topology. Enforce the same per-socket
+            # token ceiling for pinned instruments as for adaptive placement.
+            oversized_locked_lanes = {
+                lane: count
+                for lane, count in occupancy.items()
+                if lane in reserved_lanes and count > self._max_tokens_per_socket
+            }
+            if oversized_locked_lanes:
+                lane, count = sorted(oversized_locked_lanes.items())[0]
+                raise ValueError(
+                    f"locked socket lane {lane} exceeds token limit: "
+                    f"{count} instruments; maximum is {self._max_tokens_per_socket}"
+                )
+
             for pair in sorted(pairs - assignments.keys()):
                 available = next(
                     (
-                        shard_index for shard_index in sorted(occupancy)
-                        if occupancy[shard_index] < self._max_tokens_per_socket
+                        shard_index for shard_index in sorted(set(occupancy) | set(range(3)))
+                        if shard_index not in reserved_lanes
+                        and occupancy[shard_index] < self._max_tokens_per_socket
                     ),
                     None,
                 )
                 if available is None:
-                    used = set(occupancy)
                     available = 0
-                    while available in used:
+                    while available in reserved_lanes or occupancy[available] >= self._max_tokens_per_socket:
                         available += 1
                 assignments[pair] = available
                 occupancy[available] += 1
@@ -530,37 +648,51 @@ class CommonWebSocketManager:
             with self._lock:
                 if self._closed:
                     raise RuntimeError("CommonWebSocketManager is closed")
-                grouped: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
-                for sub in self.registry.subscriptions():
-                    exchange_type = self._resolve_exchange_type(sub.key)
-                    grouped[sub.mode][exchange_type].add(sub.key.token.strip())
+                try:
+                    grouped: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
+                    for sub in self.registry.subscriptions():
+                        exchange_type = self._resolve_exchange_type(sub.key)
+                        grouped[sub.mode][exchange_type].add(sub.key.token.strip())
 
-                desired_tokens: dict[SocketGroup, set[tuple[int, str]]] = {}
-                route_index: dict[
-                    SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
-                ] = defaultdict(lambda: defaultdict(list))
+                    desired_tokens: dict[SocketGroup, set[tuple[int, str]]] = {}
+                    route_index: dict[
+                        SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
+                    ] = defaultdict(lambda: defaultdict(list))
 
-                groups_by_mode: dict[int, list[tuple[int, str]]] = defaultdict(list)
-                for mode, exchanges in grouped.items():
-                    for exchange_type, tokens in exchanges.items():
-                        for token in sorted(tokens):
-                            groups_by_mode[mode].append((exchange_type, token))
+                    groups_by_mode: dict[int, list[tuple[int, str]]] = defaultdict(list)
+                    for mode, exchanges in grouped.items():
+                        for exchange_type, tokens in exchanges.items():
+                            for token in sorted(tokens):
+                                groups_by_mode[mode].append((exchange_type, token))
 
-                # Preserve active placements; only new instruments are assigned.
-                pairs_by_mode = {
-                    mode: set(pairs) for mode, pairs in groups_by_mode.items()
-                }
-                next_assignments = self._build_shard_assignments(pairs_by_mode)
-                for mode, assignments in next_assignments.items():
-                    for pair, shard_index in assignments.items():
-                        shard = SocketGroup(mode=mode, shard=shard_index)
-                        desired_tokens.setdefault(shard, set()).add(pair)
+                    # Derive preferred lanes from registered instrument metadata,
+                    # not consumer names. This is required because the single options
+                    # owner intentionally spans NIFTY weekly and BANKNIFTY monthly.
+                    pairs_by_mode = {
+                        mode: set(pairs) for mode, pairs in groups_by_mode.items()
+                    }
+                    preferred_pairs_by_mode = self._preferred_socket_pairs()
 
-                if len(desired_tokens) > self._max_sockets:
-                    raise ValueError(
-                        f"Angel One global WebSocket limit exceeded: {len(desired_tokens)} "
-                        f"sessions required; maximum is {self._max_sockets}"
+                    # Keep adaptive consumers out of reserved locked lanes. If all
+                    # three dedicated lanes are occupied, unsupported instruments
+                    # require another physical session and are rejected by the
+                    # existing global budget gate below rather than silently mixed.
+                    next_assignments = self._build_shard_assignments(
+                        pairs_by_mode, preferred_pairs_by_mode,
                     )
+                    for mode, assignments in next_assignments.items():
+                        for pair, shard_index in assignments.items():
+                            shard = SocketGroup(mode=mode, shard=shard_index)
+                            desired_tokens.setdefault(shard, set()).add(pair)
+
+                    if len(desired_tokens) > self._max_sockets:
+                        raise ValueError(
+                            f"Angel One global WebSocket limit exceeded: {len(desired_tokens)} "
+                            f"sessions required; maximum is {self._max_sockets}"
+                        )
+
+                except ValueError as exc:
+                    raise SubscriptionPlanRejected(str(exc)) from exc
 
                 # Commit the placement only after validating the global socket
                 # budget, so a rejected addition cannot corrupt existing routing.
@@ -575,6 +707,11 @@ class CommonWebSocketManager:
                         route_index[shard][pair].append((consumer, sub.key))
 
                 self._route_index = {group: dict(tokens) for group, tokens in route_index.items()}
+                active_instrument_keys = {sub.key for sub in self.registry.subscriptions()}
+                # Retain timestamp high-water marks only for active contracts;
+                # a long-running scanner must not accumulate every expired token.
+                for inactive_key in self._latest_provider_timestamp_ns_by_instrument.keys() - active_instrument_keys:
+                    self._latest_provider_timestamp_ns_by_instrument.pop(inactive_key, None)
                 existing = dict(self._sockets)
                 previous_tokens = {group: set(tokens) for group, tokens in self._socket_tokens.items()}
 
@@ -659,6 +796,7 @@ class CommonWebSocketManager:
                         not connecting or connect_timed_out
                     ) and not connect_pending
                     if disconnected:
+                        retired_generation = self._socket_generation_counter.get(group, 0)
                         with self._lock:
                             if self._sockets.get(group) is socket:
                                 self._sockets.pop(group, None)
@@ -673,11 +811,12 @@ class CommonWebSocketManager:
                                 # Retirement is also a recovery lifecycle: block a
                                 # replacement while the old transport is still closing.
                                 self._failure_recovery_groups.add(group)
-                        def _resume_after_retired_close(retired_group=group):
+                                self._failure_recovery_generation_by_group[group] = retired_generation
+                        def _resume_after_retired_close(retired_group=group, failed_generation=retired_generation):
                             try:
                                 with self._reconcile_lock:
                                     with self._lock:
-                                        self._failure_recovery_groups.discard(retired_group)
+                                        self._clear_failure_recovery_group_locked(retired_group, failed_generation)
                                     self._reconcile()
                             except Exception as exc:
                                 app_logger.warning(
@@ -686,7 +825,7 @@ class CommonWebSocketManager:
                                 )
                         close_worker = self._close_socket_tracked(
                             socket, group=group,
-                            generation=self._socket_generation_counter.get(group),
+                            generation=retired_generation,
                             reason="reconcile_disconnected",
                             on_finished=_resume_after_retired_close,
                         )
@@ -694,7 +833,7 @@ class CommonWebSocketManager:
                         if close_worker.is_alive():
                             continue
                         with self._lock:
-                            self._failure_recovery_groups.discard(group)
+                            self._clear_failure_recovery_group_locked(group, retired_generation)
                 if socket is None:
                     # A timed-out close on any retired shard may still occupy
                     # one of Angel's global sessions. Do not open a replacement
@@ -949,6 +1088,7 @@ class CommonWebSocketManager:
                     )
                     if is_current:
                         self._failure_recovery_groups.add(group)
+                        self._failure_recovery_generation_by_group[group] = generation
                         self._sockets.pop(group, None)
                         self._socket_tokens.pop(group, None)
                         self._socket_created_at.pop(group, None)
@@ -982,12 +1122,12 @@ class CommonWebSocketManager:
                         group, type(exc).__name__, exc,
                     )
                 if is_current:
-                    def _resume_after_connect_failure(failed_group=group):
+                    def _resume_after_connect_failure(failed_group=group, failed_generation=generation):
                         # This callback can run while _reconcile is waiting for
                         # the connect result; don't acquire its lock or deadlock
                         # the caller that must receive the original exception.
                         with self._lock:
-                            self._failure_recovery_groups.discard(failed_group)
+                            self._clear_failure_recovery_group_locked(failed_group, failed_generation)
                     close_worker = self._close_socket_tracked(
                         socket, group=group, generation=generation, reason="connect_failure",
                         on_finished=_resume_after_connect_failure, timeout=0.1,
@@ -1016,6 +1156,16 @@ class CommonWebSocketManager:
             if error is not None:
                 raise error
 
+    def _clear_failure_recovery_group_locked(self, group: SocketGroup, generation: int) -> None:
+        if self._failure_recovery_generation_by_group.get(group) == generation:
+            self._failure_recovery_generation_by_group.pop(group, None)
+            self._failure_recovery_groups.discard(group)
+
+    def _acknowledge_pending_failure_locked(self, group: SocketGroup, version: int) -> None:
+        if self._failure_recovery_pending_versions.get(group) == version:
+            self._failure_recovery_pending_versions.pop(group, None)
+            self._failure_recovery_pending_groups.discard(group)
+
     def _schedule_socket_failure_recovery(
         self, group: SocketGroup, socket: Any, generation: int, reason: str
     ) -> None:
@@ -1031,9 +1181,10 @@ class CommonWebSocketManager:
                     or self._socket_generation.get(group) != generation
                 ):
                     return
-                if group in self._failure_recovery_groups:
+                if self._failure_recovery_generation_by_group.get(group) == generation:
                     return
                 self._failure_recovery_groups.add(group)
+                self._failure_recovery_generation_by_group[group] = generation
                 self._sockets.pop(group, None)
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
@@ -1065,14 +1216,14 @@ class CommonWebSocketManager:
             try:
                 with self._lock:
                     if self._closed:
-                        self._failure_recovery_groups.discard(group)
+                        self._clear_failure_recovery_group_locked(group, generation)
                         return
                 # Admission remains blocked through close completion and recovery,
                 # preventing a late close callback from overlapping a new worker.
                 self.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=None)
                 with self._reconcile_lock:
                     with self._lock:
-                        self._failure_recovery_groups.discard(group)
+                        self._clear_failure_recovery_group_locked(group, generation)
                     self._reconcile()
             except Exception as exc:
                 runtime_diagnostics.record(
@@ -1090,7 +1241,7 @@ class CommonWebSocketManager:
                 with self._reconcile_lock:
                     with self._lock:
                         if group not in self._sockets:
-                            self._failure_recovery_groups.discard(group)
+                            self._clear_failure_recovery_group_locked(group, generation)
             finally:
                 with self._lock:
                     self._failure_recovery_worker_active = False
@@ -1116,15 +1267,18 @@ class CommonWebSocketManager:
                     group, exc,
                 )
                 with self._lock:
-                    self._failure_recovery_groups.discard(group)
+                    self._clear_failure_recovery_group_locked(group, generation)
                     self._failure_recovery_worker_active = False
 
         # A simultaneous shard outage must not spawn one recovery thread per
         # callback. Keep per-group invalidation, coalesce the rest, and let the
         # shared supervisor reconcile the full desired registry.
         coalesced = False
+        pending_version = 0
         with self._lock:
             if self._failure_recovery_worker_active:
+                pending_version = self._failure_recovery_pending_versions.get(group, 0) + 1
+                self._failure_recovery_pending_versions[group] = pending_version
                 self._failure_recovery_pending_groups.add(group)
                 self._failure_recovery_admission_rejections += 1
                 coalesced = True
@@ -1139,18 +1293,18 @@ class CommonWebSocketManager:
                 try:
                     with self._lock:
                         if self._closed:
-                            self._failure_recovery_groups.discard(failed_group)
-                            self._failure_recovery_pending_groups.discard(failed_group)
+                            self._clear_failure_recovery_group_locked(failed_group, generation)
+                            self._acknowledge_pending_failure_locked(failed_group, pending_version)
                             return
                     with self._reconcile_lock:
-                        # Keep coalesced failure visible until a full registry
-                        # reconcile succeeds; the supervisor clears pending groups
-                        # after its own successful recovery pass.
+                        # Keep this generation's failure visible until a full
+                        # registry reconcile succeeds; acknowledge only the exact
+                        # pending version captured when this close was scheduled.
                         with self._lock:
-                            self._failure_recovery_groups.discard(failed_group)
+                            self._clear_failure_recovery_group_locked(failed_group, generation)
                         self._reconcile()
                         with self._lock:
-                            self._failure_recovery_pending_groups.discard(failed_group)
+                            self._acknowledge_pending_failure_locked(failed_group, pending_version)
                 except Exception as exc:
                     app_logger.warning(
                         "Common feed coalesced recovery close completion failed group=%s: %s",
@@ -1170,6 +1324,7 @@ class CommonWebSocketManager:
                 # If close scheduling fails before the completion callback is
                 # registered, release admission so the supervisor can retry.
                 with self._lock:
+                    self._clear_failure_recovery_group_locked(group, generation)
                     self._failure_recovery_worker_active = False
 
         Thread(
@@ -1324,16 +1479,18 @@ class CommonWebSocketManager:
                 self._socket_generation.pop(group, None)
 
         if is_current:
+            failed_generation = self._socket_generation_counter.get(group, 0)
             with self._lock:
                 self._failure_recovery_groups.add(group)
-            def _resume_after_operation_close(failed_group=group):
+                self._failure_recovery_generation_by_group[group] = failed_generation
+            def _resume_after_operation_close(failed_group=group, operation_generation=failed_generation):
                 # The current reconcile caller owns _reconcile_lock here; only
                 # clear the state marker and let the caller unwind on the error.
                 with self._lock:
-                    self._failure_recovery_groups.discard(failed_group)
+                    self._clear_failure_recovery_group_locked(failed_group, operation_generation)
             close_worker = self._close_socket_tracked(
                 socket, group=group,
-                generation=self._socket_generation_counter.get(group),
+                generation=failed_generation,
                 reason=f"socket_{operation_name}_failure",
                 on_finished=_resume_after_operation_close,
             )
@@ -1405,7 +1562,7 @@ class CommonWebSocketManager:
                 )
                 cooldown_remaining = self._broker_cooldown_remaining()
                 with self._lock:
-                    pending_failures_to_ack = set(self._failure_recovery_pending_groups)
+                    pending_failures_to_ack = dict(self._failure_recovery_pending_versions)
                     has_pending_failures = bool(pending_failures_to_ack)
                 if cooldown_remaining > 0.0:
                     cooldown_was_active = True
@@ -1418,7 +1575,8 @@ class CommonWebSocketManager:
                     self._reconcile()
                     cooldown_was_active = False
                     with self._lock:
-                        self._failure_recovery_pending_groups.difference_update(pending_failures_to_ack)
+                        for pending_group, pending_version in pending_failures_to_ack.items():
+                            self._acknowledge_pending_failure_locked(pending_group, pending_version)
                 retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 with self._lock:
                     self._recovery_backoff_current_seconds = retry_delay
@@ -1536,15 +1694,22 @@ class CommonWebSocketManager:
                     continue
                 pairs_by_mode[mode].add((exchange_type, token))
             expected_socket_groups: set[SocketGroup] = set()
-            expected_assignments = self._build_shard_assignments(pairs_by_mode)
+            expected_assignments = self._build_shard_assignments(
+                pairs_by_mode, self._preferred_socket_pairs(),
+            )
             for mode, assignments in expected_assignments.items():
                 expected_socket_groups.update(
                     SocketGroup(mode=mode, shard=shard_index)
                     for shard_index in assignments.values()
                 )
-            # Compare identities, not only counts: a stale/unexpected group can
-            # make the count look complete while a required shard is missing.
-            missing_groups = set(self._sockets) != expected_socket_groups
+            # Compare both physical groups and the instrument-to-lane plan.
+            # A descriptor's expiry/underlying classification can change while
+            # the same three groups remain present; group-count-only recovery
+            # would otherwise leave tokens routed on their former lanes.
+            assignments_changed = expected_assignments != self._shard_assignments
+            missing_groups = (
+                set(self._sockets) != expected_socket_groups or assignments_changed
+            )
             # Reconciliation intentionally blocks new broker sessions while any
             # retired transport is still alive. If the only remaining issue is a
             # missing shard, don't count/re-run a recovery attempt on every
@@ -1710,13 +1875,29 @@ class CommonWebSocketManager:
                 group, socket, generation, "callback_dispatch_integrity_fault"
             ), name=f"angel-callback-fault-{group.mode}-{group.shard}-{generation}", daemon=True).start()
 
+    def _is_current_data_generation(self, group: SocketGroup, generation: int | None) -> bool:
+        """Fence deferred work from a socket generation that has since retired."""
+        with self._lock:
+            return (
+                group in self._sockets
+                and (generation is None or self._socket_generation.get(group) == generation)
+            )
+
     def _on_data(self, group: SocketGroup, message: Any, generation: int | None = None) -> None:
         with self._lock:
-            # Reject callbacks from an older socket after recovery has replaced
-            # or removed that group. Never let an orphan socket inflate telemetry.
-            if generation is not None and self._socket_generation.get(group) != generation:
-                return
+            # Direct/internal callers may omit a generation. Bind them to the
+            # socket generation observed at entry so a callback that triggers
+            # recovery cannot keep fanning out to later consumers on a new socket.
             if group not in self._sockets:
+                return
+            current_generation = self._socket_generation.get(group)
+            if generation is None:
+                generation = current_generation
+            elif current_generation != generation:
+                # Reject callbacks from an older socket after recovery has
+                # replaced or removed that group. Never inflate orphan telemetry.
+                return
+            if generation is None:
                 return
             self._raw_frames_received += 1
             received_monotonic_ns = time.monotonic_ns()
@@ -1797,6 +1978,10 @@ class CommonWebSocketManager:
                         self._last_raw_frame_at_by_exchange_type[(group, exchange_type)] = frame_at
             if not matching:
                 self._unmatched_frames += 1
+            # Registry route membership is set-backed. Normalize callback order
+            # so fan-out is deterministic across processes and a generation fence
+            # always has the same owner boundary to protect.
+            matching = tuple(sorted(matching, key=lambda item: item[0]))
             raw_callbacks = [self._callbacks.get(name) for name, _ in matching]
             record_callbacks = [(self._record_callbacks.get(name), key) for name, key in matching]
             record_observers = [(self._record_observers.get(name), key) for name, key in matching]
@@ -1816,11 +2001,17 @@ class CommonWebSocketManager:
                 )
                 self._ticks_by_exchange[str(routed_exchange_type)] += 1
         for callback in {id(cb): cb for cb in raw_callbacks if cb is not None}.values():
+            if not self._is_current_data_generation(group, generation):
+                return
             with self._lock:
+                if group not in self._sockets or (generation is not None and self._socket_generation.get(group) != generation):
+                    return
                 self._raw_callback_attempts += 1
             try:
                 callback(message)
                 with self._lock:
+                    if group not in self._sockets or (generation is not None and self._socket_generation.get(group) != generation):
+                        continue
                     self._raw_callback_successes += 1
                     self._last_data_at[group] = time.monotonic()
                     self._last_successful_delivery_at[group] = self._last_data_at[group]
@@ -1859,31 +2050,62 @@ class CommonWebSocketManager:
                 continue
             try:
                 record = self._normalizer.normalize(descriptor, message)
-                # Publish one latest normalized snapshot before strategy fan-out.
-                # A cache failure must never suppress live scanner callbacks.
-                try:
-                    put_market_data_record(record)
-                except Exception as cache_exc:
-                    app_logger.warning(
-                        "Common feed shared-cache publish failed exchange=%s segment=%s token=%s error=%s",
-                        record.instrument.exchange,
-                        record.instrument.segment,
-                        record.instrument.token,
-                        cache_exc,
-                    )
+                # The manager's monotonic ingress clock is captured before raw
+                # consumer fan-out. Preserve it separately from the provider's
+                # exchange timestamp and the normalizer's standalone fallback.
+                record = replace(record, received_at_monotonic_ns=received_monotonic_ns)
+                # Normalize outside the manager lock, but publish only while the
+                # originating socket generation is still current. This closes the
+                # race where a slow normalizer from a retired socket overwrites the
+                # shared latest-tick cache after its replacement has gone live.
                 with self._lock:
+                    if group not in self._sockets or (generation is not None and self._socket_generation.get(group) != generation):
+                        continue
+                    # Reject out-of-order provider frames before either shared
+                    # cache publication or strategy fan-out. Keep the high-water
+                    # mark per instrument so unrelated contracts remain independent.
+                    provider_timestamped = self._has_provider_timestamp(message)
+                    incoming_timestamp_ns = (
+                        int(record.timestamp_ns) if record.timestamp_ns is not None else None
+                    )
+                    if provider_timestamped and incoming_timestamp_ns is not None:
+                        previous_instrument_timestamp = self._latest_provider_timestamp_ns_by_instrument.get(key)
+                        if previous_instrument_timestamp is not None and incoming_timestamp_ns < previous_instrument_timestamp:
+                            continue
+                    # Publish atomically with the generation fence. The cache
+                    # helper is local and must not call back into this manager.
+                    try:
+                        put_market_data_record(record)
+                    except Exception as cache_exc:
+                        app_logger.warning(
+                            "Common feed shared-cache publish failed exchange=%s segment=%s token=%s error=%s",
+                            record.instrument.exchange,
+                            record.instrument.segment,
+                            record.instrument.token,
+                            cache_exc,
+                        )
                     self._normalized_records_emitted += 1
-                    self._last_tick = {
-                        "exchange_type": exchange_type or self._resolve_exchange_type(key),
-                        "exchange": record.instrument.exchange,
-                        "segment": record.instrument.segment,
-                        "token": record.instrument.token,
-                        "symbol": record.symbol,
-                        "timestamp_ns": record.timestamp_ns,
-                        "ltp": record.ltp,
-                        "bid": record.bid,
-                        "ask": record.ask,
-                    }
+                    if provider_timestamped and incoming_timestamp_ns is not None:
+                        self._latest_provider_timestamp_ns_by_instrument[key] = max(
+                            incoming_timestamp_ns,
+                            self._latest_provider_timestamp_ns_by_instrument.get(key, incoming_timestamp_ns),
+                        )
+                    if (
+                        record.timestamp_ns is None
+                        or self._last_tick is None
+                        or int(record.timestamp_ns) >= int(self._last_tick.get("timestamp_ns") or 0)
+                    ):
+                        self._last_tick = {
+                            "exchange_type": exchange_type or self._resolve_exchange_type(key),
+                            "exchange": record.instrument.exchange,
+                            "segment": record.instrument.segment,
+                            "token": record.instrument.token,
+                            "symbol": record.symbol,
+                            "timestamp_ns": record.timestamp_ns,
+                            "ltp": record.ltp,
+                            "bid": record.bid,
+                            "ask": record.ask,
+                        }
                     if record.timestamp_ns is not None:
                         incoming_timestamp_ns = int(record.timestamp_ns)
                         if (
@@ -1918,12 +2140,25 @@ class CommonWebSocketManager:
                                 ] = incoming_timestamp_ns
                             self._last_exchange_tick_received_at[incoming_exchange_type] = time.monotonic()
                 for callback in callbacks:
+                    if not self._is_current_data_generation(group, generation):
+                        break
                     callback(record)
                     with self._lock:
-                        self._normalized_records_delivered += 1
-                        self._last_data_at[group] = time.monotonic()
-                        self._last_successful_delivery_at[group] = self._last_data_at[group]
+                        generation_retired = (
+                            group not in self._sockets
+                            or self._socket_generation.get(group) != generation
+                        )
+                        if not generation_retired:
+                            self._normalized_records_delivered += 1
+                            self._last_data_at[group] = time.monotonic()
+                            self._last_successful_delivery_at[group] = self._last_data_at[group]
+                    if generation_retired:
+                        # Stop the entire frame fan-out, including remaining
+                        # owners and observers, once the originating socket retires.
+                        return
                 for observer in observers_by_key.get(key, ()):
+                    if not self._is_current_data_generation(group, generation):
+                        return
                     with self._lock:
                         connection_current = (
                             generation is not None
@@ -2187,7 +2422,9 @@ class CommonWebSocketManager:
                     continue
                 pairs_by_mode[mode].add((exchange_type, token))
             required_groups: set[SocketGroup] = set()
-            required_assignments = self._build_shard_assignments(pairs_by_mode)
+            required_assignments = self._build_shard_assignments(
+                pairs_by_mode, self._preferred_socket_pairs(),
+            )
             for mode, assignments in required_assignments.items():
                 required_groups.update(
                     SocketGroup(mode=mode, shard=shard_index)
@@ -2233,6 +2470,16 @@ class CommonWebSocketManager:
                         "transport_thread_alive",
                         "transport_close_timed_out",
                         "initial_subscribe_success",
+                        "subscription_response_state",
+                        "subscription_rejection_count",
+                        "ping_count",
+                        "pong_count",
+                        "last_ping_at_monotonic_ns",
+                        "last_pong_at_monotonic_ns",
+                        "heartbeat_state",
+                        "last_pong_age_seconds",
+                        "ping_interval_seconds",
+                        "ping_timeout_seconds",
                         "health_read_error",
                     )
                     if key in health
@@ -2460,7 +2707,9 @@ class CommonWebSocketManager:
                 self._last_successful_delivery_at.clear()
                 self._socket_generation.clear()
                 self._failure_recovery_groups.clear()
+                self._failure_recovery_generation_by_group.clear()
                 self._failure_recovery_pending_groups.clear()
+                self._failure_recovery_pending_versions.clear()
         # Do not hold either manager lock while waiting for consumer callbacks:
         # a callback may legitimately request subscription changes during shutdown.
         for group, (generation, adapter) in callback_adapters:

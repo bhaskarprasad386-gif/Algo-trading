@@ -1,3 +1,6 @@
+from dataclasses import replace
+
+import pytest
 from app.market_data.shared_index_feed_lifecycle import SharedIndexFeedLifecycle
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
 from app.market_data.contracts import InstrumentKey, MarketDataRecord, InstrumentType
@@ -47,6 +50,7 @@ def _options(shift=0):
                     key=InstrumentKey("NFO", "NFO", token), symbol=token,
                     instrument_type="option", exchange="NFO", segment="NFO",
                     expiry="TEST", strike=strike, option_type=opt, underlying=underlying,
+                    expiry_type="WEEKLY" if underlying == "NIFTY" else "MONTHLY",
                 ))
     return tuple(descriptors)
 
@@ -134,6 +138,7 @@ def test_locked_options_reject_unbalanced_pair_before_registry_mutation():
         key=InstrumentKey("NFO", "NFO", "duplicate-side-token"),
         symbol="duplicate-side-token", instrument_type="option", exchange="NFO", segment="NFO",
         expiry=target.expiry, strike=target.strike, option_type="CE", underlying=target.underlying,
+        expiry_type="WEEKLY",
     )
     try:
         lifecycle.start_options(broken)
@@ -153,7 +158,7 @@ def test_locked_options_reject_expiry_mismatch_and_asymmetric_strike_window():
         key=InstrumentKey("NFO", "NFO", "expiry-mismatch"),
         symbol="expiry-mismatch", instrument_type="option", exchange="NFO", segment="NFO",
         expiry="DIFFERENT", strike=broken_expiry[0].strike, option_type=broken_expiry[0].option_type,
-        underlying=broken_expiry[0].underlying,
+        underlying=broken_expiry[0].underlying, expiry_type="WEEKLY",
     )
     try:
         lifecycle.start_options(broken_expiry)
@@ -170,14 +175,14 @@ def test_locked_options_reject_expiry_mismatch_and_asymmetric_strike_window():
         key=InstrumentKey("NFO", "NFO", "off-grid-ce"),
         symbol="off-grid-ce", instrument_type="option", exchange="NFO", segment="NFO",
         expiry=original.expiry, strike=original.strike + 25, option_type="CE",
-        underlying=original.underlying,
+        underlying=original.underlying, expiry_type="WEEKLY",
     )
     pe_original = broken_strikes[paired_pe]
     broken_strikes[paired_pe] = InstrumentDescriptor(
         key=InstrumentKey("NFO", "NFO", "off-grid-pe"),
         symbol="off-grid-pe", instrument_type="option", exchange="NFO", segment="NFO",
         expiry=pe_original.expiry, strike=original.strike + 25, option_type="PE",
-        underlying=original.underlying,
+        underlying=original.underlying, expiry_type="WEEKLY",
     )
     try:
         lifecycle.start_options(broken_strikes)
@@ -367,6 +372,29 @@ def test_stop_clears_local_owner_flags_and_continues_after_partial_reconcile_fai
     assert snapshot["spot_instruments"] == 0
     assert manager.registry.active_keys() == ()
 
+
+
+
+def test_locked_options_reject_wrong_expiry_family_before_registry_mutation():
+    from dataclasses import replace
+
+    for underlying, wrong_type, expected_message in (
+        ("NIFTY", "MONTHLY", "NIFTY options must use WEEKLY expiry"),
+        ("BANKNIFTY", "WEEKLY", "BANKNIFTY options must use MONTHLY expiry"),
+    ):
+        manager = StubManager()
+        lifecycle = SharedIndexFeedLifecycle(manager=manager)
+        descriptors = list(_options())
+        index = next(i for i, item in enumerate(descriptors) if item.underlying == underlying)
+        descriptors[index] = replace(descriptors[index], expiry_type=wrong_type)
+        try:
+            lifecycle.start_options(descriptors)
+        except ValueError as exc:
+            assert expected_message in str(exc)
+        else:
+            raise AssertionError("wrong locked expiry family must be rejected")
+        assert manager.registry.subscriptions() == ()
+        assert manager.registry.active_keys() == ()
 
 def _spot_record(key, timestamp_ns=1):
     return MarketDataRecord(
@@ -715,3 +743,43 @@ def test_stop_waits_for_inflight_option_rotation_then_clears_all_owner_keys():
     assert lifecycle.snapshot()["futures_active"] is False
     assert manager.registry.active_keys() == ()
     assert manager.registry.subscriptions() == ()
+
+
+
+
+def test_spot_start_rejects_non_index_or_wrong_exchange_descriptors_before_registry_mutation():
+    manager = StubManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    nifty, bank = _spot_descriptors()
+    wrong_kind = replace(nifty, instrument_type="future")
+    wrong_exchange = replace(
+        bank,
+        exchange="BSE",
+        segment="BSE",
+        key=InstrumentKey("BSE", "BSE", bank.key.token),
+    )
+
+    with pytest.raises(ValueError, match="NSE index instruments"):
+        lifecycle.start_spot((wrong_kind, wrong_exchange))
+
+    assert manager.registry.subscriptions() == ()
+    assert manager.registry.get(wrong_kind.key) is None
+    assert manager.registry.get(wrong_exchange.key) is None
+
+
+
+def test_futures_start_rejects_non_nfo_instrument_key_before_registry_mutation():
+    manager = StubManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    nifty, bank = _future_descriptors("invalid-key")
+    invalid = replace(
+        nifty,
+        key=InstrumentKey("BSE", "BSE", nifty.key.token),
+    )
+
+    with pytest.raises(ValueError, match="valid NFO index futures"):
+        lifecycle.start_futures((invalid, bank))
+
+    assert manager.registry.subscriptions() == ()
+    assert manager.registry.get(invalid.key) is None
+    assert manager.registry.get(bank.key) is None

@@ -43,7 +43,13 @@ def shared_common_manager(
         if _SHARED_MANAGER is None:
             _SHARED_AUTH = auth or AngelOneAuth()
             factory = socket_factory or (lambda: MarketDataWebSocket(auth=_SHARED_AUTH, auto_reconnect=False))
-            _SHARED_MANAGER = CommonWebSocketManager(socket_factory=factory)
+            _SHARED_MANAGER = CommonWebSocketManager(
+                socket_factory=factory,
+                # Keep the broker transport callback limited to bounded enqueue.
+                # Strategy normalization/cache fan-out runs on the shard worker,
+                # so a slow consumer cannot stall Angel's ping/pong loop.
+                async_callback_dispatch=True,
+            )
         return _SHARED_MANAGER
 
 
@@ -63,6 +69,20 @@ def _record_from_snapshot(descriptor: InstrumentDescriptor, snapshot: dict[str, 
             symbol=descriptor.symbol,
             instrument_type=instrument_type,
             timestamp_ns=timestamp_ns,
+            exchange_timestamp_ns=(
+                snapshot.get("exchange_timestamp_ns")
+                if isinstance(snapshot.get("exchange_timestamp_ns"), int)
+                and not isinstance(snapshot.get("exchange_timestamp_ns"), bool)
+                and snapshot.get("exchange_timestamp_ns") >= 0
+                else None
+            ),
+            received_at_monotonic_ns=(
+                snapshot.get("received_at_monotonic_ns")
+                if isinstance(snapshot.get("received_at_monotonic_ns"), int)
+                and not isinstance(snapshot.get("received_at_monotonic_ns"), bool)
+                and snapshot.get("received_at_monotonic_ns") >= 0
+                else None
+            ),
             timeframe=str(snapshot.get("timeframe") or "1s"),
             ltp=snapshot.get("ltp"),
             bid=snapshot.get("bid"),
@@ -161,6 +181,7 @@ class CommonStrategyMarketFeed:
         lot_size: int | None = None,
         tick_size: float | None = None,
         underlying: str | None = None,
+        expiry_type: str | None = None,
     ) -> InstrumentDescriptor:
         exchange = str(exchange).strip().upper()
         if exchange not in _EXCHANGE_SEGMENTS:
@@ -178,6 +199,7 @@ class CommonStrategyMarketFeed:
             lot_size=lot_size,
             tick_size=tick_size,
             underlying=(str(underlying).strip().upper() or None) if underlying is not None else None,
+            expiry_type=(str(expiry_type).strip().upper() or None) if expiry_type is not None else None,
         )
 
     def start(

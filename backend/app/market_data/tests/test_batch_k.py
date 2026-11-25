@@ -38,6 +38,7 @@ def test_angel_one_payload_normalizes_price_units_and_metadata():
     assert isinstance(record, MarketDataRecord)
     assert record.instrument_type is InstrumentType.EQUITY
     assert record.timestamp_ns == 1720000000123 * 1_000_000
+    assert record.exchange_timestamp_ns == 1720000000123 * 1_000_000
     assert record.ltp == 123.45
     assert record.bid == 123.40
     assert record.ask == 123.50
@@ -83,6 +84,8 @@ def test_normalized_callback_uses_exact_exchange_group():
     assert len(seen) == 1
     assert seen[0].instrument.exchange == "NSE"
     assert seen[0].ltp == 100.0
+    assert isinstance(seen[0].received_at_monotonic_ns, int)
+    assert seen[0].received_at_monotonic_ns > 0
     manager.close()
 
 
@@ -308,3 +311,73 @@ def test_normalizer_converts_epoch_microseconds_and_preserves_explicit_nanosecon
     )
     assert micro_record.timestamp_ns == micros * 1_000
     assert ns_record.timestamp_ns == explicit_ns
+
+def test_provider_normalizers_keep_source_and_local_receive_clocks_separate():
+    from app.market_data.shoonya_normalizer import ShoonyaTickNormalizer
+
+    angel = AngelOneTickNormalizer().normalize(
+        descriptor(), {"token": "101", "last_traded_price": 12345}
+    )
+    shoonya = ShoonyaTickNormalizer().normalize(
+        descriptor(), {"tk": "101", "e": "NSE", "lp": "123.45"}
+    )
+
+    # Angel's compatibility timestamp may fall back to wall clock; Shoonya
+    # leaves an absent exchange timestamp at zero. Both carry a distinct
+    # monotonic receipt clock for local freshness and latency calculations.
+    assert angel.timestamp_ns > 0
+    assert shoonya.timestamp_ns == 0
+    assert angel.exchange_timestamp_ns is None
+    assert shoonya.exchange_timestamp_ns is None
+    assert isinstance(angel.received_at_monotonic_ns, int)
+    assert isinstance(shoonya.received_at_monotonic_ns, int)
+    assert angel.received_at_monotonic_ns > 0
+    assert shoonya.received_at_monotonic_ns > 0
+    assert angel.received_at_monotonic_ns <= __import__("time").monotonic_ns()
+    assert shoonya.received_at_monotonic_ns <= __import__("time").monotonic_ns()
+
+
+def test_market_data_record_rejects_invalid_monotonic_receive_timestamp():
+    from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
+    import pytest
+
+    for value in (True, -1, 1.5, "123"):
+        with pytest.raises(ValueError, match="received_at_monotonic_ns"):
+            MarketDataRecord(
+                instrument=InstrumentKey("NSE", "EQ", "101"),
+                symbol="ABC",
+                instrument_type=InstrumentType.EQUITY,
+                timestamp_ns=1,
+                received_at_monotonic_ns=value,
+            )
+def test_provider_exchange_timestamps_are_preserved_without_wall_clock_fallback():
+    from app.market_data.shoonya_normalizer import ShoonyaTickNormalizer
+
+    angel_ms = 1_780_000_000_123
+    angel = AngelOneTickNormalizer().normalize(
+        descriptor(), {"token": "101", "exchange_timestamp": angel_ms}
+    )
+    shoonya_seconds = 1_780_000_000
+    shoonya = ShoonyaTickNormalizer().normalize(
+        descriptor(), {"tk": "101", "e": "NSE", "ft": str(shoonya_seconds)}
+    )
+
+    assert angel.exchange_timestamp_ns == angel_ms * 1_000_000
+    assert shoonya.exchange_timestamp_ns == shoonya_seconds * 1_000_000_000
+    assert angel.received_at_monotonic_ns is not None
+    assert shoonya.received_at_monotonic_ns is not None
+
+
+def test_market_data_record_rejects_invalid_exchange_timestamp():
+    import pytest
+    from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
+
+    for value in (True, -1, 1.5, "123"):
+        with pytest.raises(ValueError, match="exchange_timestamp_ns"):
+            MarketDataRecord(
+                instrument=InstrumentKey("NSE", "EQ", "101"),
+                symbol="ABC",
+                instrument_type=InstrumentType.EQUITY,
+                timestamp_ns=1,
+                exchange_timestamp_ns=value,
+            )

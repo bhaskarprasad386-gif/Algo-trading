@@ -1,4 +1,4 @@
-"""Explicit consumer-to-shard affinity policy, isolated from the live feed manager.
+"""Explicit lane affinity policy, isolated from the live feed manager.
 
 This batch adds a deterministic planning primitive only. It does not apply socket
 assignments or change the shared manager's existing shard behavior.
@@ -7,7 +7,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import RLock
-from typing import Iterable
+from typing import Callable, Iterable
+
+from .contracts import InstrumentKey
+from .registry import InstrumentDescriptor
 
 @dataclass(frozen=True, order=True)
 class AffinitySlot:
@@ -15,7 +18,7 @@ class AffinitySlot:
     shard: int
 
     def __post_init__(self):
-        if isinstance(self.mode, bool) or self.mode not in (1, 2, 3, 4):
+        if isinstance(self.mode, bool) or not isinstance(self.mode, int) or self.mode not in (1, 2, 3, 4):
             raise ValueError("mode must be 1, 2, 3, or 4")
         if isinstance(self.shard, bool) or not isinstance(self.shard, int) or self.shard < 0:
             raise ValueError("shard must be a non-negative integer")
@@ -25,13 +28,21 @@ class AffinityPlan:
     owner_slots: dict[str, AffinitySlot]
     owner_tokens: dict[str, frozenset[tuple[int, str]]]
 
+@dataclass(frozen=True)
+class InstrumentAffinityPlan:
+    """Instrument-level placement; consumer ownership is deliberately separate."""
+
+    assignments: dict[InstrumentKey, AffinitySlot]
+    token_pairs_by_slot: dict[AffinitySlot, frozenset[tuple[int, str]]]
+    unassigned_keys: frozenset[InstrumentKey]
+
 class ConsumerSocketAffinity:
-    """Opt-in affinity reservations; unclaimed consumers remain adaptive."""
+    """Opt-in lane reservations; unclaimed consumers remain adaptive."""
 
     LOCKED_OWNERS = {
         "nifty": "shared-index-market-data:nifty",
         "banknifty": "shared-index-market-data:banknifty",
-        "options": "shared-index-market-data:options",
+        "futures": "shared-index-market-data:futures",
     }
 
     def __init__(self, *, max_sockets: int = 3, max_tokens_per_socket: int = 1000):
@@ -51,8 +62,80 @@ class ConsumerSocketAffinity:
         return {
             ConsumerSocketAffinity.LOCKED_OWNERS["nifty"]: AffinitySlot(mode, 0),
             ConsumerSocketAffinity.LOCKED_OWNERS["banknifty"]: AffinitySlot(mode, 1),
-            ConsumerSocketAffinity.LOCKED_OWNERS["options"]: AffinitySlot(mode, 2),
+            ConsumerSocketAffinity.LOCKED_OWNERS["futures"]: AffinitySlot(mode, 2),
         }
+
+
+    def plan_instruments(
+        self,
+        descriptors: Iterable[InstrumentDescriptor],
+        *,
+        mode: int,
+        exchange_type_resolver: Callable[[InstrumentKey], int],
+    ) -> InstrumentAffinityPlan:
+        """Plan locked lanes by instrument, never by a strategy consumer.
+
+        One consumer may own instruments on multiple lanes, including the
+        combined NIFTY-weekly/BANKNIFTY-monthly options subscription. Descriptors
+        without a locked preferred lane remain outside this reservation plan.
+        """
+        if isinstance(mode, bool) or not isinstance(mode, int) or mode not in (1, 2, 3, 4):
+            raise ValueError("mode must be one of 1, 2, 3 or 4")
+        if not callable(exchange_type_resolver):
+            raise TypeError("exchange_type_resolver must be callable")
+
+        assignments: dict[InstrumentKey, AffinitySlot] = {}
+        pairs_by_slot: dict[AffinitySlot, set[tuple[int, str]]] = {}
+        pair_slots: dict[tuple[int, str], AffinitySlot] = {}
+        unassigned_keys: set[InstrumentKey] = set()
+        descriptor_by_key: dict[InstrumentKey, InstrumentDescriptor] = {}
+        lane_by_key: dict[InstrumentKey, int | None] = {}
+        for descriptor in tuple(descriptors):
+            if not isinstance(descriptor, InstrumentDescriptor):
+                raise TypeError("descriptors must contain InstrumentDescriptor values")
+            lane = descriptor.preferred_socket_lane
+            previous_lane = lane_by_key.get(descriptor.key)
+            previous_descriptor = descriptor_by_key.get(descriptor.key)
+            if previous_descriptor is not None and previous_descriptor != descriptor:
+                if previous_lane is not None and lane is not None and previous_lane != lane:
+                    raise ValueError("broker token identity is assigned to conflicting locked lanes")
+                raise ValueError(f"conflicting descriptors for {descriptor.key.value}")
+            if descriptor.key in lane_by_key and previous_lane != lane:
+                raise ValueError(f"conflicting lane affinity for {descriptor.key.value}")
+            descriptor_by_key[descriptor.key] = descriptor
+            lane_by_key[descriptor.key] = lane
+            if lane is None:
+                unassigned_keys.add(descriptor.key)
+                continue
+            slot = AffinitySlot(mode, lane)
+            existing = assignments.get(descriptor.key)
+            if existing is not None and existing != slot:
+                raise ValueError(f"conflicting lane affinity for {descriptor.key.value}")
+            exchange_type = exchange_type_resolver(descriptor.key)
+            if isinstance(exchange_type, bool) or not isinstance(exchange_type, int) or exchange_type <= 0:
+                raise ValueError("exchange type resolver must return a positive integer")
+            pair = (exchange_type, str(descriptor.key.token).strip())
+            if not pair[1]:
+                raise ValueError("instrument token is required")
+            previous_slot = pair_slots.get(pair)
+            if previous_slot is not None and previous_slot != slot:
+                raise ValueError("broker token identity is assigned to conflicting locked lanes")
+            pair_slots[pair] = slot
+            assignments[descriptor.key] = slot
+            pairs_by_slot.setdefault(slot, set()).add(pair)
+
+        if len(pairs_by_slot) > self.max_sockets:
+            raise ValueError("instrument affinity plan exceeds global socket limit")
+        for slot, pairs in pairs_by_slot.items():
+            if len(pairs) > self.max_tokens_per_socket:
+                raise ValueError(f"locked lane {slot.shard} exceeds socket token capacity")
+        return InstrumentAffinityPlan(
+            assignments=dict(assignments),
+            token_pairs_by_slot={
+                slot: frozenset(pairs) for slot, pairs in pairs_by_slot.items()
+            },
+            unassigned_keys=frozenset(unassigned_keys),
+        )
 
     def plan(self, owner_slots: dict[str, AffinitySlot],
               owner_tokens: dict[str, Iterable[tuple[int, str]]]) -> AffinityPlan:

@@ -1,7 +1,9 @@
 import app.market_data.common_websocket as common_websocket_module
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+from app.market_data.common_websocket import (
+    CommonWebSocketManager, SocketGroup, SubscriptionPlanRejected,
+)
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
@@ -948,7 +950,8 @@ def test_socket_capacity_configuration_fails_fast_without_opening_partial_feed()
 
         assert manager.snapshot()["socket_groups"] == 0
         assert FakeSocket.instances == []
-        assert manager.registry.subscriptions()
+        assert manager.registry.subscriptions() == ()
+        assert registry.snapshot_consumer("cash") == {}
     finally:
         manager.close()
 
@@ -1580,6 +1583,10 @@ def test_snapshot_exposes_safe_per_socket_lifecycle_health():
                 "last_error": "ConnectionResetError: simulated",
                 "transport_thread_alive": True,
                 "transport_close_timed_out": True,
+                "heartbeat_state": "RESPONSIVE",
+                "last_pong_age_seconds": 0.25,
+                "ping_interval_seconds": 20,
+                "ping_timeout_seconds": 10,
                 "auth_token": "must-not-leak",
             }
 
@@ -1594,6 +1601,10 @@ def test_snapshot_exposes_safe_per_socket_lifecycle_health():
         assert health["last_error"] == "ConnectionResetError: simulated"
         assert health["transport_thread_alive"] is True
         assert health["transport_close_timed_out"] is True
+        assert health["heartbeat_state"] == "RESPONSIVE"
+        assert health["last_pong_age_seconds"] == 0.25
+        assert health["ping_interval_seconds"] == 20
+        assert health["ping_timeout_seconds"] == 10
         assert "auth_token" not in health
     finally:
         manager.close()
@@ -1754,7 +1765,7 @@ def test_latest_exchange_timestamp_never_regresses_on_out_of_order_ticks():
         })
         snapshot = manager.snapshot()
         assert snapshot["ticks_received"] == 2
-        assert snapshot["last_tick"]["timestamp_ns"] == 1792385990000000000
+        assert snapshot["last_tick"]["timestamp_ns"] == 1792386000000000000
         assert snapshot["latest_tick_timestamp_ns"] == 1792386000000000000
     finally:
         manager.close()
@@ -2392,3 +2403,269 @@ def test_clear_normalized_consumer_during_tick_keeps_shared_owner_delivery():
     finally:
         release.set()
         manager.close()
+
+
+def test_retired_generation_cannot_publish_normalized_tick_after_slow_normalization(monkeypatch):
+    """A callback admitted before retirement must not overwrite the replacement cache."""
+    registry = InstrumentRegistry()
+    item = descriptor("retired-normalize-991")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    entered = Event()
+    release = Event()
+    delivered = []
+    cache_writes = []
+    manager.register_normalized_callback("slow-normalizer-race", delivered.append)
+    original_normalize = manager._normalizer.normalize
+
+    def blocked_normalize(instrument, payload):
+        record = original_normalize(instrument, payload)
+        entered.set()
+        assert release.wait(timeout=2.0), "test must release blocked normalization"
+        return record
+
+    manager._normalizer.normalize = blocked_normalize
+    monkeypatch.setattr(common_websocket_module, "put_market_data_record", cache_writes.append)
+    try:
+        manager.subscribe("slow-normalizer-race", [item.key])
+        group = SocketGroup(1, 0)
+        old_generation = manager._socket_generation[group]
+        delivery = Thread(
+            target=lambda: manager._on_data(group, {
+                "token": item.key.token,
+                "exchange_type": 1,
+                "ltp": 12345,
+                "timestamp_ns": "1792386000000000000",
+            }, old_generation),
+            daemon=True,
+        )
+        delivery.start()
+        assert entered.wait(timeout=1.0), "normalization should be blocked after admission"
+
+        replacement = FakeSocket()
+        with manager._lock:
+            manager._sockets[group] = replacement
+            manager._socket_generation[group] = old_generation + 1
+
+        release.set()
+        delivery.join(timeout=1.0)
+        assert not delivery.is_alive()
+        assert cache_writes == []
+        assert delivered == []
+        assert manager.snapshot()["normalized_records_emitted"] == 0
+    finally:
+        release.set()
+        manager.close()
+
+
+def test_out_of_order_provider_tick_is_rejected_before_cache_and_consumer_fanout(monkeypatch):
+    registry = InstrumentRegistry()
+    item = descriptor("out-of-order-provider-991")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    received = []
+    cache_writes = []
+    manager.register_normalized_callback("ordered-owner", received.append)
+    monkeypatch.setattr(common_websocket_module, "put_market_data_record", cache_writes.append)
+    group = SocketGroup(1, 0)
+    try:
+        manager.subscribe("ordered-owner", [item.key])
+        generation = manager._socket_generation[group]
+        newer = {
+            "token": item.key.token,
+            "exchange_type": 1,
+            "ltp": 12000,
+            "timestamp_ns": "1792386002000000000",
+        }
+        older = {
+            "token": item.key.token,
+            "exchange_type": 1,
+            "ltp": 9000,
+            "timestamp_ns": "1792386001000000000",
+        }
+
+        manager._on_data(group, newer, generation)
+        manager._on_data(group, older, generation)
+
+        assert len(received) == 1
+        assert received[0].ltp == 120.0
+        assert len(cache_writes) == 1
+        assert manager._last_tick["ltp"] == 120.0
+        assert manager._last_tick["timestamp_ns"] == 1792386002000000000
+        assert manager.snapshot()["normalized_records_emitted"] == 1
+
+        manager.unsubscribe("ordered-owner", [item.key])
+        assert item.key not in manager._latest_provider_timestamp_ns_by_instrument
+    finally:
+        manager.close()
+
+
+def test_retirement_during_normalized_callback_stops_remaining_fanout():
+    registry = InstrumentRegistry()
+    item = descriptor("retire-during-fanout-991")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    entered = Event()
+    release = Event()
+    first_received = []
+    second_received = []
+
+    def blocking_consumer(record):
+        first_received.append(record.instrument.token)
+        entered.set()
+        assert release.wait(timeout=2.0), "release first consumer after retiring socket"
+
+    manager.register_normalized_callback("first-owner", blocking_consumer)
+    manager.register_normalized_callback(
+        "second-owner", lambda record: second_received.append(record.instrument.token)
+    )
+    manager.subscribe("first-owner", [item.key])
+    manager.subscribe("second-owner", [item.key])
+    group = SocketGroup(1, 0)
+    try:
+        generation = manager._socket_generation[group]
+        delivery = Thread(
+            target=lambda: manager._on_data(group, {
+                "token": item.key.token,
+                "exchange_type": 1,
+                "ltp": 10000,
+                "timestamp_ns": "1792386003000000000",
+            }),
+            daemon=True,
+        )
+        delivery.start()
+        assert entered.wait(timeout=1.0), "first normalized consumer should be in flight"
+
+        replacement = FakeSocket()
+        with manager._lock:
+            manager._sockets[group] = replacement
+            manager._socket_generation[group] = generation + 1
+
+        release.set()
+        delivery.join(timeout=1.0)
+        assert not delivery.is_alive()
+        assert first_received == [item.key.token]
+        assert second_received == []
+        assert manager.snapshot()["normalized_records_delivered"] == 0
+    finally:
+        release.set()
+        manager.close()
+
+
+def test_old_recovery_ack_cannot_clear_newer_failure_for_same_socket_lane():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    group = SocketGroup(3, 1)
+    try:
+        with manager._lock:
+            manager._failure_recovery_pending_groups.add(group)
+            manager._failure_recovery_pending_versions[group] = 12
+
+            # A recovery pass that captured version 11 must not acknowledge
+            # version 12, even though the set contains the same SocketGroup.
+            manager._acknowledge_pending_failure_locked(group, 11)
+
+            assert manager._failure_recovery_pending_groups == {group}
+            assert manager._failure_recovery_pending_versions == {group: 12}
+
+            manager._acknowledge_pending_failure_locked(group, 12)
+            assert manager._failure_recovery_pending_groups == set()
+            assert manager._failure_recovery_pending_versions == {}
+    finally:
+        manager.close()
+
+
+def test_old_generation_completion_cannot_clear_newer_same_lane_failure():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    group = SocketGroup(3, 2)
+    try:
+        with manager._lock:
+            manager._failure_recovery_groups.add(group)
+            manager._failure_recovery_generation_by_group[group] = 40
+
+            # The lane has already been recreated and failed again. A delayed
+            # completion for generation 40 must not clear generation 41.
+            manager._failure_recovery_generation_by_group[group] = 41
+            manager._clear_failure_recovery_group_locked(group, 40)
+
+            assert manager._failure_recovery_groups == {group}
+            assert manager._failure_recovery_generation_by_group == {group: 41}
+
+            manager._clear_failure_recovery_group_locked(group, 41)
+            assert manager._failure_recovery_groups == set()
+            assert manager._failure_recovery_generation_by_group == {}
+    finally:
+        manager.close()
+
+
+def test_new_generation_failure_is_not_suppressed_by_prior_lane_recovery_marker():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    callbacks = []
+    captured = Event()
+
+    def capture_close(_socket, **kwargs):
+        callbacks.append(kwargs["on_finished"])
+        captured.set()
+        return Thread()
+
+    manager._close_socket_tracked = capture_close
+    item = descriptor("same-lane-successive-failures")
+    manager.registry.register(item)
+    manager.register_callback("successive-failure-owner", lambda _message: None)
+    manager.subscribe("successive-failure-owner", [item.key])
+    group = SocketGroup(1, 0)
+    try:
+        first_socket = manager._sockets[group]
+        first_generation = manager._socket_generation[group]
+        manager._schedule_socket_failure_recovery(
+            group, first_socket, first_generation, "first generation failure"
+        )
+        assert captured.wait(timeout=1.0), "first failed transport should be retired"
+
+        replacement = FakeSocket()
+        with manager._lock:
+            manager._sockets[group] = replacement
+            manager._socket_generation[group] = first_generation + 1
+            manager._socket_tokens[group] = {(1, item.key.token)}
+
+        manager._schedule_socket_failure_recovery(
+            group, replacement, first_generation + 1, "replacement generation failed"
+        )
+
+        assert len(callbacks) == 2, "the replacement generation must get its own close completion"
+        assert manager._failure_recovery_generation_by_group[group] == first_generation + 1
+        assert manager._failure_recovery_pending_groups == {group}
+        assert manager._failure_recovery_pending_versions[group] == 1
+    finally:
+        manager.close()
+
+def test_rejected_affinity_subscribe_rolls_back_only_the_attempted_consumer():
+    registry = InstrumentRegistry()
+    item = descriptor("capacity-rollback-991")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._ensure_recovery_supervisor = lambda: None
+    manager._reconcile = lambda: None
+
+    manager.subscribe("existing-owner", [item.key], mode=1)
+    manager.subscribe("other-owner", [item.key], mode=3)
+    before = registry.snapshot_consumer("existing-owner")
+
+    def reject_reconcile():
+        raise SubscriptionPlanRejected("global WebSocket limit exceeded")
+
+    manager._reconcile = reject_reconcile
+    try:
+        manager.subscribe("existing-owner", [item.key], mode=2)
+    except ValueError as exc:
+        assert "global WebSocket limit" in str(exc)
+    else:
+        raise AssertionError("capacity rejection must propagate")
+
+    assert registry.snapshot_consumer("existing-owner") == before == {item.key: 1}
+    shared = registry.subscriptions()[0]
+    assert shared.consumers == frozenset({"existing-owner", "other-owner"})
+    assert shared.mode == 3

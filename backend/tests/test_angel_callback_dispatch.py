@@ -283,3 +283,148 @@ def test_retirement_fences_remaining_callbacks_in_already_dequeued_batch():
     assert seen == ["inflight"]
     assert adapter.snapshot()["callback_attempts"] == 1
     assert adapter.snapshot()["closed"] is True
+
+
+
+def test_graceful_stop_timeout_fences_remaining_invocations_in_active_batch():
+    from threading import Event
+
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    entered = Event()
+    release = Event()
+    seen = []
+
+    def blocked(value):
+        entered.set()
+        release.wait(timeout=2.0)
+        seen.append(value)
+
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(
+            CallbackInvocation(blocked, "inflight", "raw"),
+            CallbackInvocation(seen.append, "must-not-run-after-timeout", "record"),
+        ),
+    )
+    assert entered.wait(timeout=1.0)
+
+    with pytest.raises(TimeoutError, match="shutdown budget"):
+        adapter.stop(timeout=0.05, drain=True)
+
+    state = adapter.snapshot()
+    assert state["closed"] is True
+    assert state["generation"] == 2
+    assert state["callback_attempts"] == 1
+
+    release.set()
+    worker = adapter._thread
+    assert worker is not None
+    worker.join(timeout=1.0)
+    assert not worker.is_alive()
+    assert seen == ["inflight"]
+    assert adapter.snapshot()["callback_attempts"] == 1
+
+
+
+def test_publish_revalidates_generation_after_payload_copy_races_retirement():
+    from threading import Event, Thread
+
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    copy_entered = Event()
+    release_copy = Event()
+    seen = []
+
+    class BlockingCopy:
+        def __deepcopy__(self, memo):
+            copy_entered.set()
+            assert release_copy.wait(timeout=1.0)
+            return {"detached": True}
+
+    result = []
+    publisher = Thread(target=lambda: result.append(adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(seen.append, BlockingCopy(), "raw"),),
+    )))
+    publisher.start()
+    assert copy_entered.wait(timeout=1.0)
+
+    # Retirement while payload detachment is outside the adapter lock must
+    # prevent that old generation from publishing after the copy completes.
+    adapter.stop(timeout=1.0, drain=False)
+    release_copy.set()
+    publisher.join(timeout=1.0)
+
+    assert not publisher.is_alive()
+    assert result == [False]
+    state = adapter.snapshot()
+    assert state["queue_depth"] == 0
+    assert state["accepted_batches"] == 0
+    assert state["stale_batches"] == 1
+    assert seen == []
+
+
+def test_worker_can_retire_itself_without_joining_its_own_thread():
+    from threading import Event
+
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    entered = Event()
+    seen = []
+
+    def shutdown_from_callback(_value):
+        entered.set()
+        adapter.stop(timeout=1.0, drain=False)
+        seen.append("current-callback-finished")
+
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(
+            CallbackInvocation(shutdown_from_callback, None, "shutdown"),
+            CallbackInvocation(lambda _: seen.append("must-not-run"), None, "later"),
+        ),
+    )
+    assert entered.wait(timeout=1.0)
+    worker = adapter._thread
+    assert worker is not None
+    worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    assert seen == ["current-callback-finished"]
+    state = adapter.snapshot()
+    assert state["closed"] is True
+    assert state["generation"] == 2
+    assert state["callback_attempts"] == 1
+    assert state["queue_depth"] == 0
+
+def test_repeated_worker_self_stop_is_idempotent():
+    from threading import Event
+
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    finished = Event()
+
+    def repeated_shutdown(_value):
+        adapter.stop(timeout=1.0, drain=False)
+        adapter.stop(timeout=1.0, drain=False)
+        finished.set()
+
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(repeated_shutdown, None, "shutdown"),),
+    )
+    assert finished.wait(timeout=1.0)
+    worker = adapter._thread
+    assert worker is not None
+    worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    state = adapter.snapshot()
+    assert state["generation"] == 2
+    assert state["callback_attempts"] == 1
+    assert state["queue_depth"] == 0
+    assert state["closed"] is True

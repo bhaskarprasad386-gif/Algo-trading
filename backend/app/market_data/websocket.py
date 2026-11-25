@@ -17,6 +17,10 @@ from app.core.exceptions import TradingAppException
 from app.core.logger import app_logger
 
 
+ANGEL_WS_PING_INTERVAL_SECONDS = 20
+ANGEL_WS_PING_TIMEOUT_SECONDS = 10
+
+
 def _log_transport_thread_stack(thread: Thread, *, phase: str) -> None:
     """Log the blocked transport thread's Python stack without dumping locals/payloads."""
     try:
@@ -100,6 +104,26 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
     original_error = getattr(socket, "_on_error", None)
     original_close = getattr(socket, "_on_close", None)
     original_data = getattr(socket, "_on_data", None)
+    original_ping = getattr(socket, "_on_ping", None)
+    original_pong = getattr(socket, "_on_pong", None)
+    socket._heartbeat_lock = Lock()
+
+    # Expose heartbeat observations separately from socket-open and market-data
+    # delivery. A pong proves control-frame responsiveness, not subscription health.
+    def observe_heartbeat(kind, original):
+        def callback(wsapp, *details):
+            with socket._heartbeat_lock:
+                counter = f"_{kind}_count"
+                timestamp = f"_last_{kind}_at_monotonic_ns"
+                setattr(socket, counter, getattr(socket, counter, 0) + 1)
+                setattr(socket, timestamp, time.monotonic_ns())
+            if callable(original):
+                return original(wsapp, *details)
+            return None
+        return callback
+
+    socket._on_ping = observe_heartbeat("ping", original_ping)
+    socket._on_pong = observe_heartbeat("pong", original_pong)
 
     # websocket-client invokes on_close(wsapp, close_status_code, close_msg),
     # while some SmartWebSocketV2 releases define _on_close(self, wsapp).
@@ -169,8 +193,8 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
                 # VPS/network jitter can delay control-frame pong responses even
                 # while market frames continue. Avoid recycling a healthy session
                 # on a single 5-second heartbeat miss.
-                ping_interval=20,
-                ping_timeout=10,
+                ping_interval=ANGEL_WS_PING_INTERVAL_SECONDS,
+                ping_timeout=ANGEL_WS_PING_TIMEOUT_SECONDS,
             )
         finally:
             if not ready.is_set():
@@ -254,7 +278,40 @@ class MarketDataWebSocket:
                 "subscription_response_state": self._subscription_response_state,
                 "subscription_rejection_count": self._subscription_rejection_count,
                 "last_subscription_response": dict(self._last_subscription_response) if self._last_subscription_response else None,
+                "ping_count": getattr(self.websocket, "_ping_count", 0) if self.websocket is not None else 0,
+                "pong_count": getattr(self.websocket, "_pong_count", 0) if self.websocket is not None else 0,
+                "last_ping_at_monotonic_ns": getattr(self.websocket, "_last_ping_at_monotonic_ns", None) if self.websocket is not None else None,
+                "last_pong_at_monotonic_ns": getattr(self.websocket, "_last_pong_at_monotonic_ns", None) if self.websocket is not None else None,
+                "ping_interval_seconds": ANGEL_WS_PING_INTERVAL_SECONDS,
+                "ping_timeout_seconds": ANGEL_WS_PING_TIMEOUT_SECONDS,
+                **self._heartbeat_health_snapshot_locked(),
             }
+
+    def _heartbeat_health_snapshot_locked(self) -> dict[str, Any]:
+        """Return diagnostic heartbeat state without treating it as feed readiness."""
+        socket = self.websocket
+        if socket is None:
+            return {"heartbeat_state": "NO_SOCKET", "last_pong_age_seconds": None}
+        lock = getattr(socket, "_heartbeat_lock", None)
+        if lock is None:
+            return {"heartbeat_state": "UNOBSERVED", "last_pong_age_seconds": None}
+        with lock:
+            last_ping = getattr(socket, "_last_ping_at_monotonic_ns", None)
+            last_pong = getattr(socket, "_last_pong_at_monotonic_ns", None)
+        now_ns = time.monotonic_ns()
+        pong_age = max(0.0, (now_ns - last_pong) / 1_000_000_000) if last_pong else None
+        if last_ping is None:
+            state = "AWAITING_FIRST_PING"
+        elif last_pong is None or last_pong < last_ping:
+            ping_age = max(0.0, (now_ns - last_ping) / 1_000_000_000)
+            state = "PING_TIMEOUT_WINDOW" if ping_age > ANGEL_WS_PING_TIMEOUT_SECONDS else "PING_SENT"
+        elif pong_age is not None and pong_age > (
+            ANGEL_WS_PING_INTERVAL_SECONDS + ANGEL_WS_PING_TIMEOUT_SECONDS
+        ):
+            state = "STALE"
+        else:
+            state = "RESPONSIVE"
+        return {"heartbeat_state": state, "last_pong_age_seconds": pong_age}
 
     @property
     def connecting(self) -> bool:

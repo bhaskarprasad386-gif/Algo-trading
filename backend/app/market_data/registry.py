@@ -21,6 +21,46 @@ class InstrumentDescriptor:
     lot_size: int | None = None
     tick_size: float | None = None
     underlying: str | None = None
+    expiry_type: str | None = None
+
+    @property
+    def preferred_socket_lane(self) -> int | None:
+        """Stable lane affinity for the explicitly locked NIFTY/BANKNIFTY universe.
+
+        0 = NIFTY spot/weekly options; 1 = BANKNIFTY spot/monthly options;
+        2 = NIFTY and BANKNIFTY index futures. Other instruments are not
+        assigned to these dedicated lanes.
+        """
+        underlying = str(self.underlying or "").strip().upper()
+        kind = str(self.instrument_type or "").strip().lower()
+        exchange = str(self.exchange or "").strip().upper()
+        expiry_type = str(self.expiry_type or "").strip().upper()
+        expected_exchange = "NSE" if kind == "index" else "NFO" if kind in {"option", "future"} else None
+        # Affinity is based on the full canonical instrument identity, not only
+        # descriptive metadata. A mislabeled NSE/NFO descriptor must never pin a
+        # BSE/BFO key (or a mismatched segment) to a reserved production lane.
+        key_exchange = str(self.key.exchange or "").strip().upper()
+        key_segment = str(self.key.segment or "").strip().upper()
+        segment = str(self.segment or "").strip().upper()
+        if (
+            expected_exchange is None
+            or exchange != expected_exchange
+            or segment != expected_exchange
+            or key_exchange != expected_exchange
+            or key_segment != expected_exchange
+        ):
+            return None
+        if kind == "index":
+            return {"NIFTY": 0, "BANKNIFTY": 1}.get(underlying)
+        if kind == "option":
+            if underlying == "NIFTY" and expiry_type == "WEEKLY":
+                return 0
+            if underlying == "BANKNIFTY" and expiry_type == "MONTHLY":
+                return 1
+            return None
+        if kind == "future" and underlying in {"NIFTY", "BANKNIFTY"}:
+            return 2
+        return None
 
 
 @dataclass(frozen=True)
@@ -131,6 +171,47 @@ class InstrumentRegistry:
         modes = self._consumer_modes.get(key, {})
         mode = max((modes.get(c, 1) for c in consumers), default=1)
         return Subscription(key, consumers, mode)
+
+    def snapshot_consumer(self, consumer: str) -> dict[InstrumentKey, int]:
+        """Return the exact per-instrument modes owned by one consumer."""
+        consumer = self._normalize_consumer(consumer)
+        with self._lock:
+            return {
+                key: modes[consumer]
+                for key, modes in self._consumer_modes.items()
+                if consumer in modes
+            }
+
+    def restore_consumer(
+        self,
+        consumer: str,
+        subscriptions: dict[InstrumentKey, int],
+    ) -> None:
+        """Atomically restore one consumer without changing other owners."""
+        consumer = self._normalize_consumer(consumer)
+        if not isinstance(subscriptions, dict):
+            raise TypeError("subscriptions must be a mapping of instrument keys to modes")
+        validated: dict[InstrumentKey, int] = {}
+        for key, mode in subscriptions.items():
+            if not isinstance(key, InstrumentKey):
+                raise TypeError("subscription snapshot keys must be InstrumentKey values")
+            validated[key] = self._validate_mode(mode)
+        with self._lock:
+            missing = set(validated) - self._instruments.keys()
+            if missing:
+                raise KeyError("cannot restore subscriptions for unregistered instruments")
+            for key in tuple(self._consumer_modes):
+                modes = self._consumer_modes[key]
+                modes.pop(consumer, None)
+                consumers = self._consumers.get(key)
+                if consumers is not None:
+                    consumers.discard(consumer)
+                    if not consumers:
+                        self._consumers.pop(key, None)
+                        self._consumer_modes.pop(key, None)
+            for key, mode in validated.items():
+                self._consumers.setdefault(key, set()).add(consumer)
+                self._consumer_modes.setdefault(key, {})[consumer] = mode
 
     def get(self, key: InstrumentKey) -> InstrumentDescriptor | None:
         with self._lock:

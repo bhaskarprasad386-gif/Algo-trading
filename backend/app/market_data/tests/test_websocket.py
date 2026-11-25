@@ -728,3 +728,114 @@ def test_control_error_callback_is_observable_and_never_authenticates(monkeypatc
     assert observed[0]["errorCode"] == "E1001"
     assert client.health["subscription_response_state"] == "REJECTED"
     client.close()
+
+
+
+def test_sdk_transport_heartbeat_callbacks_are_observable_without_claiming_feed_health(monkeypatch):
+    calls = {"ping": 0, "pong": 0}
+
+    class FakeWebSocketApp:
+        def __init__(self, url, **kwargs):
+            self.callbacks = kwargs
+
+        def run_forever(self, **kwargs):
+            self.callbacks["on_open"](self)
+            self.callbacks["on_ping"](self, b"probe")
+            self.callbacks["on_pong"](self, b"probe")
+
+    monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", FakeWebSocketApp)
+    sdk_socket = SimpleNamespace(
+        ROOT_URI="wss://smartapisocket.angelone.in/smart-stream",
+        auth_token="jwt",
+        api_key="api-key",
+        client_code="client",
+        feed_token="feed",
+        _on_open=lambda *args: None,
+        _on_error=lambda *args: None,
+        _on_close=lambda *args: None,
+        _on_data=lambda *args: None,
+        _on_ping=lambda *args: calls.__setitem__("ping", calls["ping"] + 1),
+        _on_pong=lambda *args: calls.__setitem__("pong", calls["pong"] + 1),
+    )
+
+    websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
+
+    assert calls == {"ping": 1, "pong": 1}
+    assert sdk_socket._ping_count == 1
+    assert sdk_socket._pong_count == 1
+    assert sdk_socket._last_ping_at_monotonic_ns > 0
+    assert sdk_socket._last_pong_at_monotonic_ns > 0
+    # Heartbeat observations are deliberately not an authentication,
+    # subscription-acknowledgement, or consumer-delivery signal.
+
+
+def test_heartbeat_health_diagnostics_distinguish_waiting_timeout_and_stale(monkeypatch):
+    from threading import Lock
+
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    client.websocket = SimpleNamespace(
+        _heartbeat_lock=Lock(),
+        _last_ping_at_monotonic_ns=None,
+        _last_pong_at_monotonic_ns=None,
+    )
+    now = {"ns": 1_000_000_000}
+    monkeypatch.setattr(websocket_module.time, "monotonic_ns", lambda: now["ns"])
+
+    assert client.health["heartbeat_state"] == "AWAITING_FIRST_PING"
+    assert client.health["last_pong_age_seconds"] is None
+
+    client.websocket._last_ping_at_monotonic_ns = 1_000_000_000
+    now["ns"] = 5_000_000_000
+    assert client.health["heartbeat_state"] == "PING_SENT"
+
+    now["ns"] = 12_000_000_001
+    assert client.health["heartbeat_state"] == "PING_TIMEOUT_WINDOW"
+
+    client.websocket._last_pong_at_monotonic_ns = 12_000_000_000
+    assert client.health["heartbeat_state"] == "RESPONSIVE"
+
+    now["ns"] = 43_000_000_001
+    assert client.health["heartbeat_state"] == "STALE"
+    assert client.health["ping_interval_seconds"] == 20
+    assert client.health["ping_timeout_seconds"] == 10
+
+    # These transport diagnostics must not promote an unopened subscription
+    # into broker-accepted or market-data-ready state.
+    assert client.health["connected"] is False
+    assert client.health["subscription_response_state"] == "NOT_SENT"
+
+
+def test_ping_pong_timeout_is_forwarded_as_transport_failure(monkeypatch):
+    forwarded = []
+
+    class TimedOutWebSocketApp:
+        def __init__(self, url, **kwargs):
+            self.callbacks = kwargs
+
+        def run_forever(self, **kwargs):
+            self.callbacks["on_error"](self, TimeoutError("ping/pong timed out"))
+
+    # The transport helper must surface websocket-client's configured heartbeat
+    # timeout through the SDK's original error callback and fail the handshake.
+    monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", TimedOutWebSocketApp)
+    sdk_socket = SimpleNamespace(
+        ROOT_URI="wss://smartapisocket.angelone.in/smart-stream",
+        auth_token="jwt",
+        api_key="api-key",
+        client_code="client",
+        feed_token="feed",
+        _on_open=lambda *args: None,
+        _on_error=lambda wsapp, error: forwarded.append(str(error)),
+        _on_close=lambda *args: None,
+        _on_data=lambda *args: None,
+        _on_ping=lambda *args: None,
+        _on_pong=lambda *args: None,
+    )
+    try:
+        websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
+    except ConnectionError as exc:
+        assert "ping/pong timed out" in str(exc)
+    else:
+        raise AssertionError("heartbeat timeout must fail the transport handshake")
+
+    assert forwarded == ["ping/pong timed out"]
