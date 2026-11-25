@@ -58,6 +58,35 @@ systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
 systemctl restart "$SERVICE_NAME"
 
+log "Installing independent VPS diagnostics collector"
+DIAGNOSTICS_SERVICE_SRC="$APP_DIR/deploy/algo-diagnostics.service"
+DIAGNOSTICS_SERVICE_DST="/etc/systemd/system/algo-diagnostics.service"
+DIAGNOSTICS_AGENT="$APP_DIR/deploy/server_diagnostics_agent.py"
+[[ -f "$DIAGNOSTICS_SERVICE_SRC" ]] || die "$DIAGNOSTICS_SERVICE_SRC not found."
+[[ -f "$DIAGNOSTICS_AGENT" ]] || die "$DIAGNOSTICS_AGENT not found."
+install -m 0644 "$DIAGNOSTICS_SERVICE_SRC" "$DIAGNOSTICS_SERVICE_DST"
+chmod 0755 "$DIAGNOSTICS_AGENT"
+systemctl daemon-reload
+systemctl enable algo-diagnostics.service
+systemctl restart algo-diagnostics.service
+
+diagnostics_healthy=0
+for attempt in {1..15}; do
+  if curl --fail --silent --show-error --connect-timeout 1 --max-time 2 http://127.0.0.1:8765/health >/tmp/algo-diagnostics-health.json 2>/dev/null; then
+    diagnostics_healthy=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$diagnostics_healthy" -ne 1 ]]; then
+  log "Independent diagnostics collector failed health verification:"
+  systemctl --no-pager --full status algo-diagnostics.service || true
+  journalctl -u algo-diagnostics.service -n 40 --no-pager || true
+  rm -f /tmp/algo-diagnostics-health.json
+  die "Independent VPS diagnostics collector did not become healthy."
+fi
+rm -f /tmp/algo-diagnostics-health.json
+
 # Optional Telegram control bot: install/start only when credentials are already configured.
 TELEGRAM_INSTALLER="$APP_DIR/deploy/install-telegram-control-bot.sh"
 if [[ -x "$TELEGRAM_INSTALLER" && -f "$BACKEND_DIR/.env" ]] && grep -q '^TELEGRAM_BOT_TOKEN=.' "$BACKEND_DIR/.env" && grep -q '^TELEGRAM_ADMIN_CHAT_IDS=.' "$BACKEND_DIR/.env"; then
