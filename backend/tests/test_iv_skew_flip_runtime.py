@@ -789,9 +789,16 @@ def test_production_feed_manager_injection_isolates_all_iv_consumers_on_one_mode
     assert equity_feed.feed.manager is manager
     assert equity_feed.feed.mode == 3
 
+    snapshot = runtime.snapshot()
+    assert snapshot["market_data_connection"]["isolation"] == "SHARED_PROCESS_MANAGER"
+    assert snapshot["market_data_connection"]["manager_owner"] == "APPLICATION"
+    assert snapshot["market_data_connection"]["socket_mode"] == 3
+    assert snapshot["market_data_connection"]["global_socket_limit"] == 3
+    assert snapshot["market_data_connection"]["owns_manager"] is False
+
     stopped = runtime.stop()
     assert stopped["status"] == "STOPPED"
-    assert manager.closed is True
+    assert not getattr(manager, "closed", False)
 
 
 
