@@ -1304,6 +1304,7 @@ class CommonWebSocketManager:
                 # If close scheduling fails before the completion callback is
                 # registered, release admission so the supervisor can retry.
                 with self._lock:
+                    self._clear_failure_recovery_group_locked(group, generation)
                     self._failure_recovery_worker_active = False
 
         Thread(
