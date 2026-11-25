@@ -798,3 +798,63 @@ def test_shared_instrument_mode_upgrade_and_downgrade_preserves_only_active_rout
     finally:
         manager.close()
 
+
+def test_locked_three_lane_plan_rejects_additional_mode_group_atomically():
+    """A non-locked mode cannot consume a fourth physical session beside locked lanes."""
+    registry = InstrumentRegistry()
+    nifty = _descriptor("NIFTY-WEEKLY-MODE-BUDGET")
+    bank = _descriptor("BANK-MONTHLY-MODE-BUDGET")
+
+    def future(token, underlying):
+        return InstrumentDescriptor(
+            key=InstrumentKey("NFO", "NFO", token),
+            symbol=token,
+            instrument_type="future",
+            exchange="NFO",
+            segment="NFO",
+            underlying=underlying,
+            expiry="2026-12-31",
+        )
+
+    nifty_future = future("NIFTY-FUT-MODE-BUDGET", "NIFTY")
+    bank_future = future("BANK-FUT-MODE-BUDGET", "BANKNIFTY")
+    other_mode = _descriptor("OTHER-MODE-ONE-BUDGET")
+    registry.register_many((nifty, bank, nifty_future, bank_future, other_mode))
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._recovery_interval_seconds = 60.0
+
+    try:
+        manager.subscribe("locked-options", (nifty.key, bank.key), mode=3)
+        manager.subscribe("locked-futures", (nifty_future.key, bank_future.key), mode=3)
+        expected_groups = {
+            SocketGroup(3, 0),
+            SocketGroup(3, 1),
+            SocketGroup(3, 2),
+        }
+        assert set(manager._sockets) == expected_groups
+        before_assignments = {
+            mode: dict(assignments)
+            for mode, assignments in manager._shard_assignments.items()
+        }
+        before_routes = {
+            group: dict(routes)
+            for group, routes in manager._route_index.items()
+        }
+        before_sockets = dict(manager._sockets)
+
+        try:
+            manager.subscribe("mode-one-adaptive-owner", (other_mode.key,), mode=1)
+        except ValueError as exc:
+            assert "global WebSocket limit exceeded" in str(exc)
+            assert "4 sessions required" in str(exc)
+        else:
+            raise AssertionError("mode-1 adaptive feed must not exceed the three-session global cap")
+
+        assert manager._shard_assignments == before_assignments
+        assert manager._route_index == before_routes
+        assert manager._sockets == before_sockets
+        assert set(manager._sockets) == expected_groups
+        assert manager.snapshot()["socket_groups"] == 3
+    finally:
+        manager.close()
+
