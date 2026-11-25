@@ -522,17 +522,17 @@ export default function HomePage() {
     const consumers = Array.from(new Set(subscriptions.flatMap((item: any) => Array.isArray(item.consumer) ? item.consumer : [])));
     const connected = health?.connected === true && health?.stopping !== true;
     const status = !group ? "NOT ASSIGNED" : !health ? "MISSING" : health.stopping ? "STOPPING" : health.connecting ? "CONNECTING" : connected ? "CONNECTED" : "DISCONNECTED";
-    return { label: "SOCKET " + (index + 1), group: group ?? "No required group", status, heartbeat: health?.heartbeat_state ? String(health.heartbeat_state) : "UNKNOWN", pongAge: Number.isFinite(Number(health?.last_pong_age_seconds)) ? Number(health.last_pong_age_seconds) : null, reconnects: Number(health?.reconnect_count ?? 0), errors: Number(health?.error_count ?? 0), subscriptions: subscriptions.length, consumers: consumers.slice(0, 3).join(" • ") || "No active consumer roster" };
+    return { label: "SOCKET " + (index + 1), group: group ?? "No required group", status, heartbeat: health?.heartbeat_state ? String(health.heartbeat_state) : "UNKNOWN", pongAge: health?.last_pong_age_seconds != null && Number.isFinite(Number(health.last_pong_age_seconds)) ? Number(health.last_pong_age_seconds) : null, reconnects: Number(health?.reconnect_count ?? 0), errors: Number(health?.error_count ?? 0), subscriptions: subscriptions.length, consumers: consumers.slice(0, 3).join(" • ") || "No active consumer roster" };
   });
   const sharedRunnerEnabled = sharedRunner?.enabled === true;
   const sharedRunnerReady = sharedRunner?.live_data_ready === true;
   const sharedRunnerSampleAge = sharedRunnerLastSuccessAt == null ? null : Math.max(0, (Date.now() - sharedRunnerLastSuccessAt) / 1000);
-  const sharedRunnerStatus = sharedRunnerFetchFailed && sharedRunnerSampleAge != null ? "LAST KNOWN • API UNREACHABLE" : !sharedRunner ? "CHECKING" : !sharedRunnerEnabled ? "STOPPED" : sharedRunnerReady ? "LIVE DATA READY" : sharedRunner.initial_option_bootstrap_done ? (effectiveMarketSession === "CLOSED" ? "RUNNING • MARKET CLOSED" : "RUNNING • FEED NOT READY") : "RUNNING • BOOTSTRAPPING";
+  const sharedRunnerStatus = sharedRunnerFetchFailed && sharedRunnerSampleAge != null ? "LAST KNOWN • HEALTH FETCH FAILED" : !sharedRunner ? "CHECKING" : !sharedRunnerEnabled ? "STOPPED" : sharedRunnerReady ? "LIVE DATA READY" : sharedRunner.initial_option_bootstrap_done ? (effectiveMarketSession === "CLOSED" ? "RUNNING • MARKET CLOSED" : "RUNNING • FEED NOT READY") : "RUNNING • BOOTSTRAPPING";
   const sharedRecords: any[] = Array.isArray(sharedRunner?.records) ? sharedRunner.records : [];
   const getRecordFeed = (underlying: string, kind: string) => {
     const rows = sharedRecords.filter((item) => String(item.underlying ?? "").toUpperCase() === underlying && String(item.instrument_type ?? "").toLowerCase() === kind);
     const fresh = rows.filter((item) => item.fresh === true).length;
-    const ages = rows.map((item) => Number(item.feed_age_seconds)).filter((age) => Number.isFinite(age) && age >= 0);
+    const ages = rows.filter((item) => item.feed_age_seconds != null).map((item) => Number(item.feed_age_seconds)).filter((age) => Number.isFinite(age) && age >= 0);
     const maxAge = ages.length ? Math.max(...ages) : null;
     const status = !sharedRunner ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : rows.length === 0 ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : fresh === rows.length ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : fresh > 0 ? "PARTIAL / STALE" : "STALE";
     return { rows: rows.length, fresh, maxAge, status };
@@ -540,9 +540,9 @@ export default function HomePage() {
   const getSpotFeed = (underlying: string) => {
     const spot = sharedRunner?.latest_spots?.[underlying];
     const age = Number(spot?.age_seconds);
-    const validAge = Number.isFinite(age) && age >= 0 ? age : null;
+    const validAge = spot?.age_seconds != null && Number.isFinite(age) && age >= 0 ? age : null;
     const status = !sharedRunner ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : !spot ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : validAge != null && validAge <= 5 ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : "STALE";
-    return { status, age: validAge, price: Number.isFinite(Number(spot?.price)) ? Number(spot.price) : null };
+    return { status, age: validAge, price: spot?.price != null && Number.isFinite(Number(spot.price)) ? Number(spot.price) : null };
   };
   const sharedFeedCards = [
     { label: "NIFTY SPOT", detail: "NSE index spot", ...getSpotFeed("NIFTY") },
