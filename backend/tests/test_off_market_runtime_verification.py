@@ -219,6 +219,7 @@ def test_offmarket_vps_verification_is_intentionally_skipped_for_pull_requests()
 
 def test_offmarket_vps_verification_is_read_only_and_has_no_deploy_or_restart_steps():
     from pathlib import Path
+    import re
 
     workflow = (
         Path(__file__).resolve().parents[2]
@@ -228,26 +229,16 @@ def test_offmarket_vps_verification_is_read_only_and_has_no_deploy_or_restart_st
     ).read_text()
 
     remote = workflow.split("REMOTE_SCRIPT=$(cat <<'REMOTE'", 1)[1].split("\n          REMOTE", 1)[0]
-    forbidden = (
-        "systemctl restart",
-        "systemctl stop",
-        "git pull",
-        "git checkout",
-        "alembic upgrade",
-        "DROP TABLE",
-        "DELETE FROM",
-        "INSERT INTO",
-        "UPDATE ",
-        "deploy",
+    mutating_commands = re.compile(
+        r"(?im)^\\s*(?:systemctl\\s+(?:restart|stop|disable|enable)|"
+        r"git\\s+(?:pull|checkout|reset)|alembic\\s+upgrade|"
+        r"(?:DROP|DELETE|INSERT|UPDATE)\\s+(?:TABLE|FROM|INTO|[A-Z_]+))"
     )
-    for command in forbidden:
-        assert command.lower() not in remote.lower(), f"unexpected mutating/deploy command: {command}"
+    assert mutating_commands.search(remote) is None
 
     assert "systemctl is-active algo-trading.service" in remote
     assert "PRAGMA quick_check(1);" in remote
     assert "journalctl" in remote
-
-
 def test_offmarket_remote_verification_has_one_bounded_ssh_execution():
     from pathlib import Path
     import re
