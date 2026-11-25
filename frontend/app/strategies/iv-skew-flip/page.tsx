@@ -528,6 +528,39 @@ export default function IVSkewFlipPage() {
     void refresh();
     return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
   },[base,activeWeeklyExpiry,pagePushStatus]);
+  useEffect(()=>{
+    let active=true;
+    const poll=async()=>{
+      const requestSequence=++bankHistoryFetchSequenceRef.current;
+      try{
+        const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/history?underlying=BANKNIFTY${requestedBankExpiry?`&expiry=${encodeURIComponent(requestedBankExpiry)}`:""}`,{cache:"no-store"});
+        const body=await response.json();
+        if(isCurrentPagePushRequest({active,requestSequence,latestSequence:bankHistoryFetchSequenceRef.current})&&response.ok&&body.status==="ok")setBankDurableHistory(body as Row);
+      }catch{/* retain last valid BANKNIFTY broker snapshot */}
+    };
+    if(pagePushStatus==="LIVE"){void poll();return()=>{active=false;};}
+    let timer:number|undefined;
+    const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},10000);};
+    void refresh();
+    return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
+  },[base,requestedBankExpiry,pagePushStatus]);
+  useEffect(()=>{
+    let active=true;
+    const poll=async()=>{
+      const requestSequence=++bankChartHistoryFetchSequenceRef.current;
+      try{
+        const query=activeBankExpiry?`&expiry=${encodeURIComponent(activeBankExpiry)}`:"";
+        const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/timeseries?underlying=BANKNIFTY&window_seconds=1800&limit=20000${query}`,{cache:"no-store"});
+        const body=await response.json();
+        if(isCurrentPagePushRequest({active,requestSequence,latestSequence:bankChartHistoryFetchSequenceRef.current})&&response.ok&&body.status==="ok")setBankChartHistory(body as Row);
+      }catch{/* retain last valid BANKNIFTY chart window */}
+    };
+    if(pagePushStatus==="LIVE"){void poll();return()=>{active=false;};}
+    let timer:number|undefined;
+    const refresh=async()=>{if(!active)return;await poll();if(active)timer=window.setTimeout(()=>{void refresh();},15000);};
+    void refresh();
+    return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
+  },[base,activeBankExpiry,pagePushStatus]);
   const loadMoreAlerts=async()=>{
     if(loadingMoreAlerts||!hasMoreAlerts||!alertCursor)return;
     // A later PagePush or recovery poll supersedes this pagination response.
