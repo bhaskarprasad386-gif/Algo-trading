@@ -83,6 +83,8 @@ def test_normalized_callback_uses_exact_exchange_group():
     assert len(seen) == 1
     assert seen[0].instrument.exchange == "NSE"
     assert seen[0].ltp == 100.0
+    assert isinstance(seen[0].received_at_monotonic_ns, int)
+    assert seen[0].received_at_monotonic_ns > 0
     manager.close()
 
 
