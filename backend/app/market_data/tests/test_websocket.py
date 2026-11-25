@@ -731,7 +731,7 @@ def test_control_error_callback_is_observable_and_never_authenticates(monkeypatc
 
 
 
-def test_sdk_transport_heartbeat_callbacks_are_observable_without_claiming_feed_health():
+def test_sdk_transport_heartbeat_callbacks_are_observable_without_claiming_feed_health(monkeypatch):
     calls = {"ping": 0, "pong": 0}
 
     class FakeWebSocketApp:
