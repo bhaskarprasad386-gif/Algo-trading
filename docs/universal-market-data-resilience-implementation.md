@@ -115,3 +115,17 @@ A follow-up inspection of `SharedIndexFeedLifecycle` and `ConsumerSocketAffinity
 - Before implementation, add tests proving one live consumer can route instruments to different lane groups while every consumer callback still receives exactly its own subscribed keys. Also test shared instrument subscriptions with multiple consumers/modes and exchange/token collisions without losing canonical identity.
 
 This is a concrete blocker, not a reason to rename the helper's owner labels: the helper's owner-level abstraction must be replaced or bypassed by an instrument-level planner before live allocator integration.
+
+
+## Live descriptor-affinity allocator integration — 2026-11-25
+
+The live CommonWebSocketManager allocator now consumes InstrumentDescriptor.preferred_socket_lane during reconcile. It resolves affinity by (mode, exchange_type, token), then projects each instrument placement back to every subscribed consumer route. Consumer names are not used to infer the lane, so the combined options owner can route NIFTY weekly and BANKNIFTY monthly instruments to different sockets.
+
+- NIFTY spot / NIFTY WEEKLY options resolve to shard 0.
+- BANKNIFTY spot / BANKNIFTY MONTHLY options resolve to shard 1.
+- NIFTY and BANKNIFTY futures resolve to shard 2.
+- A broker exchange/token identity that maps to conflicting locked and unclassified descriptors is rejected before route/socket state is committed.
+- Adaptive instruments are placed only outside lanes reserved by locked instruments. If that requires a fourth physical (mode, shard) group, the existing global three-session gate rejects the reconcile rather than contaminating a locked lane.
+- snapshot() uses the same preferred-lane calculation as live reconcile, so reported required groups and roster locations cannot silently fall back to the legacy allocator.
+
+This is a guarded allocator integration, not a production activation claim. The explicit capacity trade-off remains: with all three locked lanes occupied, other unclassified instrument universes cannot be added to this same three-session manager without a separately designed compatible allocation policy. The next acceptance step is exact-head CI and runtime consumer inventory validation; no merge, production activation, or VPS work is authorized.
