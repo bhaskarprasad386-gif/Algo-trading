@@ -3,6 +3,7 @@ name: VPS Health Probe
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - .github/workflows/vps-health-probe.yml
   schedule:
@@ -15,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
+      - name: Checkout repository for diagnostic redaction
+        uses: actions/checkout@v4
       - name: Check VPS deployment state
         env:
           VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
@@ -43,7 +46,7 @@ jobs:
           echo "VPS_SSH_KEYSCAN=OK"
 
           set +e
-          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' 2> >(tee /tmp/vps-ssh-stderr.txt >&2) | tee /tmp/vps-health-probe.txt
+          ssh -i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' 2> >(python3 deploy/redact-sensitive-logs.py | tee /tmp/vps-ssh-stderr.txt >&2) | python3 deploy/redact-sensitive-logs.py | tee /tmp/vps-health-probe.txt
           set -u
           echo "=== HOST ==="
           echo "HOST=$(hostname)"
