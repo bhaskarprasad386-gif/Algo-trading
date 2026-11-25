@@ -364,3 +364,37 @@ def test_publish_revalidates_generation_after_payload_copy_races_retirement():
     assert state["accepted_batches"] == 0
     assert state["stale_batches"] == 1
     assert seen == []
+
+
+def test_worker_can_retire_itself_without_joining_its_own_thread():
+    from threading import Event
+
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    entered = Event()
+    seen = []
+
+    def shutdown_from_callback(_value):
+        entered.set()
+        adapter.stop(timeout=1.0, drain=False)
+        seen.append("current-callback-finished")
+
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(
+            CallbackInvocation(shutdown_from_callback, None, "shutdown"),
+            CallbackInvocation(lambda _: seen.append("must-not-run"), None, "later"),
+        ),
+    )
+    assert entered.wait(timeout=1.0)
+    worker = adapter._thread
+    assert worker is not None
+    worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    assert seen == ["current-callback-finished"]
+    state = adapter.snapshot()
+    assert state["closed"] is True
+    assert state["callback_attempts"] == 1
+    assert state["queue_depth"] == 0
