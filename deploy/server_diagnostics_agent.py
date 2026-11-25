@@ -31,17 +31,35 @@ _API_STATUS_LOCK = threading.Lock()
 _API_STATUS = {"reachable": False, "last_success_at": None}
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
-_SECRET_PATTERNS = [
-    (re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;]+"), r"\1[REDACTED]"),
-    (re.compile(r"""(?i)((?:api[_-]?(?:key|secret)|access[_-]?token|refresh[_-]?token|session[_-]?token|feed[_-]?token|client[_-]?id|account[_-]?(?:id|number)|uid|token|password|passwd|secret|totp|jwt)\s*[=:]\s*)['"]?[^\s,'"]+"""), r"\1[REDACTED]"),
-    (re.compile(r"(?i)(\bBearer\s+)[A-Za-z0-9._~+/=-]{12,}"), r"\1[REDACTED]"),
-]
+_SENSITIVE_KEYS = (
+    r"x[-_]?private[-_]?key|x[-_]?api[-_]?key|api[-_]?key|private[-_]?key|"
+    r"x[-_]?feed[-_]?token|feed[-_]?token|jwt[-_]?token|access[-_]?token|"
+    r"refresh[-_]?token|auth[-_]?token|password|passwd|pwd|"
+    r"totp(?:[-_]?secret)?|one[-_]?time[-_]?password|otp|"
+    r"client[-_]?secret|client[-_]?code|client[-_]?id|api[-_]?secret"
+)
+_QUOTED_ASSIGNMENT = re.compile(
+    rf"(?P<prefix>['\"]?(?:{_SENSITIVE_KEYS}|authorization)['\"]?\s*[:=]\s*['\"])"
+    rf"(?P<value>[^'\"\r\n]*)(?P<suffix>['\"])",
+    re.IGNORECASE,
+)
+_PLAIN_ASSIGNMENT = re.compile(
+    rf"(?P<prefix>\b(?:{_SENSITIVE_KEYS}|authorization)\b\s*[:=]\s*)"
+    rf"(?P<value>Bearer\s+[^,\s;}}\]]+|[^,\s;}}\]]+)",
+    re.IGNORECASE,
+)
 
 
 def sanitize(value: object, limit: int = 1200) -> str:
     text = _ANSI_ESCAPE.sub("", str(value or ""))
-    for pattern, replacement in _SECRET_PATTERNS:
-        text = pattern.sub(replacement, text)
+    text = _QUOTED_ASSIGNMENT.sub(
+        lambda match: f"{match.group('prefix')}[REDACTED]{match.group('suffix')}",
+        text,
+    )
+    text = _PLAIN_ASSIGNMENT.sub(
+        lambda match: f"{match.group('prefix')}[REDACTED]",
+        text,
+    )
     text = "".join(ch if ch in "\n\t" or ord(ch) >= 32 else " " for ch in text)
     return text[:limit]
 
