@@ -35,15 +35,30 @@ class InstrumentDescriptor:
         kind = str(self.instrument_type or "").strip().lower()
         exchange = str(self.exchange or "").strip().upper()
         expiry_type = str(self.expiry_type or "").strip().upper()
-        if kind == "index" and exchange == "NSE":
+        expected_exchange = "NSE" if kind == "index" else "NFO" if kind in {"option", "future"} else None
+        # Affinity is based on the full canonical instrument identity, not only
+        # descriptive metadata. A mislabeled NSE/NFO descriptor must never pin a
+        # BSE/BFO key (or a mismatched segment) to a reserved production lane.
+        key_exchange = str(self.key.exchange or "").strip().upper()
+        key_segment = str(self.key.segment or "").strip().upper()
+        segment = str(self.segment or "").strip().upper()
+        if (
+            expected_exchange is None
+            or exchange != expected_exchange
+            or segment != expected_exchange
+            or key_exchange != expected_exchange
+            or key_segment != expected_exchange
+        ):
+            return None
+        if kind == "index":
             return {"NIFTY": 0, "BANKNIFTY": 1}.get(underlying)
-        if kind == "option" and exchange == "NFO":
+        if kind == "option":
             if underlying == "NIFTY" and expiry_type == "WEEKLY":
                 return 0
             if underlying == "BANKNIFTY" and expiry_type == "MONTHLY":
                 return 1
             return None
-        if kind == "future" and exchange == "NFO" and underlying in {"NIFTY", "BANKNIFTY"}:
+        if kind == "future" and underlying in {"NIFTY", "BANKNIFTY"}:
             return 2
         return None
 
