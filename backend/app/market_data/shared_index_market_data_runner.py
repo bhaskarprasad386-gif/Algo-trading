@@ -39,14 +39,29 @@ def _expiry_candidates(rows: Iterable[dict], underlying: str) -> list[date]:
     return sorted(dates)
 
 
-def choose_locked_expiry(rows: Iterable[dict], underlying: str, *, today: date | None = None) -> str:
-    """Choose next NIFTY weekly or BANKNIFTY monthly expiry using exchange classification."""
+def choose_locked_expiry(
+    rows: Iterable[dict],
+    underlying: str,
+    *,
+    today: date | None = None,
+    now: datetime | None = None,
+) -> str:
+    """Choose the active index expiry, advancing after an actual expiry closes at 15:30 IST."""
     symbol = str(underlying).strip().upper()
     if symbol not in LOCKED:
         raise ValueError("expiry selection is restricted to NIFTY/BANKNIFTY")
-    current = today or datetime.now(IST).date()
+    local_now = (now or datetime.now(IST)).astimezone(IST)
+    current = today or local_now.date()
     all_dates = _expiry_candidates(rows, symbol)
-    future_dates = [expiry for expiry in all_dates if expiry >= current]
+    expired_today = (
+        local_now.date() == current
+        and (local_now.hour, local_now.minute) >= (15, 30)
+        and current in all_dates
+    )
+    future_dates = (
+        [expiry for expiry in all_dates if expiry > current]
+        if expired_today else [expiry for expiry in all_dates if expiry >= current]
+    )
     if not future_dates:
         raise LookupError(f"no future option expiries listed for {symbol}")
     # Classify against all dates. Removing expired dates first could wrongly
@@ -135,7 +150,7 @@ class SharedIndexMarketDataRunner:
                 "symbol": trading_symbol, "lot_size": row.get("lotsize")}
 
     def _expiry_for(self, underlying: str) -> str:
-        return choose_locked_expiry(self._rows, underlying)
+        return choose_locked_expiry(self._rows, underlying, now=datetime.now(IST))
 
     def _schedule_master_refresh(self) -> bool:
         """Refresh instrument master off tick callback and publish complete snapshots only."""
@@ -261,7 +276,7 @@ class SharedIndexMarketDataRunner:
             from .common_strategy_feed import CommonStrategyMarketFeed
             descriptors = []
             for underlying in LOCKED:
-                expiry = choose_locked_expiry(rows, underlying)
+                expiry = choose_locked_expiry(rows, underlying, now=datetime.now(IST))
                 selected = select_locked_index_options(
                     rows, underlying=underlying, expiry=expiry,
                     spot_price=spot_prices[underlying],
