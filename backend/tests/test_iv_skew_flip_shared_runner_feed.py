@@ -167,3 +167,34 @@ def test_shared_runner_spot_adapter_fails_closed_when_shared_runner_is_off():
         adapter.start(object(), ("NIFTY", "BANKNIFTY"))
     assert adapter.snapshot()["status"] == "STOPPED"
     assert runner.stop_calls == 0
+
+
+def test_shared_runner_option_snapshot_deduplicates_tokens_and_reports_missing_contracts():
+    now = time_ns()
+    universe = make_universe()
+    records = make_records(universe, now)
+    # Drop one required contract, then duplicate another contract's row. A
+    # raw-row counter would incorrectly report all six contracts as fresh.
+    option_rows = [row for row in records if row.get("instrument_type") == "option"]
+    missing_token = universe.contracts[-1].token
+    records = [
+        row for row in records
+        if row.get("token") != missing_token
+    ]
+    duplicate = dict(next(row for row in option_rows if row.get("token") == universe.contracts[0].token))
+    duplicate["timestamp_ns"] = now + 1
+    records.append(duplicate)
+    runner = FakeSharedRunner(records, make_descriptors(universe))
+    adapter = IVSharedRunnerOptionFeedAdapter(
+        shared_runner=runner, stream_id="BANKNIFTY_MONTHLY",
+        clock_ns=lambda: now + 1,
+    )
+    adapter.start(universe)
+
+    snapshot = adapter.snapshot(now_ns=now + 1)
+    assert snapshot["status"] == "PARTIAL"
+    assert snapshot["expected_contracts"] == 6
+    assert snapshot["fresh_contracts"] == 5
+    assert snapshot["missing_contracts"] == 1
+    assert snapshot["missing_tokens"] == [missing_token]
+    assert len(adapter.latest_quotes()) == 5
