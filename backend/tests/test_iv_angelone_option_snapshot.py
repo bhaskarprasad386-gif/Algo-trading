@@ -53,6 +53,99 @@ class FakeAngelOneClient:
         }
 
 
+
+
+def test_banknifty_monthly_snapshot_persists_only_banknifty_broker_greeks_and_full_quotes():
+    class BankNiftyAngelOneClient:
+        def option_greeks(self, underlying, expirydate):
+            assert underlying == "BANKNIFTY"
+            assert expirydate == "26NOV2026"
+            return {"status": True, "data": [{
+                "name": "BANKNIFTY",
+                "expiry": "26NOV2026",
+                "strikePrice": "58000.000000",
+                "optionType": "CE",
+                "impliedVolatility": "17.250000",
+            }]}
+
+        def quote_many(self, exchange, instruments):
+            assert exchange == "NFO"
+            assert len(instruments) == 14
+            return {"status": True, "data": {"fetched": [{
+                "symbolToken": "bank-ce-token",
+                "ltp": 225.5,
+                "opnInterest": 223456,
+                "tradeVolume": 2100,
+                "depth": {
+                    "buy": [{"price": 225.0, "quantity": 12}],
+                    "sell": [{"price": 226.0, "quantity": 22}],
+                },
+            }], "unfetched": instruments[1:]}}
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    contracts = tuple(
+        SimpleNamespace(
+            token=f"bank-{strike}-{side.lower()}-token",
+            strike=float(strike),
+            option_type=side,
+        )
+        for strike in (57700, 57800, 57900, 58000, 58100, 58200, 58300)
+        for side in ("CE", "PE")
+    )
+    contracts = tuple(
+        SimpleNamespace(
+            token="bank-ce-token" if item.strike == 58000 and item.option_type == "CE" else item.token,
+            strike=item.strike,
+            option_type=item.option_type,
+        )
+        for item in contracts
+    )
+    universe = SimpleNamespace(
+        underlying="BANKNIFTY",
+        expiry="2026-11-26",
+        expiry_type="MONTHLY",
+        option_exchange="NFO",
+        contracts=contracts,
+    )
+    captured_ns = 1_795_000_000_000_000_010
+    spot = SimpleNamespace(price=58025.0, timestamp_ns=captured_ns - 1_000_000_000)
+    result = capture_angelone_option_snapshot(
+        universe=universe,
+        spot_snapshot=spot,
+        client=BankNiftyAngelOneClient(),
+        session_factory=Session,
+        captured_at_ns=captured_ns,
+    )
+
+    assert result["underlying"] == "BANKNIFTY"
+    assert result["expiry_type"] == "MONTHLY"
+    assert result["expected_contracts"] == 14
+    assert result["saved_contracts"] == 14
+    assert result["iv_received_contracts"] == 1
+    assert result["full_quote_received_contracts"] == 1
+    with Session() as db:
+        rows = db.query(IVOptionObservation).all()
+        assert len(rows) == 14
+        bank_ce = next(row for row in rows if row.token == "bank-ce-token")
+        assert bank_ce.underlying == "BANKNIFTY"
+        assert bank_ce.expiry == "2026-11-26"
+        assert bank_ce.iv == 17.25
+        assert bank_ce.iv_source == "ANGEL_ONE"
+        assert bank_ce.ltp == 225.5
+        assert bank_ce.oi == 223456
+        assert bank_ce.volume == 2100
+        assert bank_ce.bid == 225.0
+        assert bank_ce.ask == 226.0
+        assert all(row.underlying == "BANKNIFTY" for row in rows)
+    engine.dispose()
+
+
 def test_snapshot_persists_broker_iv_without_calculating_it():
     engine = create_engine(
         "sqlite://",
