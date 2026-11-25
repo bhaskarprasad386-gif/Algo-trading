@@ -39,14 +39,29 @@ def _expiry_candidates(rows: Iterable[dict], underlying: str) -> list[date]:
     return sorted(dates)
 
 
-def choose_locked_expiry(rows: Iterable[dict], underlying: str, *, today: date | None = None) -> str:
-    """Choose next NIFTY weekly or BANKNIFTY monthly expiry using exchange classification."""
+def choose_locked_expiry(
+    rows: Iterable[dict],
+    underlying: str,
+    *,
+    today: date | None = None,
+    now: datetime | None = None,
+) -> str:
+    """Choose the active index expiry, advancing after an actual expiry closes at 15:30 IST."""
     symbol = str(underlying).strip().upper()
     if symbol not in LOCKED:
         raise ValueError("expiry selection is restricted to NIFTY/BANKNIFTY")
-    current = today or datetime.now(IST).date()
+    local_now = (now or datetime.now(IST)).astimezone(IST)
+    current = today or local_now.date()
     all_dates = _expiry_candidates(rows, symbol)
-    future_dates = [expiry for expiry in all_dates if expiry >= current]
+    expired_today = (
+        local_now.date() == current
+        and (local_now.hour, local_now.minute) >= (15, 30)
+        and current in all_dates
+    )
+    future_dates = (
+        [expiry for expiry in all_dates if expiry > current]
+        if expired_today else [expiry for expiry in all_dates if expiry >= current]
+    )
     if not future_dates:
         raise LookupError(f"no future option expiries listed for {symbol}")
     # Classify against all dates. Removing expired dates first could wrongly
@@ -135,7 +150,7 @@ class SharedIndexMarketDataRunner:
                 "symbol": trading_symbol, "lot_size": row.get("lotsize")}
 
     def _expiry_for(self, underlying: str) -> str:
-        return choose_locked_expiry(self._rows, underlying)
+        return choose_locked_expiry(self._rows, underlying, now=datetime.now(IST))
 
     def _schedule_master_refresh(self) -> bool:
         """Refresh instrument master off tick callback and publish complete snapshots only."""
@@ -199,6 +214,40 @@ class SharedIndexMarketDataRunner:
         Thread(target=worker, name="shared-index-master-refresh", daemon=True).start()
         return True
 
+    def _check_option_expiry_rollover(self) -> tuple[str, ...]:
+        """Roll an expired option family on the first fresh spot tick, even without ATM movement."""
+        with self._lock:
+            if not self._running or not self._bootstrap_options_done:
+                return ()
+            now = datetime.now(IST)
+            today = now.date()
+            descriptors = self.lifecycle.option_descriptors()
+            completed = []
+            for underlying in LOCKED:
+                active_expiries = {
+                    _parse_expiry(descriptor.expiry)
+                    for descriptor in descriptors
+                    if descriptor.underlying == underlying and descriptor.expiry
+                }
+                if not active_expiries:
+                    continue
+                # Do not roll today's expiry before its 15:30 IST close.
+                latest_active = max(active_expiries)
+                if latest_active > today or (
+                    latest_active == today and (now.hour, now.minute) < (15, 30)
+                ):
+                    continue
+                target_expiry = self._expiry_for(underlying)
+                if active_expiries == {_parse_expiry(target_expiry)}:
+                    continue
+                spot = self._spot_records.get(underlying)
+                if spot is not None and spot.ltp is not None:
+                    if self.rotation._rotate(underlying, float(spot.ltp)):
+                        completed.append(underlying)
+            if completed:
+                self._sync_state_universe()
+            return tuple(completed)
+
     def _check_futures_rollover(self) -> tuple[str, ...]:
         """Roll expired index futures without dropping the current subscription first."""
         with self._lock:
@@ -261,7 +310,7 @@ class SharedIndexMarketDataRunner:
             from .common_strategy_feed import CommonStrategyMarketFeed
             descriptors = []
             for underlying in LOCKED:
-                expiry = choose_locked_expiry(rows, underlying)
+                expiry = choose_locked_expiry(rows, underlying, now=datetime.now(IST))
                 selected = select_locked_index_options(
                     rows, underlying=underlying, expiry=expiry,
                     spot_price=spot_prices[underlying],
@@ -326,6 +375,7 @@ class SharedIndexMarketDataRunner:
                 flushed = self.rotation.flush_due()
                 if flushed:
                     self._sync_state_universe()
+                self._check_option_expiry_rollover()
                 self._check_futures_rollover()
 
     def start(self, instrument_rows: Iterable[dict] | None = None) -> dict:
@@ -427,6 +477,29 @@ class SharedIndexMarketDataRunner:
 
     def latest(self, instrument_key: str):
         return self.state.latest(instrument_key)
+
+    def health_snapshot(self) -> dict:
+        """Return lightweight runner health without decorating/calculating IV records."""
+        with self._lock:
+            running = self._running
+            started_at = self._started_at
+            error = self._start_error
+            bootstrap_done = self._bootstrap_options_done
+            master_refresh_error = self._master_refresh_error
+            master_last_refresh_at = self._master_last_refresh_at
+        return {
+            "runner": "shared-index-market-data",
+            "enabled": running,
+            "started_at": started_at,
+            "last_error": error,
+            "initial_option_bootstrap_done": bootstrap_done,
+            "state": self.state.snapshot(),
+            "lifecycle": self.lifecycle.snapshot(),
+            "master_refresh": {
+                "last_success_at": master_last_refresh_at,
+                "last_error": master_refresh_error,
+            },
+        }
 
     def snapshot(self) -> dict:
         with self._lock:

@@ -196,18 +196,20 @@ class AlertCooldownStore:
         finally:
             session.close()
 
-    def invalidate_breached_oi_walls(self, *, spot: float, observed_at_ns: int) -> int:
+    def invalidate_breached_oi_walls(self, *, spot: float, observed_at_ns: int, underlying: str | None = None) -> int:
         """Invalidate OI-wall alerts only when spot breaches the recorded wall level."""
         if not isinstance(spot, (int, float)) or spot <= 0:
             return 0
         session = self.session_factory()
         changed = 0
         try:
-            rows = (session.query(IVEarlyEntryAlertEvent)
-                    .filter(
-                        IVEarlyEntryAlertEvent.strategy == "OI_WALL_REJECTION",
-                        IVEarlyEntryAlertEvent.state == AlertState.EARLY_ENTRY.value,
-                    ).all())
+            query = session.query(IVEarlyEntryAlertEvent).filter(
+                IVEarlyEntryAlertEvent.strategy == "OI_WALL_REJECTION",
+                IVEarlyEntryAlertEvent.state == AlertState.EARLY_ENTRY.value,
+            )
+            if underlying:
+                query = query.filter(IVEarlyEntryAlertEvent.underlying == str(underlying).strip().upper())
+            rows = query.all()
             for row in rows:
                 try:
                     metadata = json.loads(row.metadata_json or "{}")
@@ -316,6 +318,7 @@ class AlertCooldownStore:
         self, *, limit: int = 20,
         before_observed_at_ns: int | None = None,
         before_id: int | None = None,
+        underlying: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return stable newest-first history, with a timestamp+ID keyset cursor."""
         limit = max(1, min(int(limit), 101))
@@ -324,6 +327,8 @@ class AlertCooldownStore:
         session = self.session_factory()
         try:
             query = session.query(IVEarlyEntryAlertEvent)
+            if underlying:
+                query = query.filter(IVEarlyEntryAlertEvent.underlying == str(underlying).strip().upper())
             if before_observed_at_ns is not None and before_id is not None:
                 query = query.filter(or_(
                     IVEarlyEntryAlertEvent.observed_at_ns < int(before_observed_at_ns),

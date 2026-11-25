@@ -31,6 +31,7 @@ from .feed import IVSkewFlipFeedAdapter
 from .instruments import download_iv_instruments
 from .sampler import IVOneSecondSampler
 from .spot_feed import IVSpotFeedAdapter
+from .shared_runner_feed import IVSharedRunnerOptionFeedAdapter, IVSharedRunnerSpotFeedAdapter
 from .alerts import AlertCooldownStore, IVEarlyEntryAlertEngine
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from .universe import resolve_option_universe
@@ -38,24 +39,30 @@ from .universe import resolve_option_universe
 IST = ZoneInfo("Asia/Kolkata")
 
 
-def _universe_selection_date(now: datetime):
-    """Roll the selected option universe after the 15:30 IST expiry close."""
+def _universe_selection_date(now: datetime, available_expiries=()):
+    """Advance past today only when today is an actual listed expiry and its close has passed.
+
+    Do not blindly add one day after 15:30: doing so on the day before expiry
+    incorrectly skips a weekly/monthly contract that expires tomorrow.
+    """
+    if now.tzinfo is None:
+        raise ValueError("universe selection requires a timezone-aware datetime")
     local_now = now.astimezone(IST)
-    selected_date = local_now.date()
-    if local_now.time() >= datetime_time(15, 30):
-        selected_date += timedelta(days=1)
-    return selected_date
+    today = local_now.date()
+    if local_now.time() < datetime_time(15, 30):
+        return today
+    expiry_dates = {str(value)[:10] for value in available_expiries}
+    return today + timedelta(days=1) if today.isoformat() in expiry_dates else today
 
 
-# IV scanner is intentionally running only NIFTY Weekly until explicitly enabled.
-# Keep the complete registry for stable API/UI reporting, but all runtime work
-# (subscriptions, sampling, signals and refresh) uses ACTIVE_CHAIN_CONFIGS only.
+# IV scanner runs the explicitly selected NIFTY Weekly and BANKNIFTY Monthly chains.
+# NIFTY Monthly remains registered for stable API/UI reporting but is not subscribed.
 ALL_CHAIN_CONFIGS = (
     ("NIFTY_WEEKLY", DEFAULT_CONFIGS[0]),
     ("NIFTY_MONTHLY", ScannerConfig("NIFTY", "MONTHLY", 0.8, -0.8)),
     ("BANKNIFTY_MONTHLY", DEFAULT_CONFIGS[1]),
 )
-ACTIVE_CHAIN_CONFIGS = (ALL_CHAIN_CONFIGS[0],)
+ACTIVE_CHAIN_CONFIGS = (ALL_CHAIN_CONFIGS[0], ALL_CHAIN_CONFIGS[2])
 CHAIN_CONFIGS = ALL_CHAIN_CONFIGS
 
 
@@ -83,27 +90,32 @@ class IVSkewFlipRuntime:
         equity_pressure_unavailable_reason: str | None = None,
         future_feed: IVIndexFutureFeedAdapter | None = None,
         feed_manager: Any | None = None,
-        close_feed_manager: bool = True,
+        shared_runner: Any | None = None,
+        close_feed_manager: bool = False,
     ) -> None:
         if refresh_seconds < 1.0 or refresh_seconds > 3.0:
             raise ValueError("universe refresh cadence must be between 1 and 3 seconds")
         self.instrument_master = instrument_master
         self.feed_manager = feed_manager
+        self.shared_runner = shared_runner
         # A manager injected by the application may be shared with other
         # scanners. Only close managers whose lifecycle this runtime owns.
         self.close_feed_manager = bool(close_feed_manager)
-        # Production injects the process-wide manager shared with Box Spread.
-        # All IV consumers use mode 3; socket admission and the three-socket
-        # budget are enforced globally by that manager.
-        self.spot_feed = spot_feed or IVSpotFeedAdapter(
-            feed=CommonStrategyMarketFeed(
-                "iv-skew-flip-spot", manager=feed_manager, mode=3,
-            ) if feed_manager is not None else None,
-            clock_ns=clock_ns,
-            # Preserve the durable last-known spot display when using an
-            # injected dedicated feed adapter.
-            persist_last_price=True if feed_manager is not None else None,
-        )
+        # Production attaches to the already-running shared index runner. The
+        # compatibility path remains available for isolated tests/tools, but
+        # production IV never registers duplicate market-data consumers.
+        if shared_runner is not None:
+            self.spot_feed = spot_feed or IVSharedRunnerSpotFeedAdapter(
+                shared_runner=shared_runner, clock_ns=clock_ns,
+            )
+        else:
+            self.spot_feed = spot_feed or IVSpotFeedAdapter(
+                feed=CommonStrategyMarketFeed(
+                    "iv-skew-flip-spot", manager=feed_manager, mode=3,
+                ) if feed_manager is not None else None,
+                clock_ns=clock_ns,
+                persist_last_price=True if feed_manager is not None else None,
+            )
         self.future_feed = future_feed or IVIndexFutureFeedAdapter(
             feed=CommonStrategyMarketFeed(
                 "iv-skew-flip-index-futures", manager=feed_manager, mode=3,
@@ -114,12 +126,18 @@ class IVSkewFlipRuntime:
         self._basis_histories: dict[str, BasisHistory] = {}
         self._basis_analysis: dict[str, dict[str, Any]] = {}
         self.option_feed_factory = option_feed_factory or (
-            lambda symbol: IVSkewFlipFeedAdapter(
-                feed=CommonStrategyMarketFeed(
-                    f"iv-skew-flip-{symbol.lower()}", manager=feed_manager, mode=3,
-                ) if feed_manager is not None else None,
-                consumer=f"iv-skew-flip-{symbol.lower()}",
-                clock_ns=clock_ns,
+            (
+                lambda stream_id: IVSharedRunnerOptionFeedAdapter(
+                    shared_runner=shared_runner, stream_id=stream_id, clock_ns=clock_ns,
+                )
+            ) if shared_runner is not None else (
+                lambda stream_id: IVSkewFlipFeedAdapter(
+                    feed=CommonStrategyMarketFeed(
+                        f"iv-skew-flip-{stream_id.lower()}", manager=feed_manager, mode=3,
+                    ) if feed_manager is not None else None,
+                    consumer=f"iv-skew-flip-{stream_id.lower()}",
+                    clock_ns=clock_ns,
+                )
             )
         )
         self.clock_ns = clock_ns
@@ -233,11 +251,11 @@ class IVSkewFlipRuntime:
         if any(not values for values in rows.values()):
             missing = sorted(stream_id for stream_id, values in rows.items() if not values)
             raise LookupError(f"instrument master has no NFO option contracts for streams {missing}")
-        # Resolve the sole enabled NSE index token before subscribing, so an
+        # Resolve both enabled NSE index tokens before subscribing, so an
         # invalid master cannot leave the runtime half-started.
-        for symbol in ("NIFTY",):
+        for symbol in ("NIFTY", "BANKNIFTY"):
             self.instrument_master.resolve_index_instrument(symbol, "NSE")
-        # Index-future basis feed is intentionally disabled in NIFTY-Weekly-only mode.
+        # Index-future basis is context-only and remains disabled; active IV signals do not consume it.
         future_contracts: tuple[Any, ...] = ()
         if self.equity_pressure_enabled and self.equity_baskets:
             # One physical quote consumer for the union of both top-10 baskets.
@@ -273,7 +291,7 @@ class IVSkewFlipRuntime:
                     ) from exc
                 raise
         try:
-            self.spot_feed.start(self.instrument_master, ("NIFTY",))
+            self.spot_feed.start(self.instrument_master, ("NIFTY", "BANKNIFTY"))
             if future_contracts:
                 self.future_feed.start(future_contracts)
         except Exception as exc:
@@ -323,12 +341,15 @@ class IVSkewFlipRuntime:
     def _refresh_stream(self, stream_id: str, config: ScannerConfig, spot: Any, now: datetime) -> None:
         symbol = stream_id
         try:
-            # Index options stop trading at 15:30 IST on expiry day. Move
-            # the selection date forward at that boundary so the next refresh
-            # selects the next listed weekly expiry and keeps it on the next day.
-            universe_date = _universe_selection_date(now)
+            # Use the instrument master as the expiry calendar. Roll only after
+            # today's actual listed expiry has passed its 15:30 IST close.
+            rows = self._rows_by_stream[symbol]
+            local_today = now.astimezone(IST).date()
+            expiries_from_today = self._future_expiry_candidates(rows, local_today)
+            universe_date = _universe_selection_date(now, expiries_from_today)
+            available_expiries = self._future_expiry_candidates(rows, universe_date)
             universe = resolve_option_universe(
-                self._rows_by_stream[symbol],
+                rows,
                 underlying=config.symbol,
                 expiry_type=config.expiry_type,
                 spot=spot.price,
@@ -339,9 +360,7 @@ class IVSkewFlipRuntime:
             with self._lock:
                 self._expiry_diagnostics[symbol] = {
                     "selection_date": universe_date.isoformat(),
-                    "available_expiries": self._future_expiry_candidates(
-                        self._rows_by_stream[symbol], universe_date,
-                    ),
+                    "available_expiries": available_expiries,
                     "selected_expiry": universe.expiry,
                 }
                 current_tokens = self._universe_tokens.get(symbol)
@@ -628,12 +647,20 @@ class IVSkewFlipRuntime:
                 continue
             try:
                 sampler_snapshot = sampler.snapshot()
-                if stream_id == "NIFTY_WEEKLY":
-                    expiry = sampler.configured_expiry
-                    self._early_entry_alerts.evaluate(
-                        sampler=sampler, spot=spot, expiry=expiry,
-                        now=self.clock_datetime(), now_ns=now_ns,
-                    )
+                expiry = sampler.configured_expiry
+                universe = feed.resolved_universe() if callable(getattr(feed, "resolved_universe", None)) else None
+                strike_step = float(getattr(universe, "strike_step", 50.0 if config.symbol == "NIFTY" else 100.0))
+                # BANKNIFTY alert thresholds are strike-grid scaled and clearly
+                # labelled PILOT until independent forward-outcome validation.
+                alert_scale = strike_step / 50.0
+                self._early_entry_alerts.evaluate(
+                    sampler=sampler, spot=spot, expiry=expiry,
+                    now=self.clock_datetime(), now_ns=now_ns,
+                    underlying=config.symbol, strike_step=strike_step,
+                    max_consolidation_points=55.0 * alert_scale,
+                    wall_tolerance_points=15.0 * alert_scale,
+                    spot_sync_tolerance_points=5.0 * alert_scale,
+                )
                 result = self._early_move_detectors[stream_id].update(
                     quotes=feed.latest_quotes(),
                     metrics=sampler_snapshot.get("raw_live_metrics", ()),
@@ -929,8 +956,11 @@ class IVSkewFlipRuntime:
         if isinstance(wall_history_times, list) and wall_history_times:
             stamps = [format_change_time(item.get("quote")) for item in wall_history_times if isinstance(item, dict)]
             change_time_text += " • Wall history " + ",".join(stamps)
+        underlying = str(payload.get("underlying") or "NIFTY").strip().upper()
+        expiry_label = "WEEKLY" if underlying == "NIFTY" else "MONTHLY"
+        calibration_label = " • PILOT THRESHOLDS" if underlying == "BANKNIFTY" else ""
         lines = [
-            f"{emoji} <b>NIFTY WEEKLY IV EARLY ENTRY</b>",
+            f"{emoji} <b>{escape(underlying)} {expiry_label} IV EARLY ENTRY{calibration_label}</b>",
             f"<b>Strategy:</b> {escape(str(payload.get('strategy') or '—'))}",
             f"<b>Signal:</b> {escape(direction)} • {escape(str(payload.get('option_type') or '—'))}",
             f"<b>Contract:</b> {escape(str(payload.get('strike') or '—'))} • Expiry {escape(str(payload.get('expiry') or '—'))}",
@@ -941,6 +971,8 @@ class IVSkewFlipRuntime:
             f"<b>Reason:</b> {escape(str(payload.get('reason') or 'Conditions satisfied'))}",
             f"<b>Alert ID:</b> {int(payload.get('event_id') or 0)} • Alert only; no order placed",
         ]
+        if underlying == "BANKNIFTY":
+            lines.insert(2, "<b>Calibration:</b> Pilot thresholds scaled to the 100-point strike grid; forward validation pending")
         body = json.dumps({"chat_id": chat_id, "text": "\n".join(lines), "parse_mode": "HTML", "disable_web_page_preview": True}).encode("utf-8")
         request = Request(
             f"https://api.telegram.org/bot{token}/sendMessage",
@@ -1084,17 +1116,47 @@ class IVSkewFlipRuntime:
             "consumer": "iv-skew-flip",
             "orders_enabled": False,
             "market_data_connection": (
-                {"isolation": "DEDICATED", "manager": manager_snapshot,
-                 "socket_mode": 3, "socket_limit": 1}
-                if self.feed_manager is not None
-                else {"isolation": "SHARED_COMPATIBILITY_MODE"}
+                {
+                    "isolation": "SHARED_INDEX_MARKET_DATA_RUNNER",
+                    "runner": (
+                        self.shared_runner.health_snapshot()
+                        if self.shared_runner is not None
+                        and callable(getattr(self.shared_runner, "health_snapshot", None))
+                        else None
+                    ),
+                    "manager_owner": "APPLICATION",
+                    "manager": manager_snapshot,
+                    "socket_mode": 3,
+                    "global_socket_limit": 3,
+                    "iv_owns_subscriptions": False,
+                    "iv_owns_shared_runner": False,
+                }
+                if self.shared_runner is not None
+                else (
+                    {
+                        "isolation": "SHARED_PROCESS_MANAGER",
+                        "manager_owner": "APPLICATION",
+                        "manager": manager_snapshot,
+                        "socket_mode": 3,
+                        "global_socket_limit": 3,
+                        "owns_manager": self.close_feed_manager,
+                    }
+                    if self.feed_manager is not None
+                    else {
+                        "isolation": "COMMON_FEED_ADAPTER",
+                        "socket_mode": 1,
+                        "global_socket_limit": None,
+                        "owns_manager": False,
+                    }
+                )
             ),
             "refresh_seconds": self.refresh_seconds,
             "signal_evaluation_seconds": self.evaluation_seconds,
             "last_evaluation_ns": last_evaluation,
             "signals": signals,
             "early_move": early_move,
-            "early_entry_alerts": self._early_entry_alerts.snapshot(),
+            "early_entry_alerts": self._early_entry_alerts.snapshot("NIFTY"),
+            "early_entry_alerts_by_underlying": self._early_entry_alerts.snapshot_all(),
             "telegram_delivery": dict(self._telegram_delivery),
             "telegram_configured": bool(settings.TELEGRAM_ENABLED and str(settings.TELEGRAM_BOT_TOKEN or "").strip() and str(settings.TELEGRAM_CHAT_ID or "").strip()),
             "equity_pressure": {
@@ -1137,7 +1199,13 @@ class IVSkewFlipRuntime:
                     "error": errors.get("NIFTY_WEEKLY"),
                     "signals": signals.get("NIFTY_WEEKLY"),
                 },
-                "BANKNIFTY": {"status": "DISABLED_BY_SCOPE", "universe_tokens": 0, "signals_allowed": False},
+                "BANKNIFTY": {
+                    "option_feed": feeds["BANKNIFTY_MONTHLY"].snapshot() if "BANKNIFTY_MONTHLY" in feeds else {"status": "WAITING_FOR_SPOT"},
+                    "sampler": samplers["BANKNIFTY_MONTHLY"].snapshot() if "BANKNIFTY_MONTHLY" in samplers else {"status": "WAITING"},
+                    "universe_tokens": len(self._universe_tokens.get("BANKNIFTY_MONTHLY", ())),
+                    "error": errors.get("BANKNIFTY_MONTHLY"),
+                    "signals": signals.get("BANKNIFTY_MONTHLY"),
+                },
             },
             "last_refresh_ns": last_refresh,
             "last_error": errors.get("RUNTIME"),

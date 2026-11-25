@@ -306,9 +306,10 @@ def test_spot_feed_persists_and_restores_last_known_price(monkeypatch):
         ltp=24125.5,
         payload={"exchange_timestamp_ns": 10_000_000_000},
     ))
+    # stop() drains the bounded persistence queue before the test inspects storage.
+    adapter.stop()
     assert persisted["NIFTY"] == (24125.5, 10_000_000_000)
 
-    adapter.stop()
     restored = IVSpotFeedAdapter(
         feed=FakeFeed(), clock_ns=lambda: 20_000_000_000, persist_last_price=True,
     )
@@ -561,3 +562,60 @@ def test_repeated_old_source_timestamp_never_refreshes_market_freshness():
     assert snapshot["spot"]["NIFTY"]["quote_status"] == "LAST_KNOWN_STALE"
     assert snapshot["signals_allowed"] is False
     assert adapter.spot_snapshot("NIFTY", now_ns=now[0]) is None
+
+
+def test_spot_websocket_callback_never_waits_for_slow_database_persistence(monkeypatch):
+    from threading import Event, Thread
+    from app.scanner.iv_skew_flip import spot_feed as spot_feed_module
+
+    commit_started = Event()
+    allow_commit = Event()
+
+    class BlockingSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def query(self, model):
+            return self
+
+        def all(self):
+            return []
+
+        def merge(self, row):
+            return None
+
+        def commit(self):
+            commit_started.set()
+            allow_commit.wait(timeout=2.0)
+
+    monkeypatch.setattr(spot_feed_module, "SessionLocal", BlockingSession)
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(
+        feed=feed, clock_ns=lambda: 10_000_000_000, persist_last_price=True,
+    )
+    adapter.start(FakeMaster())
+    nifty = next(item for item in feed.descriptors if item.underlying == "NIFTY")
+    callback_done = Event()
+
+    def deliver():
+        feed.callback(SimpleNamespace(
+            instrument=nifty.key,
+            instrument_type=InstrumentType.INDEX,
+            timestamp_ns=10_000_000_000,
+            ltp=24125.5,
+            payload={"exchange_timestamp_ns": 10_000_000_000},
+        ))
+        callback_done.set()
+
+    delivery = Thread(target=deliver, daemon=True)
+    delivery.start()
+    assert callback_done.wait(timeout=0.25), "shared-feed callback blocked on IV database I/O"
+    assert commit_started.wait(timeout=1.0), "IV persistence worker did not start"
+    assert adapter.spot_snapshot("NIFTY") is not None
+
+    allow_commit.set()
+    delivery.join(timeout=1.0)
+    adapter.stop()

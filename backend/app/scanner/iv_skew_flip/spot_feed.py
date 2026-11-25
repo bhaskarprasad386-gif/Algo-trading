@@ -6,7 +6,7 @@ and never borrows Box Spread's tracker or subscription lifecycle.
 from __future__ import annotations
 
 from math import isfinite
-from threading import RLock
+from threading import Event, RLock, Thread
 from time import time_ns
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -52,6 +52,12 @@ class IVSpotFeedAdapter:
         self._last_source_timestamp_fields: dict[str, Any] = {}
         self._last_normalized_timestamp_ns: int | None = None
         self._started = False
+        # Shared-feed callbacks must never perform database I/O. Keep only the
+        # newest bounded spot observations and persist them on an IV-owned worker.
+        self._persist_pending: dict[str, SpotSnapshot] = {}
+        self._persist_wakeup = Event()
+        self._persist_stop = Event()
+        self._persist_thread: Thread | None = None
         if self._persist_last_price:
             self._restore_last_prices()
 
@@ -107,7 +113,13 @@ class IVSpotFeedAdapter:
                 str(item.underlying).upper(): item.key
                 for item in descriptors
             }
-        keys = self.feed.start(descriptors, self._on_record)
+        if self._persist_last_price:
+            self._ensure_persistence_worker()
+        try:
+            keys = self.feed.start(descriptors, self._on_record)
+        except Exception:
+            self._stop_persistence_worker()
+            raise
         self._started = True
         return {
             "status": "SUBSCRIBED",
@@ -194,21 +206,72 @@ class IVSpotFeedAdapter:
             snapshot = SpotSnapshot(float(price), timestamp_ns, received_at_ns)
             self._latest[symbol] = snapshot
             self._accepted_records += 1
-        if not self._persist_last_price:
-            return
-        try:
-            with SessionLocal() as db:
-                db.merge(IVSpotLastPrice(symbol=symbol, price=snapshot.price, timestamp_ns=snapshot.timestamp_ns))
-                db.merge(IVSpotObservation(
-                    underlying=symbol,
-                    source_timestamp_ns=snapshot.timestamp_ns,
-                    price=snapshot.price,
-                    received_at_ns=received_at_ns,
-                ))
-                db.commit()
-        except Exception:
-            # Keep the in-memory live quote even if durable storage is unavailable.
-            return
+        if self._persist_last_price:
+            self._enqueue_persistence(symbol, snapshot)
+
+    def _ensure_persistence_worker(self) -> None:
+        with self._lock:
+            worker = self._persist_thread
+            if worker is not None and worker.is_alive():
+                if self._persist_stop.is_set():
+                    raise RuntimeError("IV spot persistence worker is still stopping")
+                return
+            self._persist_stop.clear()
+            worker = Thread(
+                target=self._run_persistence,
+                name="iv-spot-persistence",
+                daemon=True,
+            )
+            self._persist_thread = worker
+            worker.start()
+
+    def _enqueue_persistence(self, symbol: str, snapshot: SpotSnapshot) -> None:
+        # At most one pending latest-value write per configured index. This
+        # prevents a busy NIFTY stream from evicting BANKNIFTY's last spot.
+        with self._lock:
+            self._persist_pending[symbol] = snapshot
+            self._persist_wakeup.set()
+
+    def _run_persistence(self) -> None:
+        while True:
+            self._persist_wakeup.wait(timeout=0.1)
+            with self._lock:
+                pending = tuple(self._persist_pending.items())
+                self._persist_pending.clear()
+                self._persist_wakeup.clear()
+                stopping = self._persist_stop.is_set()
+            if not pending and stopping:
+                break
+            for symbol, snapshot in pending:
+                try:
+                    with SessionLocal() as db:
+                        db.merge(IVSpotLastPrice(
+                            symbol=symbol, price=snapshot.price,
+                            timestamp_ns=snapshot.timestamp_ns,
+                        ))
+                        db.merge(IVSpotObservation(
+                            underlying=symbol,
+                            source_timestamp_ns=snapshot.timestamp_ns,
+                            price=snapshot.price,
+                            received_at_ns=snapshot.received_at_ns or snapshot.timestamp_ns,
+                        ))
+                        db.commit()
+                except Exception:
+                    # Live in-memory spot remains usable if persistence is degraded.
+                    pass
+
+    def _stop_persistence_worker(self) -> None:
+        with self._lock:
+            worker = self._persist_thread
+            if worker is None:
+                return
+            self._persist_stop.set()
+            self._persist_wakeup.set()
+        worker.join(timeout=2.0)
+        with self._lock:
+            if not worker.is_alive():
+                self._persist_thread = None
+                self._persist_stop.clear()
 
     def last_spot_snapshot(self, symbol: str) -> SpotSnapshot | None:
         """Return the last broker observation even when stale; never use it for signals."""
@@ -359,11 +422,14 @@ class IVSpotFeedAdapter:
         }
 
     def stop(self) -> None:
+        # Stop delivery first; the persistence worker then drains its bounded
+        # queue without holding up the shared market-data callback thread.
         self.feed.stop()
         with self._lock:
             self._started = False
             # Last prices are intentionally retained across runner OFF/ON cycles.
             self._keys.clear()
+        self._stop_persistence_worker()
 
 
 __all__ = ["IVSpotFeedAdapter"]

@@ -875,3 +875,71 @@ def test_two_workers_atomically_claim_one_outbox_row(tmp_path):
         engine_a.dispose()
         engine_b.dispose()
 
+
+
+def test_banknifty_identity_survives_telegram_outbox_and_restart_snapshot_recovery():
+    from app.scanner.iv_skew_flip.alerts.orchestrator import IVEarlyEntryAlertEngine
+
+    store = make_store()
+    nifty = candidate()
+    bank = AlertCandidate(
+        "IV_VOLUME_MOMENTUM", "BANKNIFTY", "2026-11-26", 58000.0,
+        "BULLISH", "CE", AlertState.EARLY_ENTRY,
+        nifty.observed_at_ns, 58100.0, 125.0, 0.25, 3.0,
+        "BANKNIFTY monthly pilot alert",
+        {"calibration_status": "PILOT", "strike_step": 100},
+    )
+    store.record(nifty)
+    store.record(bank)
+
+    delivered = []
+    worker = TelegramOutboxWorker(store.session_factory)
+    for _ in range(2):
+        outcome = worker.process_one(
+            now_ns=nifty.observed_at_ns,
+            sender=lambda payload: delivered.append(payload),
+            configured=True,
+        )
+        assert outcome["status"] == "SENT"
+
+    by_underlying = {payload["underlying"]: payload for payload in delivered}
+    assert by_underlying["BANKNIFTY"]["expiry"] == "2026-11-26"
+    assert by_underlying["BANKNIFTY"]["strike"] == 58000.0
+    assert by_underlying["BANKNIFTY"]["metadata"]["calibration_status"] == "PILOT"
+    assert by_underlying["NIFTY"]["expiry"] == "2026-11-19"
+
+    # A newly constructed engine has no in-memory state. Its first per-index
+    # snapshot must restore the durable rows for the WebSocket snapshot path.
+    restarted_engine = IVEarlyEntryAlertEngine(store)
+    recovered = restarted_engine.snapshot_all()
+    assert recovered["NIFTY"]["history_recovery"] == "RESTORED"
+    assert recovered["BANKNIFTY"]["history_recovery"] == "RESTORED"
+    assert [row["underlying"] for row in recovered["NIFTY"]["alerts"]] == ["NIFTY"]
+    assert [row["underlying"] for row in recovered["BANKNIFTY"]["alerts"]] == ["BANKNIFTY"]
+    assert recovered["BANKNIFTY"]["alerts"][0]["expiry"] == "2026-11-26"
+
+def test_alert_history_filter_keeps_nifty_and_banknifty_pages_independent():
+    store = make_store()
+    base = candidate()
+    nifty = store.record(base)
+    bank_base = AlertCandidate(
+        base.strategy, "BANKNIFTY", "2026-11-26", 58000.0,
+        base.direction, base.option_type, base.state,
+        base.observed_at_ns, 58100.0, base.premium,
+        base.iv_change_points, base.volume_ratio, "bank monthly",
+        {"calibration_status": "PILOT"},
+    )
+    bank = store.record(bank_base)
+
+    assert [row["id"] for row in store.latest(underlying="NIFTY")] == [nifty["event_id"]]
+    assert [row["id"] for row in store.latest(underlying="BANKNIFTY")] == [bank["event_id"]]
+    assert {row["underlying"] for row in store.latest()} == {"NIFTY", "BANKNIFTY"}
+
+    # Equal timestamps must still paginate independently by (timestamp, id).
+    page = store.latest(limit=1, underlying="BANKNIFTY")
+    assert page[0]["id"] == bank["event_id"]
+    assert store.latest(
+        limit=1, underlying="BANKNIFTY",
+        before_observed_at_ns=page[0]["observed_at_ns"],
+        before_id=page[0]["id"],
+    ) == []

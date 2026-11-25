@@ -24,3 +24,6 @@ export type PagePushRequestGuard = {
 };
 export function isCurrentPagePushRequest(input: PagePushRequestGuard): boolean;
 export function shouldAllowBoxSpreadEdgeTimingRestRefresh(pagePushStatus: string, eventDriven?: boolean): boolean;
+
+/** Read a finite spot price from an index's authoritative IV runtime snapshot. */
+export function runtimeSpotPrice(runtime: unknown, underlying: string): number | null;

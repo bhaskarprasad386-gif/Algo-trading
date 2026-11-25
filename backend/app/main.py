@@ -78,7 +78,6 @@ from app.scanner.iv_skew_flip.alerts import AlertCooldownStore
 from app.scanner.iv_skew_flip.angelone_option_snapshot import capture_angelone_option_snapshot
 from app.scanner.iv_skew_flip.instruments import download_iv_instruments
 from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
-from app.scanner.iv_skew_flip.basket_runtime import load_verified_runtime_baskets
 from app.scanner.iv_skew_flip.validation import SignalEvent, load_persisted_forward_outcomes, summarize_forward_outcomes, summarize_walk_forward_by_date
 from app.models.iv_signal_event import IVSignalEvent
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router, build_paper_market_snapshot, build_paper_private_snapshot
@@ -2391,30 +2390,11 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
         # This downloader is isolated and never reads or mutates the Box Spread cache.
         if iv_instruments is None:
             iv_instruments = download_iv_instruments(instrument_master)
-        # Runner ON is the user's explicit activation for IV market-data analysis.
-        # Load both official index baskets, verify the complete rosters/token mappings,
-        # then subscribe only to each index's dynamically ranked top 10 constituents.
-        # If basket provenance is missing/stale, keep the IV option scanner running
-        # but fail closed for constituent pressure (no partial/guessed basket).
+        # Heavyweight pressure is a separately controlled, optional signal family.
+        # Keep it OFF here: IV's shared-runner attachment must not add NSE cash
+        # subscriptions or expand the locked spot/options/futures token universe.
         equity_baskets = {}
-        equity_pressure_error = None
-        try:
-            with SessionLocal() as db:
-                basket_records = (
-                    db.query(IVConstituentBasketVersion)
-                    .filter(IVConstituentBasketVersion.underlying.in_(("NIFTY", "BANKNIFTY")))
-                    .all()
-                )
-            equity_baskets = load_verified_runtime_baskets(
-                basket_records,
-                as_of=datetime.now(timezone.utc).date(),
-                instrument_master=instrument_master,
-                underlyings=("NIFTY", "BANKNIFTY"),
-                top_n=10,
-            )
-        except Exception as exc:
-            equity_pressure_error = f"{type(exc).__name__}: {exc}"
-            app_logger.warning("IV top-10 constituent pressure unavailable: {}", equity_pressure_error)
+        equity_pressure_error = "DISABLED_BY_SCOPE: heavyweight pressure activation remains OFF"
         # IV and Box Spread share the process-wide Angel One manager.
         # IV consumers request mode 3, while the manager enforces one global
         # three-socket budget across all registered strategy subscriptions.
@@ -2425,6 +2405,7 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
             equity_baskets=equity_baskets,
             equity_pressure_unavailable_reason=equity_pressure_error,
             feed_manager=iv_feed_manager,
+            shared_runner=shared_index_market_data_runner,
             close_feed_manager=False,
         )
         runtime.set_page_update_callback(
@@ -2494,8 +2475,12 @@ def iv_early_entry_latest_alert(
     limit: int = 20,
     before_observed_at_ns: int | None = None,
     before_id: int | None = None,
+    underlying: str | None = None,
 ):
-    """Read-only NIFTY Weekly alert history with stable keyset pagination."""
+    """Read-only NIFTY Weekly + BANKNIFTY Monthly alert history."""
+    symbol = str(underlying or "").strip().upper() or None
+    if symbol not in {None, "NIFTY", "BANKNIFTY"}:
+        raise HTTPException(status_code=422, detail="underlying must be NIFTY or BANKNIFTY")
     if (before_observed_at_ns is None) != (before_id is None):
         raise HTTPException(
             status_code=422,
@@ -2507,11 +2492,13 @@ def iv_early_entry_latest_alert(
     store = AlertCooldownStore(SessionLocal, cooldown_seconds=600)
     with _iv_skew_flip_runtime_lock:
         runtime = iv_skew_flip_runtime
-        live = runtime.snapshot().get("early_entry_alerts") if runtime is not None else None
+        live_by_underlying = runtime.snapshot().get("early_entry_alerts_by_underlying", {}) if runtime is not None else {}
+        live = live_by_underlying.get(symbol or "NIFTY")
     rows = store.latest(
         limit=page_size + 1,
         before_observed_at_ns=before_observed_at_ns,
         before_id=before_id,
+        underlying=symbol,
     )
     has_more = len(rows) > page_size
     alerts = rows[:page_size]
@@ -2523,9 +2510,10 @@ def iv_early_entry_latest_alert(
         }
     return {
         "status": "ok",
-        "strategy_scope": "NIFTY_WEEKLY",
+        "strategy_scope": symbol or "NIFTY_WEEKLY+BANKNIFTY_MONTHLY",
         "orders_enabled": False,
         "live": live or {"state": "WATCH", "signals_allowed": False, "reason": "IV_RUNTIME_STOPPED"},
+        "live_by_underlying": live_by_underlying,
         "alerts": alerts,
         "has_more": has_more,
         "next_cursor": next_cursor,
@@ -2671,11 +2659,15 @@ def iv_skew_flip_option_timeseries(
     }
 
 
-def _capture_iv_broker_option_snapshot():
+def _capture_iv_broker_option_snapshot(underlying: str = "NIFTY"):
     runtime = iv_skew_flip_runtime
     if runtime is None or runtime.snapshot().get("status") != "RUNNING":
         raise RuntimeError("IV Scanner runner must be ON before broker option snapshot capture")
-    universe, spot = runtime.broker_snapshot_context("NIFTY_WEEKLY")
+    symbol = str(underlying or "").strip().upper()
+    stream_id = {"NIFTY": "NIFTY_WEEKLY", "BANKNIFTY": "BANKNIFTY_MONTHLY"}.get(symbol)
+    if stream_id is None:
+        raise ValueError("underlying must be NIFTY or BANKNIFTY")
+    universe, spot = runtime.broker_snapshot_context(stream_id)
     return capture_angelone_option_snapshot(
         universe=universe,
         spot_snapshot=spot,
@@ -2684,88 +2676,85 @@ def _capture_iv_broker_option_snapshot():
     )
 
 
-def _iv_snapshot_saved_today(day):
+def _iv_snapshot_saved_today(day, underlying: str = "NIFTY", expected_contracts: int = 22):
     # An earlier manual fetch must not suppress the scheduled near-close snapshot.
     start = datetime.combine(day, time(15, 27), tzinfo=IST).timestamp() * 1_000_000_000
     end = datetime.combine(day, time.max, tzinfo=IST).timestamp() * 1_000_000_000
+    symbol = str(underlying or "").strip().upper()
     with SessionLocal() as db:
         received_iv_contracts = db.query(
             func.count(func.distinct(IVOptionObservation.token))
         ).filter(
-            IVOptionObservation.underlying == "NIFTY",
+            IVOptionObservation.underlying == symbol,
             IVOptionObservation.iv_source == "ANGEL_ONE",
             IVOptionObservation.iv.isnot(None),
             IVOptionObservation.sampled_at_ns >= int(start),
             IVOptionObservation.sampled_at_ns <= int(end),
         ).scalar() or 0
-        return received_iv_contracts >= 22
+        return received_iv_contracts >= int(expected_contracts)
 
 
 async def _iv_option_snapshot_daily_loop():
-    """Persist broker IV during market hours and make bounded near-close retries."""
-    last_attempt_monotonic = 0.0
-    next_attempt_delay = 0.0
+    """Persist bounded broker-IV snapshots independently for each active index chain."""
+    last_attempt = {"NIFTY": 0.0, "BANKNIFTY": 0.0}
+    next_delay = {"NIFTY": 0.0, "BANKNIFTY": 0.0}
+    expected_by_symbol = {"NIFTY": 22, "BANKNIFTY": 14}
     while True:
         now = datetime.now(IST)
         current_time = now.time()
         runtime = iv_skew_flip_runtime
-        if (
-            runtime is not None
-            and runtime.snapshot().get("status") == "RUNNING"
-            and time(9, 20) <= current_time <= time(15, 30, 20)
-        ):
+        runner_on = runtime is not None and runtime.snapshot().get("status") == "RUNNING"
+        capture_window = time(9, 20) <= current_time <= time(15, 30, 20)
+        if runner_on and capture_window:
             near_close = time(15, 28) <= current_time <= time(15, 30, 20)
-            already_saved = False
-            if near_close:
-                try:
-                    already_saved = await asyncio.to_thread(_iv_snapshot_saved_today, now.date())
-                except Exception:
-                    app_logger.exception("IV EOD snapshot completion check failed")
-            if not already_saved:
-                monotonic_now = time_module.monotonic()
-                retry_delay = 15.0 if near_close else (
-                    next_attempt_delay if next_attempt_delay > 0 else 300.0
-                )
-                if monotonic_now - last_attempt_monotonic >= retry_delay:
-                    last_attempt_monotonic = monotonic_now
+            for symbol in ("NIFTY", "BANKNIFTY"):
+                already_saved = False
+                if near_close:
                     try:
-                        result = await asyncio.to_thread(_capture_iv_broker_option_snapshot)
-                        received = int(result.get("iv_received_contracts") or 0)
-                        expected = int(result.get("expected_contracts") or 22)
-                        if received >= expected:
-                            next_attempt_delay = 300.0
-                            app_logger.info(
-                                "IV Angel One option snapshot persisted: expiry=%s contracts=%s IV=%s",
-                                result.get("expiry"), result.get("saved_contracts"), received,
-                            )
-                        else:
-                            next_attempt_delay = 15.0 if near_close else (60.0 if received > 0 else 300.0)
-                            app_logger.warning(
-                                "IV Angel One snapshot incomplete; preserving last valid IV and retrying: expiry=%s IV=%s/%s",
-                                result.get("expiry"), received, expected,
-                            )
-                    except Exception:
-                        next_attempt_delay = 15.0 if near_close else 300.0
-                        app_logger.exception(
-                            "IV Angel One option snapshot attempt failed; next retry in %.0fs",
-                            next_attempt_delay,
+                        already_saved = await asyncio.to_thread(
+                            _iv_snapshot_saved_today, now.date(), symbol, expected_by_symbol[symbol]
                         )
+                    except Exception:
+                        app_logger.exception("IV %s EOD snapshot completion check failed", symbol)
+                if already_saved:
+                    continue
+                monotonic_now = time_module.monotonic()
+                retry_delay = 15.0 if near_close else (next_delay[symbol] or 300.0)
+                if monotonic_now - last_attempt[symbol] < retry_delay:
+                    continue
+                last_attempt[symbol] = monotonic_now
+                try:
+                    result = await asyncio.to_thread(_capture_iv_broker_option_snapshot, symbol)
+                    received = int(result.get("iv_received_contracts") or 0)
+                    expected = int(result.get("expected_contracts") or expected_by_symbol[symbol])
+                    if received >= expected:
+                        next_delay[symbol] = 300.0
+                        app_logger.info(
+                            "IV Angel One %s option snapshot persisted: expiry=%s contracts=%s IV=%s",
+                            symbol, result.get("expiry"), result.get("saved_contracts"), received,
+                        )
+                    else:
+                        next_delay[symbol] = 15.0 if near_close else (60.0 if received > 0 else 300.0)
+                        app_logger.warning(
+                            "IV Angel One %s snapshot incomplete; preserving last valid IV and retrying: expiry=%s IV=%s/%s",
+                            symbol, result.get("expiry"), received, expected,
+                        )
+                except Exception:
+                    next_delay[symbol] = 15.0 if near_close else 300.0
+                    app_logger.exception("IV Angel One %s snapshot failed; next retry in %.0fs", symbol, next_delay[symbol])
         else:
-            # OFF must pause all broker calls and clear the throttle so turning
-            # the scanner ON during market hours starts capture immediately.
-            runner_off = runtime is None or runtime.snapshot().get("status") != "RUNNING"
-            outside_capture_hours = current_time < time(9, 20) or current_time > time(15, 30, 20)
-            if runner_off or outside_capture_hours:
-                last_attempt_monotonic = 0.0
-                next_attempt_delay = 0.0
+            # OFF pauses all broker calls; re-enable starts each stream promptly.
+            for symbol in last_attempt:
+                last_attempt[symbol] = 0.0
+                next_delay[symbol] = 0.0
         await asyncio.sleep(15)
 
 
 @app.post("/api/v1/scanner/iv-skew-flip/snapshot")
-def capture_iv_skew_flip_broker_snapshot():
-    """Manually fetch Angel One Greeks + FULL quote for the active NIFTY weekly chain."""
+def capture_iv_skew_flip_broker_snapshot(underlying: str = "NIFTY"):
+    """Manually fetch Angel One Greeks + FULL quote for the selected active IV chain."""
     try:
-        return _capture_iv_broker_option_snapshot()
+        return _capture_iv_broker_option_snapshot(underlying)
     except Exception as exc:
         app_logger.exception("Manual IV broker option snapshot failed")
         raise HTTPException(
