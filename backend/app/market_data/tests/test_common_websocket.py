@@ -2593,3 +2593,46 @@ def test_old_generation_completion_cannot_clear_newer_same_lane_failure():
             assert manager._failure_recovery_generation_by_group == {}
     finally:
         manager.close()
+
+
+def test_new_generation_failure_is_not_suppressed_by_prior_lane_recovery_marker():
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    callbacks = []
+    captured = Event()
+
+    def capture_close(_socket, **kwargs):
+        callbacks.append(kwargs["on_finished"])
+        captured.set()
+        return Thread()
+
+    manager._close_socket_tracked = capture_close
+    item = descriptor("same-lane-successive-failures")
+    manager.registry.register(item)
+    manager.register_callback("successive-failure-owner", lambda _message: None)
+    manager.subscribe("successive-failure-owner", [item.key])
+    group = SocketGroup(1, 0)
+    try:
+        first_socket = manager._sockets[group]
+        first_generation = manager._socket_generation[group]
+        manager._schedule_socket_failure_recovery(
+            group, first_socket, first_generation, "first generation failure"
+        )
+        assert captured.wait(timeout=1.0), "first failed transport should be retired"
+
+        replacement = FakeSocket()
+        with manager._lock:
+            manager._sockets[group] = replacement
+            manager._socket_generation[group] = first_generation + 1
+            manager._socket_tokens[group] = {(1, item.key.token)}
+
+        manager._schedule_socket_failure_recovery(
+            group, replacement, first_generation + 1, "replacement generation failed"
+        )
+
+        assert len(callbacks) == 2, "the replacement generation must get its own close completion"
+        assert manager._failure_recovery_generation_by_group[group] == first_generation + 1
+        assert manager._failure_recovery_pending_groups == {group}
+        assert manager._failure_recovery_pending_versions[group] == 1
+    finally:
+        manager.close()
