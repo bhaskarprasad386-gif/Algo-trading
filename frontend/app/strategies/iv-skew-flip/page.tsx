@@ -230,13 +230,13 @@ function OptionChain({ title, chain, spot }: { title: string; chain: Chain; spot
 }
 
 type OiVolumeRow = { strike: number; pe?: Row; ce?: Row };
-function NiftyWeeklyOiVolumeChart({ chain, spot }: { chain: Chain; spot: Row }) {
+function IndexOiVolumeChart({ symbol, title, chain, spot }: { symbol: string; title: string; chain: Chain; spot: Row }) {
   const feed = chain.option_feed ?? {};
   const sampler = chain.sampler ?? {};
   const metrics = Array.isArray(sampler.live_metrics) ? sampler.live_metrics as Row[] : [];
   const expiry = String(feed.expiry ?? "");
   const eligible = metrics.filter(item =>
-    String(item.underlying ?? "").toUpperCase() === "NIFTY"
+    String(item.underlying ?? "").toUpperCase() === symbol
     && String(item.option_type ?? "").toUpperCase() in { CE: 1, PE: 1 }
     && (!expiry || String(item.expiry ?? "") === expiry)
     && n(item.strike) !== null
@@ -281,7 +281,7 @@ function NiftyWeeklyOiVolumeChart({ chain, spot }: { chain: Chain; spot: Row }) 
   const volumeTotal = (kind:"PE"|"CE") => eligible.filter(item=>String(item.option_type).toUpperCase()===kind).reduce((sum,item)=>sum+(n(item.volume)??0),0);
   return <section className="space-y-4 rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 shadow-sm">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <div><h2 className="text-lg font-bold theme-text">NIFTY Weekly OI &amp; Volume Profile</h2><p className="mt-1 text-xs theme-muted">ATM-centred strikes • paired OI and Volume bars • actual sampler data</p></div>
+      <div><h2 className="text-lg font-bold theme-text">{title} OI &amp; Volume Profile</h2><p className="mt-1 text-xs theme-muted">ATM-centred strikes • paired OI and Volume bars • actual sampler data</p></div>
       <span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-1 text-[10px] theme-muted">{String(sampler.status??"WAITING")} • 1s sampler</span>
     </div>
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -306,12 +306,12 @@ function NiftyWeeklyOiVolumeChart({ chain, spot }: { chain: Chain; spot: Row }) 
       </div>
     </div>
     <div className="flex flex-wrap gap-4 text-[10px] theme-muted"><span><span className="mr-1 inline-block h-2 w-4 rounded bg-pink-500"/> PE OI</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-pink-300"/> PE Volume</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-emerald-500"/> CE OI</span><span><span className="mr-1 inline-block h-2 w-4 rounded bg-emerald-300"/> CE Volume</span></div>
-    <p className="text-[11px] theme-muted">{atmIndex<0?"Waiting for a fresh NIFTY spot and strike universe. No sample values are substituted.":`ATM ${fmt(allStrikes[atmIndex],0)} • ${strikes.length} strikes • OI freshness uses broker OI timestamp (5 min limit); Volume freshness uses option tick age (5 sec limit). Hover bars for source timestamps.`}</p>
+    <p className="text-[11px] theme-muted">{atmIndex<0?`Waiting for a fresh ${symbol} spot and strike universe. No sample values are substituted.`:`ATM ${fmt(allStrikes[atmIndex],0)} • ${strikes.length} strikes • OI freshness uses broker OI timestamp (5 min limit); Volume freshness uses option tick age (5 sec limit). Hover bars for source timestamps.`}</p>
   </section>;
 }
 
 type IvChartObservation = { token?: string; strike?: number; option_type?: string; timestamp_ns?: number; spot_timestamp_ns?: number; spot_price?: number | null; iv?: number | null };
-function NiftyWeeklySpotIvChart({ history, spot, chain }: { history: Row | null; spot: Row; chain: Chain }) {
+function IndexSpotIvChart({ symbol, title, history, spot, chain }: { symbol: string; title: string; history: Row | null; spot: Row; chain: Chain }) {
   const [chartZoom,setChartZoom]=useState(1);
   const [seriesVisibility,setSeriesVisibility]=useState<Record<string,boolean>>({});
   const observations=Array.isArray(history?.observations)?history!.observations as IvChartObservation[]:[];
@@ -375,7 +375,7 @@ function NiftyWeeklySpotIvChart({ history, spot, chain }: { history: Row | null;
   const palette=["#0f766e","#2563eb","#9333ea","#c2410c","#0891b2","#be123c","#4d7c0f","#7c3aed"];
   const colorFor=(strike:number,kind:string)=>{const idx=strikes.indexOf(strike);return palette[(idx*2+(kind==="PE"?1:0))%palette.length]};
   return <section className="space-y-4 rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 shadow-sm">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-extrabold tracking-tight theme-text">NIFTY Weekly • Spot + IV Time Series</h2><p className="mt-1 text-xs font-semibold theme-muted">ATM ±5 strikes • live + saved broker history • dual Y-axis</p></div><div className="flex flex-wrap items-center gap-2"><div className="flex items-center gap-1 rounded-lg border-2 border-slate-300 dark:border-slate-600 p-1"><button type="button" onClick={()=>setChartZoom(value=>Math.max(1,value/1.25))} disabled={chartZoom<=1} className="rounded-md px-3 py-1.5 text-sm font-extrabold theme-text disabled:opacity-40" aria-label="Zoom out">−</button><span className="min-w-[48px] text-center text-xs font-bold theme-text">{chartZoom.toFixed(2)}×</span><button type="button" onClick={()=>setChartZoom(value=>Math.min(4,value*1.25))} disabled={chartZoom>=4} className="rounded-md px-3 py-1.5 text-sm font-extrabold theme-text disabled:opacity-40" aria-label="Zoom in">+</button><button type="button" onClick={()=>setChartZoom(1)} className="rounded-md px-2 py-1.5 text-[11px] font-bold theme-text">Reset</button></div><span className={`rounded-full border-2 px-3 py-1.5 text-[10px] font-bold ${live?"border-emerald-500/50 text-emerald-700":"border-slate-300 dark:border-slate-600 theme-muted"}`}>{live?"LIVE • ≤5s":valid.length?"SAVED DATA":"NO DATA"} • {valid.length}</span></div></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-extrabold tracking-tight theme-text">{title} • Spot + IV Time Series</h2><p className="mt-1 text-xs font-semibold theme-muted">ATM ±5 strikes • live + saved broker history • dual Y-axis</p></div><div className="flex flex-wrap items-center gap-2"><div className="flex items-center gap-1 rounded-lg border-2 border-slate-300 dark:border-slate-600 p-1"><button type="button" onClick={()=>setChartZoom(value=>Math.max(1,value/1.25))} disabled={chartZoom<=1} className="rounded-md px-3 py-1.5 text-sm font-extrabold theme-text disabled:opacity-40" aria-label="Zoom out">−</button><span className="min-w-[48px] text-center text-xs font-bold theme-text">{chartZoom.toFixed(2)}×</span><button type="button" onClick={()=>setChartZoom(value=>Math.min(4,value*1.25))} disabled={chartZoom>=4} className="rounded-md px-3 py-1.5 text-sm font-extrabold theme-text disabled:opacity-40" aria-label="Zoom in">+</button><button type="button" onClick={()=>setChartZoom(1)} className="rounded-md px-2 py-1.5 text-[11px] font-bold theme-text">Reset</button></div><span className={`rounded-full border-2 px-3 py-1.5 text-[10px] font-bold ${live?"border-emerald-500/50 text-emerald-700":"border-slate-300 dark:border-slate-600 theme-muted"}`}>{live?"LIVE • ≤5s":valid.length?"SAVED DATA":"NO DATA"} • {valid.length}</span></div></div>
     <p className="text-[11px] theme-muted">Expiry {expiry||"—"} • Saved rows {allValid.length} • Displayed strikes {selectedStrikes.length}/11 • Latest observation {latest?sampleTime(latest):"—"} • Age {latestAgeSeconds===null?"—":latestAgeSeconds<60?`${latestAgeSeconds.toFixed(1)}s`:latestAgeSeconds<3600?`${(latestAgeSeconds/60).toFixed(1)}m`:`${(latestAgeSeconds/3600).toFixed(1)}h`} • {String(history?.data_status??"UNKNOWN")}{expiryMismatch?" • EXPIRY MISMATCH — chart suppressed":""}</p>
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-extrabold theme-text">Chart lines • select Call / Put series</span><span className="text-[10px] theme-muted">{selectedSeriesCount}/{ordered.length} visible</span></div>
@@ -383,10 +383,10 @@ function NiftyWeeklySpotIvChart({ history, spot, chain }: { history: Row | null;
       <div className="flex flex-wrap gap-2"><button type="button" onClick={()=>setSeriesVisibility(Object.fromEntries(ordered.map(([key])=>[key,true])))} className="rounded border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-[10px]">Select all</button><button type="button" onClick={()=>setSeriesVisibility(Object.fromEntries(ordered.map(([key])=>[key,false])))} className="rounded border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-[10px]">Clear all</button></div>
     </div>
     {valid.length===0||!hasPlottableData?<div className="rounded-xl border-2 border-slate-300 dark:border-slate-600 p-8 text-center text-sm theme-muted">{expiryMismatch? `Feed expiry ${feedExpiry} does not match saved-history expiry ${historyExpiry}; cross-expiry plotting is blocked.` : allValid.length? "Saved observations exist, but none match the selected strike window." : `No persisted observations are available for expiry ${expiry||"selected weekly"}. The chart will populate from real broker IV/spot ticks when this expiry is first sampled; no synthetic values are shown.`}</div>:<>
-      <div className="overflow-x-auto rounded-xl border-2 border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-950/30"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="NIFTY spot price and selected Call Put implied volatility time series" className="w-full min-w-[760px]"><defs><clipPath id="nifty-iv-chart-plot"><rect x={left} y={top} width={plotW} height={plotH}/></clipPath></defs>
+      <div className="overflow-x-auto rounded-xl border-2 border-slate-300 dark:border-slate-600 bg-white/70 dark:bg-slate-950/30"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${symbol} spot price and selected Call Put implied volatility time series`} className="w-full min-w-[760px]"><defs><clipPath id={`${symbol.toLowerCase()}-iv-chart-plot`}><rect x={left} y={top} width={plotW} height={plotH}/></clipPath></defs>
         {[0,0.25,0.5,0.75,1].map((fraction,i)=>{const yy=top+plotH*fraction;const sv=spotMax-(spotMax-spotMin)*fraction;const iv=ivMax-(ivMax-ivMin)*fraction;return <g key={i}><line x1={left} x2={width-right} y1={yy} y2={yy} stroke="currentColor" opacity=".13" strokeDasharray="3 4"/><text x={left-8} y={yy+4} textAnchor="end" fontSize="10" fill="currentColor">{sv.toFixed(1)}</text><text x={width-right+8} y={yy+4} textAnchor="start" fontSize="10" fill="currentColor">{iv.toFixed(1)}%</text></g>})}
         <line x1={left} x2={left} y1={top} y2={top+plotH} stroke="currentColor" opacity=".45"/><line x1={width-right} x2={width-right} y1={top} y2={top+plotH} stroke="currentColor" opacity=".45"/><line x1={left} x2={width-right} y1={top+plotH} y2={top+plotH} stroke="currentColor" opacity=".45"/>
-        <g clipPath="url(#nifty-iv-chart-plot)"><polyline points={path(spotPoints,ySpot)} fill="none" stroke="#111827" strokeWidth="3.2" strokeLinejoin="round" strokeLinecap="round"/>
+        <g clipPath="url(#${symbol.toLowerCase()}-iv-chart-plot)"><polyline points={path(spotPoints,ySpot)} fill="none" stroke="#111827" strokeWidth="3.2" strokeLinejoin="round" strokeLinecap="round"/>
         {spotPoints.length===1&&<circle cx={x(spotPoints[0].t)} cy={ySpot(spotPoints[0].v)} r="4" fill="#111827"/>}
         {visibleOrdered.map(([key,series])=><g key={key}><polyline points={path(series.points,yIv)} fill="none" stroke={colorFor(series.strike,series.kind)} strokeWidth={series.kind==="CE"&&series.strike===atm?3.2:1.8} opacity={series.kind==="CE"&&series.strike===atm?1:0.86} strokeLinejoin="round" strokeLinecap="round"/>{series.points.length===1&&<circle cx={x(series.points[0].t)} cy={yIv(series.points[0].v)} r="4" fill={colorFor(series.strike,series.kind)}/>}</g>)}</g>
         <text x={left} y={height-8} fontSize="10" fill="currentColor">{new Date(minT/1e6).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata"})}</text><text x={width-right} y={height-8} textAnchor="end" fontSize="10" fill="currentColor">{new Date(maxT/1e6).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata"})}</text>
