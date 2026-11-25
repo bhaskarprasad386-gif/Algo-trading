@@ -745,6 +745,16 @@ export default function IVSkewFlipPage() {
         if(underlying==="NIFTY"&&historySequence===durableHistoryFetchSequenceRef.current)setDurableHistory(saved as Row);
         if(underlying==="BANKNIFTY"&&historySequence===bankHistoryFetchSequenceRef.current)setBankDurableHistory(saved as Row);
       }
+      if(requestSequence===brokerSnapshotSequenceRef.current){
+        const chartSequence=underlying==="NIFTY"?++chartHistoryFetchSequenceRef.current:++bankChartHistoryFetchSequenceRef.current;
+        const chartQuery=expiry?`&expiry=${encodeURIComponent(expiry)}`:"";
+        const chart=await fetch(`${base}/api/v1/scanner/iv-skew-flip/timeseries?underlying=${underlying}&window_seconds=1800&limit=20000${chartQuery}`,{cache:"no-store"});
+        const chartBody=await chart.json();
+        if(chart.ok&&chartBody.status==="ok"){
+          if(underlying==="NIFTY"&&chartSequence===chartHistoryFetchSequenceRef.current)setChartHistory(chartBody as Row);
+          if(underlying==="BANKNIFTY"&&chartSequence===bankChartHistoryFetchSequenceRef.current)setBankChartHistory(chartBody as Row);
+        }
+      }
     }catch(e){if(requestSequence===brokerSnapshotSequenceRef.current)setError(e instanceof Error?e.message:"Angel One broker snapshot failed");}
     finally{if(requestSequence===brokerSnapshotSequenceRef.current)setSnapshotBusy(false);}
   }
