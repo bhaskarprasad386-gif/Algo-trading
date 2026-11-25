@@ -2425,6 +2425,7 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
             equity_baskets=equity_baskets,
             equity_pressure_unavailable_reason=equity_pressure_error,
             feed_manager=iv_feed_manager,
+            shared_runner=shared_index_market_data_runner,
             close_feed_manager=False,
         )
         runtime.set_page_update_callback(
