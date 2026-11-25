@@ -899,6 +899,10 @@ class MarketDataWebSocket:
             self._connecting = False
             socket = self.websocket
             self.websocket = None
+            # Retain the low-level socket before close_connection()/teardown can
+            # clear wsapp.sock while the transport thread is still unwinding.
+            wsapp = getattr(socket, "wsapp", None) if socket is not None else None
+            low_level_socket = getattr(wsapp, "sock", None) if wsapp is not None else None
             # connect() may still be waiting for the SDK handshake and therefore
             # has not copied the SDK's transport thread onto this wrapper yet.
             # Read the SDK-owned thread directly so close can retire it now.
@@ -948,15 +952,36 @@ class MarketDataWebSocket:
             and transport_thread is not current_thread()
             and transport_thread.is_alive()
         ):
-            wsapp = getattr(socket, "wsapp", None) if socket is not None else None
-            low_level_socket = getattr(wsapp, "sock", None) if wsapp is not None else None
             abort = getattr(low_level_socket, "abort", None)
-            if callable(abort):
+            abort_attempted = callable(abort)
+            if abort_attempted:
                 try:
                     abort()
                 except Exception as abort_exc:
                     app_logger.error(f"Angel WebSocket transport abort failed during close: {abort_exc}")
-                transport_thread.join(timeout=6.0)
+            # websocket-client abort() is conditional on its connected flag.
+            # During a close-handshake wait, connected may already be False, so
+            # abort can be a no-op while recv_frame() remains blocked. After a
+            # short grace period, shut down the retained descriptor unconditionally.
+            transport_thread.join(timeout=1.0)
+            if transport_thread.is_alive():
+                shutdown = getattr(low_level_socket, "shutdown", None)
+                if callable(shutdown):
+                    try:
+                        shutdown()
+                        app_logger.warning(
+                            "Angel WebSocket transport required immediate descriptor shutdown "
+                            "after abort did not terminate the close-handshake reader"
+                        )
+                    except Exception as shutdown_exc:
+                        app_logger.error(
+                            f"Angel WebSocket transport shutdown failed during close: {shutdown_exc}"
+                        )
+                    transport_thread.join(timeout=6.0)
+                elif abort_attempted:
+                    # Preserve the existing bounded wait when this wrapper has
+                    # abort() but exposes no separate shutdown() method.
+                    transport_thread.join(timeout=6.0)
         # A timed-out SDK close call may unwind after the transport is aborted.
         # Do not let that helper hold the common-feed retirement worker forever.
         if close_worker is not None and close_worker.is_alive():
