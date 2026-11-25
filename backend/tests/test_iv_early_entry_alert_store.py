@@ -875,3 +875,45 @@ def test_two_workers_atomically_claim_one_outbox_row(tmp_path):
         engine_a.dispose()
         engine_b.dispose()
 
+
+
+def test_banknifty_identity_survives_telegram_outbox_and_restart_snapshot_recovery():
+    from app.scanner.iv_skew_flip.alerts.orchestrator import IVEarlyEntryAlertEngine
+
+    store = make_store()
+    nifty = candidate()
+    bank = AlertCandidate(
+        "IV_VOLUME_MOMENTUM", "BANKNIFTY", "2026-11-26", 58000.0,
+        "BULLISH", "CE", AlertState.EARLY_ENTRY,
+        nifty.observed_at_ns, 58100.0, 125.0, 0.25, 3.0,
+        "BANKNIFTY monthly pilot alert",
+        {"calibration_status": "PILOT", "strike_step": 100},
+    )
+    store.record(nifty)
+    store.record(bank)
+
+    delivered = []
+    worker = TelegramOutboxWorker(store.session_factory)
+    for _ in range(2):
+        outcome = worker.process_one(
+            now_ns=nifty.observed_at_ns,
+            sender=lambda payload: delivered.append(payload),
+            configured=True,
+        )
+        assert outcome["status"] == "SENT"
+
+    by_underlying = {payload["underlying"]: payload for payload in delivered}
+    assert by_underlying["BANKNIFTY"]["expiry"] == "2026-11-26"
+    assert by_underlying["BANKNIFTY"]["strike"] == 58000.0
+    assert by_underlying["BANKNIFTY"]["metadata"]["calibration_status"] == "PILOT"
+    assert by_underlying["NIFTY"]["expiry"] == "2026-11-19"
+
+    # A newly constructed engine has no in-memory state. Its first per-index
+    # snapshot must restore the durable rows for the WebSocket snapshot path.
+    restarted_engine = IVEarlyEntryAlertEngine(store)
+    recovered = restarted_engine.snapshot_all()
+    assert recovered["NIFTY"]["history_recovery"] == "RESTORED"
+    assert recovered["BANKNIFTY"]["history_recovery"] == "RESTORED"
+    assert [row["underlying"] for row in recovered["NIFTY"]["alerts"]] == ["NIFTY"]
+    assert [row["underlying"] for row in recovered["BANKNIFTY"]["alerts"]] == ["BANKNIFTY"]
+    assert recovered["BANKNIFTY"]["alerts"][0]["expiry"] == "2026-11-26"
