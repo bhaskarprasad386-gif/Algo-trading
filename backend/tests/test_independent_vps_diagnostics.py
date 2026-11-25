@@ -16,6 +16,9 @@ def test_sanitize_redacts_common_credentials() -> None:
     assert "abc123" not in result
     assert "secret-value" not in result
     assert "abc.def.ghi" not in result
+    extended = agent.sanitize('x-api-key=one client_secret="two" pwd=three otp=four')
+    for secret in ("one", "two", "three", "four"):
+        assert secret not in extended
     assert "[REDACTED]" in result
 
 
