@@ -39,8 +39,8 @@ class IVSharedRunnerSpotFeedAdapter:
         self._started = False
 
     def start(self, _instrument_master: Any = None, symbols=("NIFTY", "BANKNIFTY")) -> dict[str, Any]:
-        selected = tuple(sorted({str(item).strip().upper() for item in symbols}))
-        if selected != self.DEFAULT_SYMBOLS:
+        selected = {str(item).strip().upper() for item in symbols}
+        if selected != set(self.DEFAULT_SYMBOLS):
             raise ValueError("IV shared spot adapter is locked to NIFTY and BANKNIFTY")
         with self._lock:
             self._started = True
