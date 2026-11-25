@@ -141,3 +141,83 @@ def test_locked_lane_owner_contract_is_exactly_spot_options_and_futures_consumer
         "nifty", "banknifty", "futures",
     }
     assert "options" not in ConsumerSocketAffinity.LOCKED_OWNERS
+
+
+def _instrument_descriptor(token, *, kind, underlying, expiry_type=None):
+    from app.market_data.contracts import InstrumentKey
+    from app.market_data.registry import InstrumentDescriptor
+
+    exchange = "NSE" if kind == "index" else "NFO"
+    segment = exchange
+    return InstrumentDescriptor(
+        key=InstrumentKey(exchange, segment, token),
+        symbol=f"{underlying}-{token}",
+        instrument_type=kind,
+        exchange=exchange,
+        segment=segment,
+        underlying=underlying,
+        expiry_type=expiry_type,
+        expiry="2026-12-31" if kind != "index" else None,
+    )
+
+
+def test_single_options_consumer_can_route_nifty_weekly_and_banknifty_monthly():
+    planner = ConsumerSocketAffinity()
+    nifty_weekly = _instrument_descriptor(
+        "NIFTY-W", kind="option", underlying="NIFTY", expiry_type="WEEKLY",
+    )
+    banknifty_monthly = _instrument_descriptor(
+        "BANK-M", kind="option", underlying="BANKNIFTY", expiry_type="MONTHLY",
+    )
+
+    plan = planner.plan_instruments(
+        [nifty_weekly, banknifty_monthly],
+        mode=3,
+        exchange_type_resolver=lambda _key: 2,
+    )
+
+    # The owner/callback is intentionally not an input to the planner: one
+    # options consumer may receive instruments from both physical socket groups.
+    assert plan.assignments[nifty_weekly.key] == AffinitySlot(3, 0)
+    assert plan.assignments[banknifty_monthly.key] == AffinitySlot(3, 1)
+    assert plan.token_pairs_by_slot == {
+        AffinitySlot(3, 0): frozenset({(2, "NIFTY-W")}),
+        AffinitySlot(3, 1): frozenset({(2, "BANK-M")}),
+    }
+
+
+def test_locked_future_descriptors_share_third_lane_independent_of_underlying():
+    planner = ConsumerSocketAffinity()
+    nifty_future = _instrument_descriptor(
+        "NIFTY-F", kind="future", underlying="NIFTY",
+    )
+    banknifty_future = _instrument_descriptor(
+        "BANK-F", kind="future", underlying="BANKNIFTY",
+    )
+
+    plan = planner.plan_instruments(
+        [nifty_future, banknifty_future],
+        mode=3,
+        exchange_type_resolver=lambda _key: 2,
+    )
+
+    assert plan.assignments == {
+        nifty_future.key: AffinitySlot(3, 2),
+        banknifty_future.key: AffinitySlot(3, 2),
+    }
+    assert plan.token_pairs_by_slot == {
+        AffinitySlot(3, 2): frozenset({(2, "NIFTY-F"), (2, "BANK-F")}),
+    }
+
+
+def test_locked_lane_planner_rejects_same_broker_token_on_different_lanes():
+    planner = ConsumerSocketAffinity()
+    nifty_spot = _instrument_descriptor("COLLIDE", kind="index", underlying="NIFTY")
+    banknifty_spot = _instrument_descriptor("COLLIDE", kind="index", underlying="BANKNIFTY")
+
+    with pytest.raises(ValueError, match="conflicting locked lanes"):
+        planner.plan_instruments(
+            [nifty_spot, banknifty_spot],
+            mode=3,
+            exchange_type_resolver=lambda _key: 1,
+        )
