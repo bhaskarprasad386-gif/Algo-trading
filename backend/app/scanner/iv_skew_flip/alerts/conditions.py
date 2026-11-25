@@ -37,7 +37,7 @@ def _same_contract(rows: Sequence[OptionObservation], option_type: str) -> bool:
     )
 
 
-def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar], underlying: str = "NIFTY", max_consolidation_points: float = 55.0,
+def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar], underlying: str = "NIFTY", max_consolidation_points: float = 55.0, spot_sync_tolerance_points: float = 5.0,
                          ce: Sequence[OptionObservation], pe: Sequence[OptionObservation],
                          target: Sequence[OptionObservation], direction: str,
                          live_ce: OptionObservation, live_pe: OptionObservation,
@@ -124,8 +124,8 @@ def evaluate_strategy_a(*, now_ns: int, expiry: str, bars: Sequence[SpotBar], un
     # event before an OI-decrease condition can authorize an alert.
     if live_target.oi_timestamp_ns <= (tgt[-1].oi_timestamp_ns or 0):
         return StrategyEvaluation(AlertState.WATCH, reasons=("LIVE_OI_NOT_UPDATED",))
-    if (abs(live_ce.spot_price-live_pe.spot_price) > 5
-            or abs(live_target.spot_price-live_ce.spot_price) > 5):
+    if (abs(live_ce.spot_price-live_pe.spot_price) > spot_sync_tolerance_points
+            or abs(live_target.spot_price-live_ce.spot_price) > spot_sync_tolerance_points):
         return StrategyEvaluation(AlertState.WATCH, reasons=("UNSYNCHRONIZED_SPOT",))
 
     wanted, opposite = ((ce3, live_ce), (pe3, live_pe)) if direction == "BULLISH" else ((pe3, live_pe), (ce3, live_ce))
@@ -194,7 +194,7 @@ def even_strikes(strikes: Sequence[float], step: float = 50.0) -> tuple[float, .
     return tuple(sorted({float(s) for s in strikes if _positive(s) and abs(float(s) / step - round(float(s) / step)) < 1e-9}))
 
 
-def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar], underlying: str = "NIFTY", wall_tolerance_points: float = 15.0,
+def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar], underlying: str = "NIFTY", wall_tolerance_points: float = 15.0, spot_sync_tolerance_points: float = 5.0,
                          ce_wall_history: Sequence[OptionObservation],
                          pe_wall_history: Sequence[OptionObservation],
                          entry_quote: OptionObservation,
@@ -254,7 +254,7 @@ def evaluate_strategy_b(*, now_ns: int, expiry: str, spot_bars: Sequence[SpotBar
     if (now_ns-entry_quote.source_timestamp_ns > 5*1_000_000_000
             or now_ns-entry_quote.spot_timestamp_ns > 5*1_000_000_000):
         return StrategyEvaluation(AlertState.WATCH, reasons=("STALE_ENTRY_QUOTE",))
-    if abs(entry_quote.spot_price-latest.spot_price) > 5:
+    if abs(entry_quote.spot_price-latest.spot_price) > spot_sync_tolerance_points:
         return StrategyEvaluation(AlertState.WATCH, reasons=("UNSYNCHRONIZED_ENTRY_SPOT",))
     if any(row.oi is None for row in wall_rows) or not (wall_rows[0].oi < wall_rows[1].oi < wall_rows[2].oi):
         return StrategyEvaluation(AlertState.WATCH, reasons=("WALL_OI_NOT_RISING",))
