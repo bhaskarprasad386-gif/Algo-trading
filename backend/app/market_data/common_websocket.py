@@ -454,29 +454,7 @@ class CommonWebSocketManager:
                     f"consumer_subscriptions={len(after)} total_subscriptions={len(self.registry.subscriptions())}"
                 )
         self._ensure_recovery_supervisor()
-        try:
-            self._reconcile()
-        except Exception:
-            # Restore this consumer's exact pre-call ownership and mode. The
-            # reconcile lock prevents another subscription mutation from being
-            # overwritten while rollback is in progress.
-            with self._lock:
-                current_keys = [
-                    sub.key for sub in self.registry.subscriptions()
-                    if consumer in sub.consumers
-                ]
-                for key in current_keys:
-                    self.registry.unsubscribe(consumer, key)
-                for key, previous_mode in before.items():
-                    self.registry.subscribe(consumer, key, mode=previous_mode)
-            try:
-                self._reconcile()
-            except Exception as rollback_error:
-                app_logger.error(
-                    "Common feed subscription rollback reconcile failed consumer=%s: %s",
-                    consumer, rollback_error,
-                )
-            raise
+        self._reconcile()
         with self._lock:
             return tuple(sub for sub in self.registry.subscriptions() if consumer in sub.consumers)
 
