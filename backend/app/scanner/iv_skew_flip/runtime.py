@@ -38,13 +38,20 @@ from .universe import resolve_option_universe
 IST = ZoneInfo("Asia/Kolkata")
 
 
-def _universe_selection_date(now: datetime):
-    """Roll the selected option universe after the 15:30 IST expiry close."""
+def _universe_selection_date(now: datetime, available_expiries=()):
+    """Advance past today only when today is an actual listed expiry and its close has passed.
+
+    Do not blindly add one day after 15:30: doing so on the day before expiry
+    incorrectly skips a weekly/monthly contract that expires tomorrow.
+    """
+    if now.tzinfo is None:
+        raise ValueError("universe selection requires a timezone-aware datetime")
     local_now = now.astimezone(IST)
-    selected_date = local_now.date()
-    if local_now.time() >= datetime_time(15, 30):
-        selected_date += timedelta(days=1)
-    return selected_date
+    today = local_now.date()
+    if local_now.time() < datetime_time(15, 30):
+        return today
+    expiry_dates = {str(value)[:10] for value in available_expiries}
+    return today + timedelta(days=1) if today.isoformat() in expiry_dates else today
 
 
 # IV scanner runs the explicitly selected NIFTY Weekly and BANKNIFTY Monthly chains.
@@ -322,12 +329,15 @@ class IVSkewFlipRuntime:
     def _refresh_stream(self, stream_id: str, config: ScannerConfig, spot: Any, now: datetime) -> None:
         symbol = stream_id
         try:
-            # Index options stop trading at 15:30 IST on expiry day. Move
-            # the selection date forward at that boundary so the next refresh
-            # selects the next listed weekly expiry and keeps it on the next day.
-            universe_date = _universe_selection_date(now)
+            # Use the instrument master as the expiry calendar. Roll only after
+            # today's actual listed expiry has passed its 15:30 IST close.
+            rows = self._rows_by_stream[symbol]
+            local_today = now.astimezone(IST).date()
+            expiries_from_today = self._future_expiry_candidates(rows, local_today)
+            universe_date = _universe_selection_date(now, expiries_from_today)
+            available_expiries = self._future_expiry_candidates(rows, universe_date)
             universe = resolve_option_universe(
-                self._rows_by_stream[symbol],
+                rows,
                 underlying=config.symbol,
                 expiry_type=config.expiry_type,
                 spot=spot.price,
@@ -338,9 +348,7 @@ class IVSkewFlipRuntime:
             with self._lock:
                 self._expiry_diagnostics[symbol] = {
                     "selection_date": universe_date.isoformat(),
-                    "available_expiries": self._future_expiry_candidates(
-                        self._rows_by_stream[symbol], universe_date,
-                    ),
+                    "available_expiries": available_expiries,
                     "selected_expiry": universe.expiry,
                 }
                 current_tokens = self._universe_tokens.get(symbol)
