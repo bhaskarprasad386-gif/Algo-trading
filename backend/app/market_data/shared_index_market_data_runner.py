@@ -427,6 +427,29 @@ class SharedIndexMarketDataRunner:
     def latest(self, instrument_key: str):
         return self.state.latest(instrument_key)
 
+    def health_snapshot(self) -> dict:
+        """Return lightweight runner health without decorating/calculating IV records."""
+        with self._lock:
+            running = self._running
+            started_at = self._started_at
+            error = self._start_error
+            bootstrap_done = self._bootstrap_options_done
+            master_refresh_error = self._master_refresh_error
+            master_last_refresh_at = self._master_last_refresh_at
+        return {
+            "runner": "shared-index-market-data",
+            "enabled": running,
+            "started_at": started_at,
+            "last_error": error,
+            "initial_option_bootstrap_done": bootstrap_done,
+            "state": self.state.snapshot(),
+            "lifecycle": self.lifecycle.snapshot(),
+            "master_refresh": {
+                "last_success_at": master_last_refresh_at,
+                "last_error": master_refresh_error,
+            },
+        }
+
     def snapshot(self) -> dict:
         with self._lock:
             running = self._running
