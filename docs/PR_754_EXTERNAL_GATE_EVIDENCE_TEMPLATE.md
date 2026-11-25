@@ -1,51 +1,44 @@
-# PR #754 — External Acceptance Evidence Packet
+# PR #754 — Code completion and production rollout boundary
 
-Status: **OPEN — evidence must be supplied by the account/operator**.
+Status: **Code/CI gate is separate from production rollout evidence.**
 
-This packet is the controlled close-out record for the three non-CI gates. A green software test cannot substitute for broker account entitlement, host process inventory, or market-hours production measurements. Do not mark a gate passed from assumptions.
+## Important clarification
 
-## Gate A — Broker WebSocket entitlement
+An official Angel One email or support reply is **not required to complete, review, or merge the PR's code**. Do not ask the user to obtain one for PR completion.
 
-**Owner:** account holder / broker support  
-**Required evidence:** written, account-specific confirmation from Angel One (not a generic SDK example).
+The implementation retains conservative software ceilings:
+- Maximum 3 physical shared-manager sessions.
+- Maximum 1,000 broker tokens per socket.
+- No automatic ceiling increase based on assumptions.
+- A plan that exceeds either software ceiling is rejected before socket/route state is committed.
+- Broker connection-limit responses activate the shared cooldown/admission guard; repeated connection attempts are paced rather than burst-retried.
 
-Record:
-- Broker/account reference: redact all but a non-identifying suffix; never commit client ID, API key, access token, TOTP, password, or session cookie.
-- Support ticket/email reference and date.
-- Maximum simultaneous authenticated market-data WebSocket sessions permitted for this account.
-- Maximum subscribed tokens per physical session, including any exchange/segment-specific constraints.
-- Whether limits differ for concurrent API sessions, multiple devices, reconnect overlap, or subscription mode.
-- Any rate, reconnect, or subscription mutation quotas that apply.
-- Explicit confirmation that the proposed 3-session topology is permitted.
+These controls are software safeguards, not proof of any broker account's entitlement. Do not describe them as broker-confirmed. If the broker rejects a session/subscription in actual operation, keep the feed degraded and use the existing controlled recovery path; do not bypass the cap.
 
-**Software safety ceiling remains 3 physical sessions and 1,000 tokens/session.** Broker confirmation must meet or exceed the actual configured demand; do not raise software ceilings to fit an entitlement assumption. If the broker cannot confirm the limits, this gate remains OPEN and production activation is NO-GO.
+## PR completion gates (code-owned)
 
-Evidence attachment/reference:
-- Ticket/email reference:
-- Confirmed simultaneous sessions:
-- Confirmed tokens/session:
-- Constraints / expiry date:
-- Reviewed by / date:
+- Locked lanes remain:
+  - Lane 0: NIFTY spot + NIFTY WEEKLY options.
+  - Lane 1: BANKNIFTY spot + BANKNIFTY MONTHLY options.
+  - Lane 2: NIFTY + BANKNIFTY index futures only.
+- No other index is admitted to those locked lanes.
+- Instrument classification uses canonical exchange, segment, token, instrument kind, underlying and expiry family.
+- Global session and per-socket token caps reject unsafe plans before live route/socket mutation.
+- Recovery recreates only the failed `(mode, shard)` lane; no cross-lane token migration.
+- Callback queues are bounded, generation-fenced, observable, and fail closed on overflow/copy-integrity faults.
+- Existing consumers retain the synchronous default unless the process-wide shared manager explicitly enables asynchronous dispatch.
+- Regression tests cover rollback, stale generations, concurrent recovery, callback shutdown, and route preservation.
+- Backend, integration, targeted common-feed and broker-safety workflows pass on the final implementation head.
 
-## Gate B — External/manual socket-owner inventory
+## Production rollout checks (not PR code-completion blockers)
 
-**Owner:** VPS/operator  
-Repository source inspection found the active application startup path using the shared manager. It also found compatibility entry points that cannot be declared unused solely from repository search:
-- legacy `LiveCashFutureOneSecondCollector` two-socket collector;
-- `MarketDataEngine` / `LiveMarketDataFeed` standalone default socket factory;
-- synthetic standalone injected socket-factory fallback.
+These checks belong to a separately authorized production activation/soak. They must not be used to demand that the user obtain a broker letter merely to finish this PR.
 
-Do not delete these compatibility paths until the host/operator inventory proves they are not launched externally.
+### Runtime socket-owner inventory
 
-On the actual host, perform a read-only inventory during a representative running period. Capture:
-- systemd unit names and ExecStart commands for the algo service and any market-data sidecars;
-- process tree and command lines for Python processes owned by the service account;
-- running containers/supervisors and scheduled jobs (cron/systemd timers);
-- application logs identifying active socket manager owners and physical session creation;
-- operator scripts, notebooks, manual commands, and external imports that may instantiate the legacy classes.
+Before production activation, an operator may perform a read-only inventory of services, timers, process trees and manually launched scripts to ensure there is no second independent owner of Angel market-data sockets. Repository review has identified legacy compatibility entry points; do not delete them speculatively without an in-repo caller or a separately approved migration.
 
-Suggested read-only commands (adapt service/account names to the host; redact secrets before sharing):
-
+Suggested read-only commands:
 ```bash
 systemctl list-units --type=service --all
 systemctl list-timers --all
@@ -53,70 +46,29 @@ systemctl cat algo-trading.service
 ps -eo pid,ppid,user,lstart,args --forest
 pgrep -af 'uvicorn|gunicorn|python'
 ```
+Never dump environment variables, process environments, credential files, shell history, access tokens, passwords, TOTP values, or secret-bearing broker URLs.
 
-Do not dump environment variables, process environments, credential files, shell history, or full broker URLs containing secrets.
+### Representative production soak
 
-Attestation:
-- Host and observation window:
-- Services/timers/containers inspected:
-- External scripts/notebooks inspected:
-- Any legacy collector invocation found (yes/no; details):
-- Any standalone engine/feed invocation found (yes/no; details):
-- Operator attestation that all active Angel market-data sockets are owned by the shared manager (yes/no):
-- Reviewer / date:
+Run only when production activation and an exact market-hours window are separately authorized and a rollback/on-call owner is present. This is not something GitHub CI can claim to have run.
 
-If any external caller is found, document its owner and migrate/retire it in a separately tested change before closing this gate. If the operator cannot attest, leave the gate OPEN.
+Capture:
+- Commit/config, start/end timestamps and market phase.
+- Per-lane mode/shard, session generation, expected/actual token counts and subscription acknowledgements/rejections.
+- Ingress-to-consumer latency p50/p95/p99 and sample count.
+- Process RSS/CPU baseline and peak.
+- Callback queue depth/high-water/overflow, callback lag and delivery errors.
+- Raw frames, valid quotes, stale/out-of-order/malformed rejects.
+- Per-consumer delivery counts, last-delivery age and gaps.
+- Ping/pong health, reconnect/failover count and time-to-recovery.
+- Retired transport/worker counts and cache size/evictions.
 
-## Gate C — Authorized representative production soak
+Only exercise pre-approved faults: delayed callback consumer, bounded queue pressure, one-lane disconnect/recovery, delayed close, and reconnect overlap. No broker-wide outage or multi-lane live disruption without a separate risk-approved plan.
 
-**Owner:** operator / on-call engineer  
-**Preconditions (all mandatory):**
-1. Gate A is closed with written account-specific entitlement evidence.
-2. Gate B is closed with host/operator attestation.
-3. Production activation and the exact soak window are explicitly approved.
-4. No deployment or config change is bundled into the soak.
-5. Rollback/stop authority and on-call owner are present.
-
-**Do not start a production soak if any precondition is missing.** A CI replay, local synthetic load, off-market test, or skipped VPS workflow is not a production soak.
-
-Capture a market-hours window that includes representative NIFTY weekly, BANKNIFTY monthly, and NIFTY/BANKNIFTY futures traffic, without adding other indices to the locked lanes.
-
-Required raw measurements:
-- Start/end timestamps, market session phase, duration, commit SHA and config version.
-- Per lane: mode/shard, expected and actual token count, session generation, connect/auth state, subscription acknowledgement/rejection counts.
-- Ingress-to-consumer latency p50/p95/p99, with measurement method and sample count.
-- Process RSS baseline/peak/end; CPU baseline/peak.
-- Callback queue capacity, high-water, overflow/rejection count, callback processing lag.
-- Raw frame and valid quote counts; stale/out-of-order/malformed rejection counts.
-- Per-consumer delivery counts, errors, last-delivery age and any observed delivery gap.
-- Ping/pong counts and latency/age where observable.
-- Reconnect/failover count, trigger, time-to-recovery, and healthy-lane continuity.
-- Cache size/evictions/TTL expirations and manager worker/retired-worker counts.
-- Logs/metrics artifact references, with secrets and raw broker payloads removed.
-
-Exercise only pre-approved controlled faults in an authorized window: delayed callback consumer, bounded queue pressure, one-lane disconnect/recovery, delayed close, and reconnect overlap. Do not deliberately inject broker-wide outages, credential failures, or multi-lane disruption in a live market without a separate risk-approved plan.
-
-**Go/no-go:** thresholds must be agreed before the run from the actual service SLO and measured baseline; do not invent numeric thresholds after observing results. NO-GO on any silent data loss, false LIVE, cross-lane token migration, duplicate active ownership, session/token entitlement breach, unbounded queue/memory growth, unexplained consumer gap, or inability to recover the failed lane without disturbing healthy lanes.
-
-Evidence:
-- Approved change/soak reference:
-- Start/end and market window:
-- Commit/config:
-- Raw metrics/log artifact references:
-- Per-lane token/session evidence:
-- Latency and memory summary:
-- Queue/overflow summary:
-- Faults exercised and recovery durations:
-- Deviations/incidents:
-- Go/no-go decision and approver:
-
-## Lane contract to verify during inventory and soak
-
-- Socket 1 / lane 0: NIFTY spot + NIFTY WEEKLY CE/PE only.
-- Socket 2 / lane 1: BANKNIFTY spot + BANKNIFTY MONTHLY CE/PE only.
-- Socket 3 / lane 2: NIFTY + BANKNIFTY index futures only.
-- No other index on these locked lanes; no cross-lane migration during failure recovery.
+NO-GO on silent data loss, false LIVE, cross-lane migration, duplicate socket ownership, unbounded queue/memory growth, unexplained consumer gaps, or failure to recover the failed lane while preserving healthy lanes.
 
 ## Closure rule
 
-Each gate is closed only when its evidence fields are completed and reviewed. Keep PR #754 draft and production activation disabled until all required evidence is attached and the final exact-head CI is green. This packet is a process/evidence aid; it is not itself proof that any external gate passed.
+- **PR code completion:** exact-head code review and CI; no broker letter, VPS inventory, or production soak is required to call the code implementation complete.
+- **Production activation:** keep operational checks separate and do not claim a soak or account entitlement that has not been observed.
+- No Cloudflare/Vercel work, no VPS changes, no Shoonya readiness/credential work, no strategy formula changes, and no order-execution changes are in scope.
