@@ -560,3 +560,76 @@ def test_same_lane_broker_token_collision_between_descriptors_fails_closed():
         }
     finally:
         manager.close()
+
+
+
+def test_recovery_reconciles_stale_lane_plan_even_when_group_set_is_unchanged():
+    registry = InstrumentRegistry()
+    nifty = _descriptor("NIFTY-WEEKLY-RECOVERY")
+    bank = _descriptor("BANK-MONTHLY-RECOVERY")
+
+    def future(token, underlying):
+        return InstrumentDescriptor(
+            key=InstrumentKey("NFO", "NFO", token),
+            symbol=token,
+            instrument_type="future",
+            exchange="NFO",
+            segment="NFO",
+            underlying=underlying,
+            expiry="2026-12-31",
+        )
+
+    nifty_future = future("NIFTY-FUT-RECOVERY", "NIFTY")
+    bank_future = future("BANK-FUT-RECOVERY", "BANKNIFTY")
+    registry.register_many((nifty, bank, nifty_future, bank_future))
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._recovery_interval_seconds = 60.0
+
+    expected = {
+        (2, nifty.key.token): 0,
+        (2, bank.key.token): 1,
+        (2, nifty_future.key.token): 2,
+        (2, bank_future.key.token): 2,
+    }
+    try:
+        manager.subscribe(
+            "locked-options",
+            (nifty.key, bank.key),
+            mode=3,
+        )
+        manager.subscribe(
+            "locked-futures",
+            (nifty_future.key, bank_future.key),
+            mode=3,
+        )
+        assert manager._shard_assignments[3] == expected
+        assert set(manager._sockets) == {
+            SocketGroup(3, 0), SocketGroup(3, 1), SocketGroup(3, 2),
+        }
+
+        # Simulate stale in-memory affinity metadata after a descriptor refresh.
+        # The same three physical groups still exist, so recovery must compare
+        # the token-to-lane plan, not only the set/count of socket groups.
+        manager._shard_assignments[3] = {
+            (2, nifty.key.token): 1,
+            (2, bank.key.token): 0,
+            (2, nifty_future.key.token): 2,
+            (2, bank_future.key.token): 2,
+        }
+        assert set(manager._sockets) == {
+            SocketGroup(3, 0), SocketGroup(3, 1), SocketGroup(3, 2),
+        }
+
+        assert manager.recover_disconnected(min_age_seconds=0.0) == 0
+        assert manager._shard_assignments[3] == expected
+        assert set(manager._route_index) == {
+            SocketGroup(3, 0), SocketGroup(3, 1), SocketGroup(3, 2),
+        }
+        assert manager._socket_tokens[SocketGroup(3, 0)] == {(2, nifty.key.token)}
+        assert manager._socket_tokens[SocketGroup(3, 1)] == {(2, bank.key.token)}
+        assert manager._socket_tokens[SocketGroup(3, 2)] == {
+            (2, nifty_future.key.token),
+            (2, bank_future.key.token),
+        }
+    finally:
+        manager.close()
