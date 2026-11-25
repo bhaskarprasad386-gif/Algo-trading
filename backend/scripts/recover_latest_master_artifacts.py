@@ -170,7 +170,7 @@ def main() -> int:
         if (
             shared_installed is None
             or shared_installed[1] != shared_fetched
-            or len(shared_installed[0]) != len(shared_rows)
+            or shared_installed[0] != shared_rows
         ):
             raise RuntimeError("Shared InstrumentMaster cache read-back verification failed")
         print(
