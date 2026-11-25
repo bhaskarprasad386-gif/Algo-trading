@@ -823,7 +823,6 @@ export default function IVSkewFlipPage() {
   const niftyRawFrameAge=spotTransport.last_raw_frame_age_seconds_by_exchange_group;
   const running=runtime?.status==="RUNNING";
   const niftyExpiry=String((nifty.option_feed??{}).expiry_type??"");
-  const bankExpiry=String((bank.option_feed??{}).expiry_type??"");
   return <main className="space-y-4 p-3 sm:p-5 theme-text">
     <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div><div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] theme-accent"><Activity size={15}/> Live Options Analytics</div><h1 className="mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl">IV Skew / IV Flip + Gamma Blast</h1><p className="mt-1 text-sm theme-muted">NIFTY Weekly + BANKNIFTY Monthly • live option quotes and model-derived IV • NIFTY Monthly remains disabled</p></div>
