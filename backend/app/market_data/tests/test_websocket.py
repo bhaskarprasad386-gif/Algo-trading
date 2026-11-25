@@ -750,7 +750,6 @@ def test_sdk_transport_heartbeat_callbacks_are_observable_without_claiming_feed_
         api_key="api-key",
         client_code="client",
         feed_token="feed",
-        _lock=__import__("threading").Lock(),
         _on_open=lambda *args: None,
         _on_error=lambda *args: None,
         _on_close=lambda *args: None,
