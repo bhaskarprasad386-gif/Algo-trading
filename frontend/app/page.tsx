@@ -531,21 +531,24 @@ export default function HomePage() {
   const sharedRunnerReady = sharedRunner?.live_data_ready === true;
   const sharedRunnerUnavailable = !sharedRunner || sharedRunner.state === "UNAVAILABLE" || sharedRunner.state === "NOT_INITIALIZED";
   const sharedRunnerSampleAge = sharedRunnerLastSuccessAt == null ? null : Math.max(0, (Date.now() - sharedRunnerLastSuccessAt) / 1000);
-  const sharedRunnerStatus = sharedRunnerFetchFailed && sharedRunnerSampleAge != null ? "LAST KNOWN • HEALTH FETCH FAILED" : !sharedRunner ? "CHECKING" : sharedRunner.state === "UNAVAILABLE" ? "UNAVAILABLE" : sharedRunner.state === "NOT_INITIALIZED" ? "NOT INITIALIZED" : !sharedRunnerEnabled ? "STOPPED" : sharedRunnerReady ? "LIVE DATA READY" : sharedRunner.initial_option_bootstrap_done ? (effectiveMarketSession === "CLOSED" ? "RUNNING • MARKET CLOSED" : "RUNNING • FEED NOT READY") : "RUNNING • BOOTSTRAPPING";
+  const sharedRunnerSampleUnavailable = sharedRunnerFetchFailed && sharedRunnerSampleAge != null;
+  const sharedRunnerStatus = sharedRunnerSampleUnavailable ? "LAST KNOWN • HEALTH FETCH FAILED" : !sharedRunner ? "CHECKING" : sharedRunner.state === "UNAVAILABLE" ? "UNAVAILABLE" : sharedRunner.state === "NOT_INITIALIZED" ? "NOT INITIALIZED" : !sharedRunnerEnabled ? "STOPPED" : sharedRunnerReady ? "LIVE DATA READY" : sharedRunner.initial_option_bootstrap_done ? (effectiveMarketSession === "CLOSED" ? "RUNNING • MARKET CLOSED" : "RUNNING • FEED NOT READY") : "RUNNING • BOOTSTRAPPING";
   const sharedFeedGroups = sharedRunner?.feed_health_by_group ?? {};
   const getRecordFeed = (underlying: string, kind: string) => {
     const group = sharedFeedGroups[underlying + ":" + kind] ?? null;
     const rows = Number(group?.count ?? 0);
     const fresh = Number(group?.fresh_count ?? 0);
     const maxAge = group?.max_age_seconds != null && Number.isFinite(Number(group.max_age_seconds)) ? Number(group.max_age_seconds) : null;
-    const status = sharedRunnerUnavailable ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : rows === 0 ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : fresh === rows ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : fresh > 0 ? "PARTIAL / STALE" : "STALE";
+    const baseStatus = sharedRunnerUnavailable ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : rows === 0 ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : fresh === rows ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : fresh > 0 ? "PARTIAL / STALE" : "STALE";
+    const status = sharedRunnerSampleUnavailable ? "LAST SAMPLE • " + baseStatus : baseStatus;
     return { rows, fresh, maxAge, status };
   };
   const getSpotFeed = (underlying: string) => {
     const spot = sharedRunner?.latest_spots?.[underlying];
     const age = Number(spot?.age_seconds);
     const validAge = spot?.age_seconds != null && Number.isFinite(age) && age >= 0 ? age : null;
-    const status = sharedRunnerUnavailable ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : !spot ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : validAge != null && validAge <= 5 ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : "STALE";
+    const baseStatus = sharedRunnerUnavailable ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : !spot ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : validAge != null && validAge <= 5 ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : "STALE";
+    const status = sharedRunnerSampleUnavailable ? "LAST SAMPLE • " + baseStatus : baseStatus;
     return { status, age: validAge, price: spot?.price != null && Number.isFinite(Number(spot.price)) ? Number(spot.price) : null };
   };
   const sharedFeedCards = [
@@ -665,9 +668,10 @@ export default function HomePage() {
               {sharedFeedCards.map((feed) => {
                 const good = feed.status === "FRESH";
                 const closed = feed.status.includes("MARKET CLOSED");
+                const lastSample = feed.status.startsWith("LAST SAMPLE");
                 const detail = "rows" in feed ? feed.fresh + "/" + feed.rows + " fresh • max age " + (feed.maxAge == null ? "—" : feed.maxAge.toFixed(1) + "s") : ("price" in feed && feed.price != null ? "LTP " + feed.price.toLocaleString("en-IN", { maximumFractionDigits: 2 }) + " • " : "") + "age " + (feed.age == null ? "—" : feed.age.toFixed(1) + "s");
                 return <div key={feed.label} className="min-w-0 rounded-xl border theme-border p-3">
-                  <div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="break-words text-[10px] font-bold">{feed.label}</div><div className="mt-0.5 text-[9px] theme-subtle">{feed.detail}</div></div><span className={"shrink-0 rounded-full px-2 py-1 text-[9px] font-extrabold " + (good ? "theme-success-bg theme-success" : closed ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{feed.status}</span></div>
+                  <div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="break-words text-[10px] font-bold">{feed.label}</div><div className="mt-0.5 text-[9px] theme-subtle">{feed.detail}</div></div><span className={"shrink-0 rounded-full px-2 py-1 text-[9px] font-extrabold " + (good ? "theme-success-bg theme-success" : closed || lastSample ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{feed.status}</span></div>
                   <div className="mt-2 text-[10px] font-semibold tabular-nums theme-muted">{detail}</div>
                   {"extra" in feed ? <div className="mt-1 text-[9px] theme-subtle">BANKNIFTY futures: {feed.extra.fresh}/{feed.extra.rows} fresh • {feed.extra.status}</div> : null}
                 </div>;
