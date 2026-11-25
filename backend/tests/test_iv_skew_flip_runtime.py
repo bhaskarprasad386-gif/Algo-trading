@@ -993,3 +993,66 @@ def test_runtime_page_update_callback_is_best_effort_and_observational():
 
     assert updates == [snapshot]
     runtime.set_page_update_callback(None)
+
+
+def test_runtime_attaches_to_shared_index_runner_without_owning_feed_lifecycle():
+    from app.scanner.iv_skew_flip.shared_runner_feed import (
+        IVSharedRunnerOptionFeedAdapter,
+        IVSharedRunnerSpotFeedAdapter,
+    )
+
+    class SharedState:
+        def records_snapshot(self):
+            return []
+
+    class SharedRunner:
+        def __init__(self):
+            self.state = SharedState()
+            self.lifecycle = type("Lifecycle", (), {
+                "option_descriptors": lambda _self: (),
+            })()
+            self.stop_calls = 0
+
+        def snapshot(self):
+            return {
+                "enabled": True,
+                "initial_option_bootstrap_done": True,
+                "state": {"instrument_count": 0},
+            }
+
+        def stop(self):
+            self.stop_calls += 1
+
+    class Manager:
+        def __init__(self):
+            self.close_calls = 0
+
+        def snapshot(self):
+            return {"socket_count": 3}
+
+        def close(self):
+            self.close_calls += 1
+
+    shared_runner = SharedRunner()
+    manager = Manager()
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        feed_manager=manager,
+        shared_runner=shared_runner,
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+
+    assert isinstance(runtime.spot_feed, IVSharedRunnerSpotFeedAdapter)
+    option_feed = runtime.option_feed_factory("BANKNIFTY_MONTHLY")
+    assert isinstance(option_feed, IVSharedRunnerOptionFeedAdapter)
+    snapshot = runtime.snapshot()
+    connection = snapshot["market_data_connection"]
+    assert connection["isolation"] == "SHARED_INDEX_MARKET_DATA_RUNNER"
+    assert connection["iv_owns_subscriptions"] is False
+    assert connection["iv_owns_shared_runner"] is False
+    assert connection["global_socket_limit"] == 3
+
+    stopped = runtime.stop()
+    assert stopped["status"] == "STOPPED"
+    assert manager.close_calls == 0
+    assert shared_runner.stop_calls == 0
