@@ -950,7 +950,8 @@ def test_socket_capacity_configuration_fails_fast_without_opening_partial_feed()
 
         assert manager.snapshot()["socket_groups"] == 0
         assert FakeSocket.instances == []
-        assert manager.registry.subscriptions()
+        assert manager.registry.subscriptions() == ()
+        assert registry.snapshot_consumer("cash") == {}
     finally:
         manager.close()
 
