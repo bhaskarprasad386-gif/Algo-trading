@@ -13,6 +13,7 @@ from typing import Any
 import requests
 
 from app.market_data import box_spread_instrument_cache as box
+from app.market_data.instruments import InstrumentMaster
 from app.scanner.iv_skew_flip import instruments as iv
 from recover_box_spread_master_artifact import _extract as extract_box
 from recover_iv_master_artifact import _extract_verified_snapshot as extract_iv
@@ -159,6 +160,23 @@ def main() -> int:
         ):
             raise RuntimeError("Box Spread cache read-back verification failed")
         print(f"box_install=PASS rows={len(box_rows)} fetched_at={box_fetched.isoformat()}")
+
+        # Publish the same verified production artifact into the shared
+        # InstrumentMaster cache used by the shared index market-data runner.
+        # Preserve source fetched_at; never make an old artifact look fresh.
+        shared_rows, shared_fetched, _ = prepared["box"]
+        InstrumentMaster._write_disk_snapshot(shared_rows, fetched_at=shared_fetched)
+        shared_installed = InstrumentMaster._read_disk_snapshot()
+        if (
+            shared_installed is None
+            or shared_installed[1] != shared_fetched
+            or shared_installed[0] != shared_rows
+        ):
+            raise RuntimeError("Shared InstrumentMaster cache read-back verification failed")
+        print(
+            f"shared_master_install=PASS rows={len(shared_rows)} "
+            f"fetched_at={shared_fetched.isoformat()}"
+        )
 
         iv_rows, iv_fetched, _ = prepared["iv"]
         iv._write_snapshot(iv_rows, fetched_at=iv_fetched)
