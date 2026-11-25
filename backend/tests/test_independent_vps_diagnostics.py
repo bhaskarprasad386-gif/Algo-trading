@@ -91,3 +91,33 @@ def test_api_unreachable_does_not_clear_persisted_errors(tmp_path: Path, monkeyp
         assert agent._API_STATUS["reachable"] is False
     finally:
         db.close()
+
+
+def test_journal_collector_persists_loguru_errors_and_advances_cursor(tmp_path: Path, monkeypatch) -> None:
+    import json
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(agent, "DB_PATH", tmp_path / "events.sqlite3")
+    records = [
+        {"__CURSOR": "cursor-1", "__REALTIME_TIMESTAMP": "1795651200000000", "PRIORITY": "6", "SYSLOG_IDENTIFIER": "uvicorn", "MESSAGE": "2026-11-26 | ERROR    | app.main:worker:10 - worker crashed"},
+        {"__CURSOR": "cursor-2", "__REALTIME_TIMESTAMP": "1795651201000000", "PRIORITY": "6", "SYSLOG_IDENTIFIER": "uvicorn", "MESSAGE": "2026-11-26 | WARNING  | app.main:worker:11 - retrying"},
+        {"__CURSOR": "cursor-3", "__REALTIME_TIMESTAMP": "1795651202000000", "PRIORITY": "6", "SYSLOG_IDENTIFIER": "uvicorn", "MESSAGE": "normal informational output"},
+    ]
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="".join(json.dumps(item) + "\\n" for item in records), stderr="")
+
+    monkeypatch.setattr(agent.subprocess, "run", fake_run)
+    db = agent.connect_db()
+    try:
+        agent.collect_once(db)
+        rows = db.execute("SELECT severity,message FROM events ORDER BY timestamp").fetchall()
+        assert [row[0] for row in rows] == ["ERROR", "WARNING"]
+        assert db.execute("SELECT value FROM collector_state WHERE key='journal_cursor'").fetchone() == ("cursor-3",)
+        agent.collect_once(db)
+        assert "--after-cursor" in calls[1]
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone() == (2,)
+    finally:
+        db.close()
