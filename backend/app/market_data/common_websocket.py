@@ -2352,6 +2352,12 @@ class CommonWebSocketManager:
                         "transport_thread_alive",
                         "transport_close_timed_out",
                         "initial_subscribe_success",
+                        "subscription_response_state",
+                        "subscription_rejection_count",
+                        "ping_count",
+                        "pong_count",
+                        "last_ping_at_monotonic_ns",
+                        "last_pong_at_monotonic_ns",
                         "health_read_error",
                     )
                     if key in health
