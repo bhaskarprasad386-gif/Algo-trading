@@ -212,6 +212,9 @@ class CommonWebSocketManager:
         # Track source timestamps independently for each Angel exchange type.
         self._latest_tick_timestamp_ns_by_exchange_type: dict[int, int] = {}
         self._latest_tick_timestamp_ns_by_group_exchange: dict[tuple[SocketGroup, int], int] = {}
+        # Provider timestamp high-water marks are per instrument, not merely
+        # per exchange: one busy option must not suppress another option's ticks.
+        self._latest_provider_timestamp_ns_by_instrument: dict[InstrumentKey, int] = {}
         self._last_exchange_tick_received_at: dict[int, float] = {}
         self._last_raw_frame_at_by_exchange_type: dict[tuple[SocketGroup, int], float] = {}
         self._socket_created_at: dict[SocketGroup, float] = {}
@@ -1997,6 +2000,17 @@ class CommonWebSocketManager:
                 with self._lock:
                     if group not in self._sockets or (generation is not None and self._socket_generation.get(group) != generation):
                         continue
+                    # Reject out-of-order provider frames before either shared
+                    # cache publication or strategy fan-out. Keep the high-water
+                    # mark per instrument so unrelated contracts remain independent.
+                    provider_timestamped = self._has_provider_timestamp(message)
+                    incoming_timestamp_ns = (
+                        int(record.timestamp_ns) if record.timestamp_ns is not None else None
+                    )
+                    if provider_timestamped and incoming_timestamp_ns is not None:
+                        previous_instrument_timestamp = self._latest_provider_timestamp_ns_by_instrument.get(key)
+                        if previous_instrument_timestamp is not None and incoming_timestamp_ns < previous_instrument_timestamp:
+                            continue
                     # Publish atomically with the generation fence. The cache
                     # helper is local and must not call back into this manager.
                     try:
@@ -2010,8 +2024,18 @@ class CommonWebSocketManager:
                             cache_exc,
                         )
                     self._normalized_records_emitted += 1
-                    self._last_tick = {
-                        "exchange_type": exchange_type or self._resolve_exchange_type(key),
+                    if provider_timestamped and incoming_timestamp_ns is not None:
+                        self._latest_provider_timestamp_ns_by_instrument[key] = max(
+                            incoming_timestamp_ns,
+                            self._latest_provider_timestamp_ns_by_instrument.get(key, incoming_timestamp_ns),
+                        )
+                    if (
+                        record.timestamp_ns is None
+                        or self._last_tick is None
+                        or int(record.timestamp_ns) >= int(self._last_tick.get("timestamp_ns") or 0)
+                    ):
+                        self._last_tick = {
+                            "exchange_type": exchange_type or self._resolve_exchange_type(key),
                         "exchange": record.instrument.exchange,
                         "segment": record.instrument.segment,
                         "token": record.instrument.token,
@@ -2019,8 +2043,8 @@ class CommonWebSocketManager:
                         "timestamp_ns": record.timestamp_ns,
                         "ltp": record.ltp,
                         "bid": record.bid,
-                        "ask": record.ask,
-                    }
+                            "ask": record.ask,
+                        }
                     if record.timestamp_ns is not None:
                         incoming_timestamp_ns = int(record.timestamp_ns)
                         if (
