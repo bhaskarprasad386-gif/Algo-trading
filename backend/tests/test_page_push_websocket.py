@@ -584,9 +584,9 @@ def test_snapshot_handoff_keeps_cursor_before_unstable_capture(monkeypatch):
     assert frame["data"]["snapshot_status"] == "UNAVAILABLE"
     assert len(captured) == 3
 
-def test_rejected_page_push_origin_logs_only_scheme_and_host(caplog):
+def test_rejected_page_push_origin_logs_safe_authority_including_port(caplog):
     class FakeWebSocket:
-        headers = {"origin": "https://untrusted.example/path?token=do-not-log"}
+        headers = {"origin": "https://untrusted.example:8443/path?token=do-not-log"}
         close_code = None
 
         async def close(self, code):
@@ -597,6 +597,6 @@ def test_rejected_page_push_origin_logs_only_scheme_and_host(caplog):
     asyncio.run(push.page_updates(websocket))
 
     assert websocket.close_code == 1008
-    assert "scheme='https' host='untrusted.example'" in caplog.text
+    assert "scheme='https' host='untrusted.example' port=8443" in caplog.text
     assert "do-not-log" not in caplog.text
     assert "/path" not in caplog.text
