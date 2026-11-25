@@ -1038,3 +1038,48 @@ def test_coalesced_close_reconcile_failure_keeps_group_pending_until_supervisor_
         time.sleep(0.005)
     assert manager.snapshot()["failure_recovery_worker_active"] is False
     manager.close()
+
+
+def test_recovery_supervisor_does_not_acknowledge_failures_added_during_reconcile():
+    manager = CommonWebSocketManager()
+    recovery_key = InstrumentKey("NSE", "NSE", "RECOVERY-CONCURRENT-INTENT")
+    manager.registry.register(InstrumentDescriptor(
+        key=recovery_key, symbol="NIFTY", instrument_type="index",
+        exchange="NSE", segment="NSE", underlying="NIFTY",
+    ))
+    manager.registry.subscribe("recovery-concurrent-test", recovery_key, mode=1)
+    first_group = SocketGroup(1, 1)
+    late_group = SocketGroup(1, 2)
+    manager._failure_recovery_pending_groups.add(first_group)
+    reconcile_entered = Event()
+    release_reconcile = Event()
+    reconcile_calls = []
+
+    def blocked_first_reconcile():
+        reconcile_calls.append(True)
+        if len(reconcile_calls) == 1:
+            reconcile_entered.set()
+            assert release_reconcile.wait(timeout=2.0)
+
+    manager.recover_disconnected = lambda **_kwargs: 0
+    manager._reconcile = blocked_first_reconcile
+    manager._recovery_interval_seconds = 0.01
+    manager._recovery_backoff_max_seconds = 0.02
+    manager._recovery_stop.clear()
+    supervisor = Thread(target=manager._recovery_loop, daemon=True)
+    supervisor.start()
+
+    assert reconcile_entered.wait(timeout=1.0)
+    manager._failure_recovery_pending_groups.add(late_group)
+    release_reconcile.set()
+
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["failure_recovery_pending_groups"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    manager._recovery_stop.set()
+    supervisor.join(timeout=1.0)
+
+    assert not supervisor.is_alive()
+    assert manager.snapshot()["failure_recovery_pending_groups"] == []
+    assert len(reconcile_calls) >= 2
+    manager.close()
