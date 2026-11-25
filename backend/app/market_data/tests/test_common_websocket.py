@@ -1762,7 +1762,7 @@ def test_latest_exchange_timestamp_never_regresses_on_out_of_order_ticks():
         })
         snapshot = manager.snapshot()
         assert snapshot["ticks_received"] == 2
-        assert snapshot["last_tick"]["timestamp_ns"] == 1792385990000000000
+        assert snapshot["last_tick"]["timestamp_ns"] == 1792386000000000000
         assert snapshot["latest_tick_timestamp_ns"] == 1792386000000000000
     finally:
         manager.close()
