@@ -160,3 +160,33 @@ def test_strategy_a_records_independent_oi_timestamp_without_quote_time_alignmen
         live_target=ce[-1],
     )
     assert result.state == AlertState.EARLY_ENTRY
+
+
+def test_banknifty_strategy_a_emits_positive_path_on_100_point_grid():
+    now, bars, ce, pe = setup()
+    bank = lambda row: replace(
+        row, underlying="BANKNIFTY", expiry="2026-11-26",
+        strike=58000.0, spot_price=58100.0,
+    )
+    bank_ce = [bank(row) for row in ce]
+    bank_pe = [bank(row) for row in pe]
+    bank_bars = [replace(
+        bar, open=bar.open+33100, high=bar.high+33100,
+        low=bar.low+33100, close=bar.close+33100,
+    ) for bar in bars]
+
+    result = evaluate_strategy_a(
+        now_ns=now, expiry="2026-11-26", bars=bank_bars,
+        underlying="BANKNIFTY", max_consolidation_points=110.0,
+        spot_sync_tolerance_points=10.0,
+        ce=bank_ce[-3:-1], pe=bank_pe[-3:-1], target=bank_ce[:4],
+        direction="BULLISH", live_ce=bank_ce[-1],
+        live_pe=bank_pe[-1], live_target=bank_ce[-1],
+    )
+
+    assert result.state == AlertState.EARLY_ENTRY
+    assert result.candidate is not None
+    assert result.candidate.underlying == "BANKNIFTY"
+    assert result.candidate.expiry == "2026-11-26"
+    assert result.candidate.strike == 58000.0
+    assert result.candidate.option_type == "CE"
