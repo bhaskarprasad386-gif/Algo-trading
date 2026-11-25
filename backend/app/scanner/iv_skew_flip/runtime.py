@@ -1106,8 +1106,10 @@ class IVSkewFlipRuntime:
                 {
                     "isolation": "SHARED_INDEX_MARKET_DATA_RUNNER",
                     "runner": (
-                        self.shared_runner.snapshot()
-                        if self.shared_runner is not None else None
+                        self.shared_runner.health_snapshot()
+                        if self.shared_runner is not None
+                        and callable(getattr(self.shared_runner, "health_snapshot", None))
+                        else None
                     ),
                     "manager_owner": "APPLICATION",
                     "manager": manager_snapshot,
