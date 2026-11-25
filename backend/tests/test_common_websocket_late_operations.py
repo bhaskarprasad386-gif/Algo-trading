@@ -328,3 +328,91 @@ def test_supervisor_acknowledges_only_pending_groups_from_reconcile_snapshot():
         )
     finally:
         manager.close()
+
+def test_late_connect_success_after_retirement_watcher_cleanup_does_not_close_twice():
+    manager = CommonWebSocketManager(socket_factory=lambda: _Socket())
+    group = SocketGroup(mode=1, shard=0)
+    socket = _Socket()
+    socket.close_calls = 0
+    original_close = socket.close
+
+    def counted_close():
+        socket.close_calls += 1
+        original_close()
+
+    socket.close = counted_close
+    generation = 9
+    with manager._lock:
+        manager._connect_pending_generation[group] = generation
+
+    first_completion = Event()
+    manager._close_socket_tracked(
+        socket, group=group, generation=generation,
+        reason="recovery_retirement", on_finished=first_completion.set, timeout=0.1,
+    )
+    deadline = monotonic() + 1.0
+    while manager.snapshot()["retired_transport_count"] and monotonic() < deadline:
+        sleep(0.01)
+    assert first_completion.wait(0.5)
+    assert manager.snapshot()["retired_transport_count"] == 0
+    assert socket.close_calls == 1
+
+    second_completion = Event()
+    duplicate_worker = manager._close_socket_tracked(
+        socket, group=group, generation=generation,
+        reason="late_connect_success", on_finished=second_completion.set, timeout=0.1,
+    )
+    assert not duplicate_worker.is_alive()
+    assert socket.close_calls == 1
+    assert not second_completion.is_set()
+    with manager._lock:
+        manager._connect_pending_generation.pop(group, None)
+        manager._connect_retirement_claims.discard((group, generation))
+    manager.close()
+
+
+def test_concurrent_retirement_claims_close_pending_connect_generation_once():
+    manager = CommonWebSocketManager(socket_factory=lambda: _Socket())
+    group = SocketGroup(mode=1, shard=0)
+    socket = _Socket()
+    socket.close_calls = 0
+    original_close = socket.close
+
+    def counted_close():
+        socket.close_calls += 1
+        original_close()
+
+    socket.close = counted_close
+    generation = 10
+    with manager._lock:
+        manager._connect_pending_generation[group] = generation
+
+    start = Event()
+    completed = [Event(), Event()]
+    from threading import Thread
+
+    def retire(index):
+        assert start.wait(1.0)
+        manager._close_socket_tracked(
+            socket, group=group, generation=generation,
+            reason=f"concurrent_retirement_{index}",
+            on_finished=completed[index].set, timeout=0.1,
+        )
+
+    workers = [Thread(target=retire, args=(index,)) for index in range(2)]
+    for worker in workers:
+        worker.start()
+    start.set()
+    for worker in workers:
+        worker.join(1.0)
+
+    deadline = monotonic() + 1.0
+    while manager.snapshot()["retired_transport_count"] and monotonic() < deadline:
+        sleep(0.01)
+    assert sum(event.is_set() for event in completed) == 1
+    assert socket.close_calls == 1
+    with manager._lock:
+        manager._connect_pending_generation.pop(group, None)
+        manager._connect_retirement_claims.discard((group, generation))
+    manager.close()
+

@@ -243,6 +243,8 @@ class CommonWebSocketManager:
         # Track sockets waiting for broker-wide connect admission so reconcile
         # does not mistake a queued handshake for a confirmed disconnect.
         self._connect_pending_generation: dict[SocketGroup, int] = {}
+        # Preserve an exact generation retirement claim until its connect worker exits.
+        self._connect_retirement_claims: set[tuple[SocketGroup, int]] = set()
         self._silent_feed_timeout_seconds = 30.0
         # A broker handshake can fail without firing on_error/on_close, leaving
         # MarketDataWebSocket.connecting stuck True forever. Bound that state.
@@ -324,13 +326,16 @@ class CommonWebSocketManager:
             "exchange_timestamp_ms", "timestamp", "feed_time",
         ):
             value = payload.get(name)
-            if value is None:
+            if value is None or isinstance(value, bool):
                 continue
             try:
                 number = float(value)
             except (TypeError, ValueError, OverflowError):
                 continue
-            if isfinite(number):
+            # A provider timestamp must be a real positive epoch value. Treat
+            # zero/negative/sentinel values as missing so the normalizer's local
+            # fallback can never be mistaken for exchange-time freshness.
+            if isfinite(number) and number > 0:
                 return True
         return False
 
@@ -1047,7 +1052,9 @@ class CommonWebSocketManager:
                             and not self._closed
                         )
                 if not _still_current():
-                    self._close_socket_bounded(socket)
+                    # Another lifecycle path already invalidated and registered
+                    # this generation's retirement. Its close watcher owns the
+                    # socket; a second untracked close would bypass deduplication.
                     return
                 # A replacement worker may already be queued for admission
                 # while another shard's close is still in flight. Re-check
@@ -1060,7 +1067,9 @@ class CommonWebSocketManager:
                         break
                     time.sleep(0.05)
                 if not _still_current():
-                    self._close_socket_bounded(socket)
+                    # Another lifecycle path already invalidated and registered
+                    # this generation's retirement. Its close watcher owns the
+                    # socket; a second untracked close would bypass deduplication.
                     return
                 # Admission is process-wide, not merely a timestamp check:
                 # hold the same lock through handshake completion and orphan
@@ -1099,7 +1108,9 @@ class CommonWebSocketManager:
                             and self._socket_generation.get(group) == generation
                         )
                     if not is_current_after_connect:
-                        close_worker = self._close_socket_tracked(
+                        # Claiming retirement is atomic and remains visible after
+                        # the watcher removes its active record.
+                        self._close_socket_tracked(
                             socket, group=group, generation=generation,
                             reason="late_connect_success",
                             on_finished=lambda: self._reconcile_after_retirement(group),
@@ -1174,6 +1185,7 @@ class CommonWebSocketManager:
                 with self._lock:
                     if self._connect_pending_generation.get(group) == generation:
                         self._connect_pending_generation.pop(group, None)
+                    self._connect_retirement_claims.discard((group, generation))
                 completed.set()
 
         worker = Thread(
@@ -2350,7 +2362,13 @@ class CommonWebSocketManager:
     ) -> Thread:
         """Register retirement before waiting, so concurrent reconciles see the slot occupied."""
         key = f"{group.mode}:{group.shard}:{generation if generation is not None else 'unknown'}:{reason}:{time.time_ns()}"
+        connect_identity = (group, generation) if generation is not None else None
         with self._lock:
+            if connect_identity is not None and self._connect_pending_generation.get(group) == generation:
+                if connect_identity in self._connect_retirement_claims:
+                    # The first retirement owns close completion and its callback.
+                    return Thread(name="common-ws-close-already-retired")
+                self._connect_retirement_claims.add(connect_identity)
             self._retired_transports[key] = {
                 "group": f"{group.mode}:{group.shard}",
                 "generation": generation,
@@ -2359,9 +2377,16 @@ class CommonWebSocketManager:
                 "close_worker_alive": True,
                 "last_observed_at": time.time(),
             }
-        worker = self._close_socket_bounded(
-            socket, timeout=timeout, group=group, generation=generation, reason=reason
-        )
+        try:
+            worker = self._close_socket_bounded(
+                socket, timeout=timeout, group=group, generation=generation, reason=reason
+            )
+        except Exception:
+            with self._lock:
+                self._retired_transports.pop(key, None)
+                if connect_identity is not None:
+                    self._connect_retirement_claims.discard(connect_identity)
+            raise
         # Bounded close may finish between the caller's first liveness check
         # and watcher registration. Own completion in this helper and guard it
         # exactly once so fast-close and watcher paths cannot double-reconcile.

@@ -457,6 +457,10 @@ def test_callback_dispatch_records_latency_and_attributes_slow_consumer_kind():
     assert state["queue_wait_max_ns"] >= 0
     assert state["callback_kind_metrics"]["normalized_record"]["slow"] == 1
     assert state["callback_kind_metrics"]["raw_tick"]["slow"] == 0
+    assert state["callback_kind_metrics"]["normalized_record"]["queue_wait_total_ns"] >= 0
+    assert state["callback_kind_metrics"]["normalized_record"]["queue_wait_max_ns"] >= 0
+    assert state["callback_kind_metrics"]["raw_tick"]["queue_wait_total_ns"] >= 0
+    assert state["callback_kind_metrics"]["raw_tick"]["queue_wait_max_ns"] >= 0
 
 
 def test_callback_dispatch_metrics_are_monotonic_and_queue_high_water_is_bounded():
@@ -496,3 +500,6 @@ def test_callback_dispatch_metrics_are_monotonic_and_queue_high_water_is_bounded
     assert final["callback_attempts"] == 3
     assert final["callback_duration_total_ns"] >= final["callback_duration_max_ns"]
     assert final["queue_wait_total_ns"] >= final["queue_wait_max_ns"]
+    # The second batch waited behind the deliberately blocked first callback;
+    # its consumer kind must receive that queue-wait attribution as well.
+    assert final["callback_kind_metrics"]["normalized_record"]["queue_wait_max_ns"] > 0
