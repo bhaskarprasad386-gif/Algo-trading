@@ -858,3 +858,88 @@ def test_locked_three_lane_plan_rejects_additional_mode_group_atomically():
     finally:
         manager.close()
 
+
+
+def test_simultaneous_locked_lane_failures_invalidate_and_retire_each_lane_independently():
+    from threading import Event, Thread
+    import time
+
+    registry = InstrumentRegistry()
+    nifty_spot = InstrumentDescriptor(
+        key=InstrumentKey("NSE", "NSE", "NIFTY-SPOT-SIMULTANEOUS"),
+        symbol="NIFTY", instrument_type="index", exchange="NSE", segment="NSE",
+        underlying="NIFTY",
+    )
+    bank_spot = InstrumentDescriptor(
+        key=InstrumentKey("NSE", "NSE", "BANK-SPOT-SIMULTANEOUS"),
+        symbol="BANKNIFTY", instrument_type="index", exchange="NSE", segment="NSE",
+        underlying="BANKNIFTY",
+    )
+    nifty_option = _descriptor("NIFTY-WEEKLY-SIMULTANEOUS")
+    bank_option = _descriptor("BANK-MONTHLY-SIMULTANEOUS")
+
+    def future(token, underlying):
+        return InstrumentDescriptor(
+            key=InstrumentKey("NFO", "NFO", token), symbol=token,
+            instrument_type="future", exchange="NFO", segment="NFO",
+            underlying=underlying, expiry="2026-12-31",
+        )
+
+    nifty_future = future("NIFTY-FUT-SIMULTANEOUS", "NIFTY")
+    bank_future = future("BANK-FUT-SIMULTANEOUS", "BANKNIFTY")
+    registry.register_many((
+        nifty_spot, bank_spot, nifty_option, bank_option, nifty_future, bank_future,
+    ))
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._recovery_interval_seconds = 60.0
+    for owner in ("nifty-spot", "bank-spot", "options", "futures"):
+        manager.register_callback(owner, lambda _message: None)
+
+    groups = (SocketGroup(3, 0), SocketGroup(3, 1), SocketGroup(3, 2))
+    callbacks = {}
+    callbacks_ready = Event()
+    start = Event()
+    try:
+        manager.subscribe("nifty-spot", (nifty_spot.key,), mode=3)
+        manager.subscribe("bank-spot", (bank_spot.key,), mode=3)
+        manager.subscribe("options", (nifty_option.key, bank_option.key), mode=3)
+        manager.subscribe("futures", (nifty_future.key, bank_future.key), mode=3)
+        original_assignments = dict(manager._shard_assignments[3])
+        original_routes = {group: dict(routes) for group, routes in manager._route_index.items()}
+        failed_sockets = {group: manager._sockets[group] for group in groups}
+
+        def defer_close(socket, **kwargs):
+            callbacks[kwargs["group"]] = kwargs.get("on_finished")
+            if len(callbacks) == 3:
+                callbacks_ready.set()
+            return Thread()
+
+        manager._close_socket_tracked = defer_close
+
+        def fail(group):
+            assert start.wait(timeout=1.0)
+            manager._handle_socket_failure(
+                group, failed_sockets[group], manager._socket_generation[group],
+                "simultaneous deterministic lane failure",
+            )
+
+        workers = [Thread(target=fail, args=(group,), daemon=True) for group in groups]
+        for worker in workers:
+            worker.start()
+        start.set()
+        for worker in workers:
+            worker.join(timeout=1.0)
+            assert not worker.is_alive(), "lane failure callback must remain bounded"
+
+        assert callbacks_ready.wait(timeout=1.0), "every failed physical lane must be retired"
+        assert set(callbacks) == set(groups)
+        assert manager._sockets == {}
+        assert manager._failure_recovery_groups == set(groups)
+        assert manager.snapshot()["failure_recovery_admission_rejections"] == 2
+        assert manager._shard_assignments[3] == original_assignments
+        assert manager._route_index == original_routes
+        assert set(manager._failure_recovery_pending_groups) == set(groups) - {
+            next(iter(manager._failure_recovery_groups - manager._failure_recovery_pending_groups))
+        }
+    finally:
+        manager.close()
