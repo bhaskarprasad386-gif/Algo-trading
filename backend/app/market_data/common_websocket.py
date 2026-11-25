@@ -432,6 +432,7 @@ class CommonWebSocketManager:
         with self._lock:
             if self._closed:
                 raise RuntimeError("CommonWebSocketManager is closed")
+            consumer_before = self.registry.snapshot_consumer(consumer)
             before = {
                 sub.key: sub.mode
                 for sub in self.registry.subscriptions()
@@ -459,7 +460,15 @@ class CommonWebSocketManager:
                     f"consumer_subscriptions={len(after)} total_subscriptions={len(self.registry.subscriptions())}"
                 )
         self._ensure_recovery_supervisor()
-        self._reconcile()
+        try:
+            self._reconcile()
+        except ValueError:
+            # Affinity/capacity planning rejects before committing socket or
+            # route state. Restore this consumer's exact prior modes so a
+            # rejected subscribe cannot leave ghost registry ownership behind.
+            with self._lock:
+                self.registry.restore_consumer(consumer, consumer_before)
+            raise
         with self._lock:
             return tuple(sub for sub in self.registry.subscriptions() if consumer in sub.consumers)
 
