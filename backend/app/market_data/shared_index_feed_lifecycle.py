@@ -157,16 +157,32 @@ class SharedIndexFeedLifecycle:
         items = self._validated_descriptors(descriptors)
         if len(items) != 2 or {d.underlying for d in items} != {"NIFTY", "BANKNIFTY"}:
             raise ValueError("spot subscription must be exactly NIFTY and BANKNIFTY")
-        if any(
-            d.instrument_type != "index"
-            or d.exchange.strip().upper() != "NSE"
-            or d.segment.strip().upper() != "NSE"
-            or d.key.exchange.strip().upper() != "NSE"
-            or d.key.segment.strip().upper() != "NSE"
-            or d.symbol.strip().upper() != d.underlying.strip().upper()
-            for d in items
-        ):
-            raise ValueError("spot descriptors must be NSE index instruments")
+        invalid = []
+        for descriptor in items:
+            fields = {
+                "instrument_type": str(descriptor.instrument_type).strip().lower(),
+                "exchange": str(descriptor.exchange).strip().upper(),
+                "segment": str(descriptor.segment).strip().upper(),
+                "key_exchange": str(descriptor.key.exchange).strip().upper(),
+                "key_segment": str(descriptor.key.segment).strip().upper(),
+                "symbol": str(descriptor.symbol).strip().upper(),
+                "underlying": str(descriptor.underlying or "").strip().upper(),
+            }
+            if (
+                fields["instrument_type"] != "index"
+                or fields["exchange"] != "NSE"
+                or fields["segment"] != "NSE"
+                or fields["key_exchange"] != "NSE"
+                or fields["key_segment"] != "NSE"
+                or not fields["underlying"]
+                or fields["symbol"] != fields["underlying"]
+            ):
+                invalid.append(fields)
+        if invalid:
+            raise ValueError(
+                "spot descriptors must be NSE index instruments; "
+                f"invalid descriptor identities={invalid!r}"
+            )
         with self._lock:
             if self._spot_started:
                 raise RuntimeError("spot subscription owner is already active")
