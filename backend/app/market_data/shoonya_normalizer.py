@@ -1,5 +1,6 @@
 """Normalize merged Shoonya Noren touchline snapshots to canonical records."""
 from __future__ import annotations
+from time import monotonic_ns
 from typing import Any, Mapping
 from .contracts import InstrumentKey, InstrumentType, MarketDataRecord, OptionType
 from .registry import InstrumentDescriptor
@@ -63,7 +64,7 @@ class ShoonyaTickNormalizer:
         return MarketDataRecord(
             instrument=InstrumentKey(descriptor.key.exchange, descriptor.key.segment, token),
             symbol=str(payload.get("ts") or descriptor.symbol), instrument_type=kind,
-            timestamp_ns=timestamp_ns, timeframe="1s",
+            timestamp_ns=timestamp_ns, received_at_monotonic_ns=monotonic_ns(), timeframe="1s",
             ltp=self._number(payload.get("lp")), bid=bid, ask=ask,
             bid_qty=self._number(payload.get("bq1")), ask_qty=self._number(payload.get("sq1")),
             volume=self._integer(payload.get("v")), oi=self._integer(payload.get("oi")),
