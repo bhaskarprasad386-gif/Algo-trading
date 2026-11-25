@@ -509,6 +509,31 @@ class CommonWebSocketManager:
                 )
         self._reconcile()
 
+    def _preferred_socket_pairs(
+        self,
+    ) -> dict[int, dict[tuple[int, str], int]]:
+        """Return one unambiguous preferred lane for each active broker token."""
+        affinity_by_pair: dict[tuple[int, tuple[int, str]], set[int | None]] = defaultdict(set)
+        for sub in self.registry.subscriptions():
+            descriptor = self.registry.get(sub.key)
+            if descriptor is None:
+                continue
+            exchange_type = self._resolve_exchange_type(sub.key)
+            pair = (exchange_type, sub.key.token.strip())
+            affinity_by_pair[(sub.mode, pair)].add(descriptor.preferred_socket_lane)
+
+        preferred: dict[int, dict[tuple[int, str], int]] = defaultdict(dict)
+        for (mode, pair), lanes in affinity_by_pair.items():
+            locked_lanes = {lane for lane in lanes if lane is not None}
+            if len(locked_lanes) > 1 or (locked_lanes and None in lanes):
+                raise ValueError(
+                    "ambiguous broker token affinity: one exchange/token maps to "
+                    "conflicting locked and unclassified instruments"
+                )
+            if locked_lanes:
+                preferred[mode][pair] = next(iter(locked_lanes))
+        return preferred
+
     def _build_shard_assignments(
         self,
         pairs_by_mode: dict[int, set[tuple[int, str]]],
@@ -595,24 +620,7 @@ class CommonWebSocketManager:
                 pairs_by_mode = {
                     mode: set(pairs) for mode, pairs in groups_by_mode.items()
                 }
-                preferred_pairs_by_mode: dict[int, dict[tuple[int, str], int]] = defaultdict(dict)
-                affinity_by_pair: dict[tuple[int, tuple[int, str]], set[int | None]] = defaultdict(set)
-                for sub in self.registry.subscriptions():
-                    descriptor = self.registry.get(sub.key)
-                    if descriptor is None:
-                        continue
-                    exchange_type = self._resolve_exchange_type(sub.key)
-                    pair = (exchange_type, sub.key.token.strip())
-                    affinity_by_pair[(sub.mode, pair)].add(descriptor.preferred_socket_lane)
-                for (mode, pair), lanes in affinity_by_pair.items():
-                    locked_lanes = {lane for lane in lanes if lane is not None}
-                    if len(locked_lanes) > 1 or (locked_lanes and None in lanes):
-                        raise ValueError(
-                            "ambiguous broker token affinity: one exchange/token maps to "
-                            "conflicting locked and unclassified instruments"
-                        )
-                    if locked_lanes:
-                        preferred_pairs_by_mode[mode][pair] = next(iter(locked_lanes))
+                preferred_pairs_by_mode = self._preferred_socket_pairs()
 
                 # Keep adaptive consumers out of reserved locked lanes. If all
                 # three dedicated lanes are occupied, unsupported instruments
@@ -2257,7 +2265,9 @@ class CommonWebSocketManager:
                     continue
                 pairs_by_mode[mode].add((exchange_type, token))
             required_groups: set[SocketGroup] = set()
-            required_assignments = self._build_shard_assignments(pairs_by_mode)
+            required_assignments = self._build_shard_assignments(
+                pairs_by_mode, self._preferred_socket_pairs(),
+            )
             for mode, assignments in required_assignments.items():
                 required_groups.update(
                     SocketGroup(mode=mode, shard=shard_index)
