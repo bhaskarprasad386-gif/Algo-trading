@@ -87,6 +87,15 @@ export default function ErrorsPage() {
         <button type="button" onClick={() => void loadErrors()} className="inline-flex min-h-11 items-center gap-2 rounded-xl theme-accent-bg px-4 text-xs font-bold theme-accent"><RefreshCw size={15} /> Refresh</button>
       </div>
 
+      {collectorReachable === true && apiProcessReachable === false && (
+        <Card className="mb-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3">
+          <div className="flex items-start gap-3"><WifiOff size={19} className="mt-0.5 shrink-0 text-amber-500" /><div className="min-w-0">
+            <div className="text-sm font-bold text-amber-500">Trading API process is unreachable</div>
+            <div className="mt-1 text-xs theme-muted">The independent VPS collector is online. Showing journal history and runtime errors saved before the API stopped{apiLastSuccessAt ? " • last API capture " + new Date(apiLastSuccessAt).toLocaleString("en-IN") : ""}.</div>
+          </div></div>
+        </Card>
+      )}
+
       {collectorReachable === false && (
         <Card className="mb-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3">
           <div className="flex items-start gap-3"><WifiOff size={19} className="mt-0.5 shrink-0 text-amber-500" /><div className="min-w-0">
