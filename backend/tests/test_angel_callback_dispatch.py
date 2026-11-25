@@ -399,3 +399,32 @@ def test_worker_can_retire_itself_without_joining_its_own_thread():
     assert state["generation"] == 2
     assert state["callback_attempts"] == 1
     assert state["queue_depth"] == 0
+
+def test_repeated_worker_self_stop_is_idempotent():
+    from threading import Event
+
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    finished = Event()
+
+    def repeated_shutdown(_value):
+        adapter.stop(timeout=1.0, drain=False)
+        adapter.stop(timeout=1.0, drain=False)
+        finished.set()
+
+    adapter.start()
+    assert adapter.publish(
+        generation=1,
+        invocations=(CallbackInvocation(repeated_shutdown, None, "shutdown"),),
+    )
+    assert finished.wait(timeout=1.0)
+    worker = adapter._thread
+    assert worker is not None
+    worker.join(timeout=1.0)
+
+    assert not worker.is_alive()
+    state = adapter.snapshot()
+    assert state["generation"] == 2
+    assert state["callback_attempts"] == 1
+    assert state["queue_depth"] == 0
+    assert state["closed"] is True
