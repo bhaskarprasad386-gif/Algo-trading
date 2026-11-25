@@ -1,7 +1,9 @@
 import app.market_data.common_websocket as common_websocket_module
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from app.market_data.common_websocket import CommonWebSocketManager, SocketGroup
+from app.market_data.common_websocket import (
+    CommonWebSocketManager, SocketGroup, SubscriptionPlanRejected,
+)
 from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.contracts import InstrumentKey
 from app.market_data.registry import InstrumentDescriptor, InstrumentRegistry
@@ -2652,7 +2654,7 @@ def test_rejected_affinity_subscribe_rolls_back_only_the_attempted_consumer():
     before = registry.snapshot_consumer("existing-owner")
 
     def reject_reconcile():
-        raise ValueError("global WebSocket limit exceeded")
+        raise SubscriptionPlanRejected("global WebSocket limit exceeded")
 
     manager._reconcile = reject_reconcile
     try:
