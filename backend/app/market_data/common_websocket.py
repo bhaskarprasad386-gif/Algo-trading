@@ -262,9 +262,11 @@ class CommonWebSocketManager:
         # remains the fallback, but duplicate SDK callbacks must not spawn a
         # burst of close/recovery workers for the same failed generation.
         self._failure_recovery_groups: set[SocketGroup] = set()
+        self._failure_recovery_generation_by_group: dict[SocketGroup, int] = {}
         # Globally admit at most one callback-triggered recovery worker; other shard failures are coalesced for the supervisor.
         self._failure_recovery_worker_active = False
         self._failure_recovery_pending_groups: set[SocketGroup] = set()
+        self._failure_recovery_pending_versions: dict[SocketGroup, int] = {}
         self._failure_recovery_admission_rejections = 0
         # Retired transports remain visible until their close worker actually exits.
         # Store metadata only; never retain broker frames or authentication payloads.
@@ -1134,6 +1136,16 @@ class CommonWebSocketManager:
             if error is not None:
                 raise error
 
+    def _clear_failure_recovery_group_locked(self, group: SocketGroup, generation: int) -> None:
+        if self._failure_recovery_generation_by_group.get(group) == generation:
+            self._failure_recovery_generation_by_group.pop(group, None)
+            self._failure_recovery_groups.discard(group)
+
+    def _acknowledge_pending_failure_locked(self, group: SocketGroup, version: int) -> None:
+        if self._failure_recovery_pending_versions.get(group) == version:
+            self._failure_recovery_pending_versions.pop(group, None)
+            self._failure_recovery_pending_groups.discard(group)
+
     def _schedule_socket_failure_recovery(
         self, group: SocketGroup, socket: Any, generation: int, reason: str
     ) -> None:
@@ -1149,9 +1161,10 @@ class CommonWebSocketManager:
                     or self._socket_generation.get(group) != generation
                 ):
                     return
-                if group in self._failure_recovery_groups:
+                if self._failure_recovery_generation_by_group.get(group) == generation:
                     return
                 self._failure_recovery_groups.add(group)
+                self._failure_recovery_generation_by_group[group] = generation
                 self._sockets.pop(group, None)
                 self._socket_tokens.pop(group, None)
                 self._socket_created_at.pop(group, None)
@@ -1183,14 +1196,14 @@ class CommonWebSocketManager:
             try:
                 with self._lock:
                     if self._closed:
-                        self._failure_recovery_groups.discard(group)
+                        self._clear_failure_recovery_group_locked(group, generation)
                         return
                 # Admission remains blocked through close completion and recovery,
                 # preventing a late close callback from overlapping a new worker.
                 self.recover_disconnected(min_age_seconds=0.0, silent_age_seconds=None)
                 with self._reconcile_lock:
                     with self._lock:
-                        self._failure_recovery_groups.discard(group)
+                        self._clear_failure_recovery_group_locked(group, generation)
                     self._reconcile()
             except Exception as exc:
                 runtime_diagnostics.record(
@@ -1208,7 +1221,7 @@ class CommonWebSocketManager:
                 with self._reconcile_lock:
                     with self._lock:
                         if group not in self._sockets:
-                            self._failure_recovery_groups.discard(group)
+                            self._clear_failure_recovery_group_locked(group, generation)
             finally:
                 with self._lock:
                     self._failure_recovery_worker_active = False
@@ -1234,15 +1247,18 @@ class CommonWebSocketManager:
                     group, exc,
                 )
                 with self._lock:
-                    self._failure_recovery_groups.discard(group)
+                    self._clear_failure_recovery_group_locked(group, generation)
                     self._failure_recovery_worker_active = False
 
         # A simultaneous shard outage must not spawn one recovery thread per
         # callback. Keep per-group invalidation, coalesce the rest, and let the
         # shared supervisor reconcile the full desired registry.
         coalesced = False
+        pending_version = None
         with self._lock:
             if self._failure_recovery_worker_active:
+                pending_version = self._failure_recovery_pending_versions.get(group, 0) + 1
+                self._failure_recovery_pending_versions[group] = pending_version
                 self._failure_recovery_pending_groups.add(group)
                 self._failure_recovery_admission_rejections += 1
                 coalesced = True
@@ -1257,18 +1273,18 @@ class CommonWebSocketManager:
                 try:
                     with self._lock:
                         if self._closed:
-                            self._failure_recovery_groups.discard(failed_group)
-                            self._failure_recovery_pending_groups.discard(failed_group)
+                            self._clear_failure_recovery_group_locked(failed_group, generation)
+                            self._acknowledge_pending_failure_locked(failed_group, pending_version)
                             return
                     with self._reconcile_lock:
                         # Keep coalesced failure visible until a full registry
                         # reconcile succeeds; the supervisor clears pending groups
                         # after its own successful recovery pass.
                         with self._lock:
-                            self._failure_recovery_groups.discard(failed_group)
+                            self._clear_failure_recovery_group_locked(failed_group, generation)
                         self._reconcile()
                         with self._lock:
-                            self._failure_recovery_pending_groups.discard(failed_group)
+                            self._acknowledge_pending_failure_locked(failed_group, pending_version)
                 except Exception as exc:
                     app_logger.warning(
                         "Common feed coalesced recovery close completion failed group=%s: %s",
@@ -1523,7 +1539,7 @@ class CommonWebSocketManager:
                 )
                 cooldown_remaining = self._broker_cooldown_remaining()
                 with self._lock:
-                    pending_failures_to_ack = set(self._failure_recovery_pending_groups)
+                    pending_failures_to_ack = dict(self._failure_recovery_pending_versions)
                     has_pending_failures = bool(pending_failures_to_ack)
                 if cooldown_remaining > 0.0:
                     cooldown_was_active = True
@@ -1536,7 +1552,8 @@ class CommonWebSocketManager:
                     self._reconcile()
                     cooldown_was_active = False
                     with self._lock:
-                        self._failure_recovery_pending_groups.difference_update(pending_failures_to_ack)
+                        for pending_group, pending_version in pending_failures_to_ack.items():
+                            self._acknowledge_pending_failure_locked(pending_group, pending_version)
                 retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 with self._lock:
                     self._recovery_backoff_current_seconds = retry_delay
@@ -2652,7 +2669,9 @@ class CommonWebSocketManager:
                 self._last_successful_delivery_at.clear()
                 self._socket_generation.clear()
                 self._failure_recovery_groups.clear()
+                self._failure_recovery_generation_by_group.clear()
                 self._failure_recovery_pending_groups.clear()
+                self._failure_recovery_pending_versions.clear()
         # Do not hold either manager lock while waiting for consumer callbacks:
         # a callback may legitimately request subscription changes during shutdown.
         for group, (generation, adapter) in callback_adapters:
