@@ -738,3 +738,59 @@ def test_each_locked_lane_recovers_in_place_without_cross_lane_token_migration()
             original_sockets[failed_group] = manager._sockets[failed_group]
     finally:
         manager.close()
+
+
+def test_shared_instrument_mode_upgrade_and_downgrade_preserves_only_active_routes():
+    """A shared key follows max consumer mode without duplicate physical ownership."""
+    registry = InstrumentRegistry()
+    item = _descriptor("NIFTY-SHARED-MODE-ROLL")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=RouteSocket)
+    manager._recovery_interval_seconds = 60.0
+    delivered = []
+    manager.register_callback("low-mode-owner", lambda message: delivered.append(("low", message["token"])))
+    manager.register_callback("high-mode-owner", lambda message: delivered.append(("high", message["token"])))
+
+    try:
+        manager.subscribe("low-mode-owner", (item.key,), mode=1)
+        low_group = SocketGroup(1, 0)
+        low_socket = manager._sockets[low_group]
+        assert manager.snapshot()["required_socket_groups"] == ["1:0"]
+
+        manager.subscribe("high-mode-owner", (item.key,), mode=3)
+        high_group = SocketGroup(3, 0)
+        assert high_group in manager._sockets
+        assert low_group not in manager._sockets
+        assert low_socket.closed is True
+        assert manager._route_index == {
+            high_group: {(2, item.key.token): [
+                ("high-mode-owner", item.key),
+                ("low-mode-owner", item.key),
+            ]}
+        } or manager._route_index == {
+            high_group: {(2, item.key.token): [
+                ("low-mode-owner", item.key),
+                ("high-mode-owner", item.key),
+            ]}
+        }
+        upgraded = manager.snapshot()
+        assert upgraded["required_socket_groups"] == ["3:0"]
+        assert upgraded["socket_token_set_mismatches"] == []
+
+        manager.unsubscribe("high-mode-owner", (item.key,))
+        assert low_group in manager._sockets
+        assert high_group not in manager._sockets
+        downgraded = manager.snapshot()
+        assert downgraded["required_socket_groups"] == ["1:0"]
+        assert downgraded["socket_token_set_mismatches"] == []
+        assert downgraded["subscriptions"] == 1
+
+        manager._on_data(low_group, {
+            "token": item.key.token,
+            "exchange_type": 2,
+            "ltp": 12345,
+        })
+        assert delivered == [("low", item.key.token)]
+    finally:
+        manager.close()
+
