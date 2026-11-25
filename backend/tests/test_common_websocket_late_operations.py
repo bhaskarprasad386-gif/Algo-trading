@@ -291,6 +291,7 @@ def test_supervisor_acknowledges_only_pending_groups_from_reconcile_snapshot():
     concurrent_failure_group = SocketGroup(mode=1, shard=1)
     with manager._lock:
         manager._failure_recovery_pending_groups.add(reconciled_group)
+        manager._failure_recovery_pending_versions[reconciled_group] = 1
 
 
 
@@ -303,6 +304,7 @@ def test_supervisor_acknowledges_only_pending_groups_from_reconcile_snapshot():
         reconcile_entered.set()
         with manager._lock:
             manager._failure_recovery_pending_groups.add(concurrent_failure_group)
+            manager._failure_recovery_pending_versions[concurrent_failure_group] = 1
         concurrent_failure_added.set()
 
 
