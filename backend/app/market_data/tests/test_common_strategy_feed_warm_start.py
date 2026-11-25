@@ -37,7 +37,12 @@ def test_common_strategy_feed_warm_starts_then_accepts_newer_live_tick():
     receive_timestamp = monotonic_ns() - 1_000_000
     cache.put(
         descriptor.key.value,
-        {"timestamp_ns": base_timestamp, "exchange_timestamp_ns": base_timestamp, "received_at_monotonic_ns": receive_timestamp, "ltp": 100.0},
+        {
+            "timestamp_ns": base_timestamp,
+            "exchange_timestamp_ns": base_timestamp,
+            "received_at_monotonic_ns": receive_timestamp,
+            "ltp": 100.0,
+        },
         timestamp_ns=base_timestamp,
     )
     manager = CommonWebSocketManager(socket_factory=FakeSocket)
@@ -55,6 +60,7 @@ def test_common_strategy_feed_warm_starts_then_accepts_newer_live_tick():
         })
         assert [(r.timestamp_ns, r.ltp) for r in received] == [(base_timestamp, 100.0), (base_timestamp + 1_000_000, 123.45)]
         assert cache.get(descriptor.key.value)["timestamp_ns"] == base_timestamp + 1_000_000
+        assert cache.get(descriptor.key.value)["exchange_timestamp_ns"] == base_timestamp + 1_000_000
         assert received[1].exchange_timestamp_ns == base_timestamp + 1_000_000
         assert isinstance(received[1].received_at_monotonic_ns, int)
         assert cache.get(descriptor.key.value)["received_at_monotonic_ns"] == received[1].received_at_monotonic_ns
