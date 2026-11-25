@@ -763,3 +763,21 @@ def test_spot_start_rejects_non_index_or_wrong_exchange_descriptors_before_regis
     assert manager.registry.subscriptions() == ()
     assert manager.registry.get(wrong_kind.key) is None
     assert manager.registry.get(wrong_exchange.key) is None
+
+
+
+def test_futures_start_rejects_non_nfo_instrument_key_before_registry_mutation():
+    manager = StubManager()
+    lifecycle = SharedIndexFeedLifecycle(manager=manager)
+    nifty, bank = _future_descriptors("invalid-key")
+    invalid = replace(
+        nifty,
+        key=InstrumentKey("BSE", "BSE", nifty.key.token),
+    )
+
+    with pytest.raises(ValueError, match="valid NFO index futures"):
+        lifecycle.start_futures((invalid, bank))
+
+    assert manager.registry.subscriptions() == ()
+    assert manager.registry.get(invalid.key) is None
+    assert manager.registry.get(bank.key) is None
