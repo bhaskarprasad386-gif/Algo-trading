@@ -795,7 +795,21 @@ export default function IVSkewFlipPage() {
       reason:liveNiftySampler.reason??(savedMetrics.length?"Showing latest durable broker observations; these are LAST values, not live ticks.":undefined),
     },
   } as Chain;
-  const bank=chains.BANKNIFTY_MONTHLY??{};
+  const liveBank=chains.BANKNIFTY_MONTHLY??{};
+  const liveBankSampler=liveBank.sampler&&typeof liveBank.sampler==="object"?liveBank.sampler as Row:{};
+  const liveBankMetrics=Array.isArray(liveBankSampler.live_metrics)?liveBankSampler.live_metrics as Row[]:[];
+  const bankSavedMetricsRaw=Array.isArray(bankDurableHistory?.metrics)?bankDurableHistory!.metrics as Row[]:[];
+  const bankSavedExpiry=String(bankDurableHistory?.expiry??"");
+  const bankLiveFeed=liveBank.option_feed&&typeof liveBank.option_feed==="object"?liveBank.option_feed as Row:{};
+  const bankHistoryMatchesLiveExpiry=!bankLiveFeed.expiry||String(bankLiveFeed.expiry)===bankSavedExpiry;
+  const bankSavedMetrics=bankHistoryMatchesLiveExpiry?bankSavedMetricsRaw:[];
+  const bankMetricsByToken=new Map<string,Row>();
+  for(const item of liveBankMetrics)bankMetricsByToken.set(String(item.token??""),item);
+  for(const item of bankSavedMetrics){
+    const token=String(item.token??"");const live=bankMetricsByToken.get(token);
+    bankMetricsByToken.set(token,{...(live??{}),...item,ltp:live?.ltp??item.ltp,oi:live?.oi??item.oi,volume:live?.volume??item.volume,bid:live?.bid??item.bid,ask:live?.ask??item.ask,iv:item.iv,iv_change_1s:null,iv_source:item.iv_source,iv_live:false,iv_status:"LAST"});
+  }
+  const bank={...liveBank,option_feed:{...bankLiveFeed,expiry:bankLiveFeed.expiry??(liveBankMetrics.length?undefined:bankSavedExpiry||undefined),expiry_type:bankLiveFeed.expiry_type??(liveBankMetrics.length?undefined:bankDurableHistory?.expiry_type),strikes:Array.isArray(bankLiveFeed.strikes)&&bankLiveFeed.strikes.length?bankLiveFeed.strikes:[...new Set(bankSavedMetrics.map(item=>n(item.strike)).filter((value):value is number=>value!==null))].sort((a,b)=>a-b)},sampler:{...liveBankSampler,live_metrics:[...bankMetricsByToken.values()].filter(item=>String(item.token??"")).map(item=>item.iv_source==="ANGEL_ONE"?item:{...item,iv:null,iv_live:false,iv_status:"BROKER_IV_WAITING"}),status:liveBankSampler.status??(bankSavedMetrics.length?"LAST":"WAITING"),history_persistence:liveBankSampler.history_persistence??(bankSavedMetrics.length?"DATABASE":"UNKNOWN"),history_persisted_count:liveBankSampler.history_persisted_count??bankSavedMetrics.length,iv_live_count:liveBankSampler.iv_live_count??0,oi_live_count:liveBankSampler.oi_live_count??0,reason:liveBankSampler.reason??(bankSavedMetrics.length?"Showing latest durable broker observations; these are LAST values, not live ticks.":undefined)}} as Chain;
   const spotFeed = runtime?.spot_feed && typeof runtime.spot_feed === "object" ? runtime.spot_feed as Row : {};
   const spot = spotFeed.spot && typeof spotFeed.spot === "object" ? spotFeed.spot as Row : {};
   const niftySpot=(spot.NIFTY&&typeof spot.NIFTY==="object"?spot.NIFTY:{}) as Row;
