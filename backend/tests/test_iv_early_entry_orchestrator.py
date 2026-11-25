@@ -153,3 +153,73 @@ def test_lifecycle_transition_refreshes_cached_history_even_when_sampler_is_degr
     assert store.latest_calls == [(30, "BANKNIFTY")]
     assert engine.snapshot("BANKNIFTY")["alerts"][0]["state"] == "EXPIRED"
     assert engine.snapshot("NIFTY")["underlying"] == "NIFTY"
+
+
+
+def test_expiry_lifecycle_sweep_is_throttled_per_underlying_and_retries_after_interval():
+    now_ns = 1_800_000_000 * 1_000_000_000
+    now = datetime.fromtimestamp(now_ns / 1_000_000_000, tz=timezone.utc)
+    store = _LifecycleStore()
+    engine = IVEarlyEntryAlertEngine(store)
+    stale_spot = SimpleNamespace(
+        timestamp_ns=now_ns - 10_000_000_000,
+        price=24900.0,
+    )
+
+    for offset, underlying in (
+        (0, "NIFTY"), (1_000_000_000, "BANKNIFTY"),
+        (30_000_000_000, "NIFTY"), (30_000_000_000, "BANKNIFTY"),
+    ):
+        sample_ns = now_ns + offset
+        engine.evaluate(
+            sampler=_NotLiveSampler(), spot=stale_spot,
+            expiry="2026-11-19" if underlying == "NIFTY" else "2026-11-26",
+            now=datetime.fromtimestamp(sample_ns / 1_000_000_000, tz=timezone.utc),
+            now_ns=sample_ns, underlying=underlying,
+        )
+
+    # The store sweep spans both indices; the second underlying must not
+    # trigger an identical full-table expiry query in the same minute.
+    assert len(store.expirations) == 1
+
+    next_ns = now_ns + 60_000_000_000
+    engine.evaluate(
+        sampler=_NotLiveSampler(), spot=stale_spot, expiry="2026-11-19",
+        now=datetime.fromtimestamp(next_ns / 1_000_000_000, tz=timezone.utc),
+        now_ns=next_ns,
+    )
+    assert len(store.expirations) == 2
+
+
+def test_expiry_sweep_failure_is_retried_without_advancing_watermark():
+    class _FailOnceStore(_LifecycleStore):
+        def __init__(self):
+            super().__init__()
+            self.fail = True
+
+        def expire_session_alerts(self, *, now):
+            self.expirations.append(now)
+            if self.fail:
+                self.fail = False
+                raise RuntimeError("temporary database outage")
+            return 0
+
+    now_ns = 1_800_000_000 * 1_000_000_000
+    now = datetime.fromtimestamp(now_ns / 1_000_000_000, tz=timezone.utc)
+    store = _FailOnceStore()
+    engine = IVEarlyEntryAlertEngine(store)
+    spot = SimpleNamespace(timestamp_ns=now_ns - 10_000_000_000, price=24900.0)
+
+    import pytest
+    with pytest.raises(RuntimeError, match="temporary database outage"):
+        engine.evaluate(
+            sampler=_NotLiveSampler(), spot=spot, expiry="2026-11-19",
+            now=now, now_ns=now_ns,
+        )
+
+    result = engine.evaluate(
+        sampler=_NotLiveSampler(), spot=spot, expiry="2026-11-19",
+        now=now, now_ns=now_ns,
+    )
+    assert result["reason"] == "SAMPLER_NOT_LIVE"
+    assert len(store.expirations) == 2
