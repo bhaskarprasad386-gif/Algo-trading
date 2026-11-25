@@ -32,6 +32,10 @@ class SocketGroup:
     mode: int
     shard: int = 0
 
+class SubscriptionPlanRejected(ValueError):
+    """A deterministic affinity/capacity rejection raised before socket mutation."""
+
+
 
 # Broker-wide cooldown/admission also covers direct collectors.
 _SHARED_BROKER_COOLDOWN_STATE_LOCK = Lock()
@@ -462,7 +466,7 @@ class CommonWebSocketManager:
         self._ensure_recovery_supervisor()
         try:
             self._reconcile()
-        except ValueError:
+        except SubscriptionPlanRejected:
             # Affinity/capacity planning rejects before committing socket or
             # route state. Restore this consumer's exact prior modes so a
             # rejected subscribe cannot leave ghost registry ownership behind.
@@ -644,47 +648,51 @@ class CommonWebSocketManager:
             with self._lock:
                 if self._closed:
                     raise RuntimeError("CommonWebSocketManager is closed")
-                grouped: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
-                for sub in self.registry.subscriptions():
-                    exchange_type = self._resolve_exchange_type(sub.key)
-                    grouped[sub.mode][exchange_type].add(sub.key.token.strip())
+                try:
+                    grouped: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
+                    for sub in self.registry.subscriptions():
+                        exchange_type = self._resolve_exchange_type(sub.key)
+                        grouped[sub.mode][exchange_type].add(sub.key.token.strip())
 
-                desired_tokens: dict[SocketGroup, set[tuple[int, str]]] = {}
-                route_index: dict[
-                    SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
-                ] = defaultdict(lambda: defaultdict(list))
+                    desired_tokens: dict[SocketGroup, set[tuple[int, str]]] = {}
+                    route_index: dict[
+                        SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
+                    ] = defaultdict(lambda: defaultdict(list))
 
-                groups_by_mode: dict[int, list[tuple[int, str]]] = defaultdict(list)
-                for mode, exchanges in grouped.items():
-                    for exchange_type, tokens in exchanges.items():
-                        for token in sorted(tokens):
-                            groups_by_mode[mode].append((exchange_type, token))
+                    groups_by_mode: dict[int, list[tuple[int, str]]] = defaultdict(list)
+                    for mode, exchanges in grouped.items():
+                        for exchange_type, tokens in exchanges.items():
+                            for token in sorted(tokens):
+                                groups_by_mode[mode].append((exchange_type, token))
 
-                # Derive preferred lanes from registered instrument metadata,
-                # not consumer names. This is required because the single options
-                # owner intentionally spans NIFTY weekly and BANKNIFTY monthly.
-                pairs_by_mode = {
-                    mode: set(pairs) for mode, pairs in groups_by_mode.items()
-                }
-                preferred_pairs_by_mode = self._preferred_socket_pairs()
+                    # Derive preferred lanes from registered instrument metadata,
+                    # not consumer names. This is required because the single options
+                    # owner intentionally spans NIFTY weekly and BANKNIFTY monthly.
+                    pairs_by_mode = {
+                        mode: set(pairs) for mode, pairs in groups_by_mode.items()
+                    }
+                    preferred_pairs_by_mode = self._preferred_socket_pairs()
 
-                # Keep adaptive consumers out of reserved locked lanes. If all
-                # three dedicated lanes are occupied, unsupported instruments
-                # require another physical session and are rejected by the
-                # existing global budget gate below rather than silently mixed.
-                next_assignments = self._build_shard_assignments(
-                    pairs_by_mode, preferred_pairs_by_mode,
-                )
-                for mode, assignments in next_assignments.items():
-                    for pair, shard_index in assignments.items():
-                        shard = SocketGroup(mode=mode, shard=shard_index)
-                        desired_tokens.setdefault(shard, set()).add(pair)
-
-                if len(desired_tokens) > self._max_sockets:
-                    raise ValueError(
-                        f"Angel One global WebSocket limit exceeded: {len(desired_tokens)} "
-                        f"sessions required; maximum is {self._max_sockets}"
+                    # Keep adaptive consumers out of reserved locked lanes. If all
+                    # three dedicated lanes are occupied, unsupported instruments
+                    # require another physical session and are rejected by the
+                    # existing global budget gate below rather than silently mixed.
+                    next_assignments = self._build_shard_assignments(
+                        pairs_by_mode, preferred_pairs_by_mode,
                     )
+                    for mode, assignments in next_assignments.items():
+                        for pair, shard_index in assignments.items():
+                            shard = SocketGroup(mode=mode, shard=shard_index)
+                            desired_tokens.setdefault(shard, set()).add(pair)
+
+                    if len(desired_tokens) > self._max_sockets:
+                        raise ValueError(
+                            f"Angel One global WebSocket limit exceeded: {len(desired_tokens)} "
+                            f"sessions required; maximum is {self._max_sockets}"
+                        )
+
+                except ValueError as exc:
+                    raise SubscriptionPlanRejected(str(exc)) from exc
 
                 # Commit the placement only after validating the global socket
                 # budget, so a rejected addition cannot corrupt existing routing.
