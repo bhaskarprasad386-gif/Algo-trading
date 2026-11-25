@@ -403,6 +403,8 @@ export default function IVSkewFlipPage() {
   const [basketRegistry,setBasketRegistry]=useState<BasketRegistry|null>(null);
   const [durableHistory,setDurableHistory]=useState<Row|null>(null);
   const [chartHistory,setChartHistory]=useState<Row|null>(null);
+  const [bankDurableHistory,setBankDurableHistory]=useState<Row|null>(null);
+  const [bankChartHistory,setBankChartHistory]=useState<Row|null>(null);
   const [earlyAlerts,setEarlyAlerts]=useState<EarlyAlert[]>([]);
   const [hasMoreAlerts,setHasMoreAlerts]=useState(false);
   const [loadingMoreAlerts,setLoadingMoreAlerts]=useState(false);
@@ -416,6 +418,8 @@ export default function IVSkewFlipPage() {
   const basketFetchSequenceRef=useRef(0);
   const durableHistoryFetchSequenceRef=useRef(0);
   const chartHistoryFetchSequenceRef=useRef(0);
+  const bankHistoryFetchSequenceRef=useRef(0);
+  const bankChartHistoryFetchSequenceRef=useRef(0);
   const brokerSnapshotSequenceRef=useRef(0);
   useEffect(()=>()=>{brokerSnapshotSequenceRef.current+=1;},[]);
   const selectedNifty="NIFTY_WEEKLY" as const;
@@ -429,6 +433,7 @@ export default function IVSkewFlipPage() {
   const base=appConfig.apiBaseUrl.replace(/\/$/,"");
   const { data: pagePushData, status: pagePushStatus } = usePagePush("iv-skew-flip");
   const requestedExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
+  const requestedBankExpiry=String(runtime?.option_chains?.BANKNIFTY_MONTHLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
@@ -502,6 +507,7 @@ export default function IVSkewFlipPage() {
     return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
   },[base,requestedExpiry,pagePushStatus]);
   const activeWeeklyExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
+  const activeBankExpiry=String(runtime?.option_chains?.BANKNIFTY_MONTHLY?.option_feed?.expiry??"");
   useEffect(()=>{
     let active=true;
     const poll=async()=>{
