@@ -7,7 +7,7 @@ ticks to consumer callbacks. Strategy code never opens a broker WebSocket.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, time as datetime_time
 from math import isfinite
 from threading import Event, Lock, RLock, Thread, current_thread
@@ -2050,6 +2050,10 @@ class CommonWebSocketManager:
                 continue
             try:
                 record = self._normalizer.normalize(descriptor, message)
+                # The manager's monotonic ingress clock is captured before raw
+                # consumer fan-out. Preserve it separately from the provider's
+                # exchange timestamp and the normalizer's standalone fallback.
+                record = replace(record, received_at_monotonic_ns=received_monotonic_ns)
                 # Normalize outside the manager lock, but publish only while the
                 # originating socket generation is still current. This closes the
                 # race where a slow normalizer from a retired socket overwrites the
