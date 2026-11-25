@@ -938,8 +938,26 @@ def test_simultaneous_locked_lane_failures_invalidate_and_retire_each_lane_indep
         assert manager.snapshot()["failure_recovery_admission_rejections"] == 2
         assert manager._shard_assignments[3] == original_assignments
         assert manager._route_index == original_routes
-        assert set(manager._failure_recovery_pending_groups) == set(groups) - {
-            next(iter(manager._failure_recovery_groups - manager._failure_recovery_pending_groups))
-        }
+        primary_groups = manager._failure_recovery_groups - manager._failure_recovery_pending_groups
+        assert len(primary_groups) == 1
+        primary_group = next(iter(primary_groups))
+        assert manager._failure_recovery_pending_groups == set(groups) - {primary_group}
+
+        # Complete the tracked closes in the opposite order from lane order.
+        # Each completion may reconcile the full desired state, but must not
+        # erase another lane's pending failure before that lane is acknowledged.
+        for group in sorted(groups, key=lambda item: item.shard, reverse=True):
+            callbacks[group]()
+            assert manager._failure_recovery_pending_groups.issubset(set(groups))
+        assert manager._failure_recovery_pending_groups == set()
+        assert manager._failure_recovery_groups == set()
+        assert manager._failure_recovery_worker_active is False
+        assert set(manager._sockets) == set(groups)
+        assert manager._shard_assignments[3] == original_assignments
+        assert manager._route_index == original_routes
+        for group in groups:
+            assert manager._socket_tokens[group] == {
+                pair for pair, shard in original_assignments.items() if shard == group.shard
+            }
     finally:
         manager.close()
