@@ -1,4 +1,4 @@
-"""Alert-only orchestration for the active NIFTY Weekly IV sampler."""
+"""Alert-only orchestration for isolated NIFTY Weekly and BANKNIFTY Monthly samplers."""
 from __future__ import annotations
 
 from datetime import datetime
