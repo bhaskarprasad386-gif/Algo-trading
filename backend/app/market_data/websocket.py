@@ -102,12 +102,13 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
     original_data = getattr(socket, "_on_data", None)
     original_ping = getattr(socket, "_on_ping", None)
     original_pong = getattr(socket, "_on_pong", None)
+    socket._heartbeat_lock = Lock()
 
     # Expose heartbeat observations separately from socket-open and market-data
     # delivery. A pong proves control-frame responsiveness, not subscription health.
     def observe_heartbeat(kind, original):
         def callback(wsapp, *details):
-            with socket._lock:
+            with socket._heartbeat_lock:
                 counter = f"_{kind}_count"
                 timestamp = f"_last_{kind}_at_monotonic_ns"
                 setattr(socket, counter, getattr(socket, counter, 0) + 1)
