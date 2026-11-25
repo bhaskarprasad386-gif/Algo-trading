@@ -917,3 +917,29 @@ def test_banknifty_identity_survives_telegram_outbox_and_restart_snapshot_recove
     assert [row["underlying"] for row in recovered["NIFTY"]["alerts"]] == ["NIFTY"]
     assert [row["underlying"] for row in recovered["BANKNIFTY"]["alerts"]] == ["BANKNIFTY"]
     assert recovered["BANKNIFTY"]["alerts"][0]["expiry"] == "2026-11-26"
+
+def test_alert_history_filter_keeps_nifty_and_banknifty_pages_independent():
+    store = make_store()
+    base = candidate()
+    nifty = store.record(base)
+    bank_base = AlertCandidate(
+        base.strategy, "BANKNIFTY", "2026-11-26", 58000.0,
+        base.direction, base.option_type, base.state,
+        base.observed_at_ns, 58100.0, base.premium,
+        base.iv_change_points, base.volume_ratio, "bank monthly",
+        {"calibration_status": "PILOT"},
+    )
+    bank = store.record(bank_base)
+
+    assert [row["id"] for row in store.latest(underlying="NIFTY")] == [nifty["event_id"]]
+    assert [row["id"] for row in store.latest(underlying="BANKNIFTY")] == [bank["event_id"]]
+    assert {row["underlying"] for row in store.latest()} == {"NIFTY", "BANKNIFTY"}
+
+    # Equal timestamps must still paginate independently by (timestamp, id).
+    page = store.latest(limit=1, underlying="BANKNIFTY")
+    assert page[0]["id"] == bank["event_id"]
+    assert store.latest(
+        limit=1, underlying="BANKNIFTY",
+        before_observed_at_ns=page[0]["observed_at_ns"],
+        before_id=page[0]["id"],
+    ) == []
