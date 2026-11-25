@@ -2454,3 +2454,96 @@ def test_retired_generation_cannot_publish_normalized_tick_after_slow_normalizat
     finally:
         release.set()
         manager.close()
+
+
+def test_out_of_order_provider_tick_is_rejected_before_cache_and_consumer_fanout(monkeypatch):
+    registry = InstrumentRegistry()
+    item = descriptor("out-of-order-provider-991")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    received = []
+    cache_writes = []
+    manager.register_normalized_callback("ordered-owner", received.append)
+    monkeypatch.setattr(common_websocket_module, "put_market_data_record", cache_writes.append)
+    group = SocketGroup(1, 0)
+    try:
+        manager.subscribe("ordered-owner", [item.key])
+        generation = manager._socket_generation[group]
+        newer = {
+            "token": item.key.token,
+            "exchange_type": 1,
+            "ltp": 12000,
+            "timestamp_ns": "1792386002000000000",
+        }
+        older = {
+            "token": item.key.token,
+            "exchange_type": 1,
+            "ltp": 9000,
+            "timestamp_ns": "1792386001000000000",
+        }
+
+        manager._on_data(group, newer, generation)
+        manager._on_data(group, older, generation)
+
+        assert len(received) == 1
+        assert received[0].ltp == 120.0
+        assert len(cache_writes) == 1
+        assert manager._last_tick["ltp"] == 120.0
+        assert manager._last_tick["timestamp_ns"] == 1792386002000000000
+        assert manager.snapshot()["normalized_records_emitted"] == 1
+    finally:
+        manager.close()
+
+
+def test_retirement_during_normalized_callback_stops_remaining_fanout():
+    registry = InstrumentRegistry()
+    item = descriptor("retire-during-fanout-991")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._recovery_interval_seconds = 60.0
+    entered = Event()
+    release = Event()
+    first_received = []
+    second_received = []
+
+    def blocking_consumer(record):
+        first_received.append(record.instrument.token)
+        entered.set()
+        assert release.wait(timeout=2.0), "release first consumer after retiring socket"
+
+    manager.register_normalized_callback("first-owner", blocking_consumer)
+    manager.register_normalized_callback(
+        "second-owner", lambda record: second_received.append(record.instrument.token)
+    )
+    manager.subscribe("first-owner", [item.key])
+    manager.subscribe("second-owner", [item.key])
+    group = SocketGroup(1, 0)
+    try:
+        generation = manager._socket_generation[group]
+        delivery = Thread(
+            target=lambda: manager._on_data(group, {
+                "token": item.key.token,
+                "exchange_type": 1,
+                "ltp": 10000,
+                "timestamp_ns": "1792386003000000000",
+            }, generation),
+            daemon=True,
+        )
+        delivery.start()
+        assert entered.wait(timeout=1.0), "first normalized consumer should be in flight"
+
+        replacement = FakeSocket()
+        with manager._lock:
+            manager._sockets[group] = replacement
+            manager._socket_generation[group] = generation + 1
+
+        release.set()
+        delivery.join(timeout=1.0)
+        assert not delivery.is_alive()
+        assert first_received == [item.key.token]
+        assert second_received == []
+        assert manager.snapshot()["normalized_records_delivered"] == 0
+    finally:
+        release.set()
+        manager.close()
