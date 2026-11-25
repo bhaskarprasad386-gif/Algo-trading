@@ -876,8 +876,8 @@ export default function IVSkewFlipPage() {
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">NIFTY Weekly Option Chain</h2><span className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs font-bold">ACTIVE • ONLY ENABLED CHAIN</span></div>
       <div className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs theme-muted">Expiry selection date: {String(nifty.expiry_selection?.selection_date??"—")} • Selected: {String(nifty.expiry_selection?.selected_expiry??(liveFeed.expiry??"—"))} • Master candidates: {Array.isArray(nifty.expiry_selection?.available_expiries)?(nifty.expiry_selection!.available_expiries as string[]).join(", "):"Waiting for instrument-master diagnostics"} • Last Angel One snapshot: {sampleTime(durableHistory?.snapshot_at_ns)}</div>
       <OptionChain title={`NIFTY ${niftyExpiry|| (selectedNifty==="NIFTY_WEEKLY"?"Weekly":"Monthly")}`} chain={nifty} spot={niftySpot}/>
-      <NiftyWeeklyOiVolumeChart chain={nifty} spot={niftySpot}/>
-      <NiftyWeeklySpotIvChart history={chartHistory} spot={niftySpot} chain={nifty}/>
+      <IndexOiVolumeChart symbol="NIFTY" title="NIFTY Weekly" chain={nifty} spot={niftySpot}/>
+      <IndexSpotIvChart symbol="NIFTY" title="NIFTY Weekly" history={chartHistory} spot={niftySpot} chain={nifty}/>
       <SignalSummary title="NIFTY" chain={nifty} spot={niftySpot}/>
     </section>
     <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 space-y-3">
@@ -895,10 +895,32 @@ export default function IVSkewFlipPage() {
       <p className="text-[11px] theme-muted">Raw frame / exchange tick counters are shared-manager diagnostics, not NIFTY-only proof. IV Accepted confirms this consumer received a usable NIFTY spot record. Weekly and Monthly use the same NIFTY spot gate.</p>
     </section>
     <section className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-bold theme-text">BANKNIFTY Monthly Option Chain</h2><span className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs font-bold">{String(bank.option_feed?.status??"WAITING")}</span></div>
-      <div className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs theme-muted">Expiry selection date: {String(bank.expiry_selection?.selection_date??"—")} • Selected: {String(bank.expiry_selection?.selected_expiry??"—")} • Contracts: {fmt(bank.universe_tokens,0)} • Spot age: {age(bankSpot.age_ms)}</div>
-      <OptionChain title="BANKNIFTY Monthly" chain={bank as Chain} spot={bankSpot}/>
-      <SignalSummary title="BANKNIFTY" chain={bank as Chain} spot={bankSpot}/>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-extrabold theme-text">BANKNIFTY Monthly • Live Options Analytics</h2><p className="mt-1 text-xs theme-muted">Independent BANKNIFTY spot gate • selected monthly expiry • ATM-centred 7 strikes / 14 CE-PE contracts • same IV / OI / Gamma signal engine</p></div><div className="flex flex-wrap items-center gap-2"><span className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs font-bold">{String(bank.option_feed?.status??"WAITING")}</span><button onClick={()=>void fetchBrokerSnapshot("BANKNIFTY")} disabled={!running||snapshotBusy} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface px-3 py-2 text-xs font-bold disabled:opacity-50">{snapshotBusy?"Fetching broker…":"Fetch BANKNIFTY Broker IV + Chain"}</button></div></div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Metric label="BANKNIFTY Spot" value={fmt(bankSpot.price)} sub={bankSpot.fresh===true?"LIVE":bankSpot.quote_status==="LAST_KNOWN_STALE"?`LAST • ${age(bankSpot.age_ms)} old`:"WAITING"}/>
+        <Metric label="ATM Strike" value={fmt(bank.option_feed?.atm_strike,0)}/>
+        <Metric label="Monthly Expiry" value={String(bank.option_feed?.expiry??bank.expiry_selection?.selected_expiry??"—")}/>
+        <Metric label="Spot Age" value={age(bankSpot.age_ms)} sub={`Source age ${age(bankSpot.source_age_ms)}`}/>
+      </div>
+      <div className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs theme-muted">Expiry selection date: {String(bank.expiry_selection?.selection_date??"—")} • Selected: {String(bank.expiry_selection?.selected_expiry??"—")} • Master candidates: {Array.isArray(bank.expiry_selection?.available_expiries)?(bank.expiry_selection!.available_expiries as string[]).join(", "):"Waiting for instrument-master diagnostics"} • Contracts: {fmt(bank.universe_tokens,0)} • Last broker snapshot: {sampleTime(bankDurableHistory?.snapshot_at_ns)}</div>
+      <OptionChain title="BANKNIFTY Monthly" chain={bank} spot={bankSpot}/>
+      <IndexOiVolumeChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" chain={bank} spot={bankSpot}/>
+      <IndexSpotIvChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" history={bankChartHistory} spot={bankSpot} chain={bank}/>
+      <SignalSummary title="BANKNIFTY" chain={bank} spot={bankSpot}/>
+    </section>
+    <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold theme-text">BANKNIFTY Spot Feed Diagnostics</h3><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-1 text-xs">{String(spotFeed.status??"WAITING")}</span></div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Metric label="BANKNIFTY Receive Age" value={age(bankSpot.age_ms)} sub="Local callback receive time"/>
+        <Metric label="BANKNIFTY Source Age" value={age(bankSpot.source_age_ms)} sub="Broker exchange timestamp"/>
+        <Metric label="Spot Freshness" value={bankSpot.fresh===true?"LIVE":bankSpot.quote_status==="LAST_KNOWN_STALE"?"STALE":"WAITING"} sub={sampleTime(bankSpot.last_trade_time)}/>
+        <Metric label="BANKNIFTY ATM" value={fmt(bank.option_feed?.atm_strike,0)} sub={String(bank.option_feed?.expiry??"Monthly expiry waiting")}/>
+        <Metric label="IV Spot Callbacks" value={fmt(spotValidation.callbacks_received,0)} sub="Shared IV spot adapter counters"/>
+        <Metric label="IV Accepted" value={fmt(spotValidation.accepted_records,0)} sub="Shared normalized spot delivery"/>
+        <Metric label="IV Rejected" value={fmt(spotValidation.rejected_records,0)} sub="Shared adapter validation"/>
+        <Metric label="Normalized Delivered" value={fmt(spotTransport.normalized_records_delivered,0)} sub="Process-wide shared manager"/>
+      </div>
+      <p className="text-[11px] theme-muted">Per-index BANKNIFTY freshness is taken from its own spot record. Callback and raw-frame counters are shared transport diagnostics, not BANKNIFTY-only counts. No missing or stale values are substituted.</p>
     </section>
     <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
