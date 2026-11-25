@@ -514,16 +514,26 @@ class CommonWebSocketManager:
     ) -> dict[int, dict[tuple[int, str], int]]:
         """Return one unambiguous preferred lane for each active broker token."""
         affinity_by_pair: dict[tuple[int, tuple[int, str]], set[int | None]] = defaultdict(set)
+        descriptors_by_pair: dict[
+            tuple[int, tuple[int, str]], set[InstrumentDescriptor]
+        ] = defaultdict(set)
         for sub in self.registry.subscriptions():
             descriptor = self.registry.get(sub.key)
             if descriptor is None:
                 continue
             exchange_type = self._resolve_exchange_type(sub.key)
             pair = (exchange_type, sub.key.token.strip())
-            affinity_by_pair[(sub.mode, pair)].add(descriptor.preferred_socket_lane)
+            identity = (sub.mode, pair)
+            affinity_by_pair[identity].add(descriptor.preferred_socket_lane)
+            descriptors_by_pair[identity].add(descriptor)
 
         preferred: dict[int, dict[tuple[int, str], int]] = defaultdict(dict)
         for (mode, pair), lanes in affinity_by_pair.items():
+            if len(descriptors_by_pair[(mode, pair)]) > 1:
+                raise ValueError(
+                    "ambiguous broker token affinity: one exchange/token maps to "
+                    "multiple instrument descriptors"
+                )
             locked_lanes = {lane for lane in lanes if lane is not None}
             if len(locked_lanes) > 1 or (locked_lanes and None in lanes):
                 raise ValueError(
