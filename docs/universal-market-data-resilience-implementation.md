@@ -7,7 +7,7 @@ Status: implementation in progress on `feat/universal-market-data-resilience`. N
 - One process-owned Angel One WebSocket manager owns exactly three managed socket lanes while the market-data service is ON.
 - One universal ingestion path validates, normalizes, timestamps, deduplicates, and publishes market data into a bounded canonical pool.
 - Box Spread, IV Scanner, Synthetic and other strategy runners remain independent consumers. Their calculations, lifecycle controls, and strategy state are not merged into the shared runner.
-- A failed lane's subscriptions are reassigned to healthy lanes within broker-confirmed limits. Recovery is gradual and generation-fenced.
+- A failed lane is retired and recreated in-place under the same `(mode, shard)` identity. Strict user-locked affinity forbids cross-lane co-location or redistribution; healthy lanes remain untouched.
 - No strategy may instantiate an independent Angel socket outside the manager after migration is complete.
 
 ## Existing foundations verified in source
@@ -35,8 +35,9 @@ Acceptance:
 1. **Three-lane ownership and distribution**
    - Explicit lane inventory and global token budget.
    - Three lane lifecycle states; no per-strategy sockets.
-   - Stable weighted assignment with reserved failover headroom.
-   - One-lane and two-lane outage redistribution; recovery rebalance with hysteresis.
+   - Deterministic descriptor-level affinity and a global physical-session/token budget.
+   - Same-lane socket recreation with generation fencing; no cross-lane redistribution or recovery rebalance under the locked topology.
+   - Fail closed before registry/route mutation when the global session budget cannot represent all active `(mode, shard)` groups.
    - Do not exceed broker-confirmed connection/token limits.
 
 2. **Transport liveness and API reachability**
@@ -97,11 +98,11 @@ This audit distinguishes a class that can open sockets from a production lifecyc
 - Socket identity is `(mode, shard)`, so the global three-session cap must count groups across all modes.
 - Registry subscriptions collapse multiple consumer modes to the maximum mode for a shared instrument. That is an existing compatibility rule; changing it requires a dedicated migration and tests because consumers may otherwise observe altered broker mode.
 - The locked affinity metadata is instrument-level, while consumers span multiple underlyings and may subscribe in different modes. A safe implementation must resolve canonical descriptors per broker instrument, apply locked affinity only to compatible subscriptions, preserve consumer routes, and reject incompatible placement before mutating live assignments.
-- The live allocator now uses `preferred_socket_lane` by canonical `(mode, exchange_type, token)` identity and applies the global session cap before committing assignments/routes. Locked-lane failover redistribution and stable recovery rebalance remain pending; the current integration pins preferred placement and does not yet implement outage redistribution.
+- The live allocator now uses `preferred_socket_lane` by canonical `(mode, exchange_type, token)` identity and applies the global session cap before committing assignments/routes. Recovery recreates a failed socket in the same `(mode, shard)` lane; cross-lane redistribution and recovery rebalance are intentionally excluded by the locked topology.
 
 ### Next acceptance gate
 
-After the initial live affinity integration, continue deterministic tests for: canonical descriptor lookup across exchange/token identities; cross-mode group-cap rejection without assignment mutation; shared-instrument multi-consumer mode behavior; and failover/recovery placement preserving consumer routes. Add failover redistribution only after preferred-lane preservation and global capacity can be proven without socket side effects.
+After the initial live affinity integration, continue deterministic tests for: canonical descriptor lookup across exchange/token identities; cross-mode group-cap rejection without assignment mutation; shared-instrument multi-consumer mode behavior; and failover/recovery placement preserving consumer routes. Continue testing same-lane retirement/recreation, global capacity rejection, mode isolation, and route preservation. Do not add cross-lane failover redistribution: it conflicts with the locked three-lane contract.
 
 
 ### Consumer-owner granularity audit — 2026-11-25
