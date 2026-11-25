@@ -445,7 +445,7 @@ export default function HomePage() {
     const loadSharedRunner = async () => {
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-        const response = await fetch(base + "/api/v1/market-data/shared-index-runner/health", {
+        const response = await fetch(base + "/api/v1/market-data/shared-index-runner/health-lite", {
           cache: "no-store",
           signal: AbortSignal.timeout(3000),
         });
@@ -531,14 +531,14 @@ export default function HomePage() {
   const sharedRunnerReady = sharedRunner?.live_data_ready === true;
   const sharedRunnerSampleAge = sharedRunnerLastSuccessAt == null ? null : Math.max(0, (Date.now() - sharedRunnerLastSuccessAt) / 1000);
   const sharedRunnerStatus = sharedRunnerFetchFailed && sharedRunnerSampleAge != null ? "LAST KNOWN • HEALTH FETCH FAILED" : !sharedRunner ? "CHECKING" : !sharedRunnerEnabled ? "STOPPED" : sharedRunnerReady ? "LIVE DATA READY" : sharedRunner.initial_option_bootstrap_done ? (effectiveMarketSession === "CLOSED" ? "RUNNING • MARKET CLOSED" : "RUNNING • FEED NOT READY") : "RUNNING • BOOTSTRAPPING";
-  const sharedRecords: any[] = Array.isArray(sharedRunner?.records) ? sharedRunner.records : [];
+  const sharedFeedGroups = sharedRunner?.feed_health_by_group ?? {};
   const getRecordFeed = (underlying: string, kind: string) => {
-    const rows = sharedRecords.filter((item) => String(item.underlying ?? "").toUpperCase() === underlying && String(item.instrument_type ?? "").toLowerCase() === kind);
-    const fresh = rows.filter((item) => item.fresh === true).length;
-    const ages = rows.filter((item) => item.feed_age_seconds != null).map((item) => Number(item.feed_age_seconds)).filter((age) => Number.isFinite(age) && age >= 0);
-    const maxAge = ages.length ? Math.max(...ages) : null;
-    const status = !sharedRunner ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : rows.length === 0 ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : fresh === rows.length ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : fresh > 0 ? "PARTIAL / STALE" : "STALE";
-    return { rows: rows.length, fresh, maxAge, status };
+    const group = sharedFeedGroups[underlying + ":" + kind] ?? null;
+    const rows = Number(group?.count ?? 0);
+    const fresh = Number(group?.fresh_count ?? 0);
+    const maxAge = group?.max_age_seconds != null && Number.isFinite(Number(group.max_age_seconds)) ? Number(group.max_age_seconds) : null;
+    const status = !sharedRunner ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : rows === 0 ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : fresh === rows ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : fresh > 0 ? "PARTIAL / STALE" : "STALE";
+    return { rows, fresh, maxAge, status };
   };
   const getSpotFeed = (underlying: string) => {
     const spot = sharedRunner?.latest_spots?.[underlying];
