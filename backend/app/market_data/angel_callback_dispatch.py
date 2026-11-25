@@ -90,10 +90,13 @@ class AngelShardCallbackAdapter:
         invocations: Iterable[CallbackInvocation],
     ) -> bool:
         with self._lock:
-            if self._closed:
-                return False
+            # A non-draining retirement advances the generation as well as
+            # closing the adapter. Check the generation first so late publishes
+            # are accounted as stale rather than being hidden by the closed flag.
             if generation != self._generation:
                 self._stale += 1
+                return False
+            if self._closed:
                 return False
         # Detach SDK payloads before they cross the thread boundary while
         # preserving the payload shape expected by existing consumers.
