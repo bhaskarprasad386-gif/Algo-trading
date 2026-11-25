@@ -151,3 +151,19 @@ def test_shared_runner_option_adapter_fails_closed_on_expiry_or_token_mismatch()
         adapter.start(wrong_expiry)
     assert adapter.latest_quotes() == ()
     assert runner.stop_calls == 0
+
+
+
+def test_shared_runner_spot_adapter_fails_closed_when_shared_runner_is_off():
+    class StoppedRunner(FakeSharedRunner):
+        def snapshot(self):
+            return {"enabled": False, "initial_option_bootstrap_done": False}
+
+    universe = make_universe()
+    runner = StoppedRunner(make_records(universe, time_ns()), make_descriptors(universe))
+    adapter = IVSharedRunnerSpotFeedAdapter(shared_runner=runner)
+
+    with pytest.raises(RuntimeError, match="SHARED_RUNNER_NOT_READY"):
+        adapter.start(object(), ("NIFTY", "BANKNIFTY"))
+    assert adapter.snapshot()["status"] == "STOPPED"
+    assert runner.stop_calls == 0
