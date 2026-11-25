@@ -35,19 +35,38 @@ class IVEarlyEntryAlertEngine:
         if underlying not in self.aggregators:
             raise ValueError("early-entry alerts support only NIFTY and BANKNIFTY")
         aggregator = self.aggregators[underlying]
-        self.store.expire_session_alerts(now=now)
+        expired_count = self.store.expire_session_alerts(now=now)
         live_spot_stamp = int(getattr(spot, "timestamp_ns", 0) or 0)
         live_spot_price = float(getattr(spot, "price", 0) or 0)
+        invalidated_count = 0
         # Lifecycle invalidation is driven only by a genuinely live spot
         # tick. A stale cached price must never invalidate an otherwise active
         # wall alert merely because it sits beyond the recorded strike.
         if (0 < live_spot_stamp <= now_ns
                 and now_ns - live_spot_stamp <= 5_000_000_000
                 and live_spot_price > 0):
-            self.store.invalidate_breached_oi_walls(
+            invalidated_count = self.store.invalidate_breached_oi_walls(
                 spot=live_spot_price, observed_at_ns=live_spot_stamp,
                 underlying=underlying,
             )
+        # Lifecycle transitions update durable rows before strategy sampling.
+        # Refresh the cached per-index history immediately, including when the
+        # sampler is degraded and the evaluation returns WATCH below; otherwise
+        # PagePush can keep presenting an obsolete EARLY_ENTRY state indefinitely.
+        if expired_count or invalidated_count:
+            try:
+                refreshed = self.store.latest(limit=30, underlying=underlying)
+            except Exception:
+                # History is observational: a read outage must not block sampling.
+                pass
+            else:
+                stream_id = "NIFTY_WEEKLY" if underlying == "NIFTY" else "BANKNIFTY_MONTHLY"
+                cached = dict(self._last_results.get(stream_id, {
+                    "state": "WATCH", "underlying": underlying,
+                    "signals_allowed": False, "reason": "NOT_EVALUATED",
+                }))
+                cached["alerts"] = refreshed
+                self._last_results[stream_id] = cached
         if not expiry:
             return {"state": "WATCH", "reason": "WAITING_FOR_EXPIRY", "signals_allowed": False}
         snapshot = sampler.snapshot()
