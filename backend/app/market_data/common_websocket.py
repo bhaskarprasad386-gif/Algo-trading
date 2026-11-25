@@ -2137,7 +2137,7 @@ class CommonWebSocketManager:
                         return
                 for observer in observers_by_key.get(key, ()):
                     if not self._is_current_data_generation(group, generation):
-                        break
+                        return
                     with self._lock:
                         connection_current = (
                             generation is not None
