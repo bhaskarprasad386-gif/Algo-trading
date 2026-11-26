@@ -63,3 +63,18 @@ def test_instrumented_rlock_records_outer_hold_and_acquisition_wait():
     # Reentrant nesting is counted as one outer critical-section hold.
     assert sum(snapshot["hold_duration_buckets"].values()) == 2
     assert snapshot["average_hold_seconds"] is not None
+
+
+
+def test_sqlalchemy_pool_connect_boundary_records_real_checkout():
+    from sqlalchemy import text
+
+    from app.core.database import database_pool_snapshot, engine
+
+    before = database_pool_snapshot()
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT 1")).scalar_one() == 1
+    after = database_pool_snapshot()
+
+    assert after["checkout_wait_count"] >= before["checkout_wait_count"] + 1
+    assert after["completed_checkouts"] >= before["completed_checkouts"] + 1
