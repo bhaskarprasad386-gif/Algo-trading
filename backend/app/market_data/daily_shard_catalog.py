@@ -123,9 +123,7 @@ class DailyMarketDataShardCatalog:
                 )
             # Instrument names are deduplicated across daily shards. This is a
             # bounded identity set, not a per-instrument SQL round-trip.
-            instruments.update(
-                catalog.instruments(source=source, timeframe=timeframe)
-            )
+            instruments.update(summary["instrument_names"])
         return {
             "record_count": record_count,
             "instruments": len(instruments),
