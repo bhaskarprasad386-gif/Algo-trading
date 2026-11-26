@@ -2,7 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.scanner.iv_skew_flip.engine import OptionQuote, ScannerConfig, black_scholes_price
-from app.scanner.iv_skew_flip.sampler import IVOneSecondSampler, SpotSnapshot
+from app.scanner.iv_skew_flip.sampler import IVOneSecondSampler, OptionMetricSample, SpotSnapshot
 
 
 class QuoteSource:
@@ -679,3 +679,104 @@ def test_sampler_does_not_infer_oi_timestamp_from_price_quote_timestamp():
     assert result["oi_live_count"] == 0
     assert result["live_metrics"][0]["oi_live"] is False
     assert sampler.history_snapshot("ce-token")[-1].oi_timestamp_ns is None
+
+
+def test_sampler_source_key_persistence_uses_one_select_for_many_contracts():
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.core.database import Base
+    from app.models.iv_option_observation import IVOptionObservation
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    statements = []
+
+    def capture_sql(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "iv_option_observations" in statement:
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_sql)
+    sampler = IVOneSecondSampler(
+        quote_source=QuoteSource(),
+        spot_provider=lambda: None,
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        history_session_factory=Session,
+    )
+    samples = [
+        OptionMetricSample(
+            token=f"token-{index}", underlying="NIFTY", expiry="2026-11-12",
+            strike=21950.0 + index * 50, option_type="CE", sampled_at_ns=1_800_000_000_000_000_000,
+            source_timestamp_ns=1_800_000_000_000_000_000 + index,
+            spot_timestamp_ns=1_800_000_000_000_000_000, spot_price=21950.0,
+            oi=1000 + index, mark=100.0, ltp=100.0, iv=20.0,
+            iv_input="LTP", bid=99.5, ask=100.5, volume=100,
+            oi_timestamp_ns=1_800_000_000_000_000_000,
+        )
+        for index in range(12)
+    ]
+
+    assert sampler._persist_history(samples) == 12
+    assert sampler._persist_history(samples) == 0
+    assert len(statements) == 2, "one indexed source-key SELECT per persistence batch, not one per contract"
+
+    with Session() as session:
+        assert session.query(IVOptionObservation).count() == 12
+    engine.dispose()
+
+
+def test_sampler_restore_loads_only_recent_window_and_latest_per_contract():
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.core.database import Base
+    from app.models.iv_option_observation import IVOptionObservation
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    now_ns = 1_800_000_000_000_000_000
+    with Session() as session:
+        for seconds_ago, price in ((1000, 100.0), (700, 101.0), (100, 102.0)):
+            timestamp = now_ns - seconds_ago * 1_000_000_000
+            session.add(IVOptionObservation(
+                token="restore-ce", underlying="NIFTY", expiry="2026-11-12",
+                strike=21950.0, option_type="CE", source_timestamp_ns=timestamp,
+                spot_timestamp_ns=timestamp, spot_price=21950.0, sampled_at_ns=timestamp,
+                iv=20.0, oi=10000, oi_timestamp_ns=timestamp,
+                bid=99.5, ask=100.5, ltp=100.0, mark=100.0, volume=100,
+            ))
+        session.commit()
+
+    statements = []
+
+    def capture_sql(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "iv_option_observations" in statement:
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_sql)
+    sampler = IVOneSecondSampler(
+        quote_source=QuoteSource(),
+        spot_provider=lambda: None,
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns,
+        history_session_factory=Session,
+        history_seconds=600,
+    )
+
+    loaded = sampler._restore_history(now_ns)
+
+    assert loaded == 1
+    assert len(statements) == 2
+    assert len(sampler.history_snapshot("restore-ce")) == 1
+    assert sampler.history_snapshot("restore-ce")[0].source_timestamp_ns == now_ns - 100_000_000_000
+    assert sampler._last_display["restore-ce"].ltp == 100.0 or sampler._last_display["restore-ce"].ltp == 100.0
+    assert sampler._last_source_timestamp["restore-ce"] == now_ns - 100_000_000_000
+    engine.dispose()
