@@ -8,7 +8,7 @@ buffer is lost on backend restart. The dashboard cannot use it while the API is 
 `algo-diagnostics.service` is an independent systemd process. It reads the
 `algo-trading.service` journal and, while the API is reachable, snapshots the
 process-local `/api/v1/diagnostics/errors` ring buffer into bounded SQLite storage.
-It serves persisted ERROR/WARNING/CRITICAL events on `127.0.0.1:8765`. Error
+It serves persisted ERROR/WARNING/CRITICAL events on `127.0.0.1:8765` through a read-only GET interface. POST, PUT, PATCH, and DELETE requests are rejected with HTTP 405. The dashboard has no edit, delete, clear, or acknowledge action; refresh, filter, and copy are view-only client actions. The collector itself writes its bounded SQLite cache automatically. Error
 messages and operational details are intentionally visible on the public dashboard.
 Credential and account-secret patterns are redacted before persistence and response.
 It preserves runtime diagnostics captured before an API outage and journal errors
@@ -60,6 +60,7 @@ the public HTTPS route and verify that the collector remains loopback-only.
 
 - `GET /health`: independent collector and SQLite readiness, plus API process reachability.
 - `GET /api/errors?limit=1..200`: newest sanitized journal/runtime events.
+- Read-only contract: GET only; POST/PUT/PATCH/DELETE return HTTP 405. No user-facing log mutation endpoints.
 - 14-day retention, maximum 3,000 events by default.
 - Exposes event id, server timestamp, severity, component, sanitized message,
   and source only.
