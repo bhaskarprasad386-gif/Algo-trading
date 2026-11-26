@@ -2976,7 +2976,7 @@ def save_iv_skew_flip_config(payload: dict):
                 _save_iv_scanner_enabled(True)
             except Exception as exc:
                 app_logger.exception("IV Scanner ON state could not be persisted")
-                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not started because ON state could not be saved.", "reason": str(exc)}) from exc
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not started because ON state could not be saved.", "reason": type(exc).__name__}) from exc
             try:
                 snapshot = _start_iv_skew_flip_runtime()
             except Exception as exc:
@@ -2986,7 +2986,7 @@ def save_iv_skew_flip_config(payload: dict):
                 except Exception:
                     app_logger.exception("IV Scanner failed to roll back persisted ON state after startup failure")
                 app_logger.exception("IV Scanner could not be enabled")
-                raise HTTPException(status_code=503, detail={"message": "IV Scanner ON save failed because backend runner did not start.", "reason": str(exc)}) from exc
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner ON save failed because backend runner did not start.", "reason": type(exc).__name__}) from exc
         else:
             # Persist OFF first. If the database is unavailable, leave the
             # currently running scanner untouched rather than create a
@@ -2995,7 +2995,7 @@ def save_iv_skew_flip_config(payload: dict):
                 _save_iv_scanner_enabled(False)
             except Exception as exc:
                 app_logger.exception("IV Scanner OFF state could not be persisted")
-                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not stopped because OFF state could not be saved.", "reason": str(exc)}) from exc
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not stopped because OFF state could not be saved.", "reason": type(exc).__name__}) from exc
             snapshot = _stop_iv_skew_flip_runtime()
         return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
                 "runner_status": snapshot.get("status", "STOPPED"),
