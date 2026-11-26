@@ -16,7 +16,7 @@ def test_cash_future_live_route_uses_common_feed_snapshot(monkeypatch):
 
     monkeypatch.setattr(routes, "_live_cash_future_snapshot_provider", snapshot)
 
-    response = routes.cash_future_live_scanner(symbols="abc", db=None)
+    response = routes.cash_future_live_scanner(symbols="abc")
 
     assert calls == {"max_age_seconds": 5.0, "limit": 50}
     assert response["status"] == "success"
@@ -29,6 +29,6 @@ def test_cash_future_live_route_returns_503_when_not_wired(monkeypatch):
     monkeypatch.setattr(routes, "_live_cash_future_snapshot_provider", None)
 
     with pytest.raises(Exception) as exc_info:
-        routes.cash_future_live_scanner(symbols="ABC", db=None)
+        routes.cash_future_live_scanner(symbols="ABC")
 
     assert exc_info.value.status_code == 503
