@@ -54,42 +54,67 @@ export default function HomePage() {
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
+    const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
     const checkServer = async () => {
+      // Liveness and database readiness are different signals. A busy database
+      // must not make a running API process look offline in the dashboard.
+      let processReachable = false;
       try {
-        const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/health", {
+        const liveResponse = await fetch(base + "/health/live", {
           cache: "no-store",
-          signal: AbortSignal.timeout(4000),
+          signal: AbortSignal.timeout(2500),
         });
-        if (!response.ok) throw new Error("health HTTP " + response.status);
-        const body = await response.json();
-        const healthy = body?.status === "ok" && String(body?.database ?? "").toLowerCase() === "connected";
+        if (!liveResponse.ok) throw new Error("liveness HTTP " + liveResponse.status);
+        const liveBody = await liveResponse.json();
+        if (liveBody?.status !== "ok") throw new Error("invalid liveness response");
+        processReachable = true;
         healthFailureCountRef.current = 0;
-        if (!cancelled) {
-          setApiStatus(healthy ? "connected" : "degraded");
-          setApiDetail(healthy
-            ? "API and database healthy"
-            : "API responding; database/status degraded (" + String(body?.database ?? body?.status ?? "unknown") + ")");
-        }
       } catch (error) {
         healthFailureCountRef.current += 1;
         if (!cancelled) {
           const failures = healthFailureCountRef.current;
-          // A failed browser probe does not prove the VPS process is down.
-          // Keep the last known status for two misses; only then report API unreachable.
           if (failures >= 3) {
             setApiStatus("error");
-            setApiDetail("API health endpoint unreachable after 3 consecutive probes: " +
+            setApiDetail("API process liveness probe failed after 3 consecutive attempts: " +
               (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")
-                ? "Health check timed out after 4 seconds"
-                : "Network/HTTP health check failed"));
+                ? "process probe timed out after 2.5 seconds"
+                : "network/HTTP failure"));
           } else {
-            setApiDetail("API health probe missed (" + failures + "/3); retrying before changing connectivity status");
+            setApiDetail("API process probe missed (" + failures + "/3); retrying");
           }
         }
-      } finally {
-        // Schedule the next probe only after this one settles; never overlap requests.
-        if (!cancelled) timer = window.setTimeout(() => { void checkServer(); }, 5000);
       }
+
+      if (processReachable) {
+        try {
+          const readyResponse = await fetch(base + "/health", {
+            cache: "no-store",
+            signal: AbortSignal.timeout(2000),
+          });
+          let readyBody: any = {};
+          try { readyBody = await readyResponse.json(); } catch { /* retain HTTP status as diagnostic */ }
+          const ready = readyResponse.ok &&
+            readyBody?.status === "ok" &&
+            String(readyBody?.database ?? "").toLowerCase() === "connected";
+          if (!cancelled) {
+            setApiStatus(ready ? "connected" : "degraded");
+            setApiDetail(ready
+              ? "API process and database readiness healthy"
+              : "API process reachable; database readiness degraded (" +
+                String(readyBody?.database_error_class ?? readyBody?.database ?? ("HTTP " + readyResponse.status)) + ")");
+          }
+        } catch (error) {
+          if (!cancelled) {
+            setApiStatus("degraded");
+            setApiDetail("API process reachable; database readiness probe " +
+              (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")
+                ? "timed out after 2 seconds"
+                : "could not be confirmed"));
+          }
+        }
+      }
+      // Schedule after both probes settle; never overlap health requests.
+      if (!cancelled) timer = window.setTimeout(() => { void checkServer(); }, 5000);
     };
     void checkServer();
     return () => {
