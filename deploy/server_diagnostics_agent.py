@@ -25,7 +25,7 @@ POLL_SECONDS = max(2, int(os.environ.get("DIAGNOSTICS_POLL_SECONDS", "5")))
 RETENTION_DAYS = max(1, int(os.environ.get("DIAGNOSTICS_RETENTION_DAYS", "14")))
 MAX_EVENTS = max(100, int(os.environ.get("DIAGNOSTICS_MAX_EVENTS", "3000")))
 STOP = threading.Event()
-API_URL = os.environ.get("DIAGNOSTICS_API_URL", "http://127.0.0.1:8000/api/v1/diagnostics/errors?limit=100")
+API_URL = os.environ.get("DIAGNOSTICS_API_URL", "http://127.0.0.1:8000/api/v1/diagnostics/errors?limit=20")
 API_TIMEOUT_SECONDS = max(0.5, float(os.environ.get("DIAGNOSTICS_API_TIMEOUT_SECONDS", "2")))
 # Preserve multi-frame tracebacks and broker response context while keeping the
 # bounded SQLite store predictable (3,000 events x 16 KiB maximum).
@@ -127,7 +127,7 @@ def collect_api_diagnostics(db: sqlite3.Connection) -> None:
         with urlopen(request, timeout=API_TIMEOUT_SECONDS) as response:
             if response.status != 200:
                 raise OSError("diagnostics API returned non-200")
-            payload = json.loads(response.read(1_000_000).decode("utf-8"))
+            payload = json.loads(response.read(2_000_000).decode("utf-8"))
         if not isinstance(payload, dict) or not isinstance(payload.get("errors"), list):
             raise ValueError("diagnostics API schema is invalid")
     except Exception:
@@ -137,7 +137,7 @@ def collect_api_diagnostics(db: sqlite3.Connection) -> None:
 
     now = time.time()
     with db:
-        for event in payload["errors"][:100]:
+        for event in payload["errors"][:20]:
             if not isinstance(event, dict):
                 continue
             event_id = str(event.get("id") or "").strip()
