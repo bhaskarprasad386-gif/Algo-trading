@@ -74,6 +74,7 @@ def _safe_health_fields(path: str, payload: object) -> dict:
                 "cycles", "publish_errors", "client_send_successes",
                 "client_send_failures", "seconds_since_last_success",
                 "last_build_seconds", "max_build_seconds",
+                "last_build_dispatch_wait_seconds", "max_build_dispatch_wait_seconds",
                 "last_serialization_seconds", "max_serialization_seconds",
                 "last_payload_bytes", "last_fanout_seconds",
                 "max_fanout_seconds", "last_client_count", "last_sent_count",

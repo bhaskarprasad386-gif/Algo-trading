@@ -12,6 +12,7 @@ def test_dashboard_stream_telemetry_tracks_build_fanout_and_client_health():
         failed_count=1,
         build_seconds=0.25,
         fanout_seconds=0.76,
+        build_dispatch_wait_seconds=0.18,
         serialization_seconds=0.03,
         payload_bytes=4096,
         cycle_seconds=1.2,
@@ -26,6 +27,8 @@ def test_dashboard_stream_telemetry_tracks_build_fanout_and_client_health():
     assert snapshot["last_sent_count"] == 2
     assert snapshot["last_failed_count"] == 1
     assert snapshot["last_build_seconds"] == 0.25
+    assert snapshot["last_build_dispatch_wait_seconds"] == 0.18
+    assert snapshot["max_build_dispatch_wait_seconds"] == 0.18
     assert snapshot["last_fanout_seconds"] == 0.76
     assert snapshot["last_serialization_seconds"] == 0.03
     assert snapshot["max_serialization_seconds"] == 0.03
