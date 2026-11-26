@@ -394,14 +394,27 @@ def test_iv_latest_per_contract_restore_uses_covering_contract_index(
             rows,
         )
         connection.execute(text("ANALYZE iv_option_observations"))
+        # Match the production restore shape: aggregate latest timestamp per
+        # token, then join those identities back to full observation rows.
         plan = connection.execute(
             text(
                 "EXPLAIN QUERY PLAN "
-                "SELECT token, MAX(source_timestamp_ns) "
+                "SELECT iv_option_observations.* "
                 "FROM iv_option_observations "
-                "WHERE underlying = :underlying AND expiry = :expiry "
-                "AND source_timestamp_ns <= :now "
-                "GROUP BY token"
+                "JOIN ("
+                " SELECT token AS token, "
+                " MAX(source_timestamp_ns) AS latest_source_timestamp_ns "
+                " FROM iv_option_observations "
+                " WHERE underlying = :underlying AND expiry = :expiry "
+                " AND source_timestamp_ns <= :now "
+                " GROUP BY token"
+                ") AS latest_source "
+                "ON iv_option_observations.token = latest_source.token "
+                "AND iv_option_observations.source_timestamp_ns = "
+                "latest_source.latest_source_timestamp_ns "
+                "WHERE iv_option_observations.underlying = :underlying "
+                "AND iv_option_observations.expiry = :expiry "
+                "AND iv_option_observations.source_timestamp_ns <= :now"
             ),
             {
                 "underlying": "NIFTY",
@@ -410,6 +423,12 @@ def test_iv_latest_per_contract_restore_uses_covering_contract_index(
             },
         ).all()
 
-    details = " ".join(str(row[-1]) for row in plan).upper()
-    assert "COVERING INDEX IX_IV_OPTION_OBSERVATION_CONTRACT_TIME" in details
-    assert "TEMP B-TREE" not in details
+    details = [str(row[-1]).upper() for row in plan]
+    combined = " ".join(details)
+    assert any(
+        "COVERING INDEX IX_IV_OPTION_OBSERVATION_CONTRACT_TIME" in detail
+        for detail in details
+    ), combined
+    assert sum("INDEX IX_IV_OPTION_OBSERVATION_CONTRACT_TIME" in detail for detail in details) >= 2, combined
+    assert any("SEARCH" in detail for detail in details), combined
+    assert not any("TEMP B-TREE" in detail for detail in details), combined
