@@ -345,7 +345,8 @@ export default function HomePage() {
           setRuntimeServerTimestampReceivedAt(receivedAt);
         }
         const runners = body?.runners ?? {};
-        const cacheAgeSeconds = Number(body?._snapshot_cache?.age_seconds);
+        const rawCacheAgeSeconds = body?._snapshot_cache?.age_seconds;
+        const cacheAgeSeconds = rawCacheAgeSeconds == null ? NaN : Number(rawCacheAgeSeconds);
         const serverSampleTime = typeof body?.server_timestamp === "string"
           ? new Date(body.server_timestamp).getTime()
           : NaN;
