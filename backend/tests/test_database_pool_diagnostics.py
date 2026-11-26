@@ -25,13 +25,13 @@ def test_database_pool_snapshot_reports_queue_pool_occupancy(monkeypatch):
 
     snapshot = database.database_pool_snapshot()
 
-    assert snapshot == {
-        "pool_class": "_QueuePool",
-        "size": 5,
-        "checkedin": 2,
-        "checkedout": 13,
-        "overflow": 8,
-    }
+    assert snapshot["pool_class"] == "_QueuePool"
+    assert snapshot["size"] == 5
+    assert snapshot["checkedin"] == 2
+    assert snapshot["checkedout"] == 13
+    assert snapshot["overflow"] == 8
+    assert snapshot["active_checkout_count"] == 0
+    assert snapshot["long_checkout_count"] == 0
 
 
 def test_database_pool_snapshot_is_safe_for_pools_without_queuepool_counters(monkeypatch):
@@ -39,13 +39,13 @@ def test_database_pool_snapshot_is_safe_for_pools_without_queuepool_counters(mon
 
     snapshot = database.database_pool_snapshot()
 
-    assert snapshot == {
-        "pool_class": "_StaticPool",
-        "size": None,
-        "checkedin": None,
-        "checkedout": None,
-        "overflow": None,
-    }
+    assert snapshot["pool_class"] == "_StaticPool"
+    assert snapshot["size"] is None
+    assert snapshot["checkedin"] is None
+    assert snapshot["checkedout"] is None
+    assert snapshot["overflow"] is None
+    assert snapshot["active_checkout_count"] == 0
+    assert snapshot["long_checkout_count"] == 0
 
 
 
