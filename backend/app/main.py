@@ -247,8 +247,7 @@ def _box_spread_targets_from_master(master, symbols, weekly_only_symbols=()):
     )
     weekly_only = set(weekly_only_symbols or ())
     if weekly_only - {"NIFTY", "SENSEX"} or weekly_only - set(selected):
-        raise ValueError("weekly-only mode is valid only for selected NIFTY/SENSEX")
-    today = datetime.now(IST).date()
+        raise ValueError("weekly-only mode is valid only for selected NIFTY/SENSEX")    today = datetime.now(IST).date()
     targets = []
     expiry_types = {}
     for symbol in selected:
@@ -746,8 +745,7 @@ async def lifespan(app: FastAPI):
                 task.cancel()
         shutdown_tasks = tuple(
             task
-            for task in (
-                _history_collector_task,
+            for task in (                _history_collector_task,
                 _contract_master_sync_task,
                 _live_cash_future_task,
                 _live_calendar_spread_task,
@@ -1245,8 +1243,7 @@ async def _live_synthetic_loop() -> None:
                     expiry = datetime.strptime(expiry_text.upper(), "%d%b%Y").date()
                 except ValueError:
                     try:
-                        expiry = datetime.strptime(expiry_text.upper(), "%d%b%y").date()
-                    except ValueError:
+                        expiry = datetime.strptime(expiry_text.upper(), "%d%b%y").date()                    except ValueError:
                         continue
                 if expiry < today:
                     continue
@@ -1744,8 +1741,7 @@ def _credit_butterfly_condor_page_snapshot(expiry_type: str) -> dict:
             "source": str(snapshot.get("source") or "box-spread-live-runner"),
             "read_only": True,
             "quote_contract_count": int(quotes.get("contract_count") or 0),
-            "quote_group_count": len(quotes.get("groups") or []),
-            "captured_at_ns": quotes.get("captured_at_ns"),
+            "quote_group_count": len(quotes.get("groups") or []),            "captured_at_ns": quotes.get("captured_at_ns"),
             "freshness_limit_seconds": quotes.get("freshness_limit_seconds", 5.0),
             "depth_enabled": bool(depth.get("enabled", False)),
             "depth_running": bool(depth.get("running", False)),
@@ -2243,8 +2239,7 @@ def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
             age = None
         if age is not None and (not math.isfinite(age) or age < 0):
             age = None
-        exchange_freshness[exchange_name] = {
-            "exchange_type": exchange_type,
+        exchange_freshness[exchange_name] = {            "exchange_type": exchange_type,
             "age_seconds": age,
             "status": "NO_DATA" if age is None else "STALE" if age > 5.0 else "LIVE",
         }
@@ -2742,8 +2737,7 @@ async def _iv_option_snapshot_daily_loop():
                     else:
                         next_delay[symbol] = 15.0 if near_close else (60.0 if received > 0 else 300.0)
                         app_logger.warning(
-                            "IV Angel One %s snapshot incomplete; preserving last valid IV and retrying: expiry=%s IV=%s/%s",
-                            symbol, result.get("expiry"), received, expected,
+                            "IV Angel One %s snapshot incomplete; preserving last valid IV and retrying: expiry=%s IV=%s/%s",                            symbol, result.get("expiry"), received, expected,
                         )
                 except Exception:
                     next_delay[symbol] = 15.0 if near_close else 300.0
@@ -3153,4 +3147,3 @@ def health_check():
             },
         )
     return {"status": "ok", "app": settings.app_name, "version": "0.1.0", "database": "Connected", "database_pool": database_pool_snapshot()}
-
