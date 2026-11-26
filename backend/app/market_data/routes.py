@@ -25,6 +25,8 @@ _OVERVIEW_QUOTE_CACHE: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, 
 _OVERVIEW_QUOTE_CACHE_LOCK = Lock()
 _OVERVIEW_QUOTE_CACHE_TTL_SECONDS = 15.0
 _OVERVIEW_QUOTE_CACHE_MAX_STALE_SECONDS = 60.0
+_OVERVIEW_QUOTE_FAILURE_BACKOFF_SECONDS = 10.0
+_OVERVIEW_QUOTE_FAILURES: dict[tuple[str, tuple[str, ...]], tuple[float, str]] = {}
 _live_cash_future_runner_snapshot_provider = None
 _shoonya_snapshot_provider = None
 _shoonya_supervisor_provider = None
@@ -487,6 +489,13 @@ def _overview_quote_batch(client, exchange: str, instruments: list[dict[str, str
             age = max(0.0, now - cached[0])
             if age <= _OVERVIEW_QUOTE_CACHE_TTL_SECONDS:
                 return cached[1], age, False, None
+        failure = _OVERVIEW_QUOTE_FAILURES.get(key)
+        if failure is not None and now - failure[0] <= _OVERVIEW_QUOTE_FAILURE_BACKOFF_SECONDS:
+            if cached is not None:
+                age = max(0.0, now - cached[0])
+                if age <= _OVERVIEW_QUOTE_CACHE_MAX_STALE_SECONDS:
+                    return cached[1], age, True, "quote refresh cooldown; stale quote snapshot used"
+            raise RuntimeError("quote refresh cooldown active after recent broker failure")
 
     try:
         payload = client.quote_many(exchange, instruments).get("data") or {}
@@ -501,6 +510,7 @@ def _overview_quote_batch(client, exchange: str, instruments: list[dict[str, str
         refreshed_at = __import__("time").monotonic()
         with _OVERVIEW_QUOTE_CACHE_LOCK:
             _OVERVIEW_QUOTE_CACHE[key] = (refreshed_at, by_token)
+            _OVERVIEW_QUOTE_FAILURES.pop(key, None)
             # This endpoint has a fixed three-exchange universe. Keep cache
             # cardinality bounded if instrument-master tokens roll over.
             if len(_OVERVIEW_QUOTE_CACHE) > 12:
@@ -512,7 +522,15 @@ def _overview_quote_batch(client, exchange: str, instruments: list[dict[str, str
                     _OVERVIEW_QUOTE_CACHE.pop(old_key, None)
         return by_token, 0.0, False, None
     except Exception as exc:
+        failed_at = __import__("time").monotonic()
         with _OVERVIEW_QUOTE_CACHE_LOCK:
+            _OVERVIEW_QUOTE_FAILURES[key] = (failed_at, type(exc).__name__)
+            if len(_OVERVIEW_QUOTE_FAILURES) > 12:
+                oldest_failure = min(
+                    _OVERVIEW_QUOTE_FAILURES,
+                    key=lambda item: _OVERVIEW_QUOTE_FAILURES[item][0],
+                )
+                _OVERVIEW_QUOTE_FAILURES.pop(oldest_failure, None)
             cached = _OVERVIEW_QUOTE_CACHE.get(key)
         if cached is not None:
             age = max(0.0, __import__("time").monotonic() - cached[0])
