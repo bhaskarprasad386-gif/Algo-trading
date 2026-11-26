@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 import heapq
 import re
+import sqlite3
 from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
@@ -39,6 +40,81 @@ class DailyMarketDataShardCatalog:
         self.base_path.parent.mkdir(parents=True, exist_ok=True)
         self._catalogs: dict[Path, HistoricalCatalog] = {}
         self._legacy = HistoricalCatalog(str(self.base_path)) if self.base_path.exists() else None
+
+    @classmethod
+    def read_source_summary(
+        cls, base_path: str | Path, *, source: str, timeframe: str
+    ) -> dict[str, int | None]:
+        """Aggregate legacy and daily shards using SQLite read-only connections.
+
+        Unlike constructing HistoricalCatalog objects, this path performs no
+        schema/index creation, journal-mode changes, or commits. It is intended
+        for health/coverage reads only; normal catalog APIs retain their existing
+        writable behavior.
+        """
+        base = Path(base_path)
+        paths: list[Path] = []
+        if base.is_file():
+            paths.append(base)
+        pattern = f"{base.stem}_????_??_??{base.suffix or SHARD_SUFFIX}"
+        for path in sorted(base.parent.glob(pattern)):
+            if base.is_file() and path.resolve() == base.resolve():
+                continue
+            paths.append(path)
+
+        record_count = 0
+        instruments: set[str] = set()
+        latest_timestamp_ns: int | None = None
+        for path in paths:
+            # URI mode=ro prevents health checks from silently creating or
+            # modifying a shard while a market-data writer is active.
+            uri = f"{path.resolve().as_uri()}?mode=ro"
+            connection = sqlite3.connect(uri, uri=True, timeout=1.0)
+            try:
+                connection.execute("PRAGMA query_only=ON")
+                tables = {
+                    str(row[0]) for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                if "data_catalog" not in tables:
+                    continue
+                count_row = connection.execute(
+                    "SELECT COUNT(*) FROM data_catalog WHERE source=? AND timeframe=?",
+                    (source, timeframe),
+                ).fetchone()
+                record_count += int(count_row[0] or 0)
+                if "source_watermarks" in tables:
+                    rows = connection.execute(
+                        "SELECT instrument, MAX(max_timestamp_ns) "
+                        "FROM source_watermarks WHERE source=? AND timeframe=? "
+                        "GROUP BY instrument",
+                        (source, timeframe),
+                    ).fetchall()
+                else:
+                    # Older legacy catalogs may predate maintained watermarks.
+                    rows = connection.execute(
+                        "SELECT instrument, MAX(timestamp_ns) FROM data_catalog "
+                        "WHERE source=? AND timeframe=? GROUP BY instrument",
+                        (source, timeframe),
+                    ).fetchall()
+                for instrument, timestamp_ns in rows:
+                    if instrument is not None:
+                        instruments.add(str(instrument))
+                    if timestamp_ns is not None:
+                        value = int(timestamp_ns)
+                        latest_timestamp_ns = (
+                            value if latest_timestamp_ns is None
+                            else max(latest_timestamp_ns, value)
+                        )
+            finally:
+                connection.close()
+
+        return {
+            "record_count": record_count,
+            "instruments": len(instruments),
+            "latest_timestamp_ns": latest_timestamp_ns,
+        }
 
     def _open(self, path: Path) -> HistoricalCatalog:
         catalog = self._catalogs.get(path)
