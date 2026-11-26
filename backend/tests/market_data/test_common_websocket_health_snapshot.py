@@ -20,6 +20,8 @@ def test_health_snapshot_avoids_descriptor_roster_and_per_instrument_maps(monkey
         socket_factory=lambda: object(),
         exchange_type_resolver=lambda _key: 1,
     )
+    # Simulate the last successful manager reconciliation without opening a socket.
+    manager._shard_assignments = {3: {(1, "12345"): 0}}
 
     # A health-only read must not perform descriptor-by-descriptor enrichment.
     monkeypatch.setattr(
