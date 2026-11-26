@@ -780,3 +780,46 @@ def test_sampler_restore_loads_only_recent_window_and_latest_per_contract():
     assert sampler._last_display["restore-ce"].source_timestamp_ns == now_ns - 100_000_000_000
     assert sampler._last_source_timestamp["restore-ce"] == now_ns - 100_000_000_000
     engine.dispose()
+
+
+def test_sampler_state_lock_is_available_while_history_persistence_blocks(monkeypatch):
+    from threading import Event, Thread
+
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "lock-ce",
+    ),)
+    sampler = IVOneSecondSampler(
+        quote_source=source,
+        spot_provider=lambda: SpotSnapshot(21950, now_ns),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns,
+        history_session_factory=lambda: None,
+    )
+    sampler._history_loaded = True
+    persistence_entered = Event()
+    release_persistence = Event()
+
+    def blocked_persist(samples):
+        persistence_entered.set()
+        assert release_persistence.wait(timeout=2)
+        return len(samples)
+
+    monkeypatch.setattr(sampler, "_persist_history", blocked_persist)
+    worker = Thread(target=lambda: sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    ))
+    worker.start()
+    assert persistence_entered.wait(timeout=1)
+
+    # Snapshot readers must not wait for the database transaction.
+    acquired = sampler._lock.acquire(timeout=0.2)
+    assert acquired
+    sampler._lock.release()
+    release_persistence.set()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert sampler.snapshot()["sample_count"] == 1
