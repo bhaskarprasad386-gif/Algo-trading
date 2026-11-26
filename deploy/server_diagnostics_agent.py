@@ -27,6 +27,8 @@ MAX_EVENTS = max(100, int(os.environ.get("DIAGNOSTICS_MAX_EVENTS", "3000")))
 STOP = threading.Event()
 API_URL = os.environ.get("DIAGNOSTICS_API_URL", "http://127.0.0.1:8000/api/v1/diagnostics/errors?limit=100")
 API_TIMEOUT_SECONDS = max(0.5, float(os.environ.get("DIAGNOSTICS_API_TIMEOUT_SECONDS", "2")))
+# Preserve multi-frame tracebacks and broker response context while keeping the
+# bounded SQLite store predictable (3,000 events x 16 KiB maximum).
 _API_STATUS_LOCK = threading.Lock()
 _API_STATUS = {"reachable": False, "last_success_at": None}
 
@@ -57,7 +59,7 @@ _PRIVATE_KEY_BLOCK = re.compile(
 )
 
 
-def sanitize(value: object, limit: int = 1200) -> str:
+def sanitize(value: object, limit: int = 16000) -> str:
     """Hide credential values while retaining the surrounding diagnostic text."""
     text = _ANSI_ESCAPE.sub("", str(value or ""))
     text = _PRIVATE_KEY_BLOCK.sub("[PRIVATE KEY REDACTED]", text)
