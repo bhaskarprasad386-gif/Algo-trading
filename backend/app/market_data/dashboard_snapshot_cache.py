@@ -29,9 +29,11 @@ class BoundedSnapshotCache:
         self._refreshing = False
         self._refresh_count = 0
         self._refresh_errors = 0
+        self._last_refresh_error: Exception | None = None
 
     def _metadata(self, *, now: float, stale: bool) -> dict[str, Any]:
-        age = max(0.0, now - (self._refreshed_at or now))
+        refreshed_at = self._refreshed_at
+        age = max(0.0, now - refreshed_at) if refreshed_at is not None else 0.0
         return {
             "age_seconds": round(age, 3),
             "stale": stale,
@@ -54,15 +56,38 @@ class BoundedSnapshotCache:
                 self._value = deepcopy(value)
                 self._refreshed_at = monotonic()
                 self._refresh_count += 1
+                self._last_refresh_error = None
             return value
-        except Exception:
+        except Exception as exc:
             with self._lock:
                 self._refresh_errors += 1
+                self._last_refresh_error = exc
             raise
         finally:
             with self._lock:
                 self._refreshing = False
                 self._refresh_done.set()
+
+    def _start_refresh_locked(self, factory: Callable[[], Any]) -> None:
+        """Start exactly one bounded worker; caller holds _lock."""
+        self._refreshing = True
+        self._refresh_done.clear()
+        try:
+            worker = Thread(
+                target=self._background_refresh,
+                args=(factory,),
+                name="dashboard-snapshot-refresh",
+                daemon=True,
+            )
+            worker.start()
+        except Exception as exc:
+            # Thread exhaustion must not leave the cache permanently marked
+            # refreshing. Existing stale data remains serviceable.
+            self._refreshing = False
+            self._refresh_errors += 1
+            self._last_refresh_error = exc
+            self._refresh_done.set()
+            raise
 
     def _background_refresh(self, factory: Callable[[], Any]) -> None:
         try:
@@ -81,6 +106,7 @@ class BoundedSnapshotCache:
             self._refreshed_at = None
             self._refresh_count = 0
             self._refresh_errors = 0
+            self._last_refresh_error = None
             self._refresh_done.set()
 
     def get(self, factory: Callable[[], Any]) -> Any:
@@ -89,38 +115,35 @@ class BoundedSnapshotCache:
             age = None if self._refreshed_at is None else max(0.0, now - self._refreshed_at)
             if age is not None and age <= self.ttl_seconds:
                 return self._copy_with_metadata(stale=False)
-            if age is not None and age <= self.max_stale_seconds:
+
+            has_usable_stale = (
+                self._value is not None
+                and age is not None
+                and age <= self.max_stale_seconds
+            )
+            if has_usable_stale:
                 if not self._refreshing:
-                    self._refreshing = True
-                    self._refresh_done.clear()
-                    Thread(target=self._background_refresh, args=(factory,),
-                           name="dashboard-snapshot-refresh", daemon=True).start()
+                    try:
+                        self._start_refresh_locked(factory)
+                    except Exception:
+                        # Stale-while-refresh is explicitly best effort.
+                        pass
                 return self._copy_with_metadata(stale=True)
-            if self._refreshing:
-                wait_for_refresh = True
-            else:
-                self._refreshing = True
-                self._refresh_done.clear()
-                wait_for_refresh = False
 
-        if wait_for_refresh:
-            self._refresh_done.wait(self.wait_seconds)
-            with self._lock:
-                age = None if self._refreshed_at is None else max(0.0, monotonic() - self._refreshed_at)
-                if self._value is not None and age is not None and age <= self.max_stale_seconds:
-                    return self._copy_with_metadata(stale=True)
-                raise TimeoutError("dashboard snapshot refresh did not finish within its bound")
+            if not self._refreshing:
+                self._start_refresh_locked(factory)
 
-        try:
-            self._refresh(factory)
-        except Exception:
-            with self._lock:
-                age = None if self._refreshed_at is None else max(0.0, monotonic() - self._refreshed_at)
-                if self._value is not None and age is not None and age <= self.max_stale_seconds:
-                    return self._copy_with_metadata(stale=True)
-            raise
+        # Cold and hard-expired refreshes run off-request in one worker. A
+        # slow shard scan/provider call can no longer pin a request thread
+        # indefinitely; callers wait only for the configured response budget.
+        finished = self._refresh_done.wait(self.wait_seconds)
         with self._lock:
-            return self._copy_with_metadata(stale=False)
+            age = None if self._refreshed_at is None else max(0.0, monotonic() - self._refreshed_at)
+            if self._value is not None and age is not None and age <= self.max_stale_seconds:
+                return self._copy_with_metadata(stale=age > self.ttl_seconds)
+            if finished and self._last_refresh_error is not None:
+                raise self._last_refresh_error
+            raise TimeoutError("dashboard snapshot refresh did not finish within its bound")
 
 
 def cached_snapshot(*, ttl_seconds: float, max_stale_seconds: float):

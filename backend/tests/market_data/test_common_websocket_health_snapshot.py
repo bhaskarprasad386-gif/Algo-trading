@@ -32,6 +32,8 @@ def test_health_snapshot_avoids_descriptor_roster_and_per_instrument_maps(monkey
     result = manager.health_snapshot()
 
     assert result["snapshot_kind"] == "health-lite"
+    assert result["lock_contention"]["name"] == "common-websocket-manager"
+    assert result["lock_contention"]["sample_every"] == 16
     assert result["subscriptions"] == 1
     assert result["active_instruments"] == 1
     assert result["required_socket_groups"]

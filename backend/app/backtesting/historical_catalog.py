@@ -302,6 +302,36 @@ class HistoricalCatalog:
         rows = self._db.execute("SELECT DISTINCT timestamp_ns FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? AND timestamp_ns BETWEEN ? AND ? ORDER BY timestamp_ns", (source, instrument, timeframe, start_ns, end_ns)).fetchall()
         return tuple(int(row[0]) for row in rows)
 
+    def source_summary(self, *, source: str, timeframe: str) -> dict[str, Any]:
+        """Return one source/timeframe aggregate using the maintained watermark index."""
+        rows = self._db.execute(
+            """
+            WITH record_totals AS (
+                SELECT COUNT(*) AS record_count
+                FROM data_catalog
+                WHERE source=? AND timeframe=?
+            )
+            SELECT record_totals.record_count, watermarks.instrument,
+                   watermarks.max_timestamp_ns
+            FROM record_totals
+            LEFT JOIN source_watermarks AS watermarks
+              ON watermarks.source=? AND watermarks.timeframe=?
+            ORDER BY watermarks.instrument
+            """,
+            (source, timeframe, source, timeframe),
+        ).fetchall()
+        instrument_names = tuple(
+            str(row[1]) for row in rows if row[1] is not None
+        )
+        latest_values = [
+            int(row[2]) for row in rows if row[2] is not None
+        ]
+        return {
+            "record_count": int(rows[0][0] or 0) if rows else 0,
+            "instrument_names": instrument_names,
+            "latest_timestamp_ns": max(latest_values) if latest_values else None,
+        }
+
     def watermark(self, *, source: str, instrument: str, timeframe: str) -> int | None:
         row = self._db.execute("SELECT max_timestamp_ns FROM source_watermarks WHERE source=? AND instrument=? AND timeframe=?", (source, instrument, timeframe)).fetchone()
         return None if row is None else int(row[0])

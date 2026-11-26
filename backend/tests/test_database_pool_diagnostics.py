@@ -22,9 +22,17 @@ class _StaticPool:
         return "StaticPool"
 
 
+def _reset_telemetry(monkeypatch):
+    from app.core.contention_telemetry import PoolCheckoutTelemetry
+
+    telemetry = PoolCheckoutTelemetry(max_owners=24)
+    monkeypatch.setattr(database, "_pool_checkout_telemetry", telemetry)
+    return telemetry
+
+
 def test_database_pool_snapshot_reports_queue_pool_occupancy(monkeypatch):
     monkeypatch.setattr(database.engine, "pool", _QueuePool())
-    monkeypatch.setattr(database, "_pool_checkouts", {})
+    _reset_telemetry(monkeypatch)
 
     snapshot = database.database_pool_snapshot()
 
@@ -45,7 +53,7 @@ def test_database_pool_snapshot_reports_queue_pool_occupancy(monkeypatch):
 
 def test_database_pool_snapshot_is_safe_for_pools_without_queuepool_counters(monkeypatch):
     monkeypatch.setattr(database.engine, "pool", _StaticPool())
-    monkeypatch.setattr(database, "_pool_checkouts", {})
+    _reset_telemetry(monkeypatch)
 
     snapshot = database.database_pool_snapshot()
 
@@ -68,16 +76,10 @@ def test_database_pool_snapshot_reports_active_and_long_checkouts(monkeypatch):
     import time
 
     monkeypatch.setattr(database.engine, "pool", _QueuePool())
-    now = time.monotonic()
-    monkeypatch.setattr(
-        database,
-        "_pool_checkouts",
-        {
-            1: (now - 45.0, "history-worker"),
-            2: (now - 2.0, "api-worker"),
-        },
-    )
-
+    telemetry = _reset_telemetry(monkeypatch)
+    with telemetry._lock:
+        telemetry._active[1] = (time.monotonic() - 45.0, "history-worker", "background")
+        telemetry._active[2] = (time.monotonic() - 2.0, "api-worker", "http:GET:/api")
     snapshot = database.database_pool_snapshot()
 
     assert snapshot["active_checkout_count"] == 2
@@ -90,20 +92,23 @@ def test_database_pool_snapshot_reports_active_and_long_checkouts(monkeypatch):
     assert snapshot["checkout_tracking_status"] == "COUNTER_MISMATCH"
 
 
-def test_pool_checkout_tracking_is_removed_on_checkin_and_invalidation():
+def test_pool_checkout_tracking_is_removed_on_checkin_and_invalidation(monkeypatch):
     class _ConnectionRecord:
         pass
 
+    _reset_telemetry(monkeypatch)
     record = _ConnectionRecord()
     database._track_pool_checkout(None, record)
-    assert id(record) in database._pool_checkouts
+    assert database._pool_checkout_telemetry.snapshot()["active_checkouts"] == 1
 
     database._clear_pool_checkout(None, record)
-    assert id(record) not in database._pool_checkouts
+    assert database._pool_checkout_telemetry.snapshot()["active_checkouts"] == 0
 
     database._track_pool_checkout(None, record)
-    database._clear_pool_checkout(None, record, RuntimeError("invalidated"))
-    assert id(record) not in database._pool_checkouts
+    database._invalidate_pool_checkout(None, record, RuntimeError("invalidated"))
+    result = database._pool_checkout_telemetry.snapshot()
+    assert result["active_checkouts"] == 0
+    assert result["invalidations"] == 1
 
 
 def test_database_pool_snapshot_marks_queue_pool_saturated(monkeypatch):
@@ -112,8 +117,7 @@ def test_database_pool_snapshot_marks_queue_pool_saturated(monkeypatch):
             return 15
 
     monkeypatch.setattr(database.engine, "pool", _SaturatedPool())
-    monkeypatch.setattr(database, "_pool_checkouts", {})
-
+    _reset_telemetry(monkeypatch)
     snapshot = database.database_pool_snapshot()
 
     assert snapshot["capacity"] == 15
@@ -130,12 +134,9 @@ def test_database_pool_snapshot_does_not_invent_capacity_for_unbounded_queue_poo
             return 27
 
     monkeypatch.setattr(database.engine, "pool", _UnboundedQueuePool())
-    monkeypatch.setattr(database, "_pool_checkouts", {})
-
+    _reset_telemetry(monkeypatch)
     snapshot = database.database_pool_snapshot()
 
-    # SQLAlchemy QueuePool(pool_size=0) is unbounded; max_overflow is not a
-    # finite capacity in this mode, so health must not report false saturation.
     assert snapshot["size"] == 0
     assert snapshot["checkedout"] == 27
     assert snapshot["capacity"] is None
@@ -150,8 +151,7 @@ def test_database_pool_snapshot_does_not_invent_capacity_for_unlimited_overflow(
             return 500
 
     monkeypatch.setattr(database.engine, "pool", _UnlimitedOverflowPool())
-    monkeypatch.setattr(database, "_pool_checkouts", {})
-
+    _reset_telemetry(monkeypatch)
     snapshot = database.database_pool_snapshot()
 
     assert snapshot["max_overflow"] == -1
@@ -159,19 +159,19 @@ def test_database_pool_snapshot_does_not_invent_capacity_for_unlimited_overflow(
     assert snapshot["saturated"] is None
 
 
-
-def test_pool_checkout_tracking_is_removed_when_connection_is_detached():
+def test_pool_checkout_tracking_is_removed_when_connection_is_detached(monkeypatch):
     from sqlalchemy import event
 
     class _ConnectionRecord:
         pass
 
+    _reset_telemetry(monkeypatch)
     record = _ConnectionRecord()
     database._track_pool_checkout(None, record)
-    assert id(record) in database._pool_checkouts
+    assert database._pool_checkout_telemetry.snapshot()["active_checkouts"] == 1
 
-    # The listener is installed on the real engine and the detach callback
-    # clears the same lifecycle entry as checkin/invalidation.
-    assert event.contains(database.engine, "detach", database._clear_pool_checkout)
-    database._clear_pool_checkout(None, record)
-    assert id(record) not in database._pool_checkouts
+    assert event.contains(database.engine, "detach", database._detach_pool_checkout)
+    database._detach_pool_checkout(None, record)
+    result = database._pool_checkout_telemetry.snapshot()
+    assert result["active_checkouts"] == 0
+    assert result["detaches"] == 1

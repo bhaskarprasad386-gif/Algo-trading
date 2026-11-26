@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
@@ -23,6 +23,9 @@ from app.core.daemon_worker import run_blocking_daemon
 from app.core.diagnostics import runtime_diagnostics
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
 from app.core.database import engine, Base, SessionLocal, check_database, check_database_bounded, DatabaseHealthProbeBusy, DatabaseHealthProbeTimeout, database_pool_snapshot
+from app.core.contention_telemetry import set_database_owner, reset_database_owner
+from app.core.event_loop_telemetry import EventLoopLagMonitor
+from app.core.dashboard_stream_telemetry import DashboardStreamTelemetry
 from app.core.schema_migrations import run_schema_migrations
 from app.core.iv_basket_guards import install_iv_basket_immutability_guards
 from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
@@ -643,7 +646,7 @@ async def _iv_scanner_recovery_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _dashboard_snapshot_task
+    global _dashboard_snapshot_task, _event_loop_lag_task
     global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, shoonya_market_data_supervisor, _shared_index_runner_task
     global provider_quote_parity_store, provider_quote_parity_worker
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
@@ -732,6 +735,7 @@ async def lifespan(app: FastAPI):
         _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
     paper_rule_task = asyncio.create_task(paper_rule_monitor_loop())
     _dashboard_snapshot_task = asyncio.create_task(_dashboard_snapshot_publisher_loop())
+    _event_loop_lag_task = asyncio.create_task(event_loop_lag_monitor.run())
     try:
         yield
     finally:
@@ -751,13 +755,16 @@ async def lifespan(app: FastAPI):
         paper_rule_task.cancel()
         if _dashboard_snapshot_task is not None:
             _dashboard_snapshot_task.cancel()
-        for task in (_dashboard_snapshot_task, _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
+        if _event_loop_lag_task is not None:
+            _event_loop_lag_task.cancel()
+        for task in (_dashboard_snapshot_task, _event_loop_lag_task, _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
             if task is not None:
                 task.cancel()
         shutdown_tasks = tuple(
             task
             for task in (
                 _dashboard_snapshot_task,
+                _event_loop_lag_task,
                 _history_collector_task,
                 _contract_master_sync_task,
                 _live_cash_future_task,
@@ -786,6 +793,7 @@ async def lifespan(app: FastAPI):
         for broker_name, error in broker_sessions.disconnect_all():
             app_logger.error("Broker session shutdown failed for %s: %s", broker_name, error)
         _dashboard_snapshot_task = None
+        _event_loop_lag_task = None
         _history_collector_task = None
         _contract_master_sync_task = None
         _live_cash_future_task = None
@@ -814,7 +822,27 @@ async def lifespan(app: FastAPI):
         if universal_result_ledger is not None:
             universal_result_ledger.close()
 
+event_loop_lag_monitor = EventLoopLagMonitor(interval_seconds=1.0)
+
 app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, lifespan=lifespan)
+
+
+@app.middleware("http")
+async def database_checkout_owner_middleware(request: Request, call_next):
+    """Attach a bounded API-group label; never retain user-supplied path identifiers."""
+    parts = [part for part in request.url.path.split("/") if part]
+    safe_parts = []
+    for part in parts[:3]:
+        if part.isdigit() or len(part) > 32:
+            safe_parts.append(":dynamic")
+        else:
+            safe_parts.append("".join(ch for ch in part if ch.isalnum() or ch in "-_")[:32])
+    owner = f"http:{request.method.upper()}:/{'/'.join(safe_parts)}"[:96]
+    token = set_database_owner(owner)
+    try:
+        return await call_next(request)
+    finally:
+        reset_database_owner(token)
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https://([a-z0-9-]+\.)?vercel\.app$|http://localhost(:\d+)?$|http://127\.0\.0\.1(:\d+)?$",
@@ -941,6 +969,11 @@ def broker_settings():
     return HTMLResponse(content=html, media_type="text/html")
 
 
+# Browser clients are owned exclusively by the ASGI event loop.
+_dashboard_clients: set[WebSocket] = set()
+_dashboard_stream_telemetry = DashboardStreamTelemetry()
+
+
 def _build_dashboard_snapshot_payload() -> dict:
     """Build one immutable-by-convention dashboard snapshot for all viewers."""
     snapshot = live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=50)
@@ -986,34 +1019,107 @@ def _build_dashboard_snapshot_payload() -> dict:
     }
 
 
-async def _send_dashboard_snapshot(client: WebSocket, payload: dict) -> None:
+def _build_dashboard_snapshot_frame() -> tuple[str, float, float, int]:
+    """Build and serialize one dashboard frame once for every connected browser."""
+    build_started = time_module.monotonic()
+    payload = _build_dashboard_snapshot_payload()
+    build_seconds = time_module.monotonic() - build_started
+    serialization_started = time_module.monotonic()
+    # Match Starlette WebSocket.send_json defaults while avoiding one JSON dump
+    # per browser connection. Serialization runs in the publisher worker thread.
+    serialized = json.dumps(
+        payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    )
+    serialization_seconds = time_module.monotonic() - serialization_started
+    return serialized, build_seconds, serialization_seconds, len(serialized.encode("utf-8"))
+
+
+async def _send_dashboard_snapshot(client: WebSocket, payload: str) -> bool:
     """Bound each client's send time; a slow browser cannot stall other viewers."""
+    started = time_module.monotonic()
     try:
-        await asyncio.wait_for(client.send_json(payload), timeout=0.75)
+        await asyncio.wait_for(client.send_text(payload), timeout=0.75)
+        _dashboard_stream_telemetry.record_client_send(
+            success=True, duration_seconds=time_module.monotonic() - started
+        )
+        return True
     except Exception:
+        _dashboard_stream_telemetry.record_client_send(
+            success=False, duration_seconds=time_module.monotonic() - started
+        )
         _dashboard_clients.discard(client)
         try:
             await client.close(code=1013, reason="dashboard consumer too slow")
         except Exception:
             pass
+        return False
 
 
 async def _dashboard_snapshot_publisher_loop() -> None:
-    """Compute once per process and fan out the same snapshot to all clients."""
+    """Compute once per process, fan out once, and retain bounded health metrics."""
     while True:
         started = time_module.monotonic()
+        build_seconds = 0.0
+        build_dispatch_wait_seconds = 0.0
+        serialization_seconds = 0.0
+        payload_bytes = 0
+        fanout_seconds = 0.0
+        client_count = len(_dashboard_clients)
+        sent_count = 0
+        failed_count = 0
         try:
-            if _dashboard_clients:
-                payload = await asyncio.to_thread(_build_dashboard_snapshot_payload)
+            if client_count:
+                dispatch_started = time_module.monotonic()
+                payload, build_seconds, serialization_seconds, payload_bytes = (
+                    await asyncio.to_thread(_build_dashboard_snapshot_frame)
+                )
+                # The function reports only time spent executing build/JSON work.
+                # The residual await time estimates queueing/scheduling delay before
+                # the default executor starts the task; this helps distinguish a
+                # slow snapshot from thread-pool starvation without private APIs.
+                build_dispatch_wait_seconds = max(
+                    0.0,
+                    time_module.monotonic() - dispatch_started
+                    - build_seconds - serialization_seconds,
+                )
                 clients = tuple(_dashboard_clients)
+                client_count = len(clients)
                 if clients:
-                    await asyncio.gather(
+                    fanout_started = time_module.monotonic()
+                    results = await asyncio.gather(
                         *(_send_dashboard_snapshot(client, payload) for client in clients),
                         return_exceptions=True,
                     )
+                    fanout_seconds = time_module.monotonic() - fanout_started
+                    sent_count = sum(result is True for result in results)
+                    failed_count = len(results) - sent_count
+            cycle_seconds = time_module.monotonic() - started
+            _dashboard_stream_telemetry.record_publish(
+                client_count=client_count,
+                sent_count=sent_count,
+                failed_count=failed_count,
+                build_seconds=build_seconds,
+                build_dispatch_wait_seconds=build_dispatch_wait_seconds,
+                fanout_seconds=fanout_seconds,
+                serialization_seconds=serialization_seconds,
+                payload_bytes=payload_bytes,
+                cycle_seconds=cycle_seconds,
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            cycle_seconds = time_module.monotonic() - started
+            _dashboard_stream_telemetry.record_publish(
+                client_count=client_count,
+                sent_count=sent_count,
+                failed_count=max(failed_count, client_count),
+                build_seconds=build_seconds,
+                fanout_seconds=fanout_seconds,
+                serialization_seconds=serialization_seconds,
+                payload_bytes=payload_bytes,
+                cycle_seconds=cycle_seconds,
+                error_type=type(exc).__name__,
+            )
             app_logger.warning("Dashboard snapshot publish failed: %s", exc)
         elapsed = time_module.monotonic() - started
         await asyncio.sleep(max(0.05, 1.0 - elapsed))
@@ -2365,6 +2471,8 @@ def market_data_runtime_health():
         "server_timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
         "common_feed": common_feed,
         "provider_readiness": provider_readiness_bridge.snapshot(),
+        "event_loop": event_loop_lag_monitor.snapshot(),
+        "dashboard_stream": _dashboard_stream_telemetry.snapshot(),
         "runners": {
             "cash_future": None if cash_runner is None else cash_runner.snapshot(),
             "calendar_spread": None if calendar_runner is None else calendar_runner.snapshot(),
