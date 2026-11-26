@@ -56,6 +56,10 @@ class IVSpotFeedAdapter:
         # newest bounded spot observations and persist them on an IV-owned worker.
         self._persist_pending: dict[str, SpotSnapshot] = {}
         self._persist_wakeup = Event()
+        self._persist_batches = 0
+        self._persisted_rows = 0
+        self._persist_errors = 0
+        self._last_persist_error: str | None = None
         self._persist_stop = Event()
         self._persist_thread: Thread | None = None
         if self._persist_last_price:
@@ -242,9 +246,12 @@ class IVSpotFeedAdapter:
                 stopping = self._persist_stop.is_set()
             if not pending and stopping:
                 break
-            for symbol, snapshot in pending:
-                try:
-                    with SessionLocal() as db:
+            # Both index snapshots are one tiny, bounded batch. One SQLAlchemy
+            # checkout and one SQLite transaction per wakeup avoids competing
+            # commits when NIFTY and BANKNIFTY ticks arrive together.
+            try:
+                with SessionLocal() as db:
+                    for symbol, snapshot in pending:
                         db.merge(IVSpotLastPrice(
                             symbol=symbol, price=snapshot.price,
                             timestamp_ns=snapshot.timestamp_ns,
@@ -255,10 +262,17 @@ class IVSpotFeedAdapter:
                             price=snapshot.price,
                             received_at_ns=snapshot.received_at_ns or snapshot.timestamp_ns,
                         ))
-                        db.commit()
-                except Exception:
-                    # Live in-memory spot remains usable if persistence is degraded.
-                    pass
+                    db.commit()
+                with self._lock:
+                    self._persist_batches += 1
+                    self._persisted_rows += len(pending)
+                    self._last_persist_error = None
+            except Exception as exc:
+                # Persistence remains best-effort and isolated from the feed;
+                # expose failures rather than silently hiding DB pressure.
+                with self._lock:
+                    self._persist_errors += 1
+                    self._last_persist_error = f"{type(exc).__name__}: {exc}"[:300]
 
     def _stop_persistence_worker(self) -> None:
         with self._lock:
@@ -313,6 +327,15 @@ class IVSpotFeedAdapter:
                 "rejected_records": sum(self._rejected_records.values()),
                 "rejected_by_reason": dict(self._rejected_records),
                 "duplicate_source_timestamps": self._duplicate_source_timestamps,
+                "persistence": {
+                    "enabled": self._persist_last_price,
+                    "batches_committed": self._persist_batches,
+                    "observations_committed": self._persisted_rows,
+                    "failed_batches": self._persist_errors,
+                    "last_error": self._last_persist_error,
+                    "pending_symbols": len(self._persist_pending),
+                    "worker_alive": bool(self._persist_thread and self._persist_thread.is_alive()),
+                },
                 "last_source_timestamp_fields": dict(self._last_source_timestamp_fields),
                 "last_normalized_timestamp_ns": self._last_normalized_timestamp_ns,
                 "last_source_timestamp_age_seconds": (
