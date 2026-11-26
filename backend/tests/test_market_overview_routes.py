@@ -1,4 +1,20 @@
+import pytest
+
 from app.market_data import routes
+
+
+@pytest.fixture(autouse=True)
+def reset_dashboard_route_caches():
+    """Keep endpoint-cache behavior isolated across route tests."""
+    for endpoint in (routes.get_market_overview, routes.get_live_data_health):
+        endpoint.snapshot_cache.clear()
+    with routes._OVERVIEW_HISTORICAL_CACHE_LOCK:
+        routes._OVERVIEW_HISTORICAL_CACHE.clear()
+    with routes._CLOSED_OVERVIEW_CACHE_LOCK:
+        routes._CLOSED_OVERVIEW_CACHE.clear()
+    yield
+    for endpoint in (routes.get_market_overview, routes.get_live_data_health):
+        endpoint.snapshot_cache.clear()
 
 
 def test_market_overview_returns_index_and_commodity_groups(monkeypatch):
