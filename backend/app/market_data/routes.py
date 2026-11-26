@@ -327,10 +327,8 @@ def get_live_data_health():
     try:
         sources = []
         for source, timeframe in (("angelone-live-1s", "1s"), ("angelone-live", "event")):
-            count = catalog.count(source=source, timeframe=timeframe)
-            instruments = catalog.instruments(source=source, timeframe=timeframe)
-            watermarks = [catalog.watermark(source=source, instrument=i, timeframe=timeframe) for i in instruments]
-            latest_ns = max((v for v in watermarks if v is not None), default=None)
+            summary = catalog.source_summary(source=source, timeframe=timeframe)
+            latest_ns = summary["latest_timestamp_ns"]
             raw_age_seconds = None if latest_ns is None else (now.timestamp() * 1_000_000_000 - latest_ns) / 1_000_000_000
             # A timestamp materially in the future is invalid, not a zero-age live quote.
             age_seconds = None if raw_age_seconds is None or raw_age_seconds < -5.0 else max(0.0, raw_age_seconds)
@@ -338,8 +336,8 @@ def get_live_data_health():
                 "STALE" if market_open and age_seconds is not None else "NO_DATA"
             )
             sources.append({
-                "source": source, "timeframe": timeframe, "records": count,
-                "instruments": len(instruments), "latest_timestamp_ns": latest_ns,
+                "source": source, "timeframe": timeframe, "records": summary["record_count"],
+                "instruments": summary["instruments"], "latest_timestamp_ns": latest_ns,
                 "age_seconds": age_seconds, "status": status,
             })
         one_second = next(x for x in sources if x["source"] == "angelone-live-1s")

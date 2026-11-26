@@ -105,6 +105,31 @@ class DailyMarketDataShardCatalog:
             values.update(catalog.instruments(source=source, timeframe=timeframe, start_ns=start_ns, end_ns=end_ns, prefix=prefix))
         return tuple(sorted(values))
 
+    def source_summary(self, *, source: str, timeframe: str) -> dict[str, int | None]:
+        """Aggregate all readable shards without per-instrument watermark queries."""
+        record_count = 0
+        instruments: set[str] = set()
+        latest_timestamp_ns: int | None = None
+        # Resolve the shard list once. Each shard executes one aggregate query,
+        # independent of the number of instruments.
+        for catalog in self._catalogs_for_read():
+            summary = catalog.source_summary(source=source, timeframe=timeframe)
+            record_count += int(summary["record_count"])
+            latest = summary["latest_timestamp_ns"]
+            if latest is not None:
+                latest_timestamp_ns = (
+                    int(latest) if latest_timestamp_ns is None
+                    else max(latest_timestamp_ns, int(latest))
+                )
+            # Instrument names are deduplicated across daily shards. This is a
+            # bounded identity set, not a per-instrument SQL round-trip.
+            instruments.update(summary["instrument_names"])
+        return {
+            "record_count": record_count,
+            "instruments": len(instruments),
+            "latest_timestamp_ns": latest_timestamp_ns,
+        }
+
     def watermark(self, *, source: str, instrument: str, timeframe: str) -> int | None:
         values = [
             value for value in self._all("watermark", source=source, instrument=instrument, timeframe=timeframe)
