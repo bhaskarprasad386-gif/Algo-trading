@@ -106,9 +106,18 @@ def database_pool_snapshot() -> dict[str, object]:
         max_overflow = None
     checked_out = snapshot.get("checkedout")
     pool_size = snapshot.get("size")
+    # QueuePool's documented pool_size=0 setting disables the size limit;
+    # it does not mean the pool has only max_overflow connections. Likewise,
+    # max_overflow=-1 permits unlimited overflow. In either configuration a
+    # finite saturation threshold cannot be derived safely.
     capacity = (
         pool_size + max_overflow
-        if isinstance(pool_size, int) and max_overflow is not None and max_overflow >= 0
+        if (
+            isinstance(pool_size, int)
+            and pool_size > 0
+            and max_overflow is not None
+            and max_overflow >= 0
+        )
         else None
     )
     snapshot["max_overflow"] = max_overflow

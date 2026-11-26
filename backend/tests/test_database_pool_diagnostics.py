@@ -119,3 +119,41 @@ def test_database_pool_snapshot_marks_queue_pool_saturated(monkeypatch):
     assert snapshot["capacity"] == 15
     assert snapshot["checkedout"] == 15
     assert snapshot["saturated"] is True
+
+
+def test_database_pool_snapshot_does_not_invent_capacity_for_unbounded_queue_pool(monkeypatch):
+    class _UnboundedQueuePool(_QueuePool):
+        def size(self):
+            return 0
+
+        def checkedout(self):
+            return 27
+
+    monkeypatch.setattr(database.engine, "pool", _UnboundedQueuePool())
+    monkeypatch.setattr(database, "_pool_checkouts", {})
+
+    snapshot = database.database_pool_snapshot()
+
+    # SQLAlchemy QueuePool(pool_size=0) is unbounded; max_overflow is not a
+    # finite capacity in this mode, so health must not report false saturation.
+    assert snapshot["size"] == 0
+    assert snapshot["checkedout"] == 27
+    assert snapshot["capacity"] is None
+    assert snapshot["saturated"] is None
+
+
+def test_database_pool_snapshot_does_not_invent_capacity_for_unlimited_overflow(monkeypatch):
+    class _UnlimitedOverflowPool(_QueuePool):
+        _max_overflow = -1
+
+        def checkedout(self):
+            return 500
+
+    monkeypatch.setattr(database.engine, "pool", _UnlimitedOverflowPool())
+    monkeypatch.setattr(database, "_pool_checkouts", {})
+
+    snapshot = database.database_pool_snapshot()
+
+    assert snapshot["max_overflow"] == -1
+    assert snapshot["capacity"] is None
+    assert snapshot["saturated"] is None
