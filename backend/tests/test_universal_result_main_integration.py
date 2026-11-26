@@ -40,12 +40,24 @@ with TestClient(main.app) as client:
         "/api/v1/backtesting/universal/runs/does-not-exist"
     )
 
+    # The deployment readiness endpoint must fail closed when the DB probe
+    # fails, rather than returning HTTP 200 with a degraded JSON body.
+    original_check_database = main.check_database
+    try:
+        main.check_database = lambda: (_ for _ in ()).throw(RuntimeError("db unavailable"))
+        degraded = client.get("/health")
+    finally:
+        main.check_database = original_check_database
+
     assert summary.status_code == 200
     assert summary.json()["run_id"] == run_id
     assert events.status_code == 200
     assert events.json()["count"] == 1
     assert events.json()["data"][0]["payload_json"] == '{"source":"main"}'
     assert missing.status_code == 404
+    assert degraded.status_code == 503
+    assert degraded.json()["status"] == "degraded"
+    assert degraded.json()["database"] == "Disconnected"
 
 print(json.dumps({"status": "ok"}))
 """
