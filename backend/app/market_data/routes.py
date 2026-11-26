@@ -27,6 +27,9 @@ _OVERVIEW_QUOTE_CACHE_TTL_SECONDS = 15.0
 _OVERVIEW_QUOTE_CACHE_MAX_STALE_SECONDS = 60.0
 _OVERVIEW_QUOTE_FAILURE_BACKOFF_SECONDS = 10.0
 _OVERVIEW_QUOTE_FAILURES: dict[tuple[str, tuple[str, ...]], tuple[float, str]] = {}
+_OVERVIEW_INSTRUMENT_CACHE: dict[tuple[str, str, str], tuple[float, str]] = {}
+_OVERVIEW_INSTRUMENT_CACHE_LOCK = Lock()
+_OVERVIEW_INSTRUMENT_CACHE_TTL_SECONDS = 900.0
 _live_cash_future_runner_snapshot_provider = None
 _shoonya_snapshot_provider = None
 _shoonya_supervisor_provider = None
@@ -473,6 +476,37 @@ def get_common_feed_health():
     }
 
 
+def _resolve_overview_instrument(master, exchange: str, symbol: str, today_key: str):
+    """Reuse successful daily instrument resolution instead of rescanning master rows."""
+    key = (today_key, str(exchange).strip().upper(), str(symbol).strip().upper())
+    now = __import__("time").monotonic()
+    with _OVERVIEW_INSTRUMENT_CACHE_LOCK:
+        cached = _OVERVIEW_INSTRUMENT_CACHE.get(key)
+        if cached is not None and now - cached[0] <= _OVERVIEW_INSTRUMENT_CACHE_TTL_SECONDS:
+            return cached[1]
+
+    instrument = (
+        master.resolve_index_instrument(symbol, exchange)
+        if exchange in {"NSE", "BSE"}
+        else master.get_instrument(symbol, exchange)
+    )
+    if not instrument:
+        return None
+    token = str(instrument.get("token", "")).strip()
+    if not token:
+        return None
+    with _OVERVIEW_INSTRUMENT_CACHE_LOCK:
+        _OVERVIEW_INSTRUMENT_CACHE[key] = (now, token)
+        if len(_OVERVIEW_INSTRUMENT_CACHE) > 32:
+            oldest = sorted(
+                _OVERVIEW_INSTRUMENT_CACHE,
+                key=lambda item: _OVERVIEW_INSTRUMENT_CACHE[item][0],
+            )[: len(_OVERVIEW_INSTRUMENT_CACHE) - 32]
+            for old_key in oldest:
+                _OVERVIEW_INSTRUMENT_CACHE.pop(old_key, None)
+    return token
+
+
 def _overview_quote_batch(client, exchange: str, instruments: list[dict[str, str]]):
     """Read a shared per-process quote batch; throttle broker REST refreshes.
 
@@ -605,11 +639,13 @@ def get_market_overview():
         errors = []
         for exchange, symbol in specs:
             try:
-                instrument = master.resolve_index_instrument(symbol, exchange) if exchange in {"NSE", "BSE"} else master.get_instrument(symbol, exchange)
-                if not instrument:
+                token = _resolve_overview_instrument(
+                    master, exchange, symbol, cache_key
+                )
+                if not token:
                     errors.append({"exchange": exchange, "symbol": symbol, "error": "instrument_not_found"})
                     continue
-                resolved.append((exchange, symbol, str(instrument.get("token", ""))))
+                resolved.append((exchange, symbol, token))
             except Exception as exc:
                 errors.append({"exchange": exchange, "symbol": symbol, "error": str(exc)})
         return resolved, errors
