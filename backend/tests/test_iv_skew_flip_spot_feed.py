@@ -666,9 +666,13 @@ def test_spot_persistence_batches_both_indices_in_one_transaction(monkeypatch):
     # Stop drains the bounded pending-symbol map before assertions.
     adapter.stop()
 
-    assert len(sessions) == 1
-    assert sessions[0].commits == 1
-    assert len(sessions[0].rows) == 4
+    # Constructor restoration uses one read-only session; the worker must
+    # then persist both symbols in exactly one separate write transaction.
+    assert len(sessions) == 2
+    write_sessions = [session for session in sessions if session.commits]
+    assert len(write_sessions) == 1
+    assert write_sessions[0].commits == 1
+    assert len(write_sessions[0].rows) == 4
     assert {row.symbol for row in sessions[0].rows if isinstance(row, spot_feed_module.IVSpotLastPrice)} == {
         "NIFTY", "BANKNIFTY"
     }
