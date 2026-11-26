@@ -3082,8 +3082,8 @@ def iv_skew_flip_validation(underlying: str = "NIFTY", expiry_type: str | None =
 
 
 def _database_health_failure_class(exc: Exception) -> str:
-    """Classify bounded probe failures before generic database failures."""
-    if isinstance(exc, DatabaseHealthProbeTimeout):
+    """Classify readiness failures without exposing database driver details."""
+    if isinstance(exc, DatabaseHealthProbeTimeout) or isinstance(exc, asyncio.TimeoutError):
         return "DATABASE_PROBE_TIMEOUT"
     if isinstance(exc, DatabaseHealthProbeBusy):
         return "DATABASE_PROBE_BUSY"
@@ -3097,6 +3097,18 @@ def _database_health_failure_class(exc: Exception) -> str:
     return "DATABASE_CHECK_FAILURE"
 
 
+# Keep a single DB health worker in flight. A timed-out asyncio.to_thread()
+# worker cannot be cancelled; it releases this slot only when its DB call ends.
+_health_db_probe_semaphore = threading.BoundedSemaphore(value=1)
+
+
+def _run_health_database_probe() -> None:
+    try:
+        check_database()
+    finally:
+        _health_db_probe_semaphore.release()
+
+
 @app.get("/health/live")
 async def health_liveness_check():
     """Fast process liveness probe; deliberately performs no DB or broker I/O."""
@@ -3104,10 +3116,9 @@ async def health_liveness_check():
 
 
 @app.get("/health")
-def health_check():
-    # Do not queue a readiness probe behind an already exhausted DB pool.
-    # This is only an early degraded response; a non-saturated pool still
-    # requires a real SELECT 1 before the endpoint can report healthy.
+async def health_check():
+    # Fail immediately when a finite pool is already saturated. A healthy
+    # response still requires a real SELECT 1 below.
     pool_snapshot = database_pool_snapshot()
     if pool_snapshot.get("saturated") is True:
         runtime_diagnostics.record(
@@ -3128,17 +3139,50 @@ def health_check():
             },
         )
 
-    try:
-        check_database_bounded(check_database, timeout_seconds=0.75)
-    except Exception as exc:
-        failure_class = _database_health_failure_class(exc)
-        failure_pool_snapshot = database_pool_snapshot()
-        # DB-driver exception strings can contain connection details or SQL
-        # context. Keep diagnostics actionable without copying raw driver text.
-        exception_type = type(exc).__name__
+    if not _health_db_probe_semaphore.acquire(blocking=False):
         runtime_diagnostics.record(
             component="Database",
-            error_type=failure_class,
+            error_type="DatabaseProbeBusy",
+            message="A previous database health probe is still running",
+            endpoint="/health",
+            context={"event": "health_check", "max_concurrent_probes": 1},
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "app": settings.app_name,
+                "version": "0.1.0",
+                "database": "Probe busy",
+                "database_error_class": "DATABASE_PROBE_BUSY",
+                "database_pool": database_pool_snapshot(),
+            },
+        )
+
+    probe_task = asyncio.create_task(asyncio.to_thread(_run_health_database_probe))
+    # Consume exceptions even if the ASGI request is cancelled; the worker
+    # retains ownership of the semaphore until the underlying DB call ends.
+    probe_task.add_done_callback(
+        lambda task: task.exception() if not task.cancelled() else None
+    )
+    await asyncio.sleep(0)
+    try:
+        await asyncio.wait_for(asyncio.shield(probe_task), timeout=0.75)
+    except Exception as exc:
+        failure_class = (
+            "DATABASE_PROBE_TIMEOUT"
+            if isinstance(exc, asyncio.TimeoutError)
+            else _database_health_failure_class(exc)
+        )
+        exception_type = (
+            "DatabaseProbeTimeout"
+            if failure_class == "DATABASE_PROBE_TIMEOUT"
+            else type(exc).__name__
+        )
+        failure_pool_snapshot = database_pool_snapshot()
+        runtime_diagnostics.record(
+            component="Database",
+            error_type=exception_type if failure_class == "DATABASE_PROBE_TIMEOUT" else failure_class,
             message=f"Database readiness probe failed ({exception_type})",
             endpoint="/health",
             context={
@@ -3153,15 +3197,31 @@ def health_check():
             failure_class,
             exception_type,
         )
+        database_status = (
+            "Contended"
+            if failure_class == "SQLITE_CONTENTION"
+            else "Probe busy"
+            if failure_class == "DATABASE_PROBE_BUSY"
+            else "Probe timed out"
+            if failure_class == "DATABASE_PROBE_TIMEOUT"
+            else "Disconnected"
+        )
         return JSONResponse(
             status_code=503,
             content={
                 "status": "degraded",
                 "app": settings.app_name,
                 "version": "0.1.0",
-                "database": "Contended" if failure_class == "SQLITE_CONTENTION" else "Probe busy" if failure_class == "DATABASE_PROBE_BUSY" else "Probe timed out" if failure_class == "DATABASE_PROBE_TIMEOUT" else "Disconnected",
+                "database": database_status,
                 "database_error_class": failure_class,
                 "database_pool": failure_pool_snapshot,
             },
         )
-    return {"status": "ok", "app": settings.app_name, "version": "0.1.0", "database": "Connected", "database_pool": database_pool_snapshot()}
+
+    return {
+        "status": "ok",
+        "app": settings.app_name,
+        "version": "0.1.0",
+        "database": "Connected",
+        "database_pool": database_pool_snapshot(),
+    }
