@@ -91,6 +91,15 @@ class DailyMarketDataShardCatalog:
                         "GROUP BY instrument",
                         (source, timeframe),
                     ).fetchall()
+                    # A watermark table can predate its backfill in legacy
+                    # catalogs. Fall back only when rows exist but no
+                    # maintained watermark is present for this source.
+                    if not rows and int(count_row[0] or 0) > 0:
+                        rows = connection.execute(
+                            "SELECT instrument, MAX(timestamp_ns) FROM data_catalog "
+                            "WHERE source=? AND timeframe=? GROUP BY instrument",
+                            (source, timeframe),
+                        ).fetchall()
                 else:
                     # Older legacy catalogs may predate maintained watermarks.
                     rows = connection.execute(
