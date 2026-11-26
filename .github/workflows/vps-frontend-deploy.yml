@@ -1,0 +1,47 @@
+name: VPS Frontend Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "deploy/deploy-frontend-vps.sh"
+      - ".github/workflows/vps-frontend-deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  # Share the lock with the existing backend deploy workflow.
+  group: vps-service-mutation
+  cancel-in-progress: false
+
+jobs:
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Deploy merged frontend commit to VPS
+        env:
+          VPS_KEY_B64: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_KEY_B64"
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          printf '%s' "$VPS_KEY_B64" | base64 --decode > /tmp/vps_key
+          chmod 600 /tmp/vps_key
+          mkdir -p ~/.ssh
+          ssh-keyscan -T 10 -H "$VPS_HOST" > /tmp/vps_known_hosts 2>/dev/null
+          test -s /tmp/vps_known_hosts
+          SSH_OPTS=(-i /tmp/vps_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -o UserKnownHostsFile=/tmp/vps_known_hosts -o StrictHostKeyChecking=yes)
+          ssh "${SSH_OPTS[@]}" "$VPS_USER@$VPS_HOST" "bash -s -- '$TARGET_SHA'" <<'REMOTE'
+          set -Eeuo pipefail
+          APP_DIR=/opt/Algo-Trading
+          cd "$APP_DIR"
+          git fetch origin main
+          git merge --ff-only origin/main
+          test "$(git rev-parse HEAD)" = "$1"
+          bash deploy/deploy-frontend-vps.sh "$1"
+          REMOTE
