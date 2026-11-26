@@ -494,6 +494,7 @@ def get_live_data_health():
 
 
 @router.get("/common-feed-health")
+@cached_snapshot(ttl_seconds=5.0, max_stale_seconds=20.0)
 def get_common_feed_health():
     """Return process-local Angel common WebSocket telemetry; raw ticks are never persisted."""
     from app.core.config import settings
