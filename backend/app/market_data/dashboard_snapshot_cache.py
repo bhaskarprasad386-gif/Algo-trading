@@ -72,6 +72,17 @@ class BoundedSnapshotCache:
             # the stale window expires. Never let a daemon exception kill a worker.
             pass
 
+    def clear(self) -> None:
+        """Clear a quiescent cache (primarily for deterministic test isolation)."""
+        with self._lock:
+            if self._refreshing:
+                raise RuntimeError("cannot clear a snapshot cache during refresh")
+            self._value = None
+            self._refreshed_at = None
+            self._refresh_count = 0
+            self._refresh_errors = 0
+            self._refresh_done.set()
+
     def get(self, factory: Callable[[], Any]) -> Any:
         now = monotonic()
         with self._lock:
