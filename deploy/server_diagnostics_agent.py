@@ -34,9 +34,10 @@ _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 _SENSITIVE_KEYS = (
     r"x[-_]?private[-_]?key|x[-_]?api[-_]?key|api[-_]?key|private[-_]?key|"
     r"x[-_]?feed[-_]?token|feed[-_]?token|jwt[-_]?token|access[-_]?token|"
-    r"refresh[-_]?token|auth[-_]?token|account[-_]?(?:id|number)|uid|password|passwd|pwd|"
+    r"refresh[-_]?token|auth[-_]?token|(?:api[-_]?)?token|"
+    r"account[-_]?(?:id|number)|uid|password|passwd|pwd|"
     r"totp(?:[-_]?secret)?|one[-_]?time[-_]?password|otp|"
-    r"client[-_]?secret|client[-_]?code|client[-_]?id|api[-_]?secret"
+    r"client[-_]?secret|client[-_]?code|client[-_]?id|api[-_]?secret|secret"
 )
 _QUOTED_ASSIGNMENT = re.compile(
     rf"(?P<prefix>['\"]?(?:{_SENSITIVE_KEYS}|authorization)['\"]?\s*[:=]\s*['\"])"
@@ -45,13 +46,22 @@ _QUOTED_ASSIGNMENT = re.compile(
 )
 _PLAIN_ASSIGNMENT = re.compile(
     rf"(?P<prefix>\b(?:{_SENSITIVE_KEYS}|authorization)\b\s*[:=]\s*)"
-    rf"(?P<value>(?:Bearer|Basic)\s+[^,\s;}}\]]+|[^,\s;}}\]]+)",
+    rf"(?P<value>(?:Bearer|Basic)\s+[^,\s;}}\]&]+|[^,\s;}}\]&]+)",
     re.IGNORECASE,
+)
+_BEARER_VALUE = re.compile(r"\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE)
+_URL_CREDENTIALS = re.compile(r"(https?://)[^/@\s:]+:[^/@\s]+@", re.IGNORECASE)
+_PRIVATE_KEY_BLOCK = re.compile(
+    r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----.*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
 def sanitize(value: object, limit: int = 1200) -> str:
+    """Hide credential values while retaining the surrounding diagnostic text."""
     text = _ANSI_ESCAPE.sub("", str(value or ""))
+    text = _PRIVATE_KEY_BLOCK.sub("[PRIVATE KEY REDACTED]", text)
+    text = _URL_CREDENTIALS.sub(r"\1[REDACTED]@", text)
     text = _QUOTED_ASSIGNMENT.sub(
         lambda match: f"{match.group('prefix')}[REDACTED]{match.group('suffix')}",
         text,
@@ -60,6 +70,7 @@ def sanitize(value: object, limit: int = 1200) -> str:
         lambda match: f"{match.group('prefix')}[REDACTED]",
         text,
     )
+    text = _BEARER_VALUE.sub(r"\1 [REDACTED]", text)
     text = "".join(ch if ch in "\n\t" or ord(ch) >= 32 else " " for ch in text)
     return text[:limit]
 
