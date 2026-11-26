@@ -22,6 +22,42 @@ def test_sanitize_redacts_common_credentials() -> None:
     assert "[REDACTED]" in result
 
 
+def test_sanitize_preserves_diagnostic_context_and_redacts_only_secrets() -> None:
+    message = (
+        "RuntimeError: Shared Index Runner failed while subscribing NIFTY-WEEKLY "
+        "at backend/app/market_data/runner.py:217\\n"
+        "Traceback (most recent call last):\\n"
+        "  File \\\"runner.py\\\", line 217, in subscribe\\n"
+        "requests.exceptions.Timeout: broker endpoint timed out after 2.0s; "
+        "api_key=live-key-123 access_token='access-secret-456' "
+        "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.signature "
+        "https://broker-user:broker-pass@example.test/api"
+    )
+    result = agent.sanitize(message)
+    for detail in (
+        "RuntimeError: Shared Index Runner failed", "NIFTY-WEEKLY",
+        "backend/app/market_data/runner.py:217", "Traceback (most recent call last)",
+        'File "runner.py", line 217', "requests.exceptions.Timeout",
+        "broker endpoint timed out after 2.0s", "https://[REDACTED]@example.test/api",
+    ):
+        assert detail in result
+    for secret in ("live-key-123", "access-secret-456", "eyJhbGciOiJIUzI1NiJ9.signature", "broker-user", "broker-pass"):
+        assert secret not in result
+
+
+def test_sanitize_redacts_json_query_and_private_key_secrets() -> None:
+    message = (
+        '{"refresh_token":"refresh-secret","status":"broker rejected order"} '
+        "GET /login?api_key=query-secret&mode=live "
+        "-----BEGIN PRIVATE KEY-----\\nprivate-material\\n-----END PRIVATE KEY-----"
+    )
+    result = agent.sanitize(message)
+    for secret in ("refresh-secret", "query-secret", "private-material"):
+        assert secret not in result
+    assert "broker rejected order" in result
+    assert "mode=live" in result
+    assert "[PRIVATE KEY REDACTED]" in result
+
 def test_classify_journal_priorities() -> None:
     assert agent.classify(0) == "CRITICAL"
     assert agent.classify(3) == "ERROR"
