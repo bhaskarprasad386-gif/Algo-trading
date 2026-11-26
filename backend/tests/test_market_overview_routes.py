@@ -13,6 +13,8 @@ def reset_dashboard_route_caches():
     with routes._OVERVIEW_QUOTE_CACHE_LOCK:
         routes._OVERVIEW_QUOTE_CACHE.clear()
         routes._OVERVIEW_QUOTE_FAILURES.clear()
+    with routes._OVERVIEW_INSTRUMENT_CACHE_LOCK:
+        routes._OVERVIEW_INSTRUMENT_CACHE.clear()
     with routes._CLOSED_OVERVIEW_CACHE_LOCK:
         routes._CLOSED_OVERVIEW_CACHE.clear()
     yield
@@ -205,12 +207,15 @@ def test_live_data_health_does_not_use_fresh_mcx_tick_to_mask_stale_nse_nfo(monk
 
 def test_market_overview_reuses_quote_batch_between_dashboard_polls(monkeypatch):
     calls = []
+    resolutions = []
 
     class FakeMaster:
         def get_instrument(self, symbol, exchange):
+            resolutions.append((exchange, symbol))
             return {"token": f"{exchange}-{symbol}"}
 
         def resolve_index_instrument(self, symbol, exchange):
+            resolutions.append((exchange, symbol))
             return {"token": f"{exchange}-{symbol}"}
 
     class FakeClient:
@@ -236,6 +241,7 @@ def test_market_overview_reuses_quote_batch_between_dashboard_polls(monkeypatch)
     second = routes.get_market_overview()
 
     assert len(calls) == 3
+    assert len(resolutions) == 10
     assert second["indices"][0]["quote_cache_age_seconds"] is not None
     assert all(row["status"] == "LIVE" for row in second["indices"] + second["commodities"])
 
