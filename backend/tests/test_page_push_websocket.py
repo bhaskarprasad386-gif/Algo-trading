@@ -176,7 +176,7 @@ def test_non_object_snapshot_provider_is_not_authoritative(monkeypatch):
 def test_origin_policy_rejects_untrusted_hosts(monkeypatch):
     monkeypatch.setenv("SCANNER_PAGE_WS_ALLOWED_ORIGINS", "https://algo-trading.pages.dev,https://terminal.example.com")
     assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.vercel.app"}))
-    assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.bhaskarprasad386.workers.dev"}))
+    assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://terminal.example.com"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "http://localhost:3000"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.pages.dev"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://terminal.example.com"}))
@@ -194,6 +194,7 @@ def test_page_event_and_sequence_journals_are_durable_tables():
 
 
 def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
+    monkeypatch.setenv("SCANNER_PAGE_WS_ALLOWED_ORIGINS", "https://terminal.example.com")
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
