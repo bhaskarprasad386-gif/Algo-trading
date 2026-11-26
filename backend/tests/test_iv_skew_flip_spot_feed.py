@@ -673,10 +673,10 @@ def test_spot_persistence_batches_both_indices_in_one_transaction(monkeypatch):
     assert len(write_sessions) == 1
     assert write_sessions[0].commits == 1
     assert len(write_sessions[0].rows) == 4
-    assert {row.symbol for row in sessions[0].rows if isinstance(row, spot_feed_module.IVSpotLastPrice)} == {
+    assert {row.symbol for row in write_sessions[0].rows if isinstance(row, spot_feed_module.IVSpotLastPrice)} == {
         "NIFTY", "BANKNIFTY"
     }
-    assert {row.underlying for row in sessions[0].rows if isinstance(row, spot_feed_module.IVSpotObservation)} == {
+    assert {row.underlying for row in write_sessions[0].rows if isinstance(row, spot_feed_module.IVSpotObservation)} == {
         "NIFTY", "BANKNIFTY"
     }
     persistence = adapter.snapshot()["record_validation"]["persistence"]
