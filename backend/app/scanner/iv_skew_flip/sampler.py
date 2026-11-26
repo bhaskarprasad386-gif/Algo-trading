@@ -103,6 +103,10 @@ class IVOneSecondSampler:
         self._previous_cycle: dict[str, OptionMetricSample] = {}
         self._one_second_changes: dict[str, dict[str, float | int | None]] = {}
         self._history: dict[str, deque[OptionMetricSample]] = defaultdict(deque)
+        # Keep failed durable writes until a later transaction confirms them.
+        # Keys are source-time identities, so retries remain idempotent.
+        self._pending_history: dict[tuple[str, int], OptionMetricSample] = {}
+        self._history_persistence_dropped_count = 0
         self._last_source_timestamp: dict[str, int] = {}
         self._last_sampled_at_ns: int | None = None
         self._last_error: str | None = None
@@ -463,15 +467,39 @@ class IVOneSecondSampler:
                 (token, sample) for token, sample in new_history
                 if self._last_source_timestamp.get(token) != sample.source_timestamp_ns
             ]
+            cutoff_ns = sampled_at - self.history_limit * 1_000_000_000
+            if self.history_session_factory is not None:
+                for token, sample in pending_history:
+                    self._pending_history.setdefault((token, sample.source_timestamp_ns), sample)
+                expired_keys = [
+                    key for key, sample in self._pending_history.items()
+                    if sample.source_timestamp_ns < cutoff_ns
+                ]
+                for key in expired_keys:
+                    self._pending_history.pop(key, None)
+                self._history_persistence_dropped_count += len(expired_keys)
+                persistence_batch = tuple(self._pending_history.values())
+            else:
+                persistence_batch = tuple(sample for _, sample in pending_history)
         # Keep the state lock out of the SQL transaction. The dedicated
         # sample lock above preserves one-cycle-at-a-time cursor ordering.
         persistence_ok = True
         try:
-            self._persist_history([sample for _, sample in pending_history])
+            self._persist_history(list(persistence_batch))
             persistence_error = None
+            with self._lock:
+                for sample in persistence_batch:
+                    key = (sample.token, sample.source_timestamp_ns)
+                    if self.history_session_factory is not None:
+                        self._pending_history.pop(key, None)
+                    self._last_source_timestamp[sample.token] = max(
+                        self._last_source_timestamp.get(sample.token, 0),
+                        sample.source_timestamp_ns,
+                    )
         except Exception as exc:
-            # Persistence outages must be visible and retried, but must not
-            # take down live IV sampling. Do not advance durable cursors.
+            # Keep failed source-time rows queued for the next cycle. Without
+            # this queue, a later tick would replace an earlier failed write
+            # and silently lose durable observations during a DB outage.
             persistence_ok = False
             persistence_error = f"{type(exc).__name__}: {exc}"
         with self._lock:
@@ -526,8 +554,7 @@ class IVOneSecondSampler:
                     history.append(sample)
                 while history and history[0].source_timestamp_ns < cutoff_ns:
                     history.popleft()
-                if persistence_ok:
-                    self._last_source_timestamp[token] = sample.source_timestamp_ns
+
             self._last_sampled_at_ns = sampled_at
             self._last_error = None if updates else "no fresh option quotes available"
         return self.snapshot()
@@ -733,6 +760,8 @@ class IVOneSecondSampler:
             "history_persistence": "ENABLED" if self.history_session_factory is not None else "DISABLED",
             "history_persisted_count": self._history_persisted_count,
             "history_persistence_error": self._history_persistence_error,
+            "history_persistence_pending_count": len(self._pending_history),
+            "history_persistence_dropped_count": self._history_persistence_dropped_count,
             "five_minute_oi_reference_available": sum(
                 1 for item in samples if self.oi_reference(item.token) is not None
             ),
