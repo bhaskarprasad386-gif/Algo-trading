@@ -1019,11 +1019,26 @@ def _build_dashboard_snapshot_payload() -> dict:
     }
 
 
-async def _send_dashboard_snapshot(client: WebSocket, payload: dict) -> bool:
+def _build_dashboard_snapshot_frame() -> tuple[str, float, float, int]:
+    """Build and serialize one dashboard frame once for every connected browser."""
+    build_started = time_module.monotonic()
+    payload = _build_dashboard_snapshot_payload()
+    build_seconds = time_module.monotonic() - build_started
+    serialization_started = time_module.monotonic()
+    # Match Starlette WebSocket.send_json defaults while avoiding one JSON dump
+    # per browser connection. Serialization runs in the publisher worker thread.
+    serialized = json.dumps(
+        payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    )
+    serialization_seconds = time_module.monotonic() - serialization_started
+    return serialized, build_seconds, serialization_seconds, len(serialized.encode("utf-8"))
+
+
+async def _send_dashboard_snapshot(client: WebSocket, payload: str) -> bool:
     """Bound each client's send time; a slow browser cannot stall other viewers."""
     started = time_module.monotonic()
     try:
-        await asyncio.wait_for(client.send_json(payload), timeout=0.75)
+        await asyncio.wait_for(client.send_text(payload), timeout=0.75)
         _dashboard_stream_telemetry.record_client_send(
             success=True, duration_seconds=time_module.monotonic() - started
         )
@@ -1045,15 +1060,17 @@ async def _dashboard_snapshot_publisher_loop() -> None:
     while True:
         started = time_module.monotonic()
         build_seconds = 0.0
+        serialization_seconds = 0.0
+        payload_bytes = 0
         fanout_seconds = 0.0
         client_count = len(_dashboard_clients)
         sent_count = 0
         failed_count = 0
         try:
             if client_count:
-                build_started = time_module.monotonic()
-                payload = await asyncio.to_thread(_build_dashboard_snapshot_payload)
-                build_seconds = time_module.monotonic() - build_started
+                payload, build_seconds, serialization_seconds, payload_bytes = (
+                    await asyncio.to_thread(_build_dashboard_snapshot_frame)
+                )
                 clients = tuple(_dashboard_clients)
                 client_count = len(clients)
                 if clients:
@@ -1071,6 +1088,8 @@ async def _dashboard_snapshot_publisher_loop() -> None:
                 failed_count=failed_count,
                 build_seconds=build_seconds,
                 fanout_seconds=fanout_seconds,
+                serialization_seconds=serialization_seconds,
+                payload_bytes=payload_bytes,
             )
         except asyncio.CancelledError:
             raise
