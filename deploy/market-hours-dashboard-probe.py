@@ -26,6 +26,7 @@ ENDPOINTS = (
     "/health/live",
     "/health",
     "/api/v1/market-data/live-health",
+    "/api/v1/market-data/runtime/health",
     "/api/v1/market-data/common-feed-health",
     "/api/v1/market-data/overview",
     "/api/v1/market-data/shared-index-runner/health-lite",
@@ -58,8 +59,10 @@ def _safe_health_fields(path: str, payload: object) -> dict:
             key: pool.get(key)
             for key in (
                 "checkedout", "capacity", "long_checkout_count",
-                "oldest_checkout_seconds", "checkout_timeouts",
-                "checkout_acquire_p95_seconds",
+                "oldest_checkout_seconds", "checkout_wait_count",
+                "average_checkout_wait_seconds", "max_checkout_wait_seconds",
+                "pool_timeout_count", "active_checkouts",
+                "checkout_tracking_status",
             )
             if key in pool
         }
@@ -67,7 +70,10 @@ def _safe_health_fields(path: str, payload: object) -> dict:
     if isinstance(event_loop, dict):
         result["event_loop"] = {
             key: event_loop.get(key)
-            for key in ("lag_ms", "p95_lag_ms", "max_lag_ms", "samples")
+            for key in (
+                "sample_interval_seconds", "sample_count", "last_lag_seconds",
+                "average_lag_seconds", "max_lag_seconds", "p95_lag_bucket",
+            )
             if key in event_loop
         }
     if path.endswith("/live-health"):
