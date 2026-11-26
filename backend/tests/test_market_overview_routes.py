@@ -6,6 +6,7 @@ from app.market_data import routes
 @pytest.fixture(autouse=True)
 def reset_dashboard_route_caches():
     """Keep endpoint-cache behavior isolated across route tests."""
+    routes._LIVE_PERSISTED_SUMMARY_CACHE.clear()
     for endpoint in (routes.get_market_overview, routes.get_live_data_health):
         endpoint.snapshot_cache.clear()
     with routes._OVERVIEW_HISTORICAL_CACHE_LOCK:
@@ -326,3 +327,54 @@ def test_market_overview_backs_off_repeated_quote_failures(monkeypatch):
     # cannot hammer a broker endpoint that is already unavailable/rate-limited.
     assert len(calls) == 3
     assert all(row["status"] == "NO_QUOTE" for row in second["indices"] + second["commodities"])
+
+
+
+def test_live_health_reuses_persisted_summary_without_staling_runtime_feed(monkeypatch):
+    from datetime import datetime
+    from app.core.config import settings
+
+    catalog_constructions = []
+    runtime_reads = []
+
+    class FakeCatalog:
+        def __init__(self, path):
+            catalog_constructions.append(path)
+
+        def source_summary(self, *, source, timeframe):
+            return {
+                "record_count": 12 if source == "angelone-live-1s" else 4,
+                "instruments": 3 if source == "angelone-live-1s" else 2,
+                "latest_timestamp_ns": None,
+            }
+
+        def close(self):
+            pass
+
+    def runtime_snapshot():
+        runtime_reads.append(1)
+        return None
+
+    monkeypatch.setattr(settings, "BACKTEST_DATA_DB", "/tmp/live-health-test.sqlite3")
+    monkeypatch.setattr(
+        "app.market_data.daily_shard_catalog.DailyMarketDataShardCatalog",
+        FakeCatalog,
+    )
+    monkeypatch.setattr(
+        "app.market_data.common_strategy_feed.shared_common_manager_snapshot",
+        runtime_snapshot,
+    )
+    monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
+
+    first = routes.get_live_data_health()
+    routes.get_live_data_health.snapshot_cache.clear()
+    second = routes.get_live_data_health()
+
+    # The expensive shard enumeration is shared for 60 seconds, but runtime
+    # feed state is still sampled on every new /live-health snapshot.
+    assert len(catalog_constructions) == 1
+    assert len(runtime_reads) == 2
+    assert first["records"] == second["records"] == 12
+    assert second["persisted_summary"]["status"] == "FRESH"
+    assert second["runtime_feed"]["status"] == "NO_DATA"
+    assert second["feed_status"] == "NO_DATA"
