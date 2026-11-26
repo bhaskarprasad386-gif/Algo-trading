@@ -749,6 +749,8 @@ def test_failed_spot_persistence_batch_is_retried(monkeypatch):
 
     adapter._persist_wakeup = ControlledWakeup()
     attempts = []
+    session_calls = []
+
     class SuccessfulSession:
         def __enter__(self):
             return self
@@ -763,8 +765,11 @@ def test_failed_spot_persistence_batch_is_retried(monkeypatch):
             return None
 
     def session_factory():
-        if not attempts:
-            # A transient failure before any row is merged.
+        session_calls.append(True)
+        if len(session_calls) == 1:
+            # A newer tick arrives while the first DB checkout fails. The
+            # retry must persist the newest value, not the stale batch.
+            adapter._enqueue_persistence("NIFTY", newer)
             raise RuntimeError("temporary database pressure")
         return SuccessfulSession()
 
