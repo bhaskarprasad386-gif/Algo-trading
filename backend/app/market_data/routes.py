@@ -339,18 +339,16 @@ def get_live_data_health():
         # the 5-second runtime feed-health cadence. The result is valid for
         # 60 seconds; feed tick freshness below is still recalculated per
         # endpoint snapshot and is never inferred from persisted history.
-        catalog = DailyMarketDataShardCatalog(settings.BACKTEST_DATA_DB)
-        try:
-            return {
-                "angelone-live-1s": catalog.source_summary(
-                    source="angelone-live-1s", timeframe="1s"
-                ),
-                "angelone-live": catalog.source_summary(
-                    source="angelone-live", timeframe="event"
-                ),
-            }
-        finally:
-            catalog.close()
+        return {
+            "angelone-live-1s": DailyMarketDataShardCatalog.read_source_summary(
+                settings.BACKTEST_DATA_DB,
+                source="angelone-live-1s", timeframe="1s",
+            ),
+            "angelone-live": DailyMarketDataShardCatalog.read_source_summary(
+                settings.BACKTEST_DATA_DB,
+                source="angelone-live", timeframe="event",
+            ),
+        }
 
     persisted_summaries, persisted_summary_meta = _LIVE_PERSISTED_SUMMARY_CACHE.get(
         str(settings.BACKTEST_DATA_DB), load_persisted_summaries
