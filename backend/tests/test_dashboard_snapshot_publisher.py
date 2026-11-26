@@ -107,7 +107,7 @@ def test_dashboard_dispatch_wait_formula_uses_elapsed_residual_and_clamps_to_zer
             "serialization_seconds": 0.03,
         },
     )
-    assert measured == 0.18
+    assert abs(measured - 0.18) < 1e-9
 
     clamped = eval(
         expression,
