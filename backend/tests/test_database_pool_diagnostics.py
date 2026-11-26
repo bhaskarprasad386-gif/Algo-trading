@@ -22,6 +22,7 @@ class _StaticPool:
 
 def test_database_pool_snapshot_reports_queue_pool_occupancy(monkeypatch):
     monkeypatch.setattr(database.engine, "pool", _QueuePool())
+    monkeypatch.setattr(database, "_pool_checkouts", {})
 
     snapshot = database.database_pool_snapshot()
 
@@ -36,6 +37,7 @@ def test_database_pool_snapshot_reports_queue_pool_occupancy(monkeypatch):
 
 def test_database_pool_snapshot_is_safe_for_pools_without_queuepool_counters(monkeypatch):
     monkeypatch.setattr(database.engine, "pool", _StaticPool())
+    monkeypatch.setattr(database, "_pool_checkouts", {})
 
     snapshot = database.database_pool_snapshot()
 
