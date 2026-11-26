@@ -48,7 +48,7 @@ cleanup() {
   if [[ -d "$RELEASE_DIR" ]]; then git -C "$APP_DIR" worktree remove --force "$RELEASE_DIR" >/dev/null 2>&1 || rm -rf "$RELEASE_DIR"; fi
   if [[ "$status" -eq 0 ]]; then
     # Keep the previous build and dependency tree as a manual rollback point.
-    find /opt -maxdepth 1 -type d -name '.frontend-rollback-*' -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | while IFS= read -r old; do rm -rf "$old"; done
+    find /opt -maxdepth 1 -type d -name 'algo-frontend-rollback-*' -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | while IFS= read -r old; do rm -rf "$old"; done
   fi
   exit "$status"
 }
