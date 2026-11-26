@@ -629,10 +629,9 @@ async def _iv_scanner_recovery_loop() -> None:
             raise
         except Exception as exc:
             app_logger.warning(
-                "IV Scanner startup recovery failed; retrying in {:.1f}s: {}; database_pool={}",
+                "IV Scanner startup recovery failed; retrying in {:.1f}s: {}",
                 retry_delay,
                 exc,
-                database_pool_snapshot(),
             )
             retry_delay = min(max_retry_delay, max(5.0, retry_delay * 2.0))
 
@@ -807,7 +806,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https://([a-z0-9-]+\.)?vercel\.app$|https://algo-trading\.bhaskarprasad386\.workers\.dev$|https://fix-cloudflare-cors-algo-trading\.bhaskarprasad386\.workers\.dev$|https://fix-cloudflare-workers-cors-algo-trading\.bhaskarprasad386\.workers\.dev$|http://localhost(:\d+)?$|http://127\.0\.0\.1(:\d+)?$",
+    allow_origin_regex=r"https://([a-z0-9-]+\.)?vercel\.app$|http://localhost(:\d+)?$|http://127\.0\.0\.1(:\d+)?$",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -2637,7 +2636,7 @@ def iv_skew_flip_option_timeseries(
         raise HTTPException(
             status_code=503,
             detail={"message": "IV option time-series is temporarily unavailable.",
-                    "reason": type(exc).__name__},
+                    "reason": f"{type(exc).__name__}: {exc}"},
         ) from exc
     rows.reverse()  # keep the newest bounded window in chronological order
     observations = [
@@ -2771,7 +2770,7 @@ def capture_iv_skew_flip_broker_snapshot(underlying: str = "NIFTY"):
         app_logger.exception("Manual IV broker option snapshot failed")
         raise HTTPException(
             status_code=503,
-            detail={"message": "Angel One option-chain snapshot could not be captured.", "reason": type(exc).__name__},
+            detail={"message": "Angel One option-chain snapshot could not be captured.", "reason": str(exc)},
         ) from exc
 
 
@@ -2898,7 +2897,7 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
         app_logger.exception("IV option history read failed")
         raise HTTPException(
             status_code=503,
-            detail={"message": "Durable IV option history is temporarily unavailable.", "reason": type(exc).__name__},
+            detail={"message": "Durable IV option history is temporarily unavailable.", "reason": f"{type(exc).__name__}: {exc}"},
         ) from exc
     metrics = []
     for row in rows:
@@ -2977,7 +2976,7 @@ def save_iv_skew_flip_config(payload: dict):
                 _save_iv_scanner_enabled(True)
             except Exception as exc:
                 app_logger.exception("IV Scanner ON state could not be persisted")
-                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not started because ON state could not be saved.", "reason": type(exc).__name__}) from exc
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not started because ON state could not be saved.", "reason": str(exc)}) from exc
             try:
                 snapshot = _start_iv_skew_flip_runtime()
             except Exception as exc:
@@ -2987,7 +2986,7 @@ def save_iv_skew_flip_config(payload: dict):
                 except Exception:
                     app_logger.exception("IV Scanner failed to roll back persisted ON state after startup failure")
                 app_logger.exception("IV Scanner could not be enabled")
-                raise HTTPException(status_code=503, detail={"message": "IV Scanner ON save failed because backend runner did not start.", "reason": type(exc).__name__}) from exc
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner ON save failed because backend runner did not start.", "reason": str(exc)}) from exc
         else:
             # Persist OFF first. If the database is unavailable, leave the
             # currently running scanner untouched rather than create a
@@ -2996,7 +2995,7 @@ def save_iv_skew_flip_config(payload: dict):
                 _save_iv_scanner_enabled(False)
             except Exception as exc:
                 app_logger.exception("IV Scanner OFF state could not be persisted")
-                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not stopped because OFF state could not be saved.", "reason": type(exc).__name__}) from exc
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not stopped because OFF state could not be saved.", "reason": str(exc)}) from exc
             snapshot = _stop_iv_skew_flip_runtime()
         return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
                 "runner_status": snapshot.get("status", "STOPPED"),
@@ -3019,7 +3018,7 @@ def start_iv_skew_flip_scanner():
             return snapshot
         except Exception as exc:
             app_logger.exception("IV Skew / IV Flip scanner startup failed")
-            raise HTTPException(status_code=503, detail={"message": "IV scanner could not start; verify Angel One session, shared feed and instrument master.", "reason": type(exc).__name__}) from exc
+            raise HTTPException(status_code=503, detail={"message": "IV scanner could not start; verify Angel One session, shared feed and instrument master.", "reason": str(exc)}) from exc
 
 
 @app.post("/api/v1/scanner/iv-skew-flip/stop")
@@ -3082,7 +3081,15 @@ def iv_skew_flip_validation(underlying: str = "NIFTY", expiry_type: str | None =
         db.close()
 
 
-def _database_health_failure_class(exc: Exception) -> str:
+# A timed-out asyncio.to_thread() cannot stop its underlying worker thread.
+# Admit only one health DB probe at a time so repeated probes cannot create an
+# unbounded backlog of abandoned DB-check threads when the database is stuck.
+_health_db_probe_semaphore = threading.BoundedSemaphore(value=1)
+
+
+def _run_health_database_probe() -> None:
+    try:
+        def _database_health_failure_class(exc: Exception) -> str:
     """Classify bounded probe failures before generic database failures."""
     if isinstance(exc, DatabaseHealthProbeTimeout):
         return "DATABASE_PROBE_TIMEOUT"
