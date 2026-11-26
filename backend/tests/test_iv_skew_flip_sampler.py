@@ -823,3 +823,112 @@ def test_sampler_state_lock_is_available_while_history_persistence_blocks(monkey
     worker.join(timeout=2)
     assert not worker.is_alive()
     assert sampler.snapshot()["sample_count"] == 1
+
+
+def test_history_inheritance_waits_for_previous_sampler_cycle():
+    from threading import Event, Thread
+
+    now_ns = 1_800_000_000_000_000_000
+    previous = _sampler(QuoteSource(), lambda: now_ns)
+    current = _sampler(QuoteSource(), lambda: now_ns)
+    universe = type("Universe", (), {
+        "underlying": "NIFTY",
+        "expiry": "2026-11-12",
+        "contracts": (
+            type("Contract", (), {"token": "shared-ce", "strike": 21950.0, "option_type": "CE"})(),
+        ),
+    })()
+    sample = OptionMetricSample(
+        token="shared-ce", underlying="NIFTY", expiry="2026-11-12",
+        strike=21950.0, option_type="CE", sampled_at_ns=now_ns,
+        source_timestamp_ns=now_ns, spot_timestamp_ns=now_ns,
+        spot_price=21950.0, oi=12000, mark=100.0, ltp=100.0,
+        iv=20.0, iv_input="LTP", oi_timestamp_ns=now_ns,
+    )
+    attempting = Event()
+    finished = Event()
+    result = []
+
+    def inherit():
+        attempting.set()
+        result.append(current.inherit_history(previous, universe))
+        finished.set()
+
+    with previous._sample_lock:
+        worker = Thread(target=inherit)
+        worker.start()
+        assert attempting.wait(timeout=1)
+        # The in-flight source cycle publishes its final OI sample before
+        # releasing its cycle lock. Inheritance must not snapshot mid-cycle.
+        with previous._lock:
+            previous._history["shared-ce"].append(sample)
+            previous._last_source_timestamp["shared-ce"] = now_ns
+        assert not finished.wait(timeout=0.05)
+
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert result == [1]
+    assert current.history_snapshot("shared-ce") == (sample,)
+    assert current._last_source_timestamp["shared-ce"] == now_ns
+
+
+def test_empty_history_persistence_never_opens_a_database_session():
+    calls = []
+
+    def unexpected_session():
+        calls.append(True)
+        raise AssertionError("empty persistence batch must not checkout a connection")
+
+    sampler = IVOneSecondSampler(
+        quote_source=QuoteSource(),
+        spot_provider=lambda: None,
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        history_session_factory=unexpected_session,
+    )
+    assert sampler._persist_history([]) == 0
+    assert calls == []
+
+
+def test_sampler_persistence_chunks_large_source_key_batches_for_sqlite():
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.core.database import Base
+    from app.models.iv_option_observation import IVOptionObservation
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    statements = []
+
+    def capture_sql(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "iv_option_observations" in statement:
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_sql)
+    sampler = IVOneSecondSampler(
+        quote_source=QuoteSource(),
+        spot_provider=lambda: None,
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        history_session_factory=Session,
+    )
+    base_ns = 1_800_000_000_000_000_000
+    samples = [
+        OptionMetricSample(
+            token=f"large-token-{index}", underlying="NIFTY", expiry="2026-11-12",
+            strike=18000.0 + index, option_type="CE", sampled_at_ns=base_ns,
+            source_timestamp_ns=base_ns + index, spot_timestamp_ns=base_ns,
+            spot_price=21950.0, oi=1000 + index, mark=100.0, ltp=100.0,
+            iv=20.0, iv_input="LTP", oi_timestamp_ns=base_ns,
+        )
+        for index in range(405)
+    ]
+
+    assert sampler._persist_history(samples) == 405
+    assert len(statements) == 2  # 400 keys, then the remaining five
+    with Session() as session:
+        assert session.query(IVOptionObservation).count() == 405
+    engine.dispose()
