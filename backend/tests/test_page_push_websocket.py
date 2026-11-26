@@ -176,7 +176,7 @@ def test_non_object_snapshot_provider_is_not_authoritative(monkeypatch):
 def test_origin_policy_rejects_untrusted_hosts(monkeypatch):
     monkeypatch.setenv("SCANNER_PAGE_WS_ALLOWED_ORIGINS", "https://algo-trading.pages.dev,https://terminal.example.com")
     assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.vercel.app"}))
-    assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.bhaskarprasad386.workers.dev"}))
+    assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.bhaskarprasad386.workers.dev"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "http://localhost:3000"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.pages.dev"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://terminal.example.com"}))
