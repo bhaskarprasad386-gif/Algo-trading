@@ -50,7 +50,8 @@ class PoolCheckoutTelemetry:
         label = (owner or _database_owner.get() or "unknown")[:96]
         key = id(connection_record)
         with self._lock:
-            if label not in self._owner_totals and len(self._owner_totals) >= self._max_owners:
+            known_owners = set(self._owner_totals) | {item[2] for item in self._active.values()}
+            if label not in known_owners and len(known_owners) >= self._max_owners:
                 label = "other"
             self._active[key] = (time.monotonic(), threading.current_thread().name[:64], label)
 
