@@ -110,8 +110,8 @@ class DailyMarketDataShardCatalog:
         record_count = 0
         instruments: set[str] = set()
         latest_timestamp_ns: int | None = None
-        # Resolve the shard list once. Each shard executes one aggregate and one
-        # indexed watermark scan, independent of the number of instruments.
+        # Resolve the shard list once. Each shard executes one aggregate query,
+        # independent of the number of instruments.
         for catalog in self._catalogs_for_read():
             summary = catalog.source_summary(source=source, timeframe=timeframe)
             record_count += int(summary["record_count"])
