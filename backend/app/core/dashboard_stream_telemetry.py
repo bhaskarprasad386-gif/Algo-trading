@@ -1,0 +1,92 @@
+"""Bounded process-local telemetry for the browser dashboard publisher."""
+from __future__ import annotations
+
+from threading import Lock
+from time import monotonic
+from typing import Any
+
+
+class DashboardStreamTelemetry:
+    """Track aggregate publisher health without retaining clients or payloads."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._cycles = 0
+        self._publish_errors = 0
+        self._client_send_successes = 0
+        self._client_send_failures = 0
+        self._last_error_type: str | None = None
+        self._last_success_at: float | None = None
+        self._last_build_seconds = 0.0
+        self._last_fanout_seconds = 0.0
+        self._max_build_seconds = 0.0
+        self._max_fanout_seconds = 0.0
+        self._last_client_count = 0
+        self._last_sent_count = 0
+        self._last_failed_count = 0
+        self._last_client_send_seconds = 0.0
+        self._max_client_send_seconds = 0.0
+
+    def record_client_send(self, *, success: bool, duration_seconds: float) -> None:
+        duration = max(0.0, float(duration_seconds))
+        with self._lock:
+            if success:
+                self._client_send_successes += 1
+            else:
+                self._client_send_failures += 1
+            self._last_client_send_seconds = duration
+            self._max_client_send_seconds = max(self._max_client_send_seconds, duration)
+
+    def record_publish(
+        self,
+        *,
+        client_count: int,
+        sent_count: int,
+        failed_count: int,
+        build_seconds: float,
+        fanout_seconds: float,
+        error_type: str | None = None,
+    ) -> None:
+        build = max(0.0, float(build_seconds))
+        fanout = max(0.0, float(fanout_seconds))
+        with self._lock:
+            self._cycles += 1
+            self._last_client_count = max(0, int(client_count))
+            self._last_sent_count = max(0, int(sent_count))
+            self._last_failed_count = max(0, int(failed_count))
+            self._last_build_seconds = build
+            self._last_fanout_seconds = fanout
+            self._max_build_seconds = max(self._max_build_seconds, build)
+            self._max_fanout_seconds = max(self._max_fanout_seconds, fanout)
+            if error_type:
+                self._publish_errors += 1
+                self._last_error_type = str(error_type)[:64]
+            else:
+                self._last_success_at = monotonic()
+                self._last_error_type = None
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            success_age = (
+                None if self._last_success_at is None
+                else max(0.0, monotonic() - self._last_success_at)
+            )
+            return {
+                "cycles": self._cycles,
+                "publish_errors": self._publish_errors,
+                "client_send_successes": self._client_send_successes,
+                "client_send_failures": self._client_send_failures,
+                "last_error_type": self._last_error_type,
+                "seconds_since_last_success": (
+                    None if success_age is None else round(success_age, 3)
+                ),
+                "last_build_seconds": round(self._last_build_seconds, 4),
+                "max_build_seconds": round(self._max_build_seconds, 4),
+                "last_fanout_seconds": round(self._last_fanout_seconds, 4),
+                "max_fanout_seconds": round(self._max_fanout_seconds, 4),
+                "last_client_count": self._last_client_count,
+                "last_sent_count": self._last_sent_count,
+                "last_failed_count": self._last_failed_count,
+                "last_client_send_seconds": round(self._last_client_send_seconds, 4),
+                "max_client_send_seconds": round(self._max_client_send_seconds, 4),
+            }
