@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import json
@@ -3096,13 +3096,16 @@ def health_check():
             endpoint="/health",
             context={"event": "health_check", "database_pool": pool_snapshot},
         )
-        return {
-            "status": "degraded",
-            "app": settings.app_name,
-            "version": "0.1.0",
-            "database": "Pool saturated",
-            "database_pool": pool_snapshot,
-        }
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "app": settings.app_name,
+                "version": "0.1.0",
+                "database": "Pool saturated",
+                "database_pool": pool_snapshot,
+            },
+        )
 
     try:
         check_database()
@@ -3115,7 +3118,16 @@ def health_check():
             context={"event": "health_check"},
         )
         app_logger.error(f"Health check database failure: {exc}")
-        return {"status": "degraded", "app": settings.app_name, "version": "0.1.0", "database": "Disconnected", "database_pool": database_pool_snapshot()}
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "app": settings.app_name,
+                "version": "0.1.0",
+                "database": "Disconnected",
+                "database_pool": database_pool_snapshot(),
+            },
+        )
     return {"status": "ok", "app": settings.app_name, "version": "0.1.0", "database": "Connected", "database_pool": database_pool_snapshot()}
 
 
