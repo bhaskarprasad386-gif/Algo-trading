@@ -3118,8 +3118,17 @@ async def health_check():
                 "database_pool": database_pool_snapshot(),
             },
         )
+    probe_task = asyncio.create_task(asyncio.to_thread(_run_health_database_probe))
+    # Ensure the worker is submitted before request cancellation can occur.
+    # Otherwise the acquired semaphore could outlive a to_thread coroutine
+    # cancelled before its worker starts and therefore never be released.
+    await asyncio.sleep(0)
+    # Bound this request without cancelling the worker that owns slot release.
+    probe_task.add_done_callback(
+        lambda task: task.exception() if not task.cancelled() else None
+    )
     try:
-        await asyncio.wait_for(asyncio.to_thread(_run_health_database_probe), timeout=3.0)
+        await asyncio.wait_for(asyncio.shield(probe_task), timeout=3.0)
     except Exception as exc:
         error_type = "DatabaseProbeTimeout" if isinstance(exc, asyncio.TimeoutError) else type(exc).__name__
         runtime_diagnostics.record(
