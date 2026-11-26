@@ -3,6 +3,14 @@ from fastapi.testclient import TestClient
 from app.main import app, _summarize_primary_exchange_feed
 
 
+def test_health_liveness_endpoint_is_independent_of_database_readiness():
+    client = TestClient(app)
+    response = client.get("/health/live")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert "database" not in response.json()
+
+
 def test_health_endpoint_contract():
     client = TestClient(app)
     response = client.get("/health")
