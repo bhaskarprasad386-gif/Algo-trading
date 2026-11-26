@@ -3150,7 +3150,7 @@ def health_check():
             },
         )
         app_logger.error(
-            "Health check database failure (%s; exception=%s)",
+            "Health check database failure ({}; exception={})",
             failure_class,
             exception_type,
         )
