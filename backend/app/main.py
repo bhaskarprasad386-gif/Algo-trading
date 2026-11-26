@@ -3097,18 +3097,6 @@ def _database_health_failure_class(exc: Exception) -> str:
     return "DATABASE_CHECK_FAILURE"
 
 
-# Keep a single DB health worker in flight. A timed-out asyncio.to_thread()
-# worker cannot be cancelled; it releases this slot only when its DB call ends.
-_health_db_probe_semaphore = threading.BoundedSemaphore(value=1)
-
-
-def _run_health_database_probe() -> None:
-    try:
-        check_database()
-    finally:
-        _health_db_probe_semaphore.release()
-
-
 @app.get("/health/live")
 async def health_liveness_check():
     """Fast process liveness probe; deliberately performs no DB or broker I/O."""
@@ -3140,35 +3128,10 @@ async def health_check():
         )
 
 
-    if not _health_db_probe_semaphore.acquire(blocking=False):
-        runtime_diagnostics.record(
-            component="Database",
-            error_type="DatabaseProbeBusy",
-            message="A previous database health probe is still running",
-            endpoint="/health",
-            context={"event": "health_check", "max_concurrent_probes": 1},
-        )
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "degraded",
-                "app": settings.app_name,
-                "version": "0.1.0",
-                "database": "Probe busy",
-                "database_error_class": "DATABASE_PROBE_BUSY",
-                "database_pool": database_pool_snapshot(),
-            },
-        )
-
-    probe_task = asyncio.create_task(asyncio.to_thread(_run_health_database_probe))
-    # Consume exceptions even if the ASGI request is cancelled; the worker
-    # retains ownership of the semaphore until the underlying DB call ends.
-    probe_task.add_done_callback(
-        lambda task: task.exception() if not task.cancelled() else None
-    )
-    await asyncio.sleep(0)
     try:
-        await asyncio.wait_for(asyncio.shield(probe_task), timeout=0.75)
+        # Use the daemon-thread, single-flight helper: a timed-out DB checkout
+        # must not hold the ASGI default executor open during request shutdown.
+        check_database_bounded(probe=check_database, timeout_seconds=0.75)
     except Exception as exc:
         failure_class = (
             "DATABASE_PROBE_TIMEOUT"
