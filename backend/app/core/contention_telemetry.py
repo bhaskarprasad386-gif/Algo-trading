@@ -119,8 +119,9 @@ class InstrumentedRLock:
 
     BUCKETS = (0.001, 0.01, 0.05, 0.1, 0.5)
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, *, sample_every: int = 16) -> None:
         self.name = str(name)[:64]
+        self.sample_every = max(1, int(sample_every))
         self._lock = threading.RLock()
         self._metrics_lock = threading.Lock()
         self._local = threading.local()
@@ -138,16 +139,23 @@ class InstrumentedRLock:
         return next((f"le_{bound:g}s" for bound in cls.BUCKETS if value <= bound), "gt_0.5s")
 
     def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
-        started = time.monotonic()
+        sequence = getattr(self._local, "acquire_sequence", 0) + 1
+        self._local.acquire_sequence = sequence
+        sampled = sequence % self.sample_every == 0
+        started = time.monotonic() if sampled else None
         acquired = self._lock.acquire(blocking, timeout)
-        waited = max(0.0, time.monotonic() - started)
         if acquired:
             depth = getattr(self._local, "depth", 0)
             self._local.depth = depth + 1
             if depth == 0:
-                self._local.hold_started = time.monotonic()
+                self._local.hold_sampled = sampled
+                if sampled:
+                    self._local.hold_started = time.monotonic()
+        if sampled:
+            waited = max(0.0, time.monotonic() - started)
             with self._metrics_lock:
-                self._acquisitions += 1
+                if acquired:
+                    self._acquisitions += 1
                 self._wait_total += waited
                 self._wait_max = max(self._wait_max, waited)
                 self._wait_buckets[self._bucket(waited)] += 1
@@ -158,13 +166,15 @@ class InstrumentedRLock:
         if depth <= 0:
             raise RuntimeError("cannot release an un-acquired lock")
         if depth == 1:
-            held = max(0.0, time.monotonic() - self._local.hold_started)
-            with self._metrics_lock:
-                self._hold_total += held
-                self._hold_count += 1
-                self._hold_max = max(self._hold_max, held)
-                self._hold_buckets[self._bucket(held)] += 1
-            del self._local.hold_started
+            if getattr(self._local, "hold_sampled", False):
+                held = max(0.0, time.monotonic() - self._local.hold_started)
+                with self._metrics_lock:
+                    self._hold_total += held
+                    self._hold_count += 1
+                    self._hold_max = max(self._hold_max, held)
+                    self._hold_buckets[self._bucket(held)] += 1
+                del self._local.hold_started
+            self._local.hold_sampled = False
         self._local.depth = depth - 1
         self._lock.release()
 
@@ -181,7 +191,8 @@ class InstrumentedRLock:
             count = self._acquisitions
             return {
                 "name": self.name,
-                "acquisitions": count,
+                "sample_every": self.sample_every,
+                "sampled_acquisitions": count,
                 "wait_duration_buckets": dict(self._wait_buckets),
                 "average_wait_seconds": round(self._wait_total / count, 6) if count else None,
                 "max_wait_seconds": round(self._wait_max, 6) if count else None,
