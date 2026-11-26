@@ -83,6 +83,12 @@ def test_dashboard_dispatch_wait_formula_uses_elapsed_residual_and_clamps_to_zer
             for target in node.targets
         )
         and node.value is not None
+        and any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == "monotonic"
+            for child in ast.walk(node.value)
+        )
     )
 
     expression = compile(
