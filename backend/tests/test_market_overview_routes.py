@@ -375,3 +375,38 @@ def test_live_health_reuses_persisted_summary_without_staling_runtime_feed(monke
     assert second["persisted_summary"]["status"] == "FRESH"
     assert second["runtime_feed"]["status"] == "NO_DATA"
     assert second["feed_status"] == "NO_DATA"
+
+
+def test_live_health_keeps_runtime_feed_available_when_persisted_shards_fail(monkeypatch):
+    from app.core.config import settings
+
+    class FailedReadOnlyCatalog:
+        @staticmethod
+        def read_source_summary(path, *, source, timeframe):
+            raise OSError("sqlite shard is temporarily unavailable")
+
+    runtime_reads = []
+
+    def runtime_snapshot():
+        runtime_reads.append(1)
+        return None
+
+    monkeypatch.setattr(settings, "BACKTEST_DATA_DB", "/tmp/unavailable-live-health.sqlite3")
+    monkeypatch.setattr(
+        "app.market_data.daily_shard_catalog.DailyMarketDataShardCatalog",
+        FailedReadOnlyCatalog,
+    )
+    monkeypatch.setattr(
+        "app.market_data.common_strategy_feed.shared_common_manager_snapshot",
+        runtime_snapshot,
+    )
+    monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
+
+    result = routes.get_live_data_health()
+
+    assert result["status"] == "success"
+    assert result["persisted"] is None
+    assert result["records"] is None
+    assert result["persisted_summary"]["status"] == "UNAVAILABLE"
+    assert result["runtime_feed"]["status"] == "NO_DATA"
+    assert len(runtime_reads) == 1
