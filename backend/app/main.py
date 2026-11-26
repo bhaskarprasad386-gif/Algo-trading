@@ -3075,7 +3075,11 @@ def iv_skew_flip_validation(underlying: str = "NIFTY", expiry_type: str | None =
             "summary": summarize_forward_outcomes(eligible_events, rows),
             "date_wise": summarize_walk_forward_by_date(rows, eligible_events),
             "orders_enabled": False,
-            "interpretation": "descriptive forward returns only; not accuracy, profitabilit
+            "interpretation": "descriptive forward returns only; not accuracy, profitability, or out-of-sample validation",
+        }
+    finally:
+        db.close()
+
 
 def _database_health_failure_class(exc: Exception) -> str:
     """Classify bounded probe failures before generic database failures."""
