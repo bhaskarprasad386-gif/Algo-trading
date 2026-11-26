@@ -21,6 +21,7 @@ def reset_dashboard_route_caches():
     yield
     for endpoint in (routes.get_market_overview, routes.get_live_data_health):
         endpoint.snapshot_cache.clear()
+    routes._LIVE_PERSISTED_SUMMARY_CACHE.clear()
 
 
 def test_market_overview_returns_index_and_commodity_groups(monkeypatch):
