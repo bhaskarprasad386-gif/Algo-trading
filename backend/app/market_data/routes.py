@@ -21,6 +21,15 @@ _CLOSED_OVERVIEW_CACHE: dict[str, dict] = {}
 _CLOSED_OVERVIEW_CACHE_LOCK = Lock()
 _OVERVIEW_HISTORICAL_CACHE: dict[tuple[str, str, str], tuple[float, float | None, float | None]] = {}
 _OVERVIEW_HISTORICAL_CACHE_LOCK = Lock()
+_OVERVIEW_QUOTE_CACHE: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, dict]]] = {}
+_OVERVIEW_QUOTE_CACHE_LOCK = Lock()
+_OVERVIEW_QUOTE_CACHE_TTL_SECONDS = 15.0
+_OVERVIEW_QUOTE_CACHE_MAX_STALE_SECONDS = 60.0
+_OVERVIEW_QUOTE_FAILURE_BACKOFF_SECONDS = 10.0
+_OVERVIEW_QUOTE_FAILURES: dict[tuple[str, tuple[str, ...]], tuple[float, str]] = {}
+_OVERVIEW_INSTRUMENT_CACHE: dict[tuple[str, str, str], tuple[float, str]] = {}
+_OVERVIEW_INSTRUMENT_CACHE_LOCK = Lock()
+_OVERVIEW_INSTRUMENT_CACHE_TTL_SECONDS = 900.0
 _live_cash_future_runner_snapshot_provider = None
 _shoonya_snapshot_provider = None
 _shoonya_supervisor_provider = None
@@ -467,6 +476,103 @@ def get_common_feed_health():
     }
 
 
+def _resolve_overview_instrument(master, exchange: str, symbol: str, today_key: str):
+    """Reuse successful daily instrument resolution instead of rescanning master rows."""
+    key = (today_key, str(exchange).strip().upper(), str(symbol).strip().upper())
+    now = __import__("time").monotonic()
+    with _OVERVIEW_INSTRUMENT_CACHE_LOCK:
+        cached = _OVERVIEW_INSTRUMENT_CACHE.get(key)
+        if cached is not None and now - cached[0] <= _OVERVIEW_INSTRUMENT_CACHE_TTL_SECONDS:
+            return cached[1]
+
+    instrument = (
+        master.resolve_index_instrument(symbol, exchange)
+        if exchange in {"NSE", "BSE"}
+        else master.get_instrument(symbol, exchange)
+    )
+    if not instrument:
+        return None
+    token = str(instrument.get("token", "")).strip()
+    if not token:
+        return None
+    with _OVERVIEW_INSTRUMENT_CACHE_LOCK:
+        _OVERVIEW_INSTRUMENT_CACHE[key] = (now, token)
+        if len(_OVERVIEW_INSTRUMENT_CACHE) > 32:
+            oldest = sorted(
+                _OVERVIEW_INSTRUMENT_CACHE,
+                key=lambda item: _OVERVIEW_INSTRUMENT_CACHE[item][0],
+            )[: len(_OVERVIEW_INSTRUMENT_CACHE) - 32]
+            for old_key in oldest:
+                _OVERVIEW_INSTRUMENT_CACHE.pop(old_key, None)
+    return token
+
+
+def _overview_quote_batch(client, exchange: str, instruments: list[dict[str, str]]):
+    """Read a shared per-process quote batch; throttle broker REST refreshes.
+
+    The dashboard polls more frequently than the broker quote API should be
+    called. Keep a bounded exchange/token-set snapshot, and only serve a
+    failed-refresh fallback for a short, explicit stale window.
+    """
+    tokens = tuple(sorted(str(item.get("symboltoken", "")).strip() for item in instruments))
+    key = (str(exchange).strip().upper(), tokens)
+    now = __import__("time").monotonic()
+    with _OVERVIEW_QUOTE_CACHE_LOCK:
+        cached = _OVERVIEW_QUOTE_CACHE.get(key)
+        if cached is not None:
+            age = max(0.0, now - cached[0])
+            if age <= _OVERVIEW_QUOTE_CACHE_TTL_SECONDS:
+                return cached[1], age, False, None
+        failure = _OVERVIEW_QUOTE_FAILURES.get(key)
+        if failure is not None and now - failure[0] <= _OVERVIEW_QUOTE_FAILURE_BACKOFF_SECONDS:
+            if cached is not None:
+                age = max(0.0, now - cached[0])
+                if age <= _OVERVIEW_QUOTE_CACHE_MAX_STALE_SECONDS:
+                    return cached[1], age, True, "quote refresh cooldown; stale quote snapshot used"
+            raise RuntimeError("quote refresh cooldown active after recent broker failure")
+
+    try:
+        payload = client.quote_many(exchange, instruments).get("data") or {}
+        fetched = payload.get("fetched") or payload.get("data") or []
+        if isinstance(fetched, dict):
+            fetched = [fetched]
+        by_token = {
+            str(row.get("symbolToken", row.get("token", ""))): row
+            for row in fetched
+            if isinstance(row, dict)
+        }
+        refreshed_at = __import__("time").monotonic()
+        with _OVERVIEW_QUOTE_CACHE_LOCK:
+            _OVERVIEW_QUOTE_CACHE[key] = (refreshed_at, by_token)
+            _OVERVIEW_QUOTE_FAILURES.pop(key, None)
+            # This endpoint has a fixed three-exchange universe. Keep cache
+            # cardinality bounded if instrument-master tokens roll over.
+            if len(_OVERVIEW_QUOTE_CACHE) > 12:
+                oldest = sorted(
+                    _OVERVIEW_QUOTE_CACHE,
+                    key=lambda item: _OVERVIEW_QUOTE_CACHE[item][0],
+                )[: len(_OVERVIEW_QUOTE_CACHE) - 12]
+                for old_key in oldest:
+                    _OVERVIEW_QUOTE_CACHE.pop(old_key, None)
+        return by_token, 0.0, False, None
+    except Exception as exc:
+        failed_at = __import__("time").monotonic()
+        with _OVERVIEW_QUOTE_CACHE_LOCK:
+            _OVERVIEW_QUOTE_FAILURES[key] = (failed_at, type(exc).__name__)
+            if len(_OVERVIEW_QUOTE_FAILURES) > 12:
+                oldest_failure = min(
+                    _OVERVIEW_QUOTE_FAILURES,
+                    key=lambda item: _OVERVIEW_QUOTE_FAILURES[item][0],
+                )
+                _OVERVIEW_QUOTE_FAILURES.pop(oldest_failure, None)
+            cached = _OVERVIEW_QUOTE_CACHE.get(key)
+        if cached is not None:
+            age = max(0.0, __import__("time").monotonic() - cached[0])
+            if age <= _OVERVIEW_QUOTE_CACHE_MAX_STALE_SECONDS:
+                return cached[1], age, True, f"{type(exc).__name__}: stale quote snapshot used"
+        raise
+
+
 @router.get("/overview")
 @cached_snapshot(ttl_seconds=4.0, max_stale_seconds=30.0)
 def get_market_overview():
@@ -533,11 +639,13 @@ def get_market_overview():
         errors = []
         for exchange, symbol in specs:
             try:
-                instrument = master.resolve_index_instrument(symbol, exchange) if exchange in {"NSE", "BSE"} else master.get_instrument(symbol, exchange)
-                if not instrument:
+                token = _resolve_overview_instrument(
+                    master, exchange, symbol, cache_key
+                )
+                if not token:
                     errors.append({"exchange": exchange, "symbol": symbol, "error": "instrument_not_found"})
                     continue
-                resolved.append((exchange, symbol, str(instrument.get("token", ""))))
+                resolved.append((exchange, symbol, token))
             except Exception as exc:
                 errors.append({"exchange": exchange, "symbol": symbol, "error": str(exc)})
         return resolved, errors
@@ -553,21 +661,26 @@ def get_market_overview():
             try:
                 by_token = {}
                 exchange_open = market_open if exchange in {"NSE", "BSE"} else mcx_market_open
+                quote_age_seconds = None
+                quote_is_stale = False
                 if exchange_open:
-                    payload = client.quote_many(exchange, instruments).get("data") or {}
-                    fetched = payload.get("fetched") or payload.get("data") or []
-                    if isinstance(fetched, dict):
-                        fetched = [fetched]
-                    by_token = {
-                        str(row.get("symbolToken", row.get("token", ""))): row
-                        for row in fetched
-                        if isinstance(row, dict)
-                    }
+                    by_token, quote_age_seconds, quote_is_stale, quote_refresh_warning = (
+                        _overview_quote_batch(client, exchange, instruments)
+                    )
+                    if quote_refresh_warning:
+                        errors.append({
+                            "exchange": exchange,
+                            "error": quote_refresh_warning,
+                        })
                 for item in instruments:
                     quote = by_token.get(item["symboltoken"], {})
                     fallback_ltp = None
                     fallback_previous = None
-                    status = "LIVE" if quote else "NO_QUOTE"
+                    status = (
+                        "STALE" if quote and quote_is_stale
+                        else "LIVE" if quote
+                        else "NO_QUOTE"
+                    )
                     if not exchange_open:
                         try:
                             fallback_ltp, fallback_previous = last_trading_closes(exchange, item["symboltoken"])
@@ -587,6 +700,7 @@ def get_market_overview():
                                  "volume": quote.get("tradeVolume"), "oi": quote.get("opnInterest"),
                                  "bid": (quote.get("depth", {}).get("buy", [{}])[0].get("price") if quote.get("depth") else None),
                                  "ask": (quote.get("depth", {}).get("sell", [{}])[0].get("price") if quote.get("depth") else None),
+                                 "quote_cache_age_seconds": quote_age_seconds,
                                  "status": status})
             except Exception as exc:
                 errors.extend({"exchange": exchange, "symbol": item["symbol"], "error": str(exc)} for item in instruments)

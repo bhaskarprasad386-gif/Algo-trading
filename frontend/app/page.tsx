@@ -267,8 +267,10 @@ export default function HomePage() {
         if (!cancelled) setMarketOverviewError(true);
         // Keep last values visible, but mark the source unavailable/stale.
       } finally {
-        // Schedule after completion so a slow response cannot overlap the next sample.
-        if (!cancelled) timer = window.setTimeout(() => { void loadMarketOverview(); }, 5000);
+        // The backend refreshes broker quote batches on a 15-second budget.
+        // Keep this informational home-page poll aligned with that cadence;
+        // strategy workspaces retain their own live WebSocket updates.
+        if (!cancelled) timer = window.setTimeout(() => { void loadMarketOverview(); }, 15000);
       }
     };
     void loadMarketOverview();
