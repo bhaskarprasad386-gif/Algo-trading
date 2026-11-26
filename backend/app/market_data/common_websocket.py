@@ -17,6 +17,8 @@ import traceback
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
+from app.core.contention_telemetry import InstrumentedRLock
+
 from .contracts import InstrumentKey
 from .registry import InstrumentDescriptor, InstrumentRegistry, Subscription
 from .shared_cache import put_market_data_record
@@ -174,7 +176,7 @@ class CommonWebSocketManager:
         # Serialize observer delivery with the final shutdown barrier.
         self._transport_observer_dispatch_lock = RLock()
         self._normalizer = AngelOneTickNormalizer()
-        self._lock = RLock()
+        self._lock = InstrumentedRLock("common-websocket-manager")
         self._reconcile_lock = RLock()
         # State and admission are shared across all Angel WebSocket components.
         self._broker_cooldown_seconds = 60.0
@@ -2562,6 +2564,7 @@ class CommonWebSocketManager:
             now_mono = time.monotonic()
             now_wall = time.time()
             return {
+                "lock_contention": self._lock.snapshot(),
                 "snapshot_kind": "health-lite",
                 "details_omitted": [
                     "subscription_roster", "raw_frames_by_instrument",
