@@ -145,15 +145,14 @@ def database_pool_snapshot() -> dict[str, object]:
         "oldest_checkout_seconds": round(oldest[0], 3) if ages else None,
         "oldest_checkout_thread": oldest[1],
         "long_checkout_threshold_seconds": _POOL_LONG_CHECKOUT_SECONDS,
-        # These counters are sampled independently; a non-zero delta can be
-        # a short-lived snapshot race or a missed lifecycle event, not proof
-        # of a connection leak. Persistent positive deltas warrant inspection.
+        # Pool counters and event tracking are sampled independently. A
+        # mismatch can be a normal checkout/checkin race, so it is never
+        # reported as an untracked connection or a leak count.
         "checkout_tracking_delta": tracking_delta,
-        "untracked_checkout_count": max(0, tracking_delta) if tracking_delta is not None else None,
+        "untracked_checkout_count": None,
         "checkout_tracking_status": (
             "MATCH" if tracking_delta == 0
-            else "POOL_AHEAD" if tracking_delta is not None and tracking_delta > 0
-            else "TRACKER_AHEAD" if tracking_delta is not None
+            else "COUNTER_MISMATCH" if tracking_delta is not None
             else "UNAVAILABLE"
         ),
     })
