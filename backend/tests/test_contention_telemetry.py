@@ -78,3 +78,14 @@ def test_sqlalchemy_pool_connect_boundary_records_real_checkout():
 
     assert after["checkout_wait_count"] >= before["checkout_wait_count"] + 1
     assert after["completed_checkouts"] >= before["completed_checkouts"] + 1
+
+
+
+def test_pool_checkout_telemetry_caps_active_entries():
+    telemetry = PoolCheckoutTelemetry(max_active=1)
+    records = [object(), object()]
+    telemetry.checkout(records[0], owner="one")
+    telemetry.checkout(records[1], owner="two")
+    snapshot = telemetry.snapshot()
+    assert snapshot["active_checkouts"] == 1
+    assert snapshot["checkout_tracking_dropped"] == 1
