@@ -1,5 +1,6 @@
 import threading
 import time
+from contextvars import copy_context
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -162,8 +163,10 @@ def check_database_bounded(probe=check_database, *, timeout_seconds: float = 0.7
             _health_probe_lock.release()
             completed.set()
 
+    request_context = copy_context()
     worker = threading.Thread(
-        target=run_probe,
+        target=request_context.run,
+        args=(run_probe,),
         name="database-health-probe",
         daemon=True,
     )
