@@ -2497,8 +2497,20 @@ class CommonWebSocketManager:
                     continue
                 pairs_by_mode[mode].add((exchange_type, token))
 
-            assignments = self._build_shard_assignments(
-                pairs_by_mode, self._preferred_socket_pairs(),
+            # Reuse the last successfully reconciled placement map. Recomputing
+            # preferred lanes would require a descriptor lookup for every token,
+            # recreating the expensive work this health-only path is designed to avoid.
+            assignments = {
+                mode: dict(mode_assignments)
+                for mode, mode_assignments in self._shard_assignments.items()
+            }
+            unassigned_instruments = sum(
+                len(pairs - set(assignments.get(mode, {})))
+                for mode, pairs in pairs_by_mode.items()
+            )
+            stale_assignments = sum(
+                len(set(mode_assignments) - pairs_by_mode.get(mode, set()))
+                for mode, mode_assignments in assignments.items()
             )
             required_groups = {
                 SocketGroup(mode=mode, shard=shard)
@@ -2561,6 +2573,9 @@ class CommonWebSocketManager:
                 "socket_groups": len(sockets),
                 "required_socket_groups": required_names,
                 "required_socket_group_count": len(required_groups),
+                "routing_assignments_current": unassigned_instruments == 0 and stale_assignments == 0,
+                "unassigned_instruments": unassigned_instruments,
+                "stale_assignment_count": stale_assignments,
                 "missing_socket_groups": missing_groups,
                 "unconnected_required_groups": unconnected_required,
                 "connected_groups": connected_groups,
