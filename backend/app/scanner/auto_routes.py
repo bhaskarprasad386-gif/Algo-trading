@@ -93,46 +93,14 @@ def _filtered(data: list[dict]) -> list[dict]:
     return [item for item in data if item.get("executable") is True]
 
 @router.get("/cash-future/live/fast")
-def cash_future_live_fast_scanner(
-    max_age_seconds: float = Query(5.0, gt=0, le=30),
-    limit: int = Query(500, ge=1, le=500),
-):
-    """Return signals produced directly by the one-second WebSocket scanner."""
-    # The process-level scanner is installed by app.main; importing the singleton
-    # here avoids a second market-data subscription.
-    from app.main import live_cash_future_scanner
-    stats = live_cash_future_scanner.health()
-    return {
-        "status": "success",
-        "scanner": "cash-future",
-        "mode": "live-fast",
-        "scan_at": stats.get("last_observation_at"),
-        "data": live_cash_future_scanner.snapshot(max_age_seconds=max_age_seconds, limit=limit),
-    }
-
+def cash_future_live_fast_scanner():
+    """Retired endpoint: Cash-Future fast scanner API is intentionally disabled."""
+    raise HTTPException(status_code=410, detail="Cash-Future live API is disabled")
 
 @router.get("/cash-future/live/pairs")
-def cash_future_live_pairs(
-    max_age_seconds: float = Query(15.0, gt=0, le=300),
-    limit: int = Query(100, ge=1, le=500),
-):
-    """Return recent Cash-Future pair diagnostics, including pairs that cannot form a signal."""
-    from app.main import live_cash_future_scanner
-    data = live_cash_future_scanner.pair_snapshot(
-        max_age_seconds=float(max_age_seconds),
-        limit=int(limit),
-    )
-    stats = live_cash_future_scanner.health()
-    return {
-        "status": "success",
-        "scanner": "cash-future",
-        "mode": "live-pair-diagnostics",
-        "max_age_seconds": float(max_age_seconds),
-        "count": len(data),
-        "stats": stats,
-        "data": data,
-    }
-
+def cash_future_live_pairs():
+    """Retired endpoint: Cash-Future pair diagnostics API is intentionally disabled."""
+    raise HTTPException(status_code=410, detail="Cash-Future live API is disabled")
 
 @router.get("/cash-future/live/history")
 def cash_future_live_scanner_history():
