@@ -1,19 +1,19 @@
-"""Bounded cache for historical persistence summaries used by live-health.
+"""Bounded stale-while-refresh cache for persisted market-data summaries.
 
-Persisted row counts are historical coverage metadata, not live feed health.
-They can be refreshed less often than in-memory tick freshness while the
-endpoint continues to calculate runtime feed age on every snapshot refresh.
+Persisted row counts are coverage metadata, not live-feed freshness. Refresh
+work runs outside the cache lock so a slow SQLite shard scan cannot block
+requests from serving a still-usable last-known summary.
 """
 from __future__ import annotations
 
 from copy import deepcopy
-from threading import Lock
+from threading import Event, Lock, Thread
 from time import monotonic
-from typing import Callable, Any
+from typing import Any, Callable
 
 
 class BoundedPersistedSummaryCache:
-    """Single-flight, bounded-age cache for slow read-only persisted summaries."""
+    """Single-flight, bounded-age cache for read-only persisted summaries."""
 
     def __init__(
         self,
@@ -22,85 +22,41 @@ class BoundedPersistedSummaryCache:
         max_stale_seconds: float = 300.0,
         max_entries: int = 4,
         failure_retry_seconds: float = 15.0,
+        wait_seconds: float = 2.0,
     ) -> None:
         if (
             ttl_seconds <= 0 or max_stale_seconds < ttl_seconds
             or max_entries < 1 or failure_retry_seconds < 0
+            or wait_seconds <= 0
         ):
             raise ValueError("invalid persisted summary cache bounds")
         self.ttl_seconds = float(ttl_seconds)
         self.max_stale_seconds = float(max_stale_seconds)
         self.max_entries = int(max_entries)
         self.failure_retry_seconds = float(failure_retry_seconds)
+        self.wait_seconds = float(wait_seconds)
         self._lock = Lock()
         self._entries: dict[str, tuple[float, dict[str, Any]]] = {}
         self._failures: dict[str, tuple[float, str]] = {}
+        self._refreshing: dict[str, Event] = {}
+        self._generation = 0
         self._refresh_count = 0
         self._refresh_errors = 0
-        self._last_error_type: str | None = None
 
     def clear(self) -> None:
+        """Reset cache state; in-flight workers from the prior generation are ignored."""
         with self._lock:
+            self._generation += 1
             self._entries.clear()
             self._failures.clear()
+            self._refreshing.clear()
             self._refresh_count = 0
             self._refresh_errors = 0
-            self._last_error_type = None
 
-    def get(
-        self,
-        key: str,
-        loader: Callable[[], dict[str, Any]],
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Return a copied summary plus freshness metadata.
-
-        The lock intentionally covers the loader: at most one request per
-        process can enumerate/open the shard set at a time. The loader must be
-        read-only and bounded by the SQLite busy timeout.
-        """
-        normalized_key = str(key)
-        with self._lock:
-            now = monotonic()
-            cached = self._entries.get(normalized_key)
-            age = None if cached is None else max(0.0, now - cached[0])
-            if cached is not None and age is not None and age <= self.ttl_seconds:
-                return deepcopy(cached[1]), self._metadata(age, "FRESH")
-
-            failure = self._failures.get(normalized_key)
-            if (
-                failure is not None
-                and now - failure[0] <= self.failure_retry_seconds
-            ):
-                self._last_error_type = failure[1]
-                if cached is not None and age is not None and age <= self.max_stale_seconds:
-                    return deepcopy(cached[1]), self._metadata(age, "STALE")
-                raise RuntimeError("persisted summary refresh cooldown is active")
-
-            try:
-                value = loader()
-                if not isinstance(value, dict):
-                    raise TypeError("persisted summary loader must return a dict")
-                refreshed_at = monotonic()
-                self._entries[normalized_key] = (refreshed_at, deepcopy(value))
-                self._failures.pop(normalized_key, None)
-                self._refresh_count += 1
-                self._last_error_type = None
-                self._evict_oldest_locked()
-                return deepcopy(value), self._metadata(0.0, "FRESH")
-            except Exception as exc:
-                self._refresh_errors += 1
-                self._last_error_type = type(exc).__name__
-                self._failures[normalized_key] = (monotonic(), self._last_error_type)
-                while len(self._failures) > self.max_entries:
-                    oldest_failure = min(
-                        self._failures, key=lambda item: self._failures[item][0]
-                    )
-                    self._failures.pop(oldest_failure, None)
-                if cached is not None and age is not None and age <= self.max_stale_seconds:
-                    return deepcopy(cached[1]), self._metadata(age, "STALE")
-                raise
-
-    def _metadata(self, age: float | None, status: str) -> dict[str, Any]:
+    def _metadata_locked(
+        self, age: float | None, status: str, key: str
+    ) -> dict[str, Any]:
+        failure = self._failures.get(key)
         return {
             "status": status,
             "age_seconds": None if age is None else round(age, 3),
@@ -108,10 +64,153 @@ class BoundedPersistedSummaryCache:
             "max_stale_seconds": self.max_stale_seconds,
             "refresh_count": self._refresh_count,
             "refresh_errors": self._refresh_errors,
-            "last_error_type": self._last_error_type,
+            "last_error_type": None if failure is None else failure[1],
+            "refresh_in_progress": key in self._refreshing,
         }
 
-    def _evict_oldest_locked(self) -> None:
+    def _start_refresh_locked(
+        self, key: str, loader: Callable[[], dict[str, Any]]
+    ) -> Event:
+        """Start one bounded worker for this key. Caller holds _lock."""
+        event = Event()
+        generation = self._generation
+        self._refreshing[key] = event
+        try:
+            worker = Thread(
+                target=self._refresh_worker,
+                args=(key, loader, event, generation),
+                name="persisted-summary-refresh",
+                daemon=True,
+            )
+            worker.start()
+        except Exception as exc:
+            self._refreshing.pop(key, None)
+            self._refresh_errors += 1
+            self._failures[key] = (monotonic(), type(exc).__name__)
+            self._evict_failures_locked()
+            event.set()
+        return event
+
+    def _refresh_worker(
+        self,
+        key: str,
+        loader: Callable[[], dict[str, Any]],
+        event: Event,
+        generation: int,
+    ) -> None:
+        try:
+            value = loader()
+            if not isinstance(value, dict):
+                raise TypeError("persisted summary loader must return a dict")
+            copied_value = deepcopy(value)
+            with self._lock:
+                if (
+                    generation == self._generation
+                    and self._refreshing.get(key) is event
+                ):
+                    self._entries[key] = (monotonic(), copied_value)
+                    self._failures.pop(key, None)
+                    self._refresh_count += 1
+                    self._evict_entries_locked()
+        except Exception as exc:
+            with self._lock:
+                if (
+                    generation == self._generation
+                    and self._refreshing.get(key) is event
+                ):
+                    self._refresh_errors += 1
+                    self._failures[key] = (monotonic(), type(exc).__name__)
+                    self._evict_failures_locked()
+        finally:
+            with self._lock:
+                if self._refreshing.get(key) is event:
+                    self._refreshing.pop(key, None)
+            event.set()
+
+    def get(
+        self,
+        key: str,
+        loader: Callable[[], dict[str, Any]],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Return a defensive copy, serving stale data while one refresh runs."""
+        normalized_key = str(key)
+        if not normalized_key or len(normalized_key) > 512:
+            raise ValueError("persisted summary cache key must be 1..512 characters")
+
+        with self._lock:
+            now = monotonic()
+            cached = self._entries.get(normalized_key)
+            age = None if cached is None else max(0.0, now - cached[0])
+            usable_stale = (
+                cached is not None and age is not None
+                and age <= self.max_stale_seconds
+            )
+            if cached is not None and age is not None and age <= self.ttl_seconds:
+                return deepcopy(cached[1]), self._metadata_locked(
+                    age, "FRESH", normalized_key
+                )
+
+            failure = self._failures.get(normalized_key)
+            if (
+                failure is not None
+                and now - failure[0] <= self.failure_retry_seconds
+            ):
+                if usable_stale:
+                    return deepcopy(cached[1]), self._metadata_locked(
+                        age, "STALE", normalized_key
+                    )
+                raise RuntimeError(
+                    f"persisted summary refresh cooldown active ({failure[1]})"
+                )
+
+            event = self._refreshing.get(normalized_key)
+            if event is None:
+                if len(self._refreshing) >= self.max_entries:
+                    if usable_stale:
+                        return deepcopy(cached[1]), self._metadata_locked(
+                            age, "STALE", normalized_key
+                        )
+                    raise RuntimeError("persisted summary refresh capacity exhausted")
+                event = self._start_refresh_locked(normalized_key, loader)
+
+            # A valid last-known summary must never wait behind its refresh.
+            if usable_stale:
+                return deepcopy(cached[1]), self._metadata_locked(
+                    age, "STALE", normalized_key
+                )
+
+        # Cold or hard-expired callers wait only for a fixed budget. The worker
+        # performs SQLite work without holding the cache lock.
+        finished = event.wait(self.wait_seconds)
+        with self._lock:
+            now = monotonic()
+            cached = self._entries.get(normalized_key)
+            age = None if cached is None else max(0.0, now - cached[0])
+            if (
+                cached is not None and age is not None
+                and age <= self.max_stale_seconds
+            ):
+                status = "FRESH" if age <= self.ttl_seconds else "STALE"
+                return deepcopy(cached[1]), self._metadata_locked(
+                    age, status, normalized_key
+                )
+            failure = self._failures.get(normalized_key)
+            if failure is not None:
+                raise RuntimeError(
+                    f"persisted summary refresh failed ({failure[1]})"
+                )
+            if not finished:
+                raise TimeoutError(
+                    "persisted summary refresh did not finish within its bound"
+                )
+            raise RuntimeError("persisted summary refresh completed without a value")
+
+    def _evict_entries_locked(self) -> None:
         while len(self._entries) > self.max_entries:
             oldest_key = min(self._entries, key=lambda item: self._entries[item][0])
             self._entries.pop(oldest_key, None)
+
+    def _evict_failures_locked(self) -> None:
+        while len(self._failures) > self.max_entries:
+            oldest_key = min(self._failures, key=lambda item: self._failures[item][0])
+            self._failures.pop(oldest_key, None)
