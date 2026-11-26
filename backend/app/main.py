@@ -3117,27 +3117,6 @@ async def health_liveness_check():
 
 @app.get("/health")
 async def health_check():
-    if not _health_db_probe_semaphore.acquire(blocking=False):
-        runtime_diagnostics.record(
-            component="Database",
-            error_type="DatabaseProbeBusy",
-            message="A previous database health probe is still running",
-            endpoint="/health",
-            context={"event": "health_check", "max_concurrent_probes": 1},
-        )
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "degraded",
-                "app": settings.app_name,
-                "version": "0.1.0",
-                "database": "Probe busy",
-                "database_error_class": "DATABASE_PROBE_BUSY",
-                "database_pool": database_pool_snapshot(),
-            },
-        )
-
-
     # Fail immediately when a finite pool is already saturated. A healthy
     # response still requires a real SELECT 1 below.
     pool_snapshot = database_pool_snapshot()
@@ -3157,6 +3136,27 @@ async def health_check():
                 "version": "0.1.0",
                 "database": "Pool saturated",
                 "database_pool": pool_snapshot,
+            },
+        )
+
+
+    if not _health_db_probe_semaphore.acquire(blocking=False):
+        runtime_diagnostics.record(
+            component="Database",
+            error_type="DatabaseProbeBusy",
+            message="A previous database health probe is still running",
+            endpoint="/health",
+            context={"event": "health_check", "max_concurrent_probes": 1},
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "app": settings.app_name,
+                "version": "0.1.0",
+                "database": "Probe busy",
+                "database_error_class": "DATABASE_PROBE_BUSY",
+                "database_pool": database_pool_snapshot(),
             },
         )
 
