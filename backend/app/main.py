@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
@@ -23,6 +23,7 @@ from app.core.daemon_worker import run_blocking_daemon
 from app.core.diagnostics import runtime_diagnostics
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
 from app.core.database import engine, Base, SessionLocal, check_database, check_database_bounded, DatabaseHealthProbeBusy, DatabaseHealthProbeTimeout, database_pool_snapshot
+from app.core.contention_telemetry import set_database_owner, reset_database_owner
 from app.core.schema_migrations import run_schema_migrations
 from app.core.iv_basket_guards import install_iv_basket_immutability_guards
 from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
@@ -815,6 +816,24 @@ async def lifespan(app: FastAPI):
             universal_result_ledger.close()
 
 app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, lifespan=lifespan)
+
+
+@app.middleware("http")
+async def database_checkout_owner_middleware(request: Request, call_next):
+    """Attach a bounded, query-free request label to DB checkouts in this request."""
+    parts = [part for part in request.url.path.split("/") if part]
+    safe_parts = []
+    for part in parts[:5]:
+        if part.isdigit() or len(part) > 32:
+            safe_parts.append(":dynamic")
+        else:
+            safe_parts.append("".join(ch for ch in part if ch.isalnum() or ch in "-_")[:32])
+    owner = f"http:{request.method.upper()}:/{'/'.join(safe_parts)}"[:96]
+    token = set_database_owner(owner)
+    try:
+        return await call_next(request)
+    finally:
+        reset_database_owner(token)
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https://([a-z0-9-]+\.)?vercel\.app$|http://localhost(:\d+)?$|http://127\.0\.0\.1(:\d+)?$",
