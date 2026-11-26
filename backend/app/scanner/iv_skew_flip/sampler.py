@@ -14,7 +14,7 @@ from threading import Event, RLock, Thread
 from time import monotonic, time_ns
 from typing import Any, Callable
 
-from sqlalchemy import func, tuple_
+from sqlalchemy import func
 from zoneinfo import ZoneInfo
 
 from app.models.iv_option_observation import IVOptionObservation
@@ -238,48 +238,73 @@ class IVOneSecondSampler:
         session = self.history_session_factory()
         inserted = 0
         try:
-            # Query all source keys in one indexed lookup rather than issuing
-            # one SELECT per option contract on every one-second sampling cycle.
-            # Keep tuple-IN below conservative SQLite bind-variable limits:
-            # each (token, timestamp) pair consumes two bound parameters.
-            source_keys = sorted({
-                (item.token, item.source_timestamp_ns)
-                for item in samples
-            })
-            existing_keys: set[tuple[str, int]] = set()
-            batch_size = 400
-            for offset in range(0, len(source_keys), batch_size):
-                key_batch = source_keys[offset:offset + batch_size]
-                existing_keys.update(
-                    session.query(
-                        IVOptionObservation.token,
-                        IVOptionObservation.source_timestamp_ns,
+            # Deduplicate the incoming cycle before touching the database. A
+            # broker adapter may expose the same contract more than once.
+            rows_by_key: dict[tuple[str, int], dict[str, Any]] = {}
+            for item in samples:
+                key = (item.token, item.source_timestamp_ns)
+                rows_by_key.setdefault(key, {
+                    "token": item.token,
+                    "underlying": item.underlying,
+                    "expiry": item.expiry,
+                    "strike": item.strike,
+                    "option_type": item.option_type,
+                    "source_timestamp_ns": item.source_timestamp_ns,
+                    "spot_timestamp_ns": item.spot_timestamp_ns,
+                    "spot_price": getattr(item, "spot_price", None),
+                    "sampled_at_ns": item.sampled_at_ns,
+                    "iv": item.iv,
+                    "oi": item.oi,
+                    "oi_timestamp_ns": item.oi_timestamp_ns,
+                    "bid": item.bid,
+                    "ask": item.ask,
+                    "ltp": item.ltp,
+                    "mark": item.mark,
+                    "volume": item.volume,
+                })
+            rows = list(rows_by_key.values())
+            if rows:
+                dialect_name = session.get_bind().dialect.name
+                if dialect_name == "sqlite":
+                    from sqlalchemy.dialects.sqlite import insert as dialect_insert
+                elif dialect_name == "postgresql":
+                    from sqlalchemy.dialects.postgresql import insert as dialect_insert
+                else:
+                    dialect_insert = None
+
+                if dialect_insert is not None:
+                    # The unique source key is the final concurrency guard:
+                    # two processes can both observe a missing row, so a
+                    # SELECT-then-INSERT sequence alone is not race-safe.
+                    statement = dialect_insert(IVOptionObservation).on_conflict_do_nothing(
+                        index_elements=["token", "source_timestamp_ns"],
                     )
-                    .filter(
-                        tuple_(
-                            IVOptionObservation.token,
-                            IVOptionObservation.source_timestamp_ns,
-                        ).in_(tuple(key_batch))
-                    )
-                    .all()
-                )
-            new_rows = [
-                IVOptionObservation(
-                    token=item.token, underlying=item.underlying, expiry=item.expiry,
-                    strike=item.strike, option_type=item.option_type,
-                    source_timestamp_ns=item.source_timestamp_ns,
-                    spot_timestamp_ns=item.spot_timestamp_ns,
-                    spot_price=getattr(item, "spot_price", None),
-                    sampled_at_ns=item.sampled_at_ns, iv=item.iv, oi=item.oi,
-                    oi_timestamp_ns=item.oi_timestamp_ns, bid=item.bid, ask=item.ask,
-                    ltp=item.ltp, mark=item.mark, volume=item.volume,
-                )
-                for item in samples
-                if (item.token, item.source_timestamp_ns) not in existing_keys
-            ]
-            if new_rows:
-                session.add_all(new_rows)
-                inserted = len(new_rows)
+                    result = session.execute(statement, rows)
+                    inserted = max(0, int(result.rowcount or 0))
+                else:
+                    # Keep a portable fallback for other SQLAlchemy dialects.
+                    from sqlalchemy import tuple_
+                    source_keys = [(row["token"], row["source_timestamp_ns"]) for row in rows]
+                    existing_keys = set()
+                    for offset in range(0, len(source_keys), 400):
+                        existing_keys.update(
+                            session.query(
+                                IVOptionObservation.token,
+                                IVOptionObservation.source_timestamp_ns,
+                            )
+                            .filter(tuple_(
+                                IVOptionObservation.token,
+                                IVOptionObservation.source_timestamp_ns,
+                            ).in_(tuple(source_keys[offset:offset + 400])))
+                            .all()
+                        )
+                    new_rows = [
+                        IVOptionObservation(**row) for row in rows
+                        if (row["token"], row["source_timestamp_ns"]) not in existing_keys
+                    ]
+                    if new_rows:
+                        session.add_all(new_rows)
+                        inserted = len(new_rows)
             session.commit()
             self._history_persisted_count += inserted
             return inserted
