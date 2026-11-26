@@ -8,62 +8,83 @@ buffer is lost on backend restart. The dashboard cannot use it while the API is 
 `algo-diagnostics.service` is an independent systemd process. It reads the
 `algo-trading.service` journal and, while the API is reachable, snapshots the
 process-local `/api/v1/diagnostics/errors` ring buffer into bounded SQLite storage.
-It serves the persisted, sanitized ERROR/WARNING/CRITICAL summaries on
-`127.0.0.1:8765`. This preserves in-memory runtime diagnostics captured before an
-API outage as well as journal errors emitted while the API is down.
-It does not import the trading app, open broker sockets, call runner controls, or
-mutate scanner state.
+It serves persisted, sanitized ERROR/WARNING/CRITICAL summaries on
+`127.0.0.1:8765`. It preserves runtime diagnostics captured before an API outage
+and journal errors emitted while the API is down. It does not import the trading
+app, open broker sockets, call runner controls, or mutate scanner state.
 
-## Install on VPS
+## Install without restarting the trading API
 
-After deploying the repository to `/opt/Algo-Trading`:
+For an already deployed checkout at `/opt/Algo-Trading`, run:
 
 ```bash
-sudo install -m 0644 /opt/Algo-Trading/deploy/algo-diagnostics.service /etc/systemd/system/algo-diagnostics.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now algo-diagnostics.service
-sudo systemctl status algo-diagnostics.service --no-pager
-curl --fail http://127.0.0.1:8765/health
-curl --fail 'http://127.0.0.1:8765/api/errors?limit=20'
+sudo bash /opt/Algo-Trading/deploy/install-diagnostics-only.sh
 ```
 
-## HTTPS routing required for mobile browser
+This installer updates/enables/restarts only `algo-diagnostics.service` and
+checks its loopback health endpoint. It does not fetch or merge Git changes,
+install backend dependencies, or restart/reload `algo-trading.service`. It does
+not restart broker sockets or market-data runners.
 
-The browser must reach the collector while API port 8000 is down. Add
-`deploy/nginx-server-diagnostics.conf` inside the existing HTTPS `server {}`
-block (do not replace TLS or existing routes), run `nginx -t`, then reload Nginx.
-If another TLS reverse proxy is used, configure the equivalent same-origin route.
+The general `deploy/bootstrap-vps.sh` is a full backend deployment script. It
+fast-forwards `main`, installs backend dependencies and restarts
+`algo-trading.service`; do not use it for a diagnostics-only rollout when
+preserving live API/socket continuity is required.
 
-Do not expose port 8765 publicly. It binds to loopback only. The endpoint returns
-sanitized summaries, not raw journal metadata or environment values. Treat the
-reverse-proxy path as operationally sensitive and verify the actual public HTTPS
-route before relying on it.
+Verify locally on the VPS:
+
+```bash
+curl --fail http://127.0.0.1:8765/health
+curl --fail 'http://127.0.0.1:8765/api/errors?limit=20'
+systemctl is-active algo-diagnostics.service
+systemctl is-active algo-trading.service
+```
+
+## HTTPS routing and access control
+
+The collector binds only to loopback. Do not expose port 8765 publicly.
+The sample `deploy/nginx-server-diagnostics.conf` is a reverse-proxy location,
+not a complete authentication policy. The `/server-diagnostics/` route returns
+operational log summaries and MUST be protected by the same trusted
+authentication/authorization policy as the dashboard before it is made publicly
+reachable. Do not assume that frontend page protection also protects this
+independent Nginx location. Do not install the sample location as an unrestricted
+public endpoint.
+
+Add the location inside the existing HTTPS `server {}` block without replacing
+TLS or existing routes. Preserve the site's established access-control mechanism
+for this path. Then run `nginx -t` and reload Nginx only after the configuration
+test succeeds. Verify the route from an authenticated browser session and verify
+that an unauthenticated request is denied. If the existing access-control
+mechanism cannot be applied to this path, keep the route disabled until a secure
+same-origin authenticated proxy is implemented.
 
 ## API contract and bounds
 
 - `GET /health`: independent collector and SQLite readiness, plus API process reachability.
-- `GET /api/errors?limit=1..200`: newest sanitized journal events.
+- `GET /api/errors?limit=1..200`: newest sanitized journal/runtime events.
 - 14-day retention, maximum 3,000 events by default.
 - Exposes event id, server timestamp, severity, component, sanitized message,
   and source only.
 
 The dashboard and mobile error page use the independent collector, not the API
-error route. The mobile page keeps the last successful response in component state and
-browser-local cache. Dashboard Shared Runner polling uses the dedicated
+error route. The mobile page keeps the last successful response in component state
+and browser-local cache. Dashboard Shared Runner polling uses the dedicated
 `/api/v1/market-data/shared-index-runner/health-lite` endpoint, which reports
 per-underlying/per-instrument freshness and socket lifecycle without serializing
-the full decorated 52-contract quote snapshot. The collector also shows whether the trading API process is
-currently reachable separately from the collector itself. A failed refresh marks the collector unreachable but never
-replaces previous logs with an empty list. It shows the last successful sync time.
+the full decorated 52-contract quote snapshot. The collector reports API process
+reachability separately from collector health. Failed refreshes do not replace
+previous logs with an empty list; the last successful sync time remains visible.
 
-## Deployment and verification
+## Acceptance checks
 
-The VPS deploy workflow must install/verify the independent service and the
-existing HTTPS reverse proxy must be updated separately. Do not claim browser
-access during API outage until the public HTTPS route is verified on the VPS.
+- Collector service remains healthy independently of `algo-trading.service`.
+- Journal warnings/errors appear and sample credentials are redacted.
+- API runtime events captured before an outage remain available.
+- Event retention and request limits remain bounded.
+- Authenticated HTTPS route works while API port 8000 is stopped.
+- Unauthenticated HTTPS requests to the diagnostics route are denied.
+- Only after those checks may browser access during API outage be considered verified.
 
-Verify in staging: agent survives API stop/restart; journal warnings/errors appear;
-sample credentials are redacted; invalid limits are bounded; event retention is
-bounded; the public route works over HTTPS with API port 8000 stopped. Do not
-touch market-data sockets, scanners, Shared Runner, broker connections, or order
-mode as part of this diagnostics work.
+Do not touch market-data sockets, scanners, Shared Runner, broker connections, or
+order mode as part of this diagnostics rollout.
