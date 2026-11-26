@@ -193,3 +193,61 @@ def test_journal_cursor_rotation_falls_back_and_resumes(tmp_path: Path, monkeypa
         assert db.execute("SELECT COUNT(*) FROM events").fetchone() == (1,)
     finally:
         db.close()
+
+
+
+def test_sanitize_preserves_long_traceback_beyond_old_truncation_limit() -> None:
+    frames = "\\n".join(
+        f"  File /opt/algo/module_{index}.py, line {index + 10}, in execute"
+        for index in range(220)
+    )
+    message = "RuntimeError: full diagnostic\\nTraceback (most recent call last):\\n" + frames + "\\nFinalBrokerError: order route unavailable"
+    result = agent.sanitize(message)
+    assert len(result) > 1200
+    assert "module_219.py" in result
+    assert "FinalBrokerError: order route unavailable" in result
+
+
+def test_collector_http_serves_persisted_errors_during_api_outage_and_is_get_only(tmp_path: Path, monkeypatch) -> None:
+    import json
+    import threading
+    from urllib.error import HTTPError
+    from urllib.request import Request, urlopen
+    from http.server import ThreadingHTTPServer
+
+    monkeypatch.setattr(agent, "DB_PATH", tmp_path / "events.sqlite3")
+    monkeypatch.setattr(agent, "_API_STATUS", {"reachable": False, "last_success_at": "2026-11-26T00:00:00+00:00"})
+    db = agent.connect_db()
+    try:
+        db.execute(
+            "INSERT INTO events(event_id,cursor,timestamp,severity,component,message,source,inserted_at) VALUES(?,?,?,?,?,?,?,?)",
+            ("survives-api-down", "", "2026-11-26T00:00:00+00:00", "ERROR", "BrokerGateway", "TimeoutError: broker request timed out\\nTraceback: preserved frame", "systemd-journal", 1),
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), agent.Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with urlopen(base + "/api/errors?limit=100", timeout=2) as response:
+            payload = json.loads(response.read().decode())
+        assert payload["api_process_reachable"] is False
+        assert payload["count"] == 1
+        assert payload["errors"][0]["id"] == "survives-api-down"
+        assert "Traceback: preserved frame" in payload["errors"][0]["message"]
+
+        for method in ("POST", "PUT", "PATCH", "DELETE"):
+            request = Request(base + "/api/errors", data=b"{}", method=method)
+            try:
+                urlopen(request, timeout=2)
+                raise AssertionError(f"{method} unexpectedly succeeded")
+            except HTTPError as error:
+                assert error.code == 405
+                assert error.headers.get("Allow") == "GET"
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=2)
