@@ -18,6 +18,9 @@ class DashboardStreamTelemetry:
         self._last_error_type: str | None = None
         self._last_success_at: float | None = None
         self._last_build_seconds = 0.0
+        self._last_serialization_seconds = 0.0
+        self._max_serialization_seconds = 0.0
+        self._last_payload_bytes = 0
         self._last_fanout_seconds = 0.0
         self._max_build_seconds = 0.0
         self._max_fanout_seconds = 0.0
@@ -45,10 +48,13 @@ class DashboardStreamTelemetry:
         failed_count: int,
         build_seconds: float,
         fanout_seconds: float,
+        serialization_seconds: float = 0.0,
+        payload_bytes: int = 0,
         error_type: str | None = None,
     ) -> None:
         build = max(0.0, float(build_seconds))
         fanout = max(0.0, float(fanout_seconds))
+        serialization = max(0.0, float(serialization_seconds))
         with self._lock:
             self._cycles += 1
             self._last_client_count = max(0, int(client_count))
@@ -56,6 +62,9 @@ class DashboardStreamTelemetry:
             self._last_failed_count = max(0, int(failed_count))
             self._last_build_seconds = build
             self._last_fanout_seconds = fanout
+            self._last_serialization_seconds = serialization
+            self._max_serialization_seconds = max(self._max_serialization_seconds, serialization)
+            self._last_payload_bytes = max(0, int(payload_bytes))
             self._max_build_seconds = max(self._max_build_seconds, build)
             self._max_fanout_seconds = max(self._max_fanout_seconds, fanout)
             if error_type:
@@ -82,6 +91,9 @@ class DashboardStreamTelemetry:
                 ),
                 "last_build_seconds": round(self._last_build_seconds, 4),
                 "max_build_seconds": round(self._max_build_seconds, 4),
+                "last_serialization_seconds": round(self._last_serialization_seconds, 4),
+                "max_serialization_seconds": round(self._max_serialization_seconds, 4),
+                "last_payload_bytes": self._last_payload_bytes,
                 "last_fanout_seconds": round(self._last_fanout_seconds, 4),
                 "max_fanout_seconds": round(self._max_fanout_seconds, 4),
                 "last_client_count": self._last_client_count,
