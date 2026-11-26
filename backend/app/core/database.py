@@ -65,6 +65,8 @@ def _clear_pool_checkout(dbapi_connection, connection_record, *args) -> None:
 event.listen(engine, "checkout", _track_pool_checkout)
 event.listen(engine, "checkin", _clear_pool_checkout)
 event.listen(engine, "invalidate", _clear_pool_checkout)
+# Detached DBAPI connections leave the pool without a normal checkin event.
+event.listen(engine, "detach", _clear_pool_checkout)
 
 
 def get_db():

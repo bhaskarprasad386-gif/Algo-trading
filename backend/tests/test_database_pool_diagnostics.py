@@ -157,3 +157,21 @@ def test_database_pool_snapshot_does_not_invent_capacity_for_unlimited_overflow(
     assert snapshot["max_overflow"] == -1
     assert snapshot["capacity"] is None
     assert snapshot["saturated"] is None
+
+
+
+def test_pool_checkout_tracking_is_removed_when_connection_is_detached():
+    from sqlalchemy import event
+
+    class _ConnectionRecord:
+        pass
+
+    record = _ConnectionRecord()
+    database._track_pool_checkout(None, record)
+    assert id(record) in database._pool_checkouts
+
+    # The listener is installed on the real engine and the detach callback
+    # clears the same lifecycle entry as checkin/invalidation.
+    assert event.contains(database.engine, "detach", database._clear_pool_checkout)
+    database._clear_pool_checkout(None, record)
+    assert id(record) not in database._pool_checkouts
