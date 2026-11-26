@@ -416,7 +416,7 @@ def test_sampler_keeps_live_metrics_and_retries_history_after_storage_failure():
     assert second["sample_count"] == 1
     assert second["history_samples_by_token"] == {"retry-ce": 1}
     assert len(attempts) == 2
-    assert "database temporarily unavailable" in second["history_persistence_error"]
+    assert second["history_persistence_error"] == "RuntimeError"
 
 
 def test_sampler_does_not_label_wide_book_as_a_valid_iv_input():
