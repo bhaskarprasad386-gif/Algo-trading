@@ -272,11 +272,19 @@ class IVSpotFeedAdapter:
                     self._persisted_rows += len(pending)
                     self._last_persist_error = None
             except Exception as exc:
-                # Persistence remains best-effort and isolated from the feed;
-                # expose failures rather than silently hiding DB pressure.
+                # Keep the newest failed value per symbol for a bounded retry.
+                # A newer tick already queued for that symbol always wins.
+                # Wait up to one second before retrying to avoid hammering a
+                # database that is already unavailable; new ticks wake us early.
                 with self._lock:
+                    for symbol, snapshot in pending:
+                        newer = self._persist_pending.get(symbol)
+                        if newer is None or newer.timestamp_ns < snapshot.timestamp_ns:
+                            self._persist_pending[symbol] = snapshot
                     self._persist_errors += 1
                     self._last_persist_error = f"{type(exc).__name__}: {exc}"[:300]
+                    self._persist_wakeup.clear()
+                self._persist_wakeup.wait(timeout=1.0)
 
     def _stop_persistence_worker(self) -> None:
         with self._lock:
