@@ -335,22 +335,18 @@ def test_live_health_reuses_persisted_summary_without_staling_runtime_feed(monke
     from datetime import datetime
     from app.core.config import settings
 
-    catalog_constructions = []
+    summary_reads = []
     runtime_reads = []
 
     class FakeCatalog:
-        def __init__(self, path):
-            catalog_constructions.append(path)
-
-        def source_summary(self, *, source, timeframe):
+        @staticmethod
+        def read_source_summary(path, *, source, timeframe):
+            summary_reads.append((path, source, timeframe))
             return {
                 "record_count": 12 if source == "angelone-live-1s" else 4,
                 "instruments": 3 if source == "angelone-live-1s" else 2,
                 "latest_timestamp_ns": None,
             }
-
-        def close(self):
-            pass
 
     def runtime_snapshot():
         runtime_reads.append(1)
@@ -373,7 +369,7 @@ def test_live_health_reuses_persisted_summary_without_staling_runtime_feed(monke
 
     # The expensive shard enumeration is shared for 60 seconds, but runtime
     # feed state is still sampled on every new /live-health snapshot.
-    assert len(catalog_constructions) == 1
+    assert len(summary_reads) == 2
     assert len(runtime_reads) == 2
     assert first["records"] == second["records"] == 12
     assert second["persisted_summary"]["status"] == "FRESH"
