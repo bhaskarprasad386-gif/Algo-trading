@@ -1,3 +1,6 @@
+import threading
+import time
+
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -41,6 +44,28 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
+# Track live pool checkouts without retaining DBAPI connections or SQL values.
+_POOL_LONG_CHECKOUT_SECONDS = 30.0
+_pool_checkout_lock = threading.Lock()
+_pool_checkouts: dict[int, tuple[float, str]] = {}
+
+
+def _track_pool_checkout(dbapi_connection, connection_record, connection_proxy=None) -> None:
+    with _pool_checkout_lock:
+        _pool_checkouts[id(connection_record)] = (
+            time.monotonic(), threading.current_thread().name
+        )
+
+
+def _clear_pool_checkout(dbapi_connection, connection_record, *args) -> None:
+    with _pool_checkout_lock:
+        _pool_checkouts.pop(id(connection_record), None)
+
+
+event.listen(engine, "checkout", _track_pool_checkout)
+event.listen(engine, "checkin", _clear_pool_checkout)
+event.listen(engine, "invalidate", _clear_pool_checkout)
+
 
 def get_db():
     db = SessionLocal()
@@ -73,4 +98,17 @@ def database_pool_snapshot() -> dict[str, object]:
             snapshot[name] = int(value) if value is not None else None
         except Exception:
             snapshot[name] = None
+
+    now = time.monotonic()
+    with _pool_checkout_lock:
+        checkouts = tuple(_pool_checkouts.values())
+    ages = [(max(0.0, now - started), thread_name) for started, thread_name in checkouts]
+    oldest = max(ages, default=(0.0, None), key=lambda item: item[0])
+    snapshot.update({
+        "active_checkout_count": len(ages),
+        "long_checkout_count": sum(age >= _POOL_LONG_CHECKOUT_SECONDS for age, _ in ages),
+        "oldest_checkout_seconds": round(oldest[0], 3) if ages else None,
+        "oldest_checkout_thread": oldest[1],
+        "long_checkout_threshold_seconds": _POOL_LONG_CHECKOUT_SECONDS,
+    })
     return snapshot
