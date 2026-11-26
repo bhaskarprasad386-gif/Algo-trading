@@ -349,12 +349,12 @@ export default function HomePage() {
           ? new Date(body.server_timestamp).getTime()
           : NaN;
         // A stale-while-refresh response is not a new sample. Prefer the
-        // backend cache age, then the source timestamp, and only use receipt
-        // time for older responses that expose neither freshness field.
-        const sampleAt = Number.isFinite(cacheAgeSeconds) && cacheAgeSeconds >= 0
-          ? receivedAt - cacheAgeSeconds * 1000
-          : Number.isFinite(serverSampleTime) && serverSampleTime <= receivedAt
-            ? serverSampleTime
+        // source timestamp, then monotonic cache age if the server clock is
+        // ahead, and use receipt time only for older responses with no marker.
+        const sampleAt = Number.isFinite(serverSampleTime) && serverSampleTime <= receivedAt
+          ? serverSampleTime
+          : Number.isFinite(cacheAgeSeconds) && cacheAgeSeconds >= 0
+            ? receivedAt - cacheAgeSeconds * 1000
             : typeof body?.server_timestamp === "string" ? null : receivedAt;
         setRuntimeLastSuccessAt(sampleAt);
         const currentCounters = {
