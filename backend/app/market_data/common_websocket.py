@@ -2577,6 +2577,11 @@ class CommonWebSocketManager:
                 "consumers": sorted(set(self._callbacks) | set(self._record_callbacks) | set(self._record_observers)),
                 "socket_health_by_group": socket_health,
                 "async_callback_dispatch": self._async_callback_dispatch,
+                "callback_dispatch_by_group": {
+                    f"{group.mode}:{group.shard}": adapter.snapshot()
+                    for group, (generation, adapter) in self._callback_adapters.items()
+                    if self._socket_generation.get(group) == generation
+                },
                 "delivery_errors": self._delivery_errors,
                 "missing_callback_routes": self._missing_callback_routes,
                 "missing_descriptor_records": self._missing_descriptor_records,
@@ -2604,6 +2609,11 @@ class CommonWebSocketManager:
                 "last_raw_frame_age_seconds_by_group": {
                     f"{group.mode}:{group.shard}": max(0.0, now_mono - at)
                     for group, at in self._last_raw_frame_at_by_group.items()
+                    if group in sockets
+                },
+                "last_raw_frame_age_seconds_by_exchange_group": {
+                    f"{group.mode}:{group.shard}:{exchange_type}": max(0.0, now_mono - received_at)
+                    for (group, exchange_type), received_at in self._last_raw_frame_at_by_exchange_type.items()
                     if group in sockets
                 },
                 "last_successful_route_age_seconds_by_group": {
