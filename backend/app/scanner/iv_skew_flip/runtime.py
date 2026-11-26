@@ -411,7 +411,7 @@ class IVSkewFlipRuntime:
                 self._last_error.pop(symbol, None)
         except Exception as exc:
             with self._lock:
-                self._last_error[symbol] = f"{type(exc).__name__}: {exc}"
+                self._last_error[symbol] = type(exc).__name__
 
     @staticmethod
     def _signal_payload(signal: Signal) -> dict[str, Any]:
@@ -1047,7 +1047,7 @@ class IVSkewFlipRuntime:
             self._telegram_delivery = {
                 "status": "ERROR",
                 "last_attempt_ns": now_ns,
-                "last_error": f"{type(exc).__name__}: {exc}"[:500],
+                "last_error": type(exc).__name__,
             }
 
     def _run_telegram_notifications(self) -> None:

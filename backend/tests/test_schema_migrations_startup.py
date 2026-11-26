@@ -271,3 +271,164 @@ def test_postgres_migration_failure_rolls_back_and_restart_recovers(
         column["name"] for column in inspector.get_columns("users")
     }
     assert "alert_contacts" in inspector.get_table_names()
+
+
+def test_iv_observation_expiry_time_index_supports_bounded_restore(migration_engine, monkeypatch):
+    """The recent-history query can seek directly by underlying, expiry and time."""
+    if migration_engine.dialect.name != "sqlite":
+        pytest.skip("SQLite query-plan assertion is dialect-specific")
+
+    monkeypatch.setattr(schema_migrations, "engine", migration_engine)
+    _seed_minimal_legacy_schema(migration_engine)
+    schema_migrations.run_schema_migrations()
+
+    with migration_engine.begin() as connection:
+        index = next(
+            item for item in inspect(connection).get_indexes("iv_option_observations")
+            if item["name"] == "ix_iv_option_observation_expiry_time"
+        )
+        assert index["column_names"] == ["underlying", "expiry", "source_timestamp_ns"]
+
+        # Seed enough rows across multiple expiries/underlyings for SQLite's
+        # planner to compare the contract-time and expiry-time indexes.
+        rows = []
+        base_ns = 1_800_000_000_000_000_000
+        for group, (underlying, expiry) in enumerate((
+            ("NIFTY", "2026-11-12"),
+            ("NIFTY", "2026-11-19"),
+            ("BANKNIFTY", "2026-11-12"),
+            ("BANKNIFTY", "2026-11-19"),
+        )):
+            for token_number in range(5):
+                for tick in range(100):
+                    timestamp_ns = base_ns + tick * 1_000_000_000
+                    rows.append({
+                        "token": f"{group}-{token_number}",
+                        "underlying": underlying,
+                        "expiry": expiry,
+                        "strike": 24000 + token_number * 100,
+                        "option_type": "CE",
+                        "source_timestamp_ns": timestamp_ns,
+                        "spot_timestamp_ns": timestamp_ns,
+                        "sampled_at_ns": timestamp_ns,
+                    })
+        connection.execute(
+            text(
+                "INSERT INTO iv_option_observations "
+                "(token, underlying, expiry, strike, option_type, "
+                "source_timestamp_ns, spot_timestamp_ns, sampled_at_ns) "
+                "VALUES (:token, :underlying, :expiry, :strike, :option_type, "
+                ":source_timestamp_ns, :spot_timestamp_ns, :sampled_at_ns)"
+            ),
+            rows,
+        )
+        connection.execute(text("ANALYZE iv_option_observations"))
+
+        # Do not force an index: assert that SQLite naturally chooses the new
+        # expiry/time index for the exact bounded restore predicate.
+        plan = connection.execute(
+            text(
+                "EXPLAIN QUERY PLAN "
+                "SELECT token, source_timestamp_ns FROM iv_option_observations "
+                "WHERE underlying = :underlying AND expiry = :expiry "
+                "AND source_timestamp_ns >= :cutoff "
+                "AND source_timestamp_ns <= :now "
+                "ORDER BY source_timestamp_ns ASC"
+            ),
+            {
+                "underlying": "NIFTY",
+                "expiry": "2026-11-12",
+                "cutoff": base_ns + 90_000_000_000,
+                "now": base_ns + 99_000_000_000,
+            },
+        ).all()
+
+    details = " ".join(str(row[-1]) for row in plan)
+    assert "SEARCH" in details.upper()
+    assert "ix_iv_option_observation_expiry_time" in details
+    assert "TEMP B-TREE" not in details.upper()
+
+
+def test_iv_latest_per_contract_restore_uses_covering_contract_index(
+    migration_engine, monkeypatch
+):
+    """Latest-per-token aggregation should be index-only and avoid temp grouping."""
+    if migration_engine.dialect.name != "sqlite":
+        pytest.skip("SQLite query-plan assertion is dialect-specific")
+
+    monkeypatch.setattr(schema_migrations, "engine", migration_engine)
+    _seed_minimal_legacy_schema(migration_engine)
+    schema_migrations.run_schema_migrations()
+
+    base_ns = 1_800_000_000_000_000_000
+    rows = []
+    for group, (underlying, expiry) in enumerate((
+        ("NIFTY", "2026-11-12"),
+        ("NIFTY", "2026-11-19"),
+        ("BANKNIFTY", "2026-11-12"),
+        ("BANKNIFTY", "2026-11-19"),
+    )):
+        for token_number in range(20):
+            for tick in range(30):
+                timestamp_ns = base_ns + tick * 1_000_000_000
+                rows.append({
+                    "token": f"{group}-{token_number}",
+                    "underlying": underlying,
+                    "expiry": expiry,
+                    "strike": 24000 + token_number * 100,
+                    "option_type": "CE",
+                    "source_timestamp_ns": timestamp_ns,
+                    "spot_timestamp_ns": timestamp_ns,
+                    "sampled_at_ns": timestamp_ns,
+                })
+
+    with migration_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO iv_option_observations "
+                "(token, underlying, expiry, strike, option_type, "
+                "source_timestamp_ns, spot_timestamp_ns, sampled_at_ns) "
+                "VALUES (:token, :underlying, :expiry, :strike, :option_type, "
+                ":source_timestamp_ns, :spot_timestamp_ns, :sampled_at_ns)"
+            ),
+            rows,
+        )
+        connection.execute(text("ANALYZE iv_option_observations"))
+        # Match the production restore shape: aggregate latest timestamp per
+        # token, then join those identities back to full observation rows.
+        plan = connection.execute(
+            text(
+                "EXPLAIN QUERY PLAN "
+                "SELECT iv_option_observations.* "
+                "FROM iv_option_observations "
+                "JOIN ("
+                " SELECT token AS token, "
+                " MAX(source_timestamp_ns) AS latest_source_timestamp_ns "
+                " FROM iv_option_observations "
+                " WHERE underlying = :underlying AND expiry = :expiry "
+                " AND source_timestamp_ns <= :now "
+                " GROUP BY token"
+                ") AS latest_source "
+                "ON iv_option_observations.token = latest_source.token "
+                "AND iv_option_observations.source_timestamp_ns = "
+                "latest_source.latest_source_timestamp_ns "
+                "WHERE iv_option_observations.underlying = :underlying "
+                "AND iv_option_observations.expiry = :expiry "
+                "AND iv_option_observations.source_timestamp_ns <= :now"
+            ),
+            {
+                "underlying": "NIFTY",
+                "expiry": "2026-11-12",
+                "now": base_ns + 29_000_000_000,
+            },
+        ).all()
+
+    details = [str(row[-1]).upper() for row in plan]
+    combined = " ".join(details)
+    assert any(
+        "COVERING INDEX IX_IV_OPTION_OBSERVATION_CONTRACT_TIME" in detail
+        for detail in details
+    ), combined
+    assert sum("INDEX IX_IV_OPTION_OBSERVATION_CONTRACT_TIME" in detail for detail in details) >= 2, combined
+    assert any("SEARCH" in detail for detail in details), combined
+    assert not any("TEMP B-TREE" in detail for detail in details), combined

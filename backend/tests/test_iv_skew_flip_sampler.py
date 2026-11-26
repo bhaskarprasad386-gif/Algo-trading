@@ -2,7 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.scanner.iv_skew_flip.engine import OptionQuote, ScannerConfig, black_scholes_price
-from app.scanner.iv_skew_flip.sampler import IVOneSecondSampler, SpotSnapshot
+from app.scanner.iv_skew_flip.sampler import IVOneSecondSampler, OptionMetricSample, SpotSnapshot
 
 
 class QuoteSource:
@@ -407,7 +407,7 @@ def test_sampler_keeps_live_metrics_and_retries_history_after_storage_failure():
     assert first["status"] == "LIVE"
     assert first["sample_count"] == 1
     assert first["history_samples_by_token"] == {"retry-ce": 1}
-    assert "database temporarily unavailable" in first["history_persistence_error"]
+    assert first["history_persistence_error"] == "RuntimeError"
 
     second = sampler.sample_once(
         now_ns=now_ns + 1_000_000_000, now=now,
@@ -416,7 +416,7 @@ def test_sampler_keeps_live_metrics_and_retries_history_after_storage_failure():
     assert second["sample_count"] == 1
     assert second["history_samples_by_token"] == {"retry-ce": 1}
     assert len(attempts) == 2
-    assert "database temporarily unavailable" in second["history_persistence_error"]
+    assert second["history_persistence_error"] == "RuntimeError"
 
 
 def test_sampler_does_not_label_wide_book_as_a_valid_iv_input():
@@ -679,3 +679,351 @@ def test_sampler_does_not_infer_oi_timestamp_from_price_quote_timestamp():
     assert result["oi_live_count"] == 0
     assert result["live_metrics"][0]["oi_live"] is False
     assert sampler.history_snapshot("ce-token")[-1].oi_timestamp_ns is None
+
+
+def test_sampler_source_key_persistence_uses_one_select_for_many_contracts():
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.core.database import Base
+    from app.models.iv_option_observation import IVOptionObservation
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    statements = []
+
+    def capture_sql(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "iv_option_observations" in statement:
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_sql)
+    sampler = IVOneSecondSampler(
+        quote_source=QuoteSource(),
+        spot_provider=lambda: None,
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        history_session_factory=Session,
+    )
+    samples = [
+        OptionMetricSample(
+            token=f"token-{index}", underlying="NIFTY", expiry="2026-11-12",
+            strike=21950.0 + index * 50, option_type="CE", sampled_at_ns=1_800_000_000_000_000_000,
+            source_timestamp_ns=1_800_000_000_000_000_000 + index,
+            spot_timestamp_ns=1_800_000_000_000_000_000, spot_price=21950.0,
+            oi=1000 + index, mark=100.0, ltp=100.0, iv=20.0,
+            iv_input="LTP", bid=99.5, ask=100.5, volume=100,
+            oi_timestamp_ns=1_800_000_000_000_000_000,
+        )
+        for index in range(12)
+    ]
+
+    # Duplicate source keys inside a single batch and across retries are harmless.
+    assert sampler._persist_history(samples + [samples[0]]) == 12
+    assert sampler._persist_history(samples) == 0
+    assert statements == [], "conflict-safe inserts must not require a preflight SELECT"
+
+    with Session() as session:
+        assert session.query(IVOptionObservation).count() == 12
+    engine.dispose()
+
+
+def test_sampler_restore_loads_only_recent_window_and_latest_per_contract():
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.core.database import Base
+    from app.models.iv_option_observation import IVOptionObservation
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    now_ns = 1_800_000_000_000_000_000
+    with Session() as session:
+        for seconds_ago, price in ((1000, 100.0), (700, 101.0), (100, 102.0)):
+            timestamp = now_ns - seconds_ago * 1_000_000_000
+            session.add(IVOptionObservation(
+                token="restore-ce", underlying="NIFTY", expiry="2026-11-12",
+                strike=21950.0, option_type="CE", source_timestamp_ns=timestamp,
+                spot_timestamp_ns=timestamp, spot_price=21950.0, sampled_at_ns=timestamp,
+                iv=20.0, oi=10000, oi_timestamp_ns=timestamp,
+                bid=99.5, ask=100.5, ltp=100.0, mark=100.0, volume=100,
+            ))
+        session.commit()
+
+    statements = []
+
+    def capture_sql(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "iv_option_observations" in statement:
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_sql)
+    sampler = IVOneSecondSampler(
+        quote_source=QuoteSource(),
+        spot_provider=lambda: None,
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns,
+        history_session_factory=Session,
+        history_seconds=600,
+    )
+
+    loaded = sampler._restore_history(now_ns)
+
+    assert loaded == 1
+    assert len(statements) == 2
+    assert len(sampler.history_snapshot("restore-ce")) == 1
+    assert sampler.history_snapshot("restore-ce")[0].source_timestamp_ns == now_ns - 100_000_000_000
+    assert sampler._last_display["restore-ce"].source_timestamp_ns == now_ns - 100_000_000_000
+    assert sampler._last_source_timestamp["restore-ce"] == now_ns - 100_000_000_000
+    engine.dispose()
+
+
+def test_sampler_state_lock_is_available_while_history_persistence_blocks(monkeypatch):
+    from threading import Event, Thread
+
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "lock-ce",
+    ),)
+    sampler = IVOneSecondSampler(
+        quote_source=source,
+        spot_provider=lambda: SpotSnapshot(21950, now_ns),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns,
+        history_session_factory=lambda: None,
+    )
+    sampler._history_loaded = True
+    persistence_entered = Event()
+    release_persistence = Event()
+
+    def blocked_persist(samples):
+        persistence_entered.set()
+        assert release_persistence.wait(timeout=2)
+        return len(samples)
+
+    monkeypatch.setattr(sampler, "_persist_history", blocked_persist)
+    worker = Thread(target=lambda: sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    ))
+    worker.start()
+    assert persistence_entered.wait(timeout=1)
+
+    # Snapshot readers must not wait for the database transaction.
+    acquired = sampler._lock.acquire(timeout=0.2)
+    assert acquired
+    sampler._lock.release()
+    release_persistence.set()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert sampler.snapshot()["sample_count"] == 1
+
+
+def test_history_inheritance_waits_for_previous_sampler_cycle():
+    from threading import Event, Thread
+
+    now_ns = 1_800_000_000_000_000_000
+    previous = _sampler(QuoteSource(), lambda: now_ns)
+    current = _sampler(QuoteSource(), lambda: now_ns)
+    universe = type("Universe", (), {
+        "underlying": "NIFTY",
+        "expiry": "2026-11-12",
+        "contracts": (
+            type("Contract", (), {"token": "shared-ce", "strike": 21950.0, "option_type": "CE"})(),
+        ),
+    })()
+    sample = OptionMetricSample(
+        token="shared-ce", underlying="NIFTY", expiry="2026-11-12",
+        strike=21950.0, option_type="CE", sampled_at_ns=now_ns,
+        source_timestamp_ns=now_ns, spot_timestamp_ns=now_ns,
+        spot_price=21950.0, oi=12000, mark=100.0, ltp=100.0,
+        iv=20.0, iv_input="LTP", oi_timestamp_ns=now_ns,
+    )
+    attempting = Event()
+    finished = Event()
+    result = []
+
+    def inherit():
+        attempting.set()
+        result.append(current.inherit_history(previous, universe))
+        finished.set()
+
+    with previous._sample_lock:
+        worker = Thread(target=inherit)
+        worker.start()
+        assert attempting.wait(timeout=1)
+        # The in-flight source cycle publishes its final OI sample before
+        # releasing its cycle lock. Inheritance must not snapshot mid-cycle.
+        with previous._lock:
+            previous._history["shared-ce"].append(sample)
+            previous._pending_history[("shared-ce", now_ns)] = sample
+            previous._last_source_timestamp["shared-ce"] = now_ns
+        assert not finished.wait(timeout=0.05)
+
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert result == [1]
+    assert current.history_snapshot("shared-ce") == (sample,)
+    assert current._last_source_timestamp["shared-ce"] == now_ns
+    assert current._pending_history[("shared-ce", now_ns)] == sample
+
+
+def test_empty_history_persistence_never_opens_a_database_session():
+    calls = []
+
+    def unexpected_session():
+        calls.append(True)
+        raise AssertionError("empty persistence batch must not checkout a connection")
+
+    sampler = IVOneSecondSampler(
+        quote_source=QuoteSource(),
+        spot_provider=lambda: None,
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        history_session_factory=unexpected_session,
+    )
+    assert sampler._persist_history([]) == 0
+    assert calls == []
+
+
+def test_sampler_persistence_chunks_large_source_key_batches_for_sqlite():
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.core.database import Base
+    from app.models.iv_option_observation import IVOptionObservation
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[IVOptionObservation.__table__])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    statements = []
+
+    def capture_sql(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "iv_option_observations" in statement:
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_sql)
+    sampler = IVOneSecondSampler(
+        quote_source=QuoteSource(),
+        spot_provider=lambda: None,
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        history_session_factory=Session,
+    )
+    base_ns = 1_800_000_000_000_000_000
+    samples = [
+        OptionMetricSample(
+            token=f"large-token-{index}", underlying="NIFTY", expiry="2026-11-12",
+            strike=18000.0 + index, option_type="CE", sampled_at_ns=base_ns,
+            source_timestamp_ns=base_ns + index, spot_timestamp_ns=base_ns,
+            spot_price=21950.0, oi=1000 + index, mark=100.0, ltp=100.0,
+            iv=20.0, iv_input="LTP", oi_timestamp_ns=base_ns,
+        )
+        for index in range(405)
+    ]
+
+    assert sampler._persist_history(samples + [samples[0]]) == 405
+    assert statements == [], "bulk conflict-safe insert should not issue source-key SELECTs"
+    with Session() as session:
+        assert session.query(IVOptionObservation).count() == 405
+    engine.dispose()
+
+
+
+def test_history_inheritance_in_opposite_directions_has_deterministic_lock_order():
+    from threading import Barrier, Thread
+
+    now_ns = 1_800_000_000_000_000_000
+    left = _sampler(QuoteSource(), lambda: now_ns)
+    right = _sampler(QuoteSource(), lambda: now_ns)
+    universe = type("Universe", (), {
+        "underlying": "NIFTY",
+        "expiry": "2026-11-12",
+        "contracts": (),
+    })()
+    start = Barrier(3)
+    errors = []
+
+    def inherit(target, source):
+        try:
+            start.wait(timeout=2)
+            target.inherit_history(source, universe)
+        except BaseException as exc:
+            errors.append(exc)
+
+    first = Thread(target=inherit, args=(left, right), daemon=True)
+    second = Thread(target=inherit, args=(right, left), daemon=True)
+    first.start()
+    second.start()
+    start.wait(timeout=2)
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive(), "left <- right inheritance deadlocked"
+    assert not second.is_alive(), "right <- left inheritance deadlocked"
+    assert errors == []
+
+
+
+def test_sampler_retries_all_unpersisted_source_ticks_after_database_recovery(monkeypatch):
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "retry-history-ce",
+        oi_timestamp_ns=now_ns,
+    ),)
+    sampler = IVOneSecondSampler(
+        quote_source=source,
+        spot_provider=lambda: SpotSnapshot(21950, now_ns),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns,
+        history_session_factory=lambda: object(),
+        history_seconds=600,
+    )
+    sampler._history_loaded = True
+    attempts = []
+
+    def fail_once_then_persist(samples):
+        attempts.append(tuple(item.source_timestamp_ns for item in samples))
+        if len(attempts) == 1:
+            raise RuntimeError("temporary database outage")
+        return len(samples)
+
+    monkeypatch.setattr(sampler, "_persist_history", fail_once_then_persist)
+    first = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    assert first["history_persistence_pending_count"] == 1
+    assert first["history_persistence_dropped_count"] == 0
+
+    second_ns = now_ns + 1_000_000_000
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", second_ns,
+        101.0, 100.5, 101.5, 10100, 11, "retry-history-ce",
+        oi_timestamp_ns=second_ns,
+    ),)
+    second = sampler.sample_once(
+        now_ns=second_ns, now=now,
+        spot=SpotSnapshot(21950, second_ns),
+    )
+
+    assert attempts == [
+        (now_ns,),
+        (now_ns, second_ns),
+    ]
+    assert second["history_persistence_pending_count"] == 0
+    assert second["history_persistence_dropped_count"] == 0
+    assert sampler._last_source_timestamp["retry-history-ce"] == second_ns
+    assert [item.source_timestamp_ns for item in sampler.history_snapshot("retry-history-ce")] == [
+        now_ns, second_ns,
+    ]

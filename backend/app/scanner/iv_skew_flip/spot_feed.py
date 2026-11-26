@@ -56,6 +56,10 @@ class IVSpotFeedAdapter:
         # newest bounded spot observations and persist them on an IV-owned worker.
         self._persist_pending: dict[str, SpotSnapshot] = {}
         self._persist_wakeup = Event()
+        self._persist_batches = 0
+        self._persisted_rows = 0
+        self._persist_errors = 0
+        self._last_persist_error: str | None = None
         self._persist_stop = Event()
         self._persist_thread: Thread | None = None
         if self._persist_last_price:
@@ -223,6 +227,11 @@ class IVSpotFeedAdapter:
                 daemon=True,
             )
             self._persist_thread = worker
+            # A previous worker may have exited after a failed shutdown drain.
+            # Wake the replacement immediately so its bounded pending values
+            # are retried without waiting for a new market tick.
+            if self._persist_pending:
+                self._persist_wakeup.set()
             worker.start()
 
     def _enqueue_persistence(self, symbol: str, snapshot: SpotSnapshot) -> None:
@@ -240,25 +249,100 @@ class IVSpotFeedAdapter:
                 self._persist_pending.clear()
                 self._persist_wakeup.clear()
                 stopping = self._persist_stop.is_set()
-            if not pending and stopping:
-                break
-            for symbol, snapshot in pending:
-                try:
-                    with SessionLocal() as db:
-                        db.merge(IVSpotLastPrice(
-                            symbol=symbol, price=snapshot.price,
-                            timestamp_ns=snapshot.timestamp_ns,
-                        ))
-                        db.merge(IVSpotObservation(
-                            underlying=symbol,
-                            source_timestamp_ns=snapshot.timestamp_ns,
-                            price=snapshot.price,
-                            received_at_ns=snapshot.received_at_ns or snapshot.timestamp_ns,
-                        ))
-                        db.commit()
-                except Exception:
-                    # Live in-memory spot remains usable if persistence is degraded.
-                    pass
+            if not pending:
+                if stopping:
+                    break
+                # An idle persistence worker must not open a DB session or
+                # commit an empty transaction on every wakeup timeout.
+                continue
+            # Both index snapshots are one tiny, bounded batch. One SQLAlchemy
+            # checkout and one SQLite transaction per wakeup avoids competing
+            # commits when NIFTY and BANKNIFTY ticks arrive together.
+            try:
+                observation_rows = [
+                    {
+                        "underlying": symbol,
+                        "source_timestamp_ns": snapshot.timestamp_ns,
+                        "price": snapshot.price,
+                        "received_at_ns": snapshot.received_at_ns or snapshot.timestamp_ns,
+                    }
+                    for symbol, snapshot in pending
+                ]
+                last_price_rows = [
+                    {
+                        "symbol": symbol,
+                        "price": snapshot.price,
+                        "timestamp_ns": snapshot.timestamp_ns,
+                    }
+                    for symbol, snapshot in pending
+                ]
+                with SessionLocal() as db:
+                    get_bind = getattr(db, "get_bind", None)
+                    dialect_name = get_bind().dialect.name if callable(get_bind) else None
+                    if dialect_name in {"sqlite", "postgresql"}:
+                        if dialect_name == "sqlite":
+                            from sqlalchemy.dialects.sqlite import insert as dialect_insert
+                        else:
+                            from sqlalchemy.dialects.postgresql import insert as dialect_insert
+
+                        last_insert = dialect_insert(IVSpotLastPrice)
+                        last_statement = last_insert.on_conflict_do_update(
+                            index_elements=["symbol"],
+                            set_={
+                                "price": last_insert.excluded.price,
+                                "timestamp_ns": last_insert.excluded.timestamp_ns,
+                            },
+                            # A delayed retry must never roll the durable LAST
+                            # price backwards over a newer exchange observation.
+                            where=last_insert.excluded.timestamp_ns >= IVSpotLastPrice.timestamp_ns,
+                        )
+                        observation_statement = dialect_insert(IVSpotObservation).on_conflict_do_nothing(
+                            index_elements=["underlying", "source_timestamp_ns"],
+                        )
+                        connection = db.connection()
+                        connection.execute(
+                            last_statement,
+                            last_price_rows,
+                            execution_options={"preserve_rowcount": True},
+                        )
+                        observation_result = connection.execute(
+                            observation_statement,
+                            observation_rows,
+                            execution_options={"preserve_rowcount": True},
+                        )
+                        persisted_observations = max(0, int(observation_result.rowcount or 0))
+                    else:
+                        # Portable fallback for test doubles and unsupported
+                        # dialects. Production SQLite/PostgreSQL use two
+                        # conflict-safe executemany statements with no SELECTs.
+                        for row in last_price_rows:
+                            db.merge(IVSpotLastPrice(**row))
+                        for row in observation_rows:
+                            db.merge(IVSpotObservation(**row))
+                        persisted_observations = len(pending)
+                    db.commit()
+                with self._lock:
+                    self._persist_batches += 1
+                    self._persisted_rows += persisted_observations
+                    self._last_persist_error = None
+            except Exception as exc:
+                # Keep the newest failed value per symbol for a bounded retry.
+                # A newer tick already queued for that symbol always wins.
+                # If shutdown is already in progress, preserve the queue and
+                # let the next start create a fresh worker instead of spinning
+                # forever against an unavailable database.
+                with self._lock:
+                    for symbol, snapshot in pending:
+                        newer = self._persist_pending.get(symbol)
+                        if newer is None or newer.timestamp_ns < snapshot.timestamp_ns:
+                            self._persist_pending[symbol] = snapshot
+                    self._persist_errors += 1
+                    # Driver messages may expose connection/SQL details in API telemetry.
+                    self._last_persist_error = type(exc).__name__
+                    self._persist_wakeup.clear()
+                if stopping:
+                    break
+                self._persist_wakeup.wait(timeout=1.0)
 
     def _stop_persistence_worker(self) -> None:
         with self._lock:
@@ -313,6 +397,15 @@ class IVSpotFeedAdapter:
                 "rejected_records": sum(self._rejected_records.values()),
                 "rejected_by_reason": dict(self._rejected_records),
                 "duplicate_source_timestamps": self._duplicate_source_timestamps,
+                "persistence": {
+                    "enabled": self._persist_last_price,
+                    "batches_committed": self._persist_batches,
+                    "observations_committed": self._persisted_rows,
+                    "failed_batches": self._persist_errors,
+                    "last_error": self._last_persist_error,
+                    "pending_symbols": len(self._persist_pending),
+                    "worker_alive": bool(self._persist_thread and self._persist_thread.is_alive()),
+                },
                 "last_source_timestamp_fields": dict(self._last_source_timestamp_fields),
                 "last_normalized_timestamp_ns": self._last_normalized_timestamp_ns,
                 "last_source_timestamp_age_seconds": (

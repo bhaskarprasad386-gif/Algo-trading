@@ -690,7 +690,7 @@ def test_runtime_retains_option_feed_when_subscription_start_partially_fails():
     runtime.refresh_once()
     feed = created["NIFTY_WEEKLY"]
     assert runtime._option_feeds["NIFTY_WEEKLY"] is feed
-    assert "partial option subscription failure" in runtime._last_error["NIFTY_WEEKLY"]
+    assert runtime._last_error["NIFTY_WEEKLY"] == "RuntimeError"
 
     stopped = runtime.stop()
     assert stopped["status"] == "STOPPED"

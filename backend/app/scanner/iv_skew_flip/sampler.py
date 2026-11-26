@@ -13,6 +13,8 @@ from math import isfinite
 from threading import Event, RLock, Thread
 from time import monotonic, time_ns
 from typing import Any, Callable
+
+from sqlalchemy import func
 from zoneinfo import ZoneInfo
 
 from app.models.iv_option_observation import IVOptionObservation
@@ -89,6 +91,9 @@ class IVOneSecondSampler:
         self._history_persisted_count = 0
         self._history_persistence_error: str | None = None
         self._lock = RLock()
+        # Serialize complete sampling cycles independently of the state lock.
+        # Database persistence must never hold the lock used by snapshot readers.
+        self._sample_lock = RLock()
         self._stop = Event()
         self._thread: Thread | None = None
         self._latest: dict[str, OptionMetricSample] = {}
@@ -98,6 +103,10 @@ class IVOneSecondSampler:
         self._previous_cycle: dict[str, OptionMetricSample] = {}
         self._one_second_changes: dict[str, dict[str, float | int | None]] = {}
         self._history: dict[str, deque[OptionMetricSample]] = defaultdict(deque)
+        # Keep failed durable writes until a later transaction confirms them.
+        # Keys are source-time identities, so retries remain idempotent.
+        self._pending_history: dict[tuple[str, int], OptionMetricSample] = {}
+        self._history_persistence_dropped_count = 0
         self._last_source_timestamp: dict[str, int] = {}
         self._last_sampled_at_ns: int | None = None
         self._last_error: str | None = None
@@ -142,39 +151,74 @@ class IVOneSecondSampler:
             return 0
         session = self.history_session_factory()
         try:
-            # Restore the latest real broker observation for every contract in
-            # this exact expiry, irrespective of how long the market has been
-            # closed. The rolling in-memory OI window remains bounded separately.
-            rows = (session.query(IVOptionObservation).filter(
-                IVOptionObservation.underlying == self.config.symbol,
-                IVOptionObservation.expiry == self.configured_expiry,
-                IVOptionObservation.source_timestamp_ns <= now_ns,
-            ).order_by(IVOptionObservation.source_timestamp_ns.asc()).all())
-            latest_by_token: dict[str, OptionMetricSample] = {}
             cutoff = now_ns - self.history_limit * 1_000_000_000
+            # Restore only the newest durable row per contract for display and
+            # the bounded rolling window for OI references. Loading every
+            # historical tick here made startup cost and connection hold time
+            # grow without limit as the IV observation table accumulated.
+            latest_source = (
+                session.query(
+                    IVOptionObservation.token.label("token"),
+                    func.max(IVOptionObservation.source_timestamp_ns).label("latest_source_timestamp_ns"),
+                )
+                .filter(
+                    IVOptionObservation.underlying == self.config.symbol,
+                    IVOptionObservation.expiry == self.configured_expiry,
+                    IVOptionObservation.source_timestamp_ns <= now_ns,
+                )
+                .group_by(IVOptionObservation.token)
+                .subquery()
+            )
+            latest_rows = (
+                session.query(IVOptionObservation)
+                .join(
+                    latest_source,
+                    (IVOptionObservation.token == latest_source.c.token)
+                    & (
+                        IVOptionObservation.source_timestamp_ns
+                        == latest_source.c.latest_source_timestamp_ns
+                    ),
+                )
+                .filter(
+                    IVOptionObservation.underlying == self.config.symbol,
+                    IVOptionObservation.expiry == self.configured_expiry,
+                    IVOptionObservation.source_timestamp_ns <= now_ns,
+                )
+                .all()
+            )
+            recent_rows = (
+                session.query(IVOptionObservation)
+                .filter(
+                    IVOptionObservation.underlying == self.config.symbol,
+                    IVOptionObservation.expiry == self.configured_expiry,
+                    IVOptionObservation.source_timestamp_ns >= cutoff,
+                    IVOptionObservation.source_timestamp_ns <= now_ns,
+                )
+                .order_by(IVOptionObservation.source_timestamp_ns.asc())
+                .all()
+            )
+
+            def to_sample(row: IVOptionObservation) -> OptionMetricSample:
+                return OptionMetricSample(
+                    token=row.token, underlying=row.underlying, expiry=row.expiry,
+                    strike=row.strike, option_type=row.option_type, sampled_at_ns=row.sampled_at_ns,
+                    source_timestamp_ns=row.source_timestamp_ns, spot_timestamp_ns=row.spot_timestamp_ns,
+                    spot_price=row.spot_price, oi=row.oi, mark=row.mark, ltp=row.ltp, iv=row.iv,
+                    oi_timestamp_ns=getattr(row, "oi_timestamp_ns", None),
+                    iv_input=(
+                        "BID_ASK_MIDPOINT" if row.bid is not None and row.ask is not None
+                        else "LTP" if row.ltp is not None else None
+                    ),
+                    bid=row.bid, ask=row.ask, volume=row.volume,
+                )
+
+            latest_by_token = {row.token: to_sample(row) for row in latest_rows}
             with self._lock:
-                for row in rows:
-                    sample = OptionMetricSample(
-                        token=row.token, underlying=row.underlying, expiry=row.expiry,
-                        strike=row.strike, option_type=row.option_type, sampled_at_ns=row.sampled_at_ns,
-                        source_timestamp_ns=row.source_timestamp_ns, spot_timestamp_ns=row.spot_timestamp_ns,
-                        spot_price=row.spot_price,
-                        oi=row.oi, mark=row.mark, ltp=row.ltp, iv=row.iv,
-                        oi_timestamp_ns=getattr(row, "oi_timestamp_ns", None),
-                        iv_input=(
-                            'BID_ASK_MIDPOINT' if row.bid is not None and row.ask is not None
-                            else 'LTP' if row.ltp is not None else None
-                        ),
-                        bid=row.bid, ask=row.ask, volume=row.volume,
-                    )
-                    latest_by_token[row.token] = sample
-                    if row.source_timestamp_ns >= cutoff:
-                        history = self._history[row.token]
-                        if not history or history[-1].source_timestamp_ns < sample.source_timestamp_ns:
-                            history.append(sample)
-                    self._last_source_timestamp[row.token] = max(
-                        self._last_source_timestamp.get(row.token, 0), row.source_timestamp_ns
-                    )
+                for row in recent_rows:
+                    sample = to_sample(row)
+                    history = self._history[row.token]
+                    if not history or history[-1].source_timestamp_ns < sample.source_timestamp_ns:
+                        history.append(sample)
                 # Durable LAST values are display-only. They never enter the
                 # live quote feed or authorize sampling/signals.
                 self._last_display = latest_by_token.copy()
@@ -182,11 +226,13 @@ class IVOneSecondSampler:
                     token: sample for token, sample in latest_by_token.items()
                     if sample.iv is not None
                 }
+                for token, sample in latest_by_token.items():
+                    self._last_source_timestamp[token] = sample.source_timestamp_ns
                 # Mark the restored expiry so the first stale-spot cycle does
                 # not mistake these valid rows for a rollover and clear them.
                 self._retained_iv_expiry = self.configured_expiry
                 self._history_loaded = True
-            return len(rows)
+            return len(recent_rows)
         finally:
             session.close()
 
@@ -196,17 +242,81 @@ class IVOneSecondSampler:
         session = self.history_session_factory()
         inserted = 0
         try:
+            # Deduplicate the incoming cycle before touching the database. A
+            # broker adapter may expose the same contract more than once.
+            rows_by_key: dict[tuple[str, int], dict[str, Any]] = {}
             for item in samples:
-                exists = session.query(IVOptionObservation.id).filter_by(token=item.token, source_timestamp_ns=item.source_timestamp_ns).first()
-                if exists:
-                    continue
-                session.add(IVOptionObservation(
-                    token=item.token, underlying=item.underlying, expiry=item.expiry, strike=item.strike,
-                    option_type=item.option_type, source_timestamp_ns=item.source_timestamp_ns,
-                    spot_timestamp_ns=item.spot_timestamp_ns, spot_price=getattr(item, "spot_price", None), sampled_at_ns=item.sampled_at_ns,
-                    iv=item.iv, oi=item.oi, oi_timestamp_ns=item.oi_timestamp_ns, bid=item.bid, ask=item.ask, ltp=item.ltp, mark=item.mark, volume=item.volume,
-                ))
-                inserted += 1
+                key = (item.token, item.source_timestamp_ns)
+                rows_by_key.setdefault(key, {
+                    "token": item.token,
+                    "underlying": item.underlying,
+                    "expiry": item.expiry,
+                    "strike": item.strike,
+                    "option_type": item.option_type,
+                    "source_timestamp_ns": item.source_timestamp_ns,
+                    "spot_timestamp_ns": item.spot_timestamp_ns,
+                    "spot_price": getattr(item, "spot_price", None),
+                    "sampled_at_ns": item.sampled_at_ns,
+                    "iv": item.iv,
+                    "oi": item.oi,
+                    "oi_timestamp_ns": item.oi_timestamp_ns,
+                    "bid": item.bid,
+                    "ask": item.ask,
+                    "ltp": item.ltp,
+                    "mark": item.mark,
+                    "volume": item.volume,
+                })
+            rows = list(rows_by_key.values())
+            if rows:
+                dialect_name = session.get_bind().dialect.name
+                if dialect_name == "sqlite":
+                    from sqlalchemy.dialects.sqlite import insert as dialect_insert
+                elif dialect_name == "postgresql":
+                    from sqlalchemy.dialects.postgresql import insert as dialect_insert
+                else:
+                    dialect_insert = None
+
+                if dialect_insert is not None:
+                    # The unique source key is the final concurrency guard:
+                    # two processes can both observe a missing row, so a
+                    # SELECT-then-INSERT sequence alone is not race-safe.
+                    statement = dialect_insert(IVOptionObservation).on_conflict_do_nothing(
+                        index_elements=["token", "source_timestamp_ns"],
+                    )
+                    # ORM Session.execute() may wrap executemany results in
+                    # IteratorResult, which does not expose DBAPI rowcount.
+                    # Execute on the session's transactional Connection so
+                    # SQLite/PostgreSQL report the actual conflict-aware count.
+                    result = session.connection().execute(
+                        statement,
+                        rows,
+                        execution_options={"preserve_rowcount": True},
+                    )
+                    inserted = max(0, int(result.rowcount or 0))
+                else:
+                    # Keep a portable fallback for other SQLAlchemy dialects.
+                    from sqlalchemy import tuple_
+                    source_keys = [(row["token"], row["source_timestamp_ns"]) for row in rows]
+                    existing_keys = set()
+                    for offset in range(0, len(source_keys), 400):
+                        existing_keys.update(
+                            session.query(
+                                IVOptionObservation.token,
+                                IVOptionObservation.source_timestamp_ns,
+                            )
+                            .filter(tuple_(
+                                IVOptionObservation.token,
+                                IVOptionObservation.source_timestamp_ns,
+                            ).in_(tuple(source_keys[offset:offset + 400])))
+                            .all()
+                        )
+                    new_rows = [
+                        IVOptionObservation(**row) for row in rows
+                        if (row["token"], row["source_timestamp_ns"]) not in existing_keys
+                    ]
+                    if new_rows:
+                        session.add_all(new_rows)
+                        inserted = len(new_rows)
             session.commit()
             self._history_persisted_count += inserted
             return inserted
@@ -215,7 +325,20 @@ class IVOneSecondSampler:
             raise
         finally:
             session.close()
+
     def sample_once(
+        self,
+        *,
+        now_ns: int | None = None,
+        now: datetime | None = None,
+        spot: SpotSnapshot | tuple[float, int] | None = None,
+    ) -> dict[str, Any]:
+        # Keep source cursor checks and persistence ordering deterministic while
+        # allowing readers to acquire _lock during a slow database transaction.
+        with self._sample_lock:
+            return self._sample_once_serialized(now_ns=now_ns, now=now, spot=spot)
+
+    def _sample_once_serialized(
         self,
         *,
         now_ns: int | None = None,
@@ -344,15 +467,42 @@ class IVOneSecondSampler:
                 (token, sample) for token, sample in new_history
                 if self._last_source_timestamp.get(token) != sample.source_timestamp_ns
             ]
-            persistence_ok = True
-            try:
-                self._persist_history([sample for _, sample in pending_history])
-                self._history_persistence_error = None
-            except Exception as exc:
-                # Persistence outages must be visible and retried, but must not
-                # take down live IV sampling. Do not advance durable cursors.
-                persistence_ok = False
-                self._history_persistence_error = f"{type(exc).__name__}: {exc}"
+            cutoff_ns = sampled_at - self.history_limit * 1_000_000_000
+            if self.history_session_factory is not None:
+                for token, sample in pending_history:
+                    self._pending_history.setdefault((token, sample.source_timestamp_ns), sample)
+                expired_keys = [
+                    key for key, sample in self._pending_history.items()
+                    if sample.source_timestamp_ns < cutoff_ns
+                ]
+                for key in expired_keys:
+                    self._pending_history.pop(key, None)
+                self._history_persistence_dropped_count += len(expired_keys)
+                persistence_batch = tuple(self._pending_history.values())
+            else:
+                persistence_batch = tuple(sample for _, sample in pending_history)
+        # Keep the state lock out of the SQL transaction. The dedicated
+        # sample lock above preserves one-cycle-at-a-time cursor ordering.
+        try:
+            self._persist_history(list(persistence_batch))
+            persistence_error = None
+            with self._lock:
+                for sample in persistence_batch:
+                    key = (sample.token, sample.source_timestamp_ns)
+                    if self.history_session_factory is not None:
+                        self._pending_history.pop(key, None)
+                    self._last_source_timestamp[sample.token] = max(
+                        self._last_source_timestamp.get(sample.token, 0),
+                        sample.source_timestamp_ns,
+                    )
+        except Exception as exc:
+            # Keep failed source-time rows queued for the next cycle. Without
+            # this queue, a later tick would replace an earlier failed write
+            # and silently lose durable observations during a DB outage.
+            # Keep raw driver text out of the API snapshot; it can contain connection details.
+            persistence_error = f"{type(exc).__name__}"
+        with self._lock:
+            self._history_persistence_error = persistence_error
             changes: dict[str, dict[str, float | int | None]] = {}
             for token, sample in updates.items():
                 previous = self._previous_cycle.get(token)
@@ -403,8 +553,7 @@ class IVOneSecondSampler:
                     history.append(sample)
                 while history and history[0].source_timestamp_ns < cutoff_ns:
                     history.popleft()
-                if persistence_ok:
-                    self._last_source_timestamp[token] = sample.source_timestamp_ns
+
             self._last_sampled_at_ns = sampled_at
             self._last_error = None if updates else "no fresh option quotes available"
         return self.snapshot()
@@ -415,6 +564,18 @@ class IVOneSecondSampler:
         return None if universe is None else universe.expiry
 
     def inherit_history(self, previous: "IVOneSecondSampler | None", universe: Any) -> int:
+        """Copy a completed source cycle while excluding both samplers' writers."""
+        if previous is None or previous is self:
+            return 0
+        # sample_once takes its sampler lock before the state lock. Acquire both
+        # sampler locks in a stable identity order to prevent cross-inheritance
+        # deadlocks and to make the source snapshot cycle-consistent.
+        ordered_locks = sorted((previous._sample_lock, self._sample_lock), key=id)
+        with ordered_locks[0]:
+            with ordered_locks[1]:
+                return self._inherit_history_locked(previous, universe)
+
+    def _inherit_history_locked(self, previous: "IVOneSecondSampler", universe: Any) -> int:
         """Carry recent OI ticks only for identical contracts in the same expiry."""
         if previous is None or previous is self:
             return 0
@@ -434,10 +595,26 @@ class IVOneSecondSampler:
                 for token, rows in previous._history.items()
                 if token in valid
             }
+            # A source sampler can be replaced while its database is down.
+            # Carry its uncommitted rows too, otherwise inherited in-memory
+            # history would advance the new sampler's cursor past lost writes.
+            prior_pending = tuple(previous._pending_history.values())
         now_ns = self.clock_ns()
         cutoff_ns = now_ns - self.history_limit * 1_000_000_000
         copied = 0
         with self._lock:
+            for item in prior_pending:
+                contract = valid.get(item.token)
+                if (
+                    contract is not None
+                    and item.underlying == self.config.symbol
+                    and item.expiry == universe.expiry
+                    and (item.strike, item.option_type) == contract
+                    and cutoff_ns <= item.source_timestamp_ns <= now_ns
+                ):
+                    self._pending_history.setdefault(
+                        (item.token, item.source_timestamp_ns), item,
+                    )
             for token, rows in prior.items():
                 strike, option_type = valid[token]
                 eligible = [
@@ -517,6 +694,9 @@ class IVOneSecondSampler:
             sampled_at = self._last_sampled_at_ns
             error = self._last_error
             changes = dict(self._one_second_changes)
+            persistence_error = self._history_persistence_error
+            persistence_pending_count = len(self._pending_history)
+            persistence_dropped_count = self._history_persistence_dropped_count
         live_metrics = [
             {
                 "token": item.token,
@@ -597,7 +777,9 @@ class IVOneSecondSampler:
             "history_samples_by_token": history_sizes,
             "history_persistence": "ENABLED" if self.history_session_factory is not None else "DISABLED",
             "history_persisted_count": self._history_persisted_count,
-            "history_persistence_error": self._history_persistence_error,
+            "history_persistence_error": persistence_error,
+            "history_persistence_pending_count": persistence_pending_count,
+            "history_persistence_dropped_count": persistence_dropped_count,
             "five_minute_oi_reference_available": sum(
                 1 for item in samples if self.oi_reference(item.token) is not None
             ),
