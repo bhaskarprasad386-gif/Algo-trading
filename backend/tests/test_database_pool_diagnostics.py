@@ -14,6 +14,8 @@ class _QueuePool:
     def overflow(self):
         return 8
 
+    _max_overflow = 10
+
 
 class _StaticPool:
     def status(self):
@@ -31,6 +33,9 @@ def test_database_pool_snapshot_reports_queue_pool_occupancy(monkeypatch):
     assert snapshot["checkedin"] == 2
     assert snapshot["checkedout"] == 13
     assert snapshot["overflow"] == 8
+    assert snapshot["max_overflow"] == 10
+    assert snapshot["capacity"] == 15
+    assert snapshot["saturated"] is False
     assert snapshot["active_checkout_count"] == 0
     assert snapshot["long_checkout_count"] == 0
 
@@ -46,6 +51,9 @@ def test_database_pool_snapshot_is_safe_for_pools_without_queuepool_counters(mon
     assert snapshot["checkedin"] is None
     assert snapshot["checkedout"] is None
     assert snapshot["overflow"] is None
+    assert snapshot["max_overflow"] is None
+    assert snapshot["capacity"] is None
+    assert snapshot["saturated"] is None
     assert snapshot["active_checkout_count"] == 0
     assert snapshot["long_checkout_count"] == 0
 
@@ -88,3 +96,18 @@ def test_pool_checkout_tracking_is_removed_on_checkin_and_invalidation():
     database._track_pool_checkout(None, record)
     database._clear_pool_checkout(None, record, RuntimeError("invalidated"))
     assert id(record) not in database._pool_checkouts
+
+
+def test_database_pool_snapshot_marks_queue_pool_saturated(monkeypatch):
+    class _SaturatedPool(_QueuePool):
+        def checkedout(self):
+            return 15
+
+    monkeypatch.setattr(database.engine, "pool", _SaturatedPool())
+    monkeypatch.setattr(database, "_pool_checkouts", {})
+
+    snapshot = database.database_pool_snapshot()
+
+    assert snapshot["capacity"] == 15
+    assert snapshot["checkedout"] == 15
+    assert snapshot["saturated"] is True
