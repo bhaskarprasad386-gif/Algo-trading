@@ -498,7 +498,6 @@ def _cash_future_page_push_snapshot():
         "runner": None if live_cash_future_runner is None else live_cash_future_runner.snapshot(),
     }
 
-
 def _scanner_page_push_runtime_health(runner_name, runner):
     """Read-only feed and runner health included in scanner reconnect/live frames."""
     try:
@@ -1496,8 +1495,7 @@ async def _live_box_spread_loop() -> None:
         supervisor = None
         try:
             # Box Spread uses its own recent instrument-master cache on download failure.
-            # The shared InstrumentMaster behavior for other scanners remains unchanged.
-            # This downloader performs synchronous network I/O; keep it off the ASGI
+            # The shared InstrumentMaster behavior for other scanners remains unchanged.            # This downloader performs synchronous network I/O; keep it off the ASGI
             # event loop so Angel One TLS/read timeouts cannot stall API health/routes.
             await run_blocking_daemon(
                 download_box_spread_instruments, master,
@@ -2495,8 +2493,7 @@ def iv_early_entry_latest_alert(
     store = AlertCooldownStore(SessionLocal, cooldown_seconds=600)
     with _iv_skew_flip_runtime_lock:
         runtime = iv_skew_flip_runtime
-        live_by_underlying = runtime.snapshot().get("early_entry_alerts_by_underlying", {}) if runtime is not None else {}
-        live = live_by_underlying.get(symbol or "NIFTY")
+        live_by_underlying = runtime.snapshot().get("early_entry_alerts_by_underlying", {}) if runtime is not None else {}        live = live_by_underlying.get(symbol or "NIFTY")
     rows = store.latest(
         limit=page_size + 1,
         before_observed_at_ns=before_observed_at_ns,
@@ -2995,8 +2992,7 @@ def save_iv_skew_flip_config(payload: dict):
                 app_logger.exception("IV Scanner OFF state could not be persisted")
                 raise HTTPException(status_code=503, detail={"message": "IV Scanner was not stopped because OFF state could not be saved.", "reason": str(exc)}) from exc
             snapshot = _stop_iv_skew_flip_runtime()
-        return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
-                "runner_status": snapshot.get("status", "STOPPED"),
+        return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,                "runner_status": snapshot.get("status", "STOPPED"),
                 "runtime": snapshot, "orders_enabled": False}
 
 
@@ -3157,5 +3153,4 @@ def health_check():
             },
         )
     return {"status": "ok", "app": settings.app_name, "version": "0.1.0", "database": "Connected", "database_pool": database_pool_snapshot()}
-
 
