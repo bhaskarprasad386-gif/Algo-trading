@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import json
@@ -806,7 +806,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https://([a-z0-9-]+\.)?vercel\.app$|https://algo-trading\.bhaskarprasad386\.workers\.dev$|https://fix-cloudflare-cors-algo-trading\.bhaskarprasad386\.workers\.dev$|https://fix-cloudflare-workers-cors-algo-trading\.bhaskarprasad386\.workers\.dev$|http://localhost(:\d+)?$|http://127\.0\.0\.1(:\d+)?$",
+    allow_origin_regex=r"https://([a-z0-9-]+\.)?vercel\.app$|http://localhost(:\d+)?$|http://127\.0\.0\.1(:\d+)?$",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -3081,20 +3081,76 @@ def iv_skew_flip_validation(underlying: str = "NIFTY", expiry_type: str | None =
         db.close()
 
 
-@app.get("/health")
-def health_check():
+# A timed-out asyncio.to_thread() cannot stop its underlying worker thread.
+# Admit only one health DB probe at a time so repeated probes cannot create an
+# unbounded backlog of abandoned DB-check threads when the database is stuck.
+_health_db_probe_semaphore = threading.BoundedSemaphore(value=1)
+
+
+def _run_health_database_probe() -> None:
     try:
         check_database()
-    except Exception as exc:
+    finally:
+        _health_db_probe_semaphore.release()
+
+
+@app.get("/health")
+async def health_check():
+    # Keep the readiness probe off Starlette's synchronous endpoint threadpool.
+    # Bound both its wait and concurrency; a timed-out worker retains its slot
+    # until its DB call actually returns.
+    if not _health_db_probe_semaphore.acquire(blocking=False):
+        error_type = "DatabaseProbeBusy"
         runtime_diagnostics.record(
             component="Database",
-            error_type=type(exc).__name__,
-            message=str(exc),
+            error_type=error_type,
+            message="A previous database health probe is still running",
             endpoint="/health",
-            context={"event": "health_check"},
+            context={"event": "health_check", "max_concurrent_probes": 1},
         )
-        app_logger.error(f"Health check database failure: {exc}")
-        return {"status": "degraded", "app": settings.app_name, "version": "0.1.0", "database": "Disconnected", "database_pool": database_pool_snapshot()}
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "app": settings.app_name,
+                "version": "0.1.0",
+                "database": "ProbeBusy",
+                "database_pool": database_pool_snapshot(),
+            },
+        )
+    probe_task = asyncio.create_task(asyncio.to_thread(_run_health_database_probe))
+    # Consume worker exceptions even if the ASGI request is cancelled before
+    # it reaches the await below; the worker still owns semaphore release.
+    probe_task.add_done_callback(
+        lambda task: task.exception() if not task.cancelled() else None
+    )
+    # Ensure the worker is submitted before request cancellation can occur.
+    # Otherwise the acquired semaphore could outlive a to_thread coroutine
+    # cancelled before its worker starts and therefore never be released.
+    await asyncio.sleep(0)
+    # Bound this request without cancelling the worker that owns slot release.
+    try:
+        await asyncio.wait_for(asyncio.shield(probe_task), timeout=3.0)
+    except Exception as exc:
+        error_type = "DatabaseProbeTimeout" if isinstance(exc, asyncio.TimeoutError) else type(exc).__name__
+        runtime_diagnostics.record(
+            component="Database",
+            error_type=error_type,
+            message=str(exc) or error_type,
+            endpoint="/health",
+            context={"event": "health_check", "timeout_seconds": 3.0},
+        )
+        app_logger.error(f"Health check database failure ({error_type}): {exc}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "app": settings.app_name,
+                "version": "0.1.0",
+                "database": "Disconnected",
+                "database_pool": database_pool_snapshot(),
+            },
+        )
     return {"status": "ok", "app": settings.app_name, "version": "0.1.0", "database": "Connected", "database_pool": database_pool_snapshot()}
 
 

@@ -6,12 +6,10 @@ on:
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-verify.yml"
-      - ".github/workflows/cloudflare-production-deploy.yml"
   pull_request:
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-verify.yml"
-      - ".github/workflows/cloudflare-production-deploy.yml"
   workflow_dispatch:
 
 jobs:
@@ -47,8 +45,3 @@ jobs:
       - name: Build Next.js application
         run: npm run build:next
 
-      - name: Build Cloudflare OpenNext Worker
-        run: npm run build:cloudflare
-
-      - name: Validate Wrangler Worker bundle (dry run)
-        run: npx wrangler deploy --dry-run
