@@ -968,3 +968,60 @@ def test_history_inheritance_in_opposite_directions_has_deterministic_lock_order
     assert not first.is_alive(), "left <- right inheritance deadlocked"
     assert not second.is_alive(), "right <- left inheritance deadlocked"
     assert errors == []
+
+
+
+def test_sampler_retries_all_unpersisted_source_ticks_after_database_recovery(monkeypatch):
+    now_ns = 1_800_000_000_000_000_000
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    source = QuoteSource()
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", now_ns,
+        100.0, 99.5, 100.5, 10000, 10, "retry-history-ce",
+        oi_timestamp_ns=now_ns,
+    ),)
+    sampler = IVOneSecondSampler(
+        quote_source=source,
+        spot_provider=lambda: SpotSnapshot(21950, now_ns),
+        config=ScannerConfig("NIFTY", "WEEKLY", 0.8, -0.8),
+        clock_ns=lambda: now_ns,
+        history_session_factory=lambda: object(),
+        history_seconds=600,
+    )
+    sampler._history_loaded = True
+    attempts = []
+
+    def fail_once_then_persist(samples):
+        attempts.append(tuple(item.source_timestamp_ns for item in samples))
+        if len(attempts) == 1:
+            raise RuntimeError("temporary database outage")
+        return len(samples)
+
+    monkeypatch.setattr(sampler, "_persist_history", fail_once_then_persist)
+    first = sampler.sample_once(
+        now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
+    )
+    assert first["history_persistence_pending_count"] == 1
+    assert first["history_persistence_dropped_count"] == 0
+
+    second_ns = now_ns + 1_000_000_000
+    source.quotes = (OptionQuote(
+        "NIFTY", "2026-11-12", 21950, "CE", second_ns,
+        101.0, 100.5, 101.5, 10100, 11, "retry-history-ce",
+        oi_timestamp_ns=second_ns,
+    ),)
+    second = sampler.sample_once(
+        now_ns=second_ns, now=now,
+        spot=SpotSnapshot(21950, second_ns),
+    )
+
+    assert attempts == [
+        (now_ns,),
+        (now_ns, second_ns),
+    ]
+    assert second["history_persistence_pending_count"] == 0
+    assert second["history_persistence_dropped_count"] == 0
+    assert sampler._last_source_timestamp["retry-history-ce"] == second_ns
+    assert [item.source_timestamp_ns for item in sampler.history_snapshot("retry-history-ce")] == [
+        now_ns, second_ns,
+    ]
