@@ -80,3 +80,45 @@ def test_cache_never_serves_snapshot_beyond_max_stale_after_refresh_failure(monk
     clock[0] = 5.0
     with pytest.raises(RuntimeError, match="provider unavailable"):
         cache.get(lambda: (_ for _ in ()).throw(RuntimeError("provider unavailable")))
+
+
+def test_cold_refresh_is_bounded_and_runs_in_background():
+    cache = BoundedSnapshotCache(
+        ttl_seconds=1, max_stale_seconds=5, wait_seconds=0.02
+    )
+    started, release = Event(), Event()
+
+    def slow_factory():
+        started.set()
+        assert release.wait(2)
+        return {"value": "ready"}
+
+    with pytest.raises(TimeoutError, match="within its bound"):
+        cache.get(slow_factory)
+    assert started.wait(1)
+    assert cache._refreshing is True
+    release.set()
+    for _ in range(100):
+        if not cache._refreshing:
+            break
+        sleep(0.01)
+    assert cache.get(slow_factory)["value"] == "ready"
+
+
+def test_refresh_thread_start_failure_does_not_leave_cache_stuck(monkeypatch):
+    import app.market_data.dashboard_snapshot_cache as module
+
+    class FailedThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("thread capacity exhausted")
+
+    monkeypatch.setattr(module, "Thread", FailedThread)
+    cache = BoundedSnapshotCache(ttl_seconds=1, max_stale_seconds=5)
+    with pytest.raises(RuntimeError, match="thread capacity exhausted"):
+        cache.get(lambda: {"value": "never"})
+    assert cache._refreshing is False
+    assert cache._refresh_done.is_set()
+    assert cache._refresh_errors == 1
