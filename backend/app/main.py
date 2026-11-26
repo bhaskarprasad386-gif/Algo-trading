@@ -3098,6 +3098,12 @@ def _database_health_failure_class(exc: Exception) -> str:
     return "DATABASE_CHECK_FAILURE"
 
 
+@app.get("/health/live")
+async def health_liveness_check():
+    """Fast process liveness probe; deliberately performs no DB or broker I/O."""
+    return {"status": "ok", "app": settings.app_name, "version": "0.1.0"}
+
+
 @app.get("/health")
 def health_check():
     # Do not queue a readiness probe behind an already exhausted DB pool.
