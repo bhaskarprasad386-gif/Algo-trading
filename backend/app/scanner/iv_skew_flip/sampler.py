@@ -240,23 +240,29 @@ class IVOneSecondSampler:
         try:
             # Query all source keys in one indexed lookup rather than issuing
             # one SELECT per option contract on every one-second sampling cycle.
-            source_keys = {
+            # Keep tuple-IN below conservative SQLite bind-variable limits:
+            # each (token, timestamp) pair consumes two bound parameters.
+            source_keys = sorted({
                 (item.token, item.source_timestamp_ns)
                 for item in samples
-            }
-            existing_keys = set(
-                session.query(
-                    IVOptionObservation.token,
-                    IVOptionObservation.source_timestamp_ns,
-                )
-                .filter(
-                    tuple_(
+            })
+            existing_keys: set[tuple[str, int]] = set()
+            batch_size = 400
+            for offset in range(0, len(source_keys), batch_size):
+                key_batch = source_keys[offset:offset + batch_size]
+                existing_keys.update(
+                    session.query(
                         IVOptionObservation.token,
                         IVOptionObservation.source_timestamp_ns,
-                    ).in_(tuple(source_keys))
+                    )
+                    .filter(
+                        tuple_(
+                            IVOptionObservation.token,
+                            IVOptionObservation.source_timestamp_ns,
+                        ).in_(tuple(key_batch))
+                    )
+                    .all()
                 )
-                .all()
-            )
             new_rows = [
                 IVOptionObservation(
                     token=item.token, underlying=item.underlying, expiry=item.expiry,
@@ -499,6 +505,18 @@ class IVOneSecondSampler:
         return None if universe is None else universe.expiry
 
     def inherit_history(self, previous: "IVOneSecondSampler | None", universe: Any) -> int:
+        """Copy a completed source cycle while excluding both samplers' writers."""
+        if previous is None or previous is self:
+            return 0
+        # sample_once takes its sampler lock before the state lock. Acquire both
+        # sampler locks in a stable identity order to prevent cross-inheritance
+        # deadlocks and to make the source snapshot cycle-consistent.
+        ordered_locks = sorted((previous._sample_lock, self._sample_lock), key=id)
+        with ordered_locks[0]:
+            with ordered_locks[1]:
+                return self._inherit_history_locked(previous, universe)
+
+    def _inherit_history_locked(self, previous: "IVOneSecondSampler", universe: Any) -> int:
         """Carry recent OI ticks only for identical contracts in the same expiry."""
         if previous is None or previous is self:
             return 0
