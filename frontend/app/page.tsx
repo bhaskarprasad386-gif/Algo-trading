@@ -33,6 +33,7 @@ export default function HomePage() {
   const [feedAge, setFeedAge] = useState<number | null>(null);
   const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; connectedGroupNames: string[]; requiredSocketGroups: string[]; requiredSocketGroupCount: number | null; missingSocketGroups: string[]; disconnectedGroups: string[]; maxSocketSessions: number; lastConnectFailure: any; lastSocketFailure: any; retiredTransportCount: number; brokerCooldownRemaining: number; failureRecoveryGroups: string[]; transportCloseTimedOutGroups: string[]; socketHealthByGroup: Record<string, any>; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; payloads: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, connectedGroupNames: [], requiredSocketGroups: [], requiredSocketGroupCount: null, missingSocketGroups: [], disconnectedGroups: [], maxSocketSessions: 3, lastConnectFailure: null, lastSocketFailure: null, retiredTransportCount: 0, brokerCooldownRemaining: 0, failureRecoveryGroups: [], transportCloseTimedOutGroups: [], socketHealthByGroup: {}, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const healthFailureCountRef = useRef(0);
+  const lastReadinessCheckAtRef = useRef(0);
   const lastDashboardServerSnapshotTimeRef = useRef<number | null>(null);
   const runnerCountersRef = useRef<Record<string, number> | null>(null);
   const runnerCounterSampleAtRef = useRef<number | null>(null);
@@ -85,7 +86,12 @@ export default function HomePage() {
         }
       }
 
-      if (processReachable) {
+      // Readiness performs a real database checkout/SELECT 1. Keep the
+      // process liveness signal frequent, but do not turn the dashboard into
+      // a five-second database load generator. The last readiness result stays
+      // visible between samples; a new DB probe runs at most every 30 seconds.
+      if (processReachable && Date.now() - lastReadinessCheckAtRef.current >= 30000) {
+        lastReadinessCheckAtRef.current = Date.now();
         try {
           const readyResponse = await fetch(base + "/health", {
             cache: "no-store",
@@ -267,8 +273,10 @@ export default function HomePage() {
         if (!cancelled) setMarketOverviewError(true);
         // Keep last values visible, but mark the source unavailable/stale.
       } finally {
-        // Schedule after completion so a slow response cannot overlap the next sample.
-        if (!cancelled) timer = window.setTimeout(() => { void loadMarketOverview(); }, 5000);
+        // The backend refreshes broker quote batches on a 15-second budget.
+        // Keep this informational home-page poll aligned with that cadence;
+        // strategy workspaces retain their own live WebSocket updates.
+        if (!cancelled) timer = window.setTimeout(() => { void loadMarketOverview(); }, 15000);
       }
     };
     void loadMarketOverview();
@@ -291,7 +299,17 @@ export default function HomePage() {
         const status = String(body?.runtime_feed?.status ?? "NO_DATA").toUpperCase();
         const session = String(body?.market_session ?? "").toUpperCase();
         setFeedMarketSession(session === "OPEN" ? "OPEN" : session === "CLOSED" ? "CLOSED" : "UNKNOWN");
-        setFeedHealthCheckedAt(new Date().toISOString());
+        // /live-health may serve a stale-while-refresh snapshot. Age ticks from
+        // the server's checked_at timestamp, not the time this HTTP response arrived.
+        const hasCheckedAt = typeof body?.checked_at === "string";
+        const checkedAt = hasCheckedAt ? new Date(body.checked_at) : null;
+        setFeedHealthCheckedAt(
+          !hasCheckedAt
+            ? new Date().toISOString()
+            : checkedAt && Number.isFinite(checkedAt.getTime())
+              ? checkedAt.toISOString()
+              : null
+        );
         const age = body?.runtime_feed?.age_seconds;
         setFeedAge(age == null || !Number.isFinite(Number(age)) ? null : Number(age));
         if (session === "CLOSED") setFeedStatus("closed");
@@ -322,12 +340,25 @@ export default function HomePage() {
         if (!body || typeof body !== "object" || !body.common_feed || typeof body.common_feed !== "object" || !Array.isArray(body.common_feed.connected_groups) || !Array.isArray(body.common_feed.required_socket_groups) || !Number.isFinite(Number(body.common_feed.required_socket_group_count)) || !Number.isFinite(Number(body.common_feed.active_instruments))) throw new Error("runtime health schema incomplete");
         const feed = body.common_feed;
         const receivedAt = Date.now();
-        setRuntimeLastSuccessAt(receivedAt);
         if (typeof body.server_timestamp === "string" && Number.isFinite(new Date(body.server_timestamp).getTime())) {
           setRuntimeServerTimestamp(body.server_timestamp);
           setRuntimeServerTimestampReceivedAt(receivedAt);
         }
         const runners = body?.runners ?? {};
+        const rawCacheAgeSeconds = body?._snapshot_cache?.age_seconds;
+        const cacheAgeSeconds = rawCacheAgeSeconds == null ? NaN : Number(rawCacheAgeSeconds);
+        const serverSampleTime = typeof body?.server_timestamp === "string"
+          ? new Date(body.server_timestamp).getTime()
+          : NaN;
+        // A stale-while-refresh response is not a new sample. Prefer the
+        // source timestamp, then monotonic cache age if the server clock is
+        // ahead, and use receipt time only for older responses with no marker.
+        const sampleAt = Number.isFinite(serverSampleTime) && serverSampleTime <= receivedAt
+          ? serverSampleTime
+          : Number.isFinite(cacheAgeSeconds) && cacheAgeSeconds >= 0
+            ? receivedAt - cacheAgeSeconds * 1000
+            : typeof body?.server_timestamp === "string" ? null : receivedAt;
+        setRuntimeLastSuccessAt(sampleAt);
         const currentCounters = {
           commonTicks: Number(feed.ticks_received ?? 0),
           cashPayloads: Number(runners.cash_future?.records_received ?? runners.cash_future?.payload_callbacks ?? runners.cash_future?.callbacks ?? 0),
@@ -436,7 +467,7 @@ export default function HomePage() {
       } catch {
         // Keep last values for context; UI separately marks telemetry stale/unavailable.
       } finally {
-        if (!cancelled) timer = window.setTimeout(() => { void loadRuntimeHealth(); }, 5000);
+        if (!cancelled) timer = window.setTimeout(() => { void loadRuntimeHealth(); }, 10000);
       }
     };
     void loadRuntimeHealth();
@@ -467,7 +498,7 @@ export default function HomePage() {
         if (!cancelled) setDiagnosticsFetchFailed(true);
         // Keep last successful server events when either the API or collector route is unavailable.
       } finally {
-        if (!cancelled) timer = window.setTimeout(() => { void loadDiagnosticErrors(); }, 5000);
+        if (!cancelled) timer = window.setTimeout(() => { void loadDiagnosticErrors(); }, 15000);
       }
     };
     void loadDiagnosticErrors();
@@ -494,7 +525,7 @@ export default function HomePage() {
       } catch {
         if (!cancelled) setSharedRunnerFetchFailed(true);
       } finally {
-        if (!cancelled) timer = window.setTimeout(() => { void loadSharedRunner(); }, 5000);
+        if (!cancelled) timer = window.setTimeout(() => { void loadSharedRunner(); }, 15000);
       }
     };
     void loadSharedRunner();
@@ -518,7 +549,9 @@ export default function HomePage() {
   const snapshotAge = Number.isFinite(snapshotTime) && snapshotTime <= Date.now() ? (Date.now() - snapshotTime) / 1000 : null;
   const dashboardMessageAge = lastDashboardMessageAt == null ? null : Math.max(0, (Date.now() - lastDashboardMessageAt) / 1000);
   const runtimeTelemetryAge = runtimeLastSuccessAt == null ? null : Math.max(0, (Date.now() - runtimeLastSuccessAt) / 1000);
-  const runtimeTelemetryStale = runtimeTelemetryAge == null || runtimeTelemetryAge > 8;
+  // Runtime health is intentionally sampled every 10 seconds; allow one missed
+  // sample before marking telemetry stale, without affecting the live WS stream.
+  const runtimeTelemetryStale = runtimeTelemetryAge == null || runtimeTelemetryAge > 22;
   const dashboardStreamStale = wsStatus !== "connected" || dashboardMessageAge == null || dashboardMessageAge > 15;
   const commonSocketState = runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : runtime.requiredSocketGroupCount == null ? "UNKNOWN" : runtime.requiredSocketGroupCount === 0 ? "DISCONNECTED" : runtime.requiredSocketGroups.length === runtime.requiredSocketGroupCount && runtime.requiredSocketGroups.every((group) => runtime.connectedGroupNames.includes(group)) && runtime.socketGroups === runtime.requiredSocketGroupCount && runtime.disconnectedGroups.length === 0 ? "CONNECTED" : runtime.connectedGroups > 0 ? "DEGRADED" : "DISCONNECTED";
   const connectedRequiredGroupCount = runtime.requiredSocketGroups.filter((group) => runtime.connectedGroupNames.includes(group)).length;

@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 import heapq
 import re
+import sqlite3
 from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
@@ -39,6 +40,106 @@ class DailyMarketDataShardCatalog:
         self.base_path.parent.mkdir(parents=True, exist_ok=True)
         self._catalogs: dict[Path, HistoricalCatalog] = {}
         self._legacy = HistoricalCatalog(str(self.base_path)) if self.base_path.exists() else None
+
+    @classmethod
+    def read_source_summary(
+        cls, base_path: str | Path, *, source: str, timeframe: str
+    ) -> dict[str, int | None]:
+        """Aggregate legacy and daily shards using SQLite read-only connections.
+
+        Unlike constructing HistoricalCatalog objects, this path performs no
+        schema/index creation, journal-mode changes, or commits. It is intended
+        for health/coverage reads only; normal catalog APIs retain their existing
+        writable behavior.
+        """
+        base = Path(base_path)
+        paths: list[Path] = []
+        if base.is_file():
+            paths.append(base)
+        pattern = f"{base.stem}_????_??_??{base.suffix or SHARD_SUFFIX}"
+        for path in sorted(base.parent.glob(pattern)):
+            if base.is_file() and path.resolve() == base.resolve():
+                continue
+            paths.append(path)
+
+        record_count = 0
+        instruments: set[str] = set()
+        latest_timestamp_ns: int | None = None
+        for path in paths:
+            # URI mode=ro prevents health checks from silently creating or
+            # modifying a shard while a market-data writer is active.
+            uri = f"{path.resolve().as_uri()}?mode=ro"
+            connection = sqlite3.connect(uri, uri=True, timeout=1.0)
+            try:
+                connection.execute("PRAGMA query_only=ON")
+                tables = {
+                    str(row[0]) for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                if "data_catalog" not in tables:
+                    continue
+                if "source_watermarks" in tables:
+                    summary_rows = connection.execute(
+                        """
+                        WITH record_totals AS (
+                            SELECT COUNT(*) AS record_count
+                            FROM data_catalog WHERE source=? AND timeframe=?
+                        )
+                        SELECT record_totals.record_count, watermarks.instrument,
+                               watermarks.max_timestamp_ns
+                        FROM record_totals
+                        LEFT JOIN source_watermarks AS watermarks
+                          ON watermarks.source=? AND watermarks.timeframe=?
+                        ORDER BY watermarks.instrument
+                        """,
+                        (source, timeframe, source, timeframe),
+                    ).fetchall()
+                    shard_record_count = (
+                        int(summary_rows[0][0] or 0) if summary_rows else 0
+                    )
+                    record_count += shard_record_count
+                    rows = [
+                        (row[1], row[2]) for row in summary_rows
+                        if row[1] is not None and shard_record_count > 0
+                    ]
+                    # A watermark table can predate its backfill in legacy
+                    # catalogs. Fall back only when rows exist but no
+                    # maintained watermark is present for this source.
+                    if not rows and shard_record_count > 0:
+                        rows = connection.execute(
+                            "SELECT instrument, MAX(timestamp_ns) FROM data_catalog "
+                            "WHERE source=? AND timeframe=? GROUP BY instrument",
+                            (source, timeframe),
+                        ).fetchall()
+                else:
+                    count_row = connection.execute(
+                        "SELECT COUNT(*) FROM data_catalog WHERE source=? AND timeframe=?",
+                        (source, timeframe),
+                    ).fetchone()
+                    record_count += int(count_row[0] or 0)
+                    rows = connection.execute(
+                        "SELECT instrument, MAX(timestamp_ns) FROM data_catalog "
+                        "WHERE source=? AND timeframe=? GROUP BY instrument",
+                        (source, timeframe),
+                    ).fetchall()
+                for instrument, timestamp_ns in rows:
+                    if instrument is not None:
+                        instruments.add(str(instrument))
+                    if timestamp_ns is not None:
+                        value = int(timestamp_ns)
+                        latest_timestamp_ns = (
+                            value if latest_timestamp_ns is None
+                            else max(latest_timestamp_ns, value)
+                        )
+            finally:
+                connection.close()
+
+        return {
+            "record_count": record_count,
+            "instruments": len(instruments),
+            "latest_timestamp_ns": latest_timestamp_ns,
+        }
 
     def _open(self, path: Path) -> HistoricalCatalog:
         catalog = self._catalogs.get(path)
@@ -104,6 +205,31 @@ class DailyMarketDataShardCatalog:
         for catalog in self._catalogs_for_read():
             values.update(catalog.instruments(source=source, timeframe=timeframe, start_ns=start_ns, end_ns=end_ns, prefix=prefix))
         return tuple(sorted(values))
+
+    def source_summary(self, *, source: str, timeframe: str) -> dict[str, int | None]:
+        """Aggregate all readable shards without per-instrument watermark queries."""
+        record_count = 0
+        instruments: set[str] = set()
+        latest_timestamp_ns: int | None = None
+        # Resolve the shard list once. Each shard executes one aggregate query,
+        # independent of the number of instruments.
+        for catalog in self._catalogs_for_read():
+            summary = catalog.source_summary(source=source, timeframe=timeframe)
+            record_count += int(summary["record_count"])
+            latest = summary["latest_timestamp_ns"]
+            if latest is not None:
+                latest_timestamp_ns = (
+                    int(latest) if latest_timestamp_ns is None
+                    else max(latest_timestamp_ns, int(latest))
+                )
+            # Instrument names are deduplicated across daily shards. This is a
+            # bounded identity set, not a per-instrument SQL round-trip.
+            instruments.update(summary["instrument_names"])
+        return {
+            "record_count": record_count,
+            "instruments": len(instruments),
+            "latest_timestamp_ns": latest_timestamp_ns,
+        }
 
     def watermark(self, *, source: str, instrument: str, timeframe: str) -> int | None:
         values = [
