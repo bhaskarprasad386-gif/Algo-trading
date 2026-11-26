@@ -83,6 +83,26 @@ with TestClient(main.app) as client:
         for event in timeout_events
     )
 
+    # A still-running timed-out worker owns the only probe slot. Concurrent
+    # probes must fail quickly instead of spawning more blocked worker threads.
+    assert main._health_db_probe_semaphore.acquire(blocking=False)
+    try:
+        started = time.monotonic()
+        busy = client.get("/health")
+        busy_elapsed = time.monotonic() - started
+    finally:
+        main._health_db_probe_semaphore.release()
+
+    assert busy.status_code == 503
+    assert busy.json()["database"] == "ProbeBusy"
+    assert busy_elapsed < 0.5, f"busy health probe was not rejected promptly: {busy_elapsed:.2f}s"
+    busy_events = main.runtime_diagnostics.snapshot(limit=5)
+    assert any(
+        event.get("error_type") == "DatabaseProbeBusy"
+        and event.get("endpoint") == "/health"
+        for event in busy_events
+    )
+
 print(json.dumps({"status": "ok"}))
 """
 
