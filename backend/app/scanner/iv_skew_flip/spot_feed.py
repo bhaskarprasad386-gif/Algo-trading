@@ -227,6 +227,11 @@ class IVSpotFeedAdapter:
                 daemon=True,
             )
             self._persist_thread = worker
+            # A previous worker may have exited after a failed shutdown drain.
+            # Wake the replacement immediately so its bounded pending values
+            # are retried without waiting for a new market tick.
+            if self._persist_pending:
+                self._persist_wakeup.set()
             worker.start()
 
     def _enqueue_persistence(self, symbol: str, snapshot: SpotSnapshot) -> None:
@@ -254,28 +259,78 @@ class IVSpotFeedAdapter:
             # checkout and one SQLite transaction per wakeup avoids competing
             # commits when NIFTY and BANKNIFTY ticks arrive together.
             try:
+                observation_rows = [
+                    {
+                        "underlying": symbol,
+                        "source_timestamp_ns": snapshot.timestamp_ns,
+                        "price": snapshot.price,
+                        "received_at_ns": snapshot.received_at_ns or snapshot.timestamp_ns,
+                    }
+                    for symbol, snapshot in pending
+                ]
+                last_price_rows = [
+                    {
+                        "symbol": symbol,
+                        "price": snapshot.price,
+                        "timestamp_ns": snapshot.timestamp_ns,
+                    }
+                    for symbol, snapshot in pending
+                ]
                 with SessionLocal() as db:
-                    for symbol, snapshot in pending:
-                        db.merge(IVSpotLastPrice(
-                            symbol=symbol, price=snapshot.price,
-                            timestamp_ns=snapshot.timestamp_ns,
-                        ))
-                        db.merge(IVSpotObservation(
-                            underlying=symbol,
-                            source_timestamp_ns=snapshot.timestamp_ns,
-                            price=snapshot.price,
-                            received_at_ns=snapshot.received_at_ns or snapshot.timestamp_ns,
-                        ))
+                    get_bind = getattr(db, "get_bind", None)
+                    dialect_name = get_bind().dialect.name if callable(get_bind) else None
+                    if dialect_name in {"sqlite", "postgresql"}:
+                        if dialect_name == "sqlite":
+                            from sqlalchemy.dialects.sqlite import insert as dialect_insert
+                        else:
+                            from sqlalchemy.dialects.postgresql import insert as dialect_insert
+
+                        last_insert = dialect_insert(IVSpotLastPrice)
+                        last_statement = last_insert.on_conflict_do_update(
+                            index_elements=["symbol"],
+                            set_={
+                                "price": last_insert.excluded.price,
+                                "timestamp_ns": last_insert.excluded.timestamp_ns,
+                            },
+                            # A delayed retry must never roll the durable LAST
+                            # price backwards over a newer exchange observation.
+                            where=last_insert.excluded.timestamp_ns >= IVSpotLastPrice.timestamp_ns,
+                        )
+                        observation_statement = dialect_insert(IVSpotObservation).on_conflict_do_nothing(
+                            index_elements=["underlying", "source_timestamp_ns"],
+                        )
+                        connection = db.connection()
+                        connection.execute(
+                            last_statement,
+                            last_price_rows,
+                            execution_options={"preserve_rowcount": True},
+                        )
+                        observation_result = connection.execute(
+                            observation_statement,
+                            observation_rows,
+                            execution_options={"preserve_rowcount": True},
+                        )
+                        persisted_observations = max(0, int(observation_result.rowcount or 0))
+                    else:
+                        # Portable fallback for test doubles and unsupported
+                        # dialects. Production SQLite/PostgreSQL use two
+                        # conflict-safe executemany statements with no SELECTs.
+                        for row in last_price_rows:
+                            db.merge(IVSpotLastPrice(**row))
+                        for row in observation_rows:
+                            db.merge(IVSpotObservation(**row))
+                        persisted_observations = len(pending)
                     db.commit()
                 with self._lock:
                     self._persist_batches += 1
-                    self._persisted_rows += len(pending)
+                    self._persisted_rows += persisted_observations
                     self._last_persist_error = None
             except Exception as exc:
                 # Keep the newest failed value per symbol for a bounded retry.
                 # A newer tick already queued for that symbol always wins.
-                # Wait up to one second before retrying to avoid hammering a
-                # database that is already unavailable; new ticks wake us early.
+                # If shutdown is already in progress, preserve the queue and
+                # let the next start create a fresh worker instead of spinning
+                # forever against an unavailable database.
                 with self._lock:
                     for symbol, snapshot in pending:
                         newer = self._persist_pending.get(symbol)
@@ -284,6 +339,8 @@ class IVSpotFeedAdapter:
                     self._persist_errors += 1
                     self._last_persist_error = f"{type(exc).__name__}: {exc}"[:300]
                     self._persist_wakeup.clear()
+                if stopping:
+                    break
                 self._persist_wakeup.wait(timeout=1.0)
 
     def _stop_persistence_worker(self) -> None:
