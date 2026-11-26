@@ -337,7 +337,8 @@ class IVSpotFeedAdapter:
                         if newer is None or newer.timestamp_ns < snapshot.timestamp_ns:
                             self._persist_pending[symbol] = snapshot
                     self._persist_errors += 1
-                    self._last_persist_error = f"{type(exc).__name__}: {exc}"[:300]
+                    # Driver messages may expose connection/SQL details in API telemetry.
+                    self._last_persist_error = type(exc).__name__
                     self._persist_wakeup.clear()
                 if stopping:
                     break
