@@ -27,10 +27,12 @@ class PoolCheckoutTelemetry:
 
     BUCKETS = (0.1, 0.5, 1.0, 5.0, 30.0)
 
-    def __init__(self, *, max_owners: int = 24) -> None:
+    def __init__(self, *, max_owners: int = 24, max_active: int = 128) -> None:
         self._lock = threading.Lock()
         self._active: dict[int, tuple[float, str, str]] = {}
         self._max_owners = max(1, int(max_owners))
+        self._max_active = max(1, int(max_active))
+        self._tracking_dropped = 0
         self._owner_totals: Counter[str] = Counter()
         self._hold_buckets: Counter[str] = Counter()
         self._completed = 0
@@ -50,6 +52,9 @@ class PoolCheckoutTelemetry:
         label = (owner or _database_owner.get() or "unknown")[:96]
         key = id(connection_record)
         with self._lock:
+            if key not in self._active and len(self._active) >= self._max_active:
+                self._tracking_dropped += 1
+                return
             known_owners = set(self._owner_totals) | {item[2] for item in self._active.values()}
             if label not in known_owners and len(known_owners) >= self._max_owners:
                 label = "other"
@@ -100,6 +105,7 @@ class PoolCheckoutTelemetry:
                 "max_checkout_wait_seconds": round(self._wait_max, 4) if self._wait_count else None,
                 "pool_timeout_count": self._pool_timeouts,
                 "active_checkouts": len(active),
+                "checkout_tracking_dropped": self._tracking_dropped,
                 "long_checkouts_30s": long_count,
                 "active_by_owner": dict(owners),
                 "completed_by_owner": dict(self._owner_totals),
