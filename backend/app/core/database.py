@@ -239,6 +239,9 @@ def database_pool_snapshot() -> dict[str, object]:
         "active_checkout_count": active_checkout_count,
         "long_checkout_count": checkout_metrics["long_checkouts_30s"],
         "long_checkout_threshold_seconds": 30.0,
+        # Preserve the established diagnostic keys for existing health consumers.
+        "oldest_checkout_seconds": checkout_metrics["oldest_active_hold_seconds"],
+        "oldest_checkout_thread": checkout_metrics["oldest_active_thread"],
         # Pool counters and event tracking are sampled independently. A
         # mismatch can be a normal checkout/checkin race, never a leak claim.
         "checkout_tracking_delta": tracking_delta,
