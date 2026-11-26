@@ -11,9 +11,10 @@ def test_safe_health_fields_only_keeps_bounded_diagnostic_values():
         "database_pool": {
             "checkedout": 2,
             "capacity": 10,
+            "checkout_wait_count": 5,
             "password": "must-not-escape",
         },
-        "event_loop": {"p95_lag_ms": 18.5, "secret": "must-not-escape"},
+        "event_loop": {"p95_lag_bucket": "le_0.05s", "max_lag_seconds": 0.03, "secret": "must-not-escape"},
         "runtime_feed": {
             "status": "STALE",
             "age_seconds": 7.0,
@@ -23,8 +24,12 @@ def test_safe_health_fields_only_keeps_bounded_diagnostic_values():
     }
     result = probe._safe_health_fields("/api/v1/market-data/live-health", payload)
 
-    assert result["database_pool"] == {"checkedout": 2, "capacity": 10}
-    assert result["event_loop"] == {"p95_lag_ms": 18.5}
+    assert result["database_pool"] == {
+        "checkedout": 2, "capacity": 10, "checkout_wait_count": 5
+    }
+    assert result["event_loop"] == {
+        "max_lag_seconds": 0.03, "p95_lag_bucket": "le_0.05s"
+    }
     assert result["feed_freshness"]["status"] == "STALE"
     assert "password" not in str(result)
     assert "must-not-escape" not in str(result)
