@@ -78,6 +78,8 @@ def test_sqlalchemy_pool_connect_boundary_records_real_checkout():
 
     assert after["checkout_wait_count"] >= before["checkout_wait_count"] + 1
     assert after["completed_checkouts"] >= before["completed_checkouts"] + 1
+    assert "oldest_checkout_seconds" in after
+    assert "oldest_checkout_thread" in after
 
 
 
