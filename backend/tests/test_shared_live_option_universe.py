@@ -1,7 +1,24 @@
+from datetime import datetime as RealDateTime
+from zoneinfo import ZoneInfo
+
+import pytest
+import app.market_data.synthetic_subscriptions as synthetic_module
 from app.market_data.box_spread_subscriptions import select_box_contracts
 from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.synthetic_subscriptions import select_synthetic_contracts
+
+
+class FrozenDateTime(RealDateTime):
+    @classmethod
+    def now(cls, tz=None):
+        fixed = RealDateTime(2026, 11, 20, 12, 0)
+        return fixed.replace(tzinfo=tz) if tz is not None else fixed
+
+
+@pytest.fixture(autouse=True)
+def freeze_synthetic_market_date(monkeypatch):
+    monkeypatch.setattr(synthetic_module, "datetime", FrozenDateTime)
 
 
 def test_shared_stock_option_window_is_identical_for_box_and_synthetic():

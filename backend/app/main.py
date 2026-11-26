@@ -44,6 +44,7 @@ from app.market_data.client import MarketDataClient
 from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
+from app.market_data.dashboard_snapshot_cache import cached_snapshot
 from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
@@ -449,7 +450,9 @@ def _box_page_push_snapshot():
     try:
         runner = live_box_spread_runner
         runner_snapshot = None if runner is None else runner.snapshot()
-        common_feed = shared_common_manager().snapshot()
+        feed_manager = shared_common_manager()
+        health_snapshot = getattr(feed_manager, "health_snapshot", None)
+        common_feed = health_snapshot() if callable(health_snapshot) else feed_manager.snapshot()
         feed_health = _summarize_primary_exchange_feed(common_feed)
         common_feed["age_seconds"] = feed_health["age_seconds"]
         common_feed["status"] = feed_health["status"]
@@ -502,7 +505,9 @@ def _cash_future_page_push_snapshot():
 def _scanner_page_push_runtime_health(runner_name, runner):
     """Read-only feed and runner health included in scanner reconnect/live frames."""
     try:
-        common_feed = shared_common_manager().snapshot()
+        feed_manager = shared_common_manager()
+        health_snapshot = getattr(feed_manager, "health_snapshot", None)
+        common_feed = health_snapshot() if callable(health_snapshot) else feed_manager.snapshot()
         feed_health = _summarize_primary_exchange_feed(common_feed)
         common_feed["age_seconds"] = feed_health["age_seconds"]
         common_feed["status"] = feed_health["status"]
@@ -638,6 +643,7 @@ async def _iv_scanner_recovery_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _dashboard_snapshot_task
     global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, shoonya_market_data_supervisor, _shared_index_runner_task
     global provider_quote_parity_store, provider_quote_parity_worker
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
@@ -725,6 +731,7 @@ async def lifespan(app: FastAPI):
     if not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED and settings.LIVE_BOX_SPREAD_DATA_ENABLED and _live_box_spread_task is None:
         _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
     paper_rule_task = asyncio.create_task(paper_rule_monitor_loop())
+    _dashboard_snapshot_task = asyncio.create_task(_dashboard_snapshot_publisher_loop())
     try:
         yield
     finally:
@@ -742,12 +749,15 @@ async def lifespan(app: FastAPI):
         # This makes to_thread(run_forever) unwind promptly during service stop.
         _signal_live_runner_shutdown()
         paper_rule_task.cancel()
-        for task in (_history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
+        if _dashboard_snapshot_task is not None:
+            _dashboard_snapshot_task.cancel()
+        for task in (_dashboard_snapshot_task, _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
             if task is not None:
                 task.cancel()
         shutdown_tasks = tuple(
             task
             for task in (
+                _dashboard_snapshot_task,
                 _history_collector_task,
                 _contract_master_sync_task,
                 _live_cash_future_task,
@@ -775,6 +785,7 @@ async def lifespan(app: FastAPI):
         # and must not prevent the remaining sessions or market-data runners closing.
         for broker_name, error in broker_sessions.disconnect_all():
             app_logger.error("Broker session shutdown failed for %s: %s", broker_name, error)
+        _dashboard_snapshot_task = None
         _history_collector_task = None
         _contract_master_sync_task = None
         _live_cash_future_task = None
@@ -930,67 +941,105 @@ def broker_settings():
     return HTMLResponse(content=html, media_type="text/html")
 
 
+def _build_dashboard_snapshot_payload() -> dict:
+    """Build one immutable-by-convention dashboard snapshot for all viewers."""
+    snapshot = live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=50)
+    health = live_cash_future_scanner.health()
+    calendar_snapshot = live_calendar_spread_scanner.snapshot(limit=200)
+    synthetic_snapshot = _fresh_live_synthetic_results(live_synthetic_latest_results)
+    box_snapshot = live_box_spread_latest_results
+
+    def _ts(items):
+        if not items:
+            return None
+        first = items[0]
+        value = getattr(first, "timestamp_ns", None)
+        if value is None:
+            value = getattr(getattr(first, "option", None), "timestamp_ns", None)
+        if value is None:
+            value = getattr(getattr(first, "low", None), "timestamp_ns", None)
+        return value
+
+    return {
+        "type": "dashboard_snapshot",
+        "timestamp": datetime.now(IST).isoformat(),
+        "scanner": {
+            "mode": "live-fast",
+            "data": snapshot,
+            "health": health,
+            "opportunity_count": sum(
+                1 for item in snapshot
+                if float(item.get("gap", 0) or 0) > 0
+                and float(item.get("net_gap", 0) or 0) > 0
+                and item.get("lifecycle") != "EXPIRED"
+            ),
+        },
+        "integration": {
+            "transport": "server-websocket",
+            "broker_socket_per_browser": False,
+            "cash_future": {"count": len(snapshot), "timestamp_ns": _ts(snapshot)},
+            "calendar_spread": {"count": len(calendar_snapshot), "timestamp_ns": _ts(calendar_snapshot)},
+            "synthetic_arbitrage": {"count": len(synthetic_snapshot), "timestamp_ns": _ts(synthetic_snapshot)},
+            "box_spread": {"count": len(box_snapshot), "timestamp_ns": _ts(box_snapshot)},
+        },
+        "live_orders": "OFF",
+    }
+
+
+async def _send_dashboard_snapshot(client: WebSocket, payload: dict) -> None:
+    """Bound each client's send time; a slow browser cannot stall other viewers."""
+    try:
+        await asyncio.wait_for(client.send_json(payload), timeout=0.75)
+    except Exception:
+        _dashboard_clients.discard(client)
+        try:
+            await client.close(code=1013, reason="dashboard consumer too slow")
+        except Exception:
+            pass
+
+
+async def _dashboard_snapshot_publisher_loop() -> None:
+    """Compute once per process and fan out the same snapshot to all clients."""
+    while True:
+        started = time_module.monotonic()
+        try:
+            if _dashboard_clients:
+                payload = await asyncio.to_thread(_build_dashboard_snapshot_payload)
+                clients = tuple(_dashboard_clients)
+                if clients:
+                    await asyncio.gather(
+                        *(_send_dashboard_snapshot(client, payload) for client in clients),
+                        return_exceptions=True,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            app_logger.warning("Dashboard snapshot publish failed: %s", exc)
+        elapsed = time_module.monotonic() - started
+        await asyncio.sleep(max(0.05, 1.0 - elapsed))
+
+
 @app.websocket("/ws/dashboard")
 async def dashboard_websocket(websocket: WebSocket):
-    """Stream the Home Command Center from the existing process-local live scanner.
-
-    The browser receives one server-side stream and never opens a broker socket.
-    The existing Angel One 1-second Cash-Future stream remains the sole market feed.
-    """
+    """Subscribe a browser to the process-wide dashboard snapshot stream."""
     await websocket.accept()
+    _dashboard_clients.add(websocket)
     try:
+        # Clients are receive-only. The shared publisher owns all snapshot work
+        # and sends one bounded latest snapshot to every connected browser.
         while True:
-            snapshot = live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=50)
-            health = live_cash_future_scanner.health()
-            cash_count = len(snapshot)
-            calendar_snapshot = live_calendar_spread_scanner.snapshot(limit=200)
-            calendar_count = len(calendar_snapshot)
-            synthetic_snapshot = _fresh_live_synthetic_results(live_synthetic_latest_results)
-            box_snapshot = live_box_spread_latest_results
-            def _ts(items):
-                if not items:
-                    return None
-                first = items[0]
-                value = getattr(first, "timestamp_ns", None)
-                if value is None:
-                    value = getattr(getattr(first, "option", None), "timestamp_ns", None)
-                if value is None:
-                    value = getattr(getattr(first, "low", None), "timestamp_ns", None)
-                return value
-            await websocket.send_json({
-                "type": "dashboard_snapshot",
-                "timestamp": datetime.now(IST).isoformat(),
-                "scanner": {
-                    "mode": "live-fast",
-                    "data": snapshot,
-                    "health": health,
-                    "opportunity_count": sum(
-                        1 for item in snapshot
-                        if float(item.get("gap", 0) or 0) > 0
-                        and float(item.get("net_gap", 0) or 0) > 0
-                        and item.get("lifecycle") != "EXPIRED"
-                    ),
-                },
-                "integration": {
-                    "transport": "server-websocket",
-                    "broker_socket_per_browser": False,
-                    "cash_future": {"count": cash_count, "timestamp_ns": _ts(snapshot)},
-                    "calendar_spread": {"count": calendar_count, "timestamp_ns": _ts(calendar_snapshot)},
-                    "synthetic_arbitrage": {"count": len(synthetic_snapshot), "timestamp_ns": _ts(synthetic_snapshot)},
-                    "box_spread": {"count": len(box_snapshot), "timestamp_ns": _ts(box_snapshot)},
-                },
-                "live_orders": "OFF",
-            })
-            await asyncio.sleep(1.0)
+            await websocket.receive_text()
     except WebSocketDisconnect:
         pass
     except Exception as exc:
-        app_logger.warning("Dashboard WebSocket closed: %s", exc)
+        app_logger.debug("Dashboard WebSocket client disconnected: %s", exc)
     finally:
+        _dashboard_clients.discard(websocket)
         try:
             await websocket.close()
         except Exception:
             pass
+
 
 _history_collector_task: asyncio.Task | None = None
 _iv_scanner_recovery_task: asyncio.Task | None = None
@@ -2280,6 +2329,7 @@ def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
 
 
 @app.get("/api/v1/market-data/runtime/health")
+@cached_snapshot(ttl_seconds=5.0, max_stale_seconds=20.0)
 def market_data_runtime_health():
     """Expose process-local live-feed diagnostics for runtime troubleshooting."""
     global _provider_readiness_observer_manager_id
@@ -2301,7 +2351,8 @@ def market_data_runtime_health():
     synthetic_runner = live_synthetic_runner
     box_runner = live_box_spread_runner
     calendar_counts = live_calendar_spread_scanner.counts_snapshot()
-    common_feed = manager.snapshot()
+    health_snapshot = getattr(manager, "health_snapshot", None)
+    common_feed = health_snapshot() if callable(health_snapshot) else manager.snapshot()
     # The synthetic scanner needs both NSE underlying and NFO derivatives.
     # A fresh tick from another exchange must not mask a missing/stale primary feed.
     feed_health = _summarize_primary_exchange_feed(common_feed)

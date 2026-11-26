@@ -10,6 +10,7 @@ from app.core.logger import app_logger
 from .shoonya_owner_auth import ShoonyaOwnerLogin, login_shoonya_owner, require_shoonya_owner_access
 from .registry import InstrumentDescriptor
 from .contracts import InstrumentKey
+from .dashboard_snapshot_cache import cached_snapshot
 
 router = APIRouter(
     prefix="/api/v1/market-data",
@@ -18,6 +19,8 @@ router = APIRouter(
 
 _CLOSED_OVERVIEW_CACHE: dict[str, dict] = {}
 _CLOSED_OVERVIEW_CACHE_LOCK = Lock()
+_OVERVIEW_HISTORICAL_CACHE: dict[tuple[str, str, str], tuple[float, float | None, float | None]] = {}
+_OVERVIEW_HISTORICAL_CACHE_LOCK = Lock()
 _live_cash_future_runner_snapshot_provider = None
 _shoonya_snapshot_provider = None
 _shoonya_supervisor_provider = None
@@ -307,6 +310,7 @@ def get_historical(
 
 
 @router.get("/live-health")
+@cached_snapshot(ttl_seconds=5.0, max_stale_seconds=20.0)
 def get_live_data_health():
     """Return bounded live-data persistence and freshness health for the control center."""
     from datetime import datetime
@@ -466,6 +470,7 @@ def get_common_feed_health():
 
 
 @router.get("/overview")
+@cached_snapshot(ttl_seconds=4.0, max_stale_seconds=30.0)
 def get_market_overview():
     """Return a bounded live overview for configured NSE/BSE indices and MCX commodities."""
     from app.market_data.client import MarketDataClient
@@ -492,8 +497,14 @@ def get_market_overview():
             return cached
 
     def last_trading_closes(exchange, token):
-        """Return latest and prior trading-day closes for closed-market fallback."""
+        """Return a 15-minute cached historical close; it is not a live quote."""
         now = datetime.now(ist)
+        cache_key = (now.date().isoformat(), exchange, str(token))
+        monotonic_now = __import__("time").monotonic()
+        with _OVERVIEW_HISTORICAL_CACHE_LOCK:
+            cached = _OVERVIEW_HISTORICAL_CACHE.get(cache_key)
+            if cached is not None and monotonic_now - cached[0] < 900.0:
+                return cached[1], cached[2]
         from_date = (now - timedelta(days=10)).strftime("%Y-%m-%d 00:00")
         to_date = now.strftime("%Y-%m-%d %H:%M")
         response = historical_client.get_candles(
@@ -504,16 +515,19 @@ def get_market_overview():
             to_date=to_date,
         )
         candles = response.get("data") or []
-        if not isinstance(candles, list):
-            return None, None
         valid = [
             row for row in candles
             if isinstance(row, (list, tuple)) and len(row) >= 5 and row[4] is not None
-        ]
-        if not valid:
-            return None, None
-        latest = float(valid[-1][4])
+        ] if isinstance(candles, list) else []
+        latest = float(valid[-1][4]) if valid else None
         prior = float(valid[-2][4]) if len(valid) >= 2 else latest
+        if latest is not None:
+            with _OVERVIEW_HISTORICAL_CACHE_LOCK:
+                _OVERVIEW_HISTORICAL_CACHE[cache_key] = (monotonic_now, latest, prior)
+                # Keep only the current date's bounded index universe.
+                for old_key in tuple(_OVERVIEW_HISTORICAL_CACHE):
+                    if old_key[0] != cache_key[0]:
+                        _OVERVIEW_HISTORICAL_CACHE.pop(old_key, None)
         return latest, prior
 
     def resolve(specs):
