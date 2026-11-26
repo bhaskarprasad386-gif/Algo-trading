@@ -289,14 +289,47 @@ def test_iv_observation_expiry_time_index_supports_bounded_restore(migration_eng
         )
         assert index["column_names"] == ["underlying", "expiry", "source_timestamp_ns"]
 
-        # Force the candidate index only to verify that the exact restore
-        # predicate and ordering are covered by a range search, not a full scan
-        # followed by a temporary sort.
+        # Seed enough rows across multiple expiries/underlyings for SQLite's
+        # planner to compare the contract-time and expiry-time indexes.
+        rows = []
+        base_ns = 1_800_000_000_000_000_000
+        for group, (underlying, expiry) in enumerate((
+            ("NIFTY", "2026-11-12"),
+            ("NIFTY", "2026-11-19"),
+            ("BANKNIFTY", "2026-11-12"),
+            ("BANKNIFTY", "2026-11-19"),
+        )):
+            for token_number in range(5):
+                for tick in range(100):
+                    timestamp_ns = base_ns + tick * 1_000_000_000
+                    rows.append({
+                        "token": f"{group}-{token_number}",
+                        "underlying": underlying,
+                        "expiry": expiry,
+                        "strike": 24000 + token_number * 100,
+                        "option_type": "CE",
+                        "source_timestamp_ns": timestamp_ns,
+                        "spot_timestamp_ns": timestamp_ns,
+                        "sampled_at_ns": timestamp_ns,
+                    })
+        connection.execute(
+            text(
+                "INSERT INTO iv_option_observations "
+                "(token, underlying, expiry, strike, option_type, "
+                "source_timestamp_ns, spot_timestamp_ns, sampled_at_ns) "
+                "VALUES (:token, :underlying, :expiry, :strike, :option_type, "
+                ":source_timestamp_ns, :spot_timestamp_ns, :sampled_at_ns)"
+            ),
+            rows,
+        )
+        connection.execute(text("ANALYZE iv_option_observations"))
+
+        # Do not force an index: assert that SQLite naturally chooses the new
+        # expiry/time index for the exact bounded restore predicate.
         plan = connection.execute(
             text(
                 "EXPLAIN QUERY PLAN "
                 "SELECT token, source_timestamp_ns FROM iv_option_observations "
-                "INDEXED BY ix_iv_option_observation_expiry_time "
                 "WHERE underlying = :underlying AND expiry = :expiry "
                 "AND source_timestamp_ns >= :cutoff "
                 "AND source_timestamp_ns <= :now "
@@ -305,8 +338,8 @@ def test_iv_observation_expiry_time_index_supports_bounded_restore(migration_eng
             {
                 "underlying": "NIFTY",
                 "expiry": "2026-11-12",
-                "cutoff": 1_800_000_000_000_000_000,
-                "now": 1_800_000_600_000_000_000,
+                "cutoff": base_ns + 90_000_000_000,
+                "now": base_ns + 99_000_000_000,
             },
         ).all()
 
