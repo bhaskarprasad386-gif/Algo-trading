@@ -333,6 +333,7 @@ def get_live_data_health():
     from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
     from app.core.config import settings
     from app.market_data.common_strategy_feed import shared_common_manager_snapshot
+    import sqlite3
 
     def load_persisted_summaries():
         # This read-only catalog enumeration is intentionally decoupled from
@@ -350,9 +351,29 @@ def get_live_data_health():
             ),
         }
 
-    persisted_summaries, persisted_summary_meta = _LIVE_PERSISTED_SUMMARY_CACHE.get(
-        str(settings.BACKTEST_DATA_DB), load_persisted_summaries
-    )
+    try:
+        persisted_summaries, persisted_summary_meta = _LIVE_PERSISTED_SUMMARY_CACHE.get(
+            str(settings.BACKTEST_DATA_DB), load_persisted_summaries
+        )
+    except (TimeoutError, RuntimeError, OSError, sqlite3.Error) as exc:
+        # Historical coverage is optional diagnostics. A cold/locked/corrupt
+        # shard must not make the live tick-health endpoint unavailable.
+        persisted_summaries = {
+            "angelone-live-1s": {
+                "record_count": None, "instruments": None,
+                "latest_timestamp_ns": None,
+            },
+            "angelone-live": {
+                "record_count": None, "instruments": None,
+                "latest_timestamp_ns": None,
+            },
+        }
+        persisted_summary_meta = {
+            "status": "UNAVAILABLE", "age_seconds": None,
+            "ttl_seconds": _LIVE_PERSISTED_SUMMARY_CACHE.ttl_seconds,
+            "max_stale_seconds": _LIVE_PERSISTED_SUMMARY_CACHE.max_stale_seconds,
+            "error_type": type(exc).__name__,
+        }
 
     ist = ZoneInfo("Asia/Kolkata")
     now = datetime.now(ist)
@@ -370,8 +391,11 @@ def get_live_data_health():
             None if raw_age_seconds is None or raw_age_seconds < -5.0
             else max(0.0, raw_age_seconds)
         )
-        status = "LIVE" if market_open and age_seconds is not None and age_seconds <= 5 else (
-            "STALE" if market_open and age_seconds is not None else "NO_DATA"
+        status = (
+            "UNAVAILABLE" if persisted_summary_meta["status"] == "UNAVAILABLE"
+            else "LIVE" if market_open and age_seconds is not None and age_seconds <= 5
+            else "STALE" if market_open and age_seconds is not None
+            else "NO_DATA"
         )
         sources.append({
             "source": source, "timeframe": timeframe,
@@ -438,7 +462,10 @@ def get_live_data_health():
     )
     return {
         "status": "success", "market_session": "OPEN" if market_open else "CLOSED",
-        "checked_at": now.isoformat(), "persisted": one_second["records"] > 0,
+        "checked_at": now.isoformat(),
+        "persisted": (
+            None if one_second["records"] is None else one_second["records"] > 0
+        ),
         "raw_market_data_persistence": bool(settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED),
         "source": one_second["source"], "timeframe": one_second["timeframe"],
         "records": one_second["records"], "instruments": one_second["instruments"],
