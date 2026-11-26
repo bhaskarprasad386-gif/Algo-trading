@@ -12,6 +12,7 @@ def reset_dashboard_route_caches():
         routes._OVERVIEW_HISTORICAL_CACHE.clear()
     with routes._OVERVIEW_QUOTE_CACHE_LOCK:
         routes._OVERVIEW_QUOTE_CACHE.clear()
+        routes._OVERVIEW_QUOTE_FAILURES.clear()
     with routes._CLOSED_OVERVIEW_CACHE_LOCK:
         routes._CLOSED_OVERVIEW_CACHE.clear()
     yield
@@ -286,3 +287,36 @@ def test_market_overview_uses_bounded_stale_quotes_after_broker_refresh_failure(
         row["quote_cache_age_seconds"] > routes._OVERVIEW_QUOTE_CACHE_TTL_SECONDS
         for row in second["indices"] + second["commodities"]
     )
+
+
+def test_market_overview_backs_off_repeated_quote_failures(monkeypatch):
+    calls = []
+
+    class FakeMaster:
+        def get_instrument(self, symbol, exchange):
+            return {"token": f"{exchange}-{symbol}"}
+
+        def resolve_index_instrument(self, symbol, exchange):
+            return {"token": f"{exchange}-{symbol}"}
+
+    class FailedClient:
+        def quote_many(self, exchange, instruments):
+            calls.append(exchange)
+            raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
+    monkeypatch.setattr("app.market_data.client.MarketDataClient", FailedClient)
+    monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
+    monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: True)
+
+    first = routes.get_market_overview()
+    assert len(calls) == 3
+    assert all(row["status"] == "NO_QUOTE" for row in first["indices"] + first["commodities"])
+
+    routes.get_market_overview.snapshot_cache.clear()
+    second = routes.get_market_overview()
+
+    # Recent failures are negatively cached briefly so a 5-second browser poll
+    # cannot hammer a broker endpoint that is already unavailable/rate-limited.
+    assert len(calls) == 3
+    assert all(row["status"] == "NO_QUOTE" for row in second["indices"] + second["commodities"])
