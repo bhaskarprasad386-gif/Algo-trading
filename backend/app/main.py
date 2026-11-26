@@ -629,9 +629,10 @@ async def _iv_scanner_recovery_loop() -> None:
             raise
         except Exception as exc:
             app_logger.warning(
-                "IV Scanner startup recovery failed; retrying in {:.1f}s: {}",
+                "IV Scanner startup recovery failed; retrying in {:.1f}s: {}; database_pool={}",
                 retry_delay,
                 exc,
+                database_pool_snapshot(),
             )
             retry_delay = min(max_retry_delay, max(5.0, retry_delay * 2.0))
 
