@@ -66,6 +66,23 @@ def _safe_health_fields(path: str, payload: object) -> dict:
             )
             if key in pool
         }
+    dashboard_stream = payload.get("dashboard_stream")
+    if isinstance(dashboard_stream, dict):
+        result["dashboard_stream"] = {
+            key: dashboard_stream.get(key)
+            for key in (
+                "cycles", "publish_errors", "client_send_successes",
+                "client_send_failures", "seconds_since_last_success",
+                "last_build_seconds", "max_build_seconds",
+                "last_serialization_seconds", "max_serialization_seconds",
+                "last_payload_bytes", "last_fanout_seconds",
+                "max_fanout_seconds", "last_client_count", "last_sent_count",
+                "last_failed_count", "last_client_send_seconds",
+                "max_client_send_seconds", "last_cycle_seconds",
+                "max_cycle_seconds", "cycle_overrun_count",
+            )
+            if key in dashboard_stream
+        }
     event_loop = payload.get("event_loop")
     if isinstance(event_loop, dict):
         result["event_loop"] = {
@@ -83,6 +100,17 @@ def _safe_health_fields(path: str, payload: object) -> dict:
                 "status": runtime.get("status"),
                 "age_seconds": runtime.get("age_seconds"),
                 "exchange_freshness": runtime.get("exchange_freshness"),
+            }
+        persisted = payload.get("persisted_summary")
+        if isinstance(persisted, dict):
+            result["persisted_summary"] = {
+                key: persisted.get(key)
+                for key in (
+                    "status", "age_seconds", "ttl_seconds", "max_stale_seconds",
+                    "refresh_count", "refresh_errors", "last_error_type",
+                    "refresh_in_progress",
+                )
+                if key in persisted
             }
     if path.endswith("/overview"):
         rows = payload.get("indices")
