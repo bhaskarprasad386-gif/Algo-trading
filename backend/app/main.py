@@ -3081,14 +3081,45 @@ def iv_skew_flip_validation(underlying: str = "NIFTY", expiry_type: str | None =
         db.close()
 
 
+# A timed-out asyncio.to_thread() cannot stop its underlying worker thread.
+# Admit only one health DB probe at a time so repeated probes cannot create an
+# unbounded backlog of abandoned DB-check threads when the database is stuck.
+_health_db_probe_semaphore = threading.BoundedSemaphore(value=1)
+
+
+def _run_health_database_probe() -> None:
+    try:
+        check_database()
+    finally:
+        _health_db_probe_semaphore.release()
+
+
 @app.get("/health")
 async def health_check():
-    # Keep the liveness/readiness probe off Starlette's synchronous endpoint
-    # threadpool. Under request-threadpool saturation a sync health handler can
-    # be starved even while the ASGI event loop is still able to serve requests.
-    # Bound the DB probe so a stalled pool/connection cannot hold the probe open.
+    # Keep the readiness probe off Starlette's synchronous endpoint threadpool.
+    # Bound both its wait and concurrency; a timed-out worker retains its slot
+    # until its DB call actually returns.
+    if not _health_db_probe_semaphore.acquire(blocking=False):
+        error_type = "DatabaseProbeBusy"
+        runtime_diagnostics.record(
+            component="Database",
+            error_type=error_type,
+            message="A previous database health probe is still running",
+            endpoint="/health",
+            context={"event": "health_check", "max_concurrent_probes": 1},
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "app": settings.app_name,
+                "version": "0.1.0",
+                "database": "ProbeBusy",
+                "database_pool": database_pool_snapshot(),
+            },
+        )
     try:
-        await asyncio.wait_for(asyncio.to_thread(check_database), timeout=3.0)
+        await asyncio.wait_for(asyncio.to_thread(_run_health_database_probe), timeout=3.0)
     except Exception as exc:
         error_type = "DatabaseProbeTimeout" if isinstance(exc, asyncio.TimeoutError) else type(exc).__name__
         runtime_diagnostics.record(
