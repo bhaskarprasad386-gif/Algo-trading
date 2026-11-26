@@ -684,3 +684,38 @@ def test_spot_persistence_batches_both_indices_in_one_transaction(monkeypatch):
     assert persistence["observations_committed"] == 2
     assert persistence["failed_batches"] == 0
     assert persistence["pending_symbols"] == 0
+
+def test_idle_spot_persistence_worker_does_not_open_database_session(monkeypatch):
+    from threading import Event
+    from app.scanner.iv_skew_flip import spot_feed as spot_feed_module
+
+    feed = IVSpotFeedAdapter(feed=FakeFeed(), persist_last_price=False)
+    stop = Event()
+    feed._persist_stop = stop
+
+    class StopAfterIdleWakeups:
+        def __init__(self):
+            self.calls = 0
+
+        def wait(self, timeout=None):
+            self.calls += 1
+            if self.calls == 2:
+                stop.set()
+            return True
+
+        def clear(self):
+            return None
+
+        def set(self):
+            return None
+
+    feed._persist_wakeup = StopAfterIdleWakeups()
+
+    def unexpected_session():
+        raise AssertionError("idle worker must not acquire a database session")
+
+    monkeypatch.setattr(spot_feed_module, "SessionLocal", unexpected_session)
+    feed._run_persistence()
+    assert feed._persist_wakeup.calls == 2
+    assert feed._persist_batches == 0
+    assert feed._persist_errors == 0
