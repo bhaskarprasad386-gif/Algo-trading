@@ -74,9 +74,11 @@ class PoolCheckoutTelemetry:
             active = tuple(self._active.values())
             owners = Counter(item[2] for item in active)
             oldest = max(active, key=lambda item: now - item[0], default=None)
+            long_count = sum(1 for item in active if now - item[0] >= 30.0)
             return {
                 "completed_checkouts": self._completed,
                 "active_checkouts": len(active),
+                "long_checkouts_30s": long_count,
                 "active_by_owner": dict(owners),
                 "completed_by_owner": dict(self._owner_totals),
                 "hold_duration_buckets": dict(self._hold_buckets),
@@ -105,6 +107,7 @@ class InstrumentedRLock:
         self._wait_max = 0.0
         self._wait_buckets: Counter[str] = Counter()
         self._hold_total = 0.0
+        self._hold_count = 0
         self._hold_max = 0.0
         self._hold_buckets: Counter[str] = Counter()
 
@@ -136,6 +139,7 @@ class InstrumentedRLock:
             held = max(0.0, time.monotonic() - self._local.hold_started)
             with self._metrics_lock:
                 self._hold_total += held
+                self._hold_count += 1
                 self._hold_max = max(self._hold_max, held)
                 self._hold_buckets[self._bucket(held)] += 1
             del self._local.hold_started
@@ -160,6 +164,6 @@ class InstrumentedRLock:
                 "average_wait_seconds": round(self._wait_total / count, 6) if count else None,
                 "max_wait_seconds": round(self._wait_max, 6) if count else None,
                 "hold_duration_buckets": dict(self._hold_buckets),
-                "average_hold_seconds": round(self._hold_total / len(self._hold_buckets.values()), 6) if self._hold_buckets else None,
-                "max_hold_seconds": round(self._hold_max, 6) if self._hold_buckets else None,
+                "average_hold_seconds": round(self._hold_total / self._hold_count, 6) if self._hold_count else None,
+                "max_hold_seconds": round(self._hold_max, 6) if self._hold_count else None,
             }
