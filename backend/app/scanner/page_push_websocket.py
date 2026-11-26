@@ -495,8 +495,6 @@ def _origin_allowed(websocket: WebSocket) -> bool:
     host = (parsed.hostname or "").lower()
     return normalized in configured or (
         host in {"localhost", "127.0.0.1"}
-        or host == "bhaskarprasad386.workers.dev"
-        or host.endswith(".bhaskarprasad386.workers.dev")
     )
 
 
