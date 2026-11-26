@@ -21,14 +21,20 @@ class BoundedPersistedSummaryCache:
         ttl_seconds: float = 60.0,
         max_stale_seconds: float = 300.0,
         max_entries: int = 4,
+        failure_retry_seconds: float = 15.0,
     ) -> None:
-        if ttl_seconds <= 0 or max_stale_seconds < ttl_seconds or max_entries < 1:
+        if (
+            ttl_seconds <= 0 or max_stale_seconds < ttl_seconds
+            or max_entries < 1 or failure_retry_seconds < 0
+        ):
             raise ValueError("invalid persisted summary cache bounds")
         self.ttl_seconds = float(ttl_seconds)
         self.max_stale_seconds = float(max_stale_seconds)
         self.max_entries = int(max_entries)
+        self.failure_retry_seconds = float(failure_retry_seconds)
         self._lock = Lock()
         self._entries: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._failures: dict[str, tuple[float, str]] = {}
         self._refresh_count = 0
         self._refresh_errors = 0
         self._last_error_type: str | None = None
@@ -36,6 +42,7 @@ class BoundedPersistedSummaryCache:
     def clear(self) -> None:
         with self._lock:
             self._entries.clear()
+            self._failures.clear()
             self._refresh_count = 0
             self._refresh_errors = 0
             self._last_error_type = None
@@ -59,12 +66,23 @@ class BoundedPersistedSummaryCache:
             if cached is not None and age is not None and age <= self.ttl_seconds:
                 return deepcopy(cached[1]), self._metadata(age, "FRESH")
 
+            failure = self._failures.get(normalized_key)
+            if (
+                failure is not None
+                and now - failure[0] <= self.failure_retry_seconds
+            ):
+                self._last_error_type = failure[1]
+                if cached is not None and age is not None and age <= self.max_stale_seconds:
+                    return deepcopy(cached[1]), self._metadata(age, "STALE")
+                raise RuntimeError("persisted summary refresh cooldown is active")
+
             try:
                 value = loader()
                 if not isinstance(value, dict):
                     raise TypeError("persisted summary loader must return a dict")
                 refreshed_at = monotonic()
                 self._entries[normalized_key] = (refreshed_at, deepcopy(value))
+                self._failures.pop(normalized_key, None)
                 self._refresh_count += 1
                 self._last_error_type = None
                 self._evict_oldest_locked()
@@ -72,6 +90,12 @@ class BoundedPersistedSummaryCache:
             except Exception as exc:
                 self._refresh_errors += 1
                 self._last_error_type = type(exc).__name__
+                self._failures[normalized_key] = (monotonic(), self._last_error_type)
+                while len(self._failures) > self.max_entries:
+                    oldest_failure = min(
+                        self._failures, key=lambda item: self._failures[item][0]
+                    )
+                    self._failures.pop(oldest_failure, None)
                 if cached is not None and age is not None and age <= self.max_stale_seconds:
                     return deepcopy(cached[1]), self._metadata(age, "STALE")
                 raise
