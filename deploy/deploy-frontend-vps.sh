@@ -27,16 +27,22 @@ OLD_MODULES="$LIVE_DIR/node_modules"
 DIST_BACKED_UP=0
 MODULES_BACKED_UP=0
 SWAPPED=0
+STOPPED=0
 
 cleanup() {
   local status=$?
   if [[ "$status" -ne 0 && "$SWAPPED" -eq 1 ]]; then
     echo "Frontend health gate failed; rolling back previous frontend runtime"
     systemctl stop "$SERVICE" || true
-    rm -rf "$LIVE_DIR/.next" "$LIVE_DIR/node_modules"
-    if [[ "$DIST_BACKED_UP" -eq 1 && -d "$BACKUP_DIR/next" ]]; then mv "$BACKUP_DIR/next" "$OLD_DIST"; fi
-    if [[ "$MODULES_BACKED_UP" -eq 1 && -d "$BACKUP_DIR/node_modules" ]]; then mv "$BACKUP_DIR/node_modules" "$OLD_MODULES"; fi
-    systemctl start "$SERVICE" || true
+    if [[ "$DIST_BACKED_UP" -eq 1 ]]; then
+      rm -rf "$LIVE_DIR/.next"
+      if [[ -d "$BACKUP_DIR/next" ]]; then mv "$BACKUP_DIR/next" "$OLD_DIST"; fi
+    fi
+    if [[ "$MODULES_BACKED_UP" -eq 1 ]]; then
+      rm -rf "$LIVE_DIR/node_modules"
+      if [[ -d "$BACKUP_DIR/node_modules" ]]; then mv "$BACKUP_DIR/node_modules" "$OLD_MODULES"; fi
+    fi
+    if [[ "$STOPPED" -eq 1 ]]; then systemctl start "$SERVICE" || true; fi
   fi
   rm -rf "$NEW_DIST" "$NEW_MODULES"
   if [[ -d "$RELEASE_DIR" ]]; then git -C "$APP_DIR" worktree remove --force "$RELEASE_DIR" >/dev/null 2>&1 || rm -rf "$RELEASE_DIR"; fi
@@ -72,6 +78,7 @@ cp -a "$RELEASE_DIR/frontend/node_modules" "$NEW_MODULES"
 
 SWAPPED=1
 systemctl stop "$SERVICE"
+STOPPED=1
 if [[ -d "$OLD_DIST" ]]; then mv "$OLD_DIST" "$BACKUP_DIR/next"; DIST_BACKED_UP=1; fi
 if [[ -d "$OLD_MODULES" ]]; then mv "$OLD_MODULES" "$BACKUP_DIR/node_modules"; MODULES_BACKED_UP=1; fi
 mv "$NEW_DIST" "$OLD_DIST"
