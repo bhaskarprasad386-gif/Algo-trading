@@ -30,7 +30,10 @@ def shared_common_manager_snapshot() -> dict[str, Any] | None:
     """Return runtime state without creating the shared manager or persisting ticks."""
     with _SHARED_LOCK:
         manager = _SHARED_MANAGER
-    return None if manager is None else manager.snapshot()
+    if manager is None:
+        return None
+    health_snapshot = getattr(manager, "health_snapshot", None)
+    return health_snapshot() if callable(health_snapshot) else manager.snapshot()
 
 
 def shared_common_manager(
