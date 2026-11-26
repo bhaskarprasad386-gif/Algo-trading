@@ -18,8 +18,8 @@ exec 9>/run/lock/algo-frontend-deploy.lock
 flock -n 9 || { echo "Another frontend deployment is running" >&2; exit 1; }
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-RELEASE_DIR="$APP_DIR/.frontend-build-$TARGET_SHA"
-BACKUP_DIR="$APP_DIR/.frontend-rollback-$STAMP"
+RELEASE_DIR="/opt/algo-frontend-build-$TARGET_SHA"
+BACKUP_DIR="/opt/algo-frontend-rollback-$STAMP"
 NEW_DIST="$LIVE_DIR/.next.new-$TARGET_SHA"
 NEW_MODULES="$LIVE_DIR/node_modules.new-$TARGET_SHA"
 OLD_DIST="$LIVE_DIR/.next"
@@ -38,10 +38,11 @@ cleanup() {
     if [[ "$MODULES_BACKED_UP" -eq 1 && -d "$BACKUP_DIR/node_modules" ]]; then mv "$BACKUP_DIR/node_modules" "$OLD_MODULES"; fi
     systemctl start "$SERVICE" || true
   fi
-  rm -rf "$NEW_DIST" "$NEW_MODULES" "$RELEASE_DIR"
+  rm -rf "$NEW_DIST" "$NEW_MODULES"
+  if [[ -d "$RELEASE_DIR" ]]; then git -C "$APP_DIR" worktree remove --force "$RELEASE_DIR" >/dev/null 2>&1 || rm -rf "$RELEASE_DIR"; fi
   if [[ "$status" -eq 0 ]]; then
     # Keep the previous build and dependency tree as a manual rollback point.
-    find "$APP_DIR" -maxdepth 1 -type d -name '.frontend-rollback-*' -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | while IFS= read -r old; do rm -rf "$old"; done
+    find /opt -maxdepth 1 -type d -name '.frontend-rollback-*' -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | while IFS= read -r old; do rm -rf "$old"; done
   fi
   exit "$status"
 }
@@ -69,12 +70,12 @@ rm -rf "$NEW_DIST" "$NEW_MODULES"
 cp -a "$RELEASE_DIR/frontend/.next" "$NEW_DIST"
 cp -a "$RELEASE_DIR/frontend/node_modules" "$NEW_MODULES"
 
+SWAPPED=1
 systemctl stop "$SERVICE"
 if [[ -d "$OLD_DIST" ]]; then mv "$OLD_DIST" "$BACKUP_DIR/next"; DIST_BACKED_UP=1; fi
 if [[ -d "$OLD_MODULES" ]]; then mv "$OLD_MODULES" "$BACKUP_DIR/node_modules"; MODULES_BACKED_UP=1; fi
 mv "$NEW_DIST" "$OLD_DIST"
 mv "$NEW_MODULES" "$OLD_MODULES"
-SWAPPED=1
 systemctl start "$SERVICE"
 
 healthy=0
