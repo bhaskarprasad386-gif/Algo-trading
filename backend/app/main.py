@@ -1100,6 +1100,8 @@ async def _dashboard_snapshot_publisher_loop() -> None:
                 failed_count=max(failed_count, client_count),
                 build_seconds=build_seconds,
                 fanout_seconds=fanout_seconds,
+                serialization_seconds=serialization_seconds,
+                payload_bytes=payload_bytes,
                 error_type=type(exc).__name__,
             )
             app_logger.warning("Dashboard snapshot publish failed: %s", exc)
