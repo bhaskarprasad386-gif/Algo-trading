@@ -499,7 +499,8 @@ class IVOneSecondSampler:
             # Keep failed source-time rows queued for the next cycle. Without
             # this queue, a later tick would replace an earlier failed write
             # and silently lose durable observations during a DB outage.
-            persistence_error = f"{type(exc).__name__}: {exc}"
+            # Keep raw driver text out of the API snapshot; it can contain connection details.
+            persistence_error = f"{type(exc).__name__}"
         with self._lock:
             self._history_persistence_error = persistence_error
             changes: dict[str, dict[str, float | int | None]] = {}
