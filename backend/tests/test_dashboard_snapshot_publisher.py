@@ -64,3 +64,82 @@ def test_dashboard_snapshot_is_serialized_once_before_client_fanout():
         and node.func.attr == "send_json"
         for node in sender_calls
     )
+
+
+def test_dashboard_dispatch_wait_formula_uses_elapsed_residual_and_clamps_to_zero():
+    main_path = Path(__file__).resolve().parents[1] / "app" / "main.py"
+    tree = ast.parse(main_path.read_text(encoding="utf-8"))
+    publisher = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "_dashboard_snapshot_publisher_loop"
+    )
+    measurement = next(
+        node for node in ast.walk(publisher)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "build_dispatch_wait_seconds"
+            for target in node.targets
+        )
+        and node.value is not None
+    )
+
+    expression = compile(
+        ast.Expression(measurement.value),
+        filename=str(main_path),
+        mode="eval",
+    )
+
+    class Clock:
+        def __init__(self, now):
+            self.now = now
+
+        def monotonic(self):
+            return self.now
+
+    measured = eval(
+        expression,
+        {"time_module": Clock(10.46)},
+        {
+            "dispatch_started": 10.0,
+            "build_seconds": 0.25,
+            "serialization_seconds": 0.03,
+        },
+    )
+    assert measured == 0.18
+
+    clamped = eval(
+        expression,
+        {"time_module": Clock(10.10)},
+        {
+            "dispatch_started": 10.0,
+            "build_seconds": 0.25,
+            "serialization_seconds": 0.03,
+        },
+    )
+    assert clamped == 0.0
+
+
+def test_dashboard_publisher_records_the_measured_dispatch_wait():
+    main_path = Path(__file__).resolve().parents[1] / "app" / "main.py"
+    tree = ast.parse(main_path.read_text(encoding="utf-8"))
+    publisher = next(
+        node for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "_dashboard_snapshot_publisher_loop"
+    )
+
+    record_calls = [
+        node for node in ast.walk(publisher)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "record_publish"
+    ]
+    assert len(record_calls) == 1
+    assert any(
+        keyword.arg == "build_dispatch_wait_seconds"
+        and isinstance(keyword.value, ast.Name)
+        and keyword.value.id == "build_dispatch_wait_seconds"
+        for keyword in record_calls[0].keywords
+    )
