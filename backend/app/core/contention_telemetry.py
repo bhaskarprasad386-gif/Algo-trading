@@ -38,6 +38,11 @@ class PoolCheckoutTelemetry:
         self._max_hold_seconds = 0.0
         self._invalidations = 0
         self._detaches = 0
+        self._wait_buckets: Counter[str] = Counter()
+        self._wait_total = 0.0
+        self._wait_max = 0.0
+        self._wait_count = 0
+        self._pool_timeouts = 0
 
     def checkout(self, connection_record: Any, *, owner: str | None = None) -> None:
         if connection_record is None:
@@ -68,6 +73,17 @@ class PoolCheckoutTelemetry:
             bucket = next((f"le_{bound:g}s" for bound in self.BUCKETS if duration <= bound), "gt_30s")
             self._hold_buckets[bucket] += 1
 
+    def record_wait(self, duration: float, *, timed_out: bool = False) -> None:
+        waited = max(0.0, float(duration))
+        with self._lock:
+            self._wait_count += 1
+            self._wait_total += waited
+            self._wait_max = max(self._wait_max, waited)
+            bucket = next((f"le_{bound:g}s" for bound in (0.01, 0.05, 0.1, 0.5, 1.0, 5.0) if waited <= bound), "gt_5s")
+            self._wait_buckets[bucket] += 1
+            if timed_out:
+                self._pool_timeouts += 1
+
     def snapshot(self) -> dict[str, Any]:
         now = time.monotonic()
         with self._lock:
@@ -77,6 +93,11 @@ class PoolCheckoutTelemetry:
             long_count = sum(1 for item in active if now - item[0] >= 30.0)
             return {
                 "completed_checkouts": self._completed,
+                "checkout_wait_count": self._wait_count,
+                "checkout_wait_buckets": dict(self._wait_buckets),
+                "average_checkout_wait_seconds": round(self._wait_total / self._wait_count, 4) if self._wait_count else None,
+                "max_checkout_wait_seconds": round(self._wait_max, 4) if self._wait_count else None,
+                "pool_timeout_count": self._pool_timeouts,
                 "active_checkouts": len(active),
                 "long_checkouts_30s": long_count,
                 "active_by_owner": dict(owners),
