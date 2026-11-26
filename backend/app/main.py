@@ -3082,18 +3082,23 @@ def iv_skew_flip_validation(underlying: str = "NIFTY", expiry_type: str | None =
 
 
 @app.get("/health")
-def health_check():
+async def health_check():
+    # Keep the liveness/readiness probe off Starlette's synchronous endpoint
+    # threadpool. Under request-threadpool saturation a sync health handler can
+    # be starved even while the ASGI event loop is still able to serve requests.
+    # Bound the DB probe so a stalled pool/connection cannot hold the probe open.
     try:
-        check_database()
+        await asyncio.wait_for(asyncio.to_thread(check_database), timeout=3.0)
     except Exception as exc:
+        error_type = "DatabaseProbeTimeout" if isinstance(exc, asyncio.TimeoutError) else type(exc).__name__
         runtime_diagnostics.record(
             component="Database",
-            error_type=type(exc).__name__,
-            message=str(exc),
+            error_type=error_type,
+            message=str(exc) or error_type,
             endpoint="/health",
-            context={"event": "health_check"},
+            context={"event": "health_check", "timeout_seconds": 3.0},
         )
-        app_logger.error(f"Health check database failure: {exc}")
+        app_logger.error(f"Health check database failure ({error_type}): {exc}")
         return {"status": "degraded", "app": settings.app_name, "version": "0.1.0", "database": "Disconnected", "database_pool": database_pool_snapshot()}
     return {"status": "ok", "app": settings.app_name, "version": "0.1.0", "database": "Connected", "database_pool": database_pool_snapshot()}
 
