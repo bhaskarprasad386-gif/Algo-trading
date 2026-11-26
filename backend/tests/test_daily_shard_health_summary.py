@@ -149,3 +149,31 @@ def test_read_source_summary_does_not_initialize_an_empty_legacy_database(tmp_pa
         "latest_timestamp_ns": None,
     }
     assert tables == set()
+
+
+def test_read_source_summary_falls_back_when_legacy_watermarks_are_unpopulated(tmp_path):
+    import sqlite3
+
+    base_path = tmp_path / "legacy.sqlite3"
+    catalog = HistoricalCatalog(str(base_path))
+    try:
+        catalog.ingest(_record(2, "NSE:NIFTY", "angelone-live-1s"))
+    finally:
+        catalog.close()
+
+    connection = sqlite3.connect(base_path)
+    try:
+        connection.execute("DELETE FROM source_watermarks")
+        connection.commit()
+    finally:
+        connection.close()
+
+    summary = DailyMarketDataShardCatalog.read_source_summary(
+        base_path, source="angelone-live-1s", timeframe="1s"
+    )
+
+    assert summary["record_count"] == 1
+    assert summary["instruments"] == 1
+    assert summary["latest_timestamp_ns"] == _record(
+        2, "NSE:NIFTY", "angelone-live-1s"
+    ).timestamp_ns
