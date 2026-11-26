@@ -449,7 +449,9 @@ def _box_page_push_snapshot():
     try:
         runner = live_box_spread_runner
         runner_snapshot = None if runner is None else runner.snapshot()
-        common_feed = shared_common_manager().health_snapshot()
+        feed_manager = shared_common_manager()
+        health_snapshot = getattr(feed_manager, "health_snapshot", None)
+        common_feed = health_snapshot() if callable(health_snapshot) else feed_manager.snapshot()
         feed_health = _summarize_primary_exchange_feed(common_feed)
         common_feed["age_seconds"] = feed_health["age_seconds"]
         common_feed["status"] = feed_health["status"]
@@ -502,7 +504,9 @@ def _cash_future_page_push_snapshot():
 def _scanner_page_push_runtime_health(runner_name, runner):
     """Read-only feed and runner health included in scanner reconnect/live frames."""
     try:
-        common_feed = shared_common_manager().health_snapshot()
+        feed_manager = shared_common_manager()
+        health_snapshot = getattr(feed_manager, "health_snapshot", None)
+        common_feed = health_snapshot() if callable(health_snapshot) else feed_manager.snapshot()
         feed_health = _summarize_primary_exchange_feed(common_feed)
         common_feed["age_seconds"] = feed_health["age_seconds"]
         common_feed["status"] = feed_health["status"]
