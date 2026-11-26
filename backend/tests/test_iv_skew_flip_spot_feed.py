@@ -619,3 +619,64 @@ def test_spot_websocket_callback_never_waits_for_slow_database_persistence(monke
     allow_commit.set()
     delivery.join(timeout=1.0)
     adapter.stop()
+
+
+def test_spot_persistence_batches_both_indices_in_one_transaction(monkeypatch):
+    from app.scanner.iv_skew_flip import spot_feed as spot_feed_module
+
+    sessions = []
+
+    class RecordingSession:
+        def __init__(self):
+            self.rows = []
+            self.commits = 0
+            sessions.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def merge(self, row):
+            self.rows.append(row)
+
+        def commit(self):
+            self.commits += 1
+
+    monkeypatch.setattr(spot_feed_module, "SessionLocal", RecordingSession)
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(
+        feed=feed, clock_ns=lambda: 10_000_000_000, persist_last_price=True,
+    )
+    adapter.start(FakeMaster())
+
+    for descriptor, price in (
+        (next(item for item in feed.descriptors if item.underlying == "NIFTY"), 24125.5),
+        (next(item for item in feed.descriptors if item.underlying == "BANKNIFTY"), 51234.5),
+    ):
+        feed.callback(SimpleNamespace(
+            instrument=descriptor.key,
+            instrument_type=InstrumentType.INDEX,
+            timestamp_ns=10_000_000_000,
+            ltp=price,
+            payload={"exchange_timestamp_ns": 10_000_000_000},
+        ))
+
+    # Stop drains the bounded pending-symbol map before assertions.
+    adapter.stop()
+
+    assert len(sessions) == 1
+    assert sessions[0].commits == 1
+    assert len(sessions[0].rows) == 4
+    assert {row.symbol for row in sessions[0].rows if isinstance(row, spot_feed_module.IVSpotLastPrice)} == {
+        "NIFTY", "BANKNIFTY"
+    }
+    assert {row.underlying for row in sessions[0].rows if isinstance(row, spot_feed_module.IVSpotObservation)} == {
+        "NIFTY", "BANKNIFTY"
+    }
+    persistence = adapter.snapshot()["record_validation"]["persistence"]
+    assert persistence["batches_committed"] == 1
+    assert persistence["observations_committed"] == 2
+    assert persistence["failed_batches"] == 0
+    assert persistence["pending_symbols"] == 0
