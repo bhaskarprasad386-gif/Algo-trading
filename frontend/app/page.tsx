@@ -444,7 +444,7 @@ export default function HomePage() {
       } catch {
         // Keep last values for context; UI separately marks telemetry stale/unavailable.
       } finally {
-        if (!cancelled) timer = window.setTimeout(() => { void loadRuntimeHealth(); }, 5000);
+        if (!cancelled) timer = window.setTimeout(() => { void loadRuntimeHealth(); }, 10000);
       }
     };
     void loadRuntimeHealth();
@@ -475,7 +475,7 @@ export default function HomePage() {
         if (!cancelled) setDiagnosticsFetchFailed(true);
         // Keep last successful server events when either the API or collector route is unavailable.
       } finally {
-        if (!cancelled) timer = window.setTimeout(() => { void loadDiagnosticErrors(); }, 5000);
+        if (!cancelled) timer = window.setTimeout(() => { void loadDiagnosticErrors(); }, 15000);
       }
     };
     void loadDiagnosticErrors();
@@ -502,7 +502,7 @@ export default function HomePage() {
       } catch {
         if (!cancelled) setSharedRunnerFetchFailed(true);
       } finally {
-        if (!cancelled) timer = window.setTimeout(() => { void loadSharedRunner(); }, 5000);
+        if (!cancelled) timer = window.setTimeout(() => { void loadSharedRunner(); }, 15000);
       }
     };
     void loadSharedRunner();
@@ -526,7 +526,9 @@ export default function HomePage() {
   const snapshotAge = Number.isFinite(snapshotTime) && snapshotTime <= Date.now() ? (Date.now() - snapshotTime) / 1000 : null;
   const dashboardMessageAge = lastDashboardMessageAt == null ? null : Math.max(0, (Date.now() - lastDashboardMessageAt) / 1000);
   const runtimeTelemetryAge = runtimeLastSuccessAt == null ? null : Math.max(0, (Date.now() - runtimeLastSuccessAt) / 1000);
-  const runtimeTelemetryStale = runtimeTelemetryAge == null || runtimeTelemetryAge > 8;
+  // Runtime health is intentionally sampled every 10 seconds; allow one missed
+  // sample before marking telemetry stale, without affecting the live WS stream.
+  const runtimeTelemetryStale = runtimeTelemetryAge == null || runtimeTelemetryAge > 22;
   const dashboardStreamStale = wsStatus !== "connected" || dashboardMessageAge == null || dashboardMessageAge > 15;
   const commonSocketState = runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : runtime.requiredSocketGroupCount == null ? "UNKNOWN" : runtime.requiredSocketGroupCount === 0 ? "DISCONNECTED" : runtime.requiredSocketGroups.length === runtime.requiredSocketGroupCount && runtime.requiredSocketGroups.every((group) => runtime.connectedGroupNames.includes(group)) && runtime.socketGroups === runtime.requiredSocketGroupCount && runtime.disconnectedGroups.length === 0 ? "CONNECTED" : runtime.connectedGroups > 0 ? "DEGRADED" : "DISCONNECTED";
   const connectedRequiredGroupCount = runtime.requiredSocketGroups.filter((group) => runtime.connectedGroupNames.includes(group)).length;
