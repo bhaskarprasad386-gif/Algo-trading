@@ -261,6 +261,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _method_not_allowed(self) -> None:
+        self._json(405, {"status": "method_not_allowed", "allowed": ["GET"]})
+        self.send_header("Allow", "GET")
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._method_not_allowed()
+
+    def do_PUT(self) -> None:  # noqa: N802
+        self._method_not_allowed()
+
+    def do_PATCH(self) -> None:  # noqa: N802
+        self._method_not_allowed()
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        self._method_not_allowed()
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path == "/health":
