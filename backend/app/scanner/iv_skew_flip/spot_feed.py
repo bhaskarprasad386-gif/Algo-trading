@@ -244,8 +244,12 @@ class IVSpotFeedAdapter:
                 self._persist_pending.clear()
                 self._persist_wakeup.clear()
                 stopping = self._persist_stop.is_set()
-            if not pending and stopping:
-                break
+            if not pending:
+                if stopping:
+                    break
+                # An idle persistence worker must not open a DB session or
+                # commit an empty transaction on every wakeup timeout.
+                continue
             # Both index snapshots are one tiny, bounded batch. One SQLAlchemy
             # checkout and one SQLite transaction per wakeup avoids competing
             # commits when NIFTY and BANKNIFTY ticks arrive together.
