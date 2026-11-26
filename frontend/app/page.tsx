@@ -54,7 +54,7 @@ export default function HomePage() {
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
-    const base = appConfig.apiBaseUrl.replace(/\\/$/, "");
+    const base = appConfig.apiBaseUrl.replace(/\/$/, "");
     const checkServer = async () => {
       // Liveness and database readiness are different signals. A busy database
       // must not make a running API process look offline in the dashboard.
