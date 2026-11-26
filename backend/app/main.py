@@ -3075,21 +3075,7 @@ def iv_skew_flip_validation(underlying: str = "NIFTY", expiry_type: str | None =
             "summary": summarize_forward_outcomes(eligible_events, rows),
             "date_wise": summarize_walk_forward_by_date(rows, eligible_events),
             "orders_enabled": False,
-            "interpretation": "descriptive forward returns only; not accuracy, profitability, or out-of-sample validation",
-        }
-    finally:
-        db.close()
-
-
-# A timed-out asyncio.to_thread() cannot stop its underlying worker thread.
-# Admit only one health DB probe at a time so repeated probes cannot create an
-# unbounded backlog of abandoned DB-check threads when the database is stuck.
-_health_db_probe_semaphore = threading.BoundedSemaphore(value=1)
-
-
-def _run_health_database_probe() -> None:
-    try:
-        def _database_health_failure_class(exc: Exception) -> str:
+            "interpretation": "descriptive forward returns only; not accuracy, profitabilitdef _database_health_failure_class(exc: Exception) -> str:
     """Classify bounded probe failures before generic database failures."""
     if isinstance(exc, DatabaseHealthProbeTimeout):
         return "DATABASE_PROBE_TIMEOUT"
