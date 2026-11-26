@@ -13,6 +13,8 @@ from math import isfinite
 from threading import Event, RLock, Thread
 from time import monotonic, time_ns
 from typing import Any, Callable
+
+from sqlalchemy import func, tuple_
 from zoneinfo import ZoneInfo
 
 from app.models.iv_option_observation import IVOptionObservation
@@ -142,39 +144,69 @@ class IVOneSecondSampler:
             return 0
         session = self.history_session_factory()
         try:
-            # Restore the latest real broker observation for every contract in
-            # this exact expiry, irrespective of how long the market has been
-            # closed. The rolling in-memory OI window remains bounded separately.
-            rows = (session.query(IVOptionObservation).filter(
-                IVOptionObservation.underlying == self.config.symbol,
-                IVOptionObservation.expiry == self.configured_expiry,
-                IVOptionObservation.source_timestamp_ns <= now_ns,
-            ).order_by(IVOptionObservation.source_timestamp_ns.asc()).all())
-            latest_by_token: dict[str, OptionMetricSample] = {}
             cutoff = now_ns - self.history_limit * 1_000_000_000
+            # Restore only the newest durable row per contract for display and
+            # the bounded rolling window for OI references. Loading every
+            # historical tick here made startup cost and connection hold time
+            # grow without limit as the IV observation table accumulated.
+            latest_source = (
+                session.query(
+                    IVOptionObservation.token.label("token"),
+                    func.max(IVOptionObservation.source_timestamp_ns).label("latest_source_timestamp_ns"),
+                )
+                .filter(
+                    IVOptionObservation.underlying == self.config.symbol,
+                    IVOptionObservation.expiry == self.configured_expiry,
+                    IVOptionObservation.source_timestamp_ns <= now_ns,
+                )
+                .group_by(IVOptionObservation.token)
+                .subquery()
+            )
+            latest_rows = (
+                session.query(IVOptionObservation)
+                .join(
+                    latest_source,
+                    (IVOptionObservation.token == latest_source.c.token)
+                    & (
+                        IVOptionObservation.source_timestamp_ns
+                        == latest_source.c.latest_source_timestamp_ns
+                    ),
+                )
+                .all()
+            )
+            recent_rows = (
+                session.query(IVOptionObservation)
+                .filter(
+                    IVOptionObservation.underlying == self.config.symbol,
+                    IVOptionObservation.expiry == self.configured_expiry,
+                    IVOptionObservation.source_timestamp_ns >= cutoff,
+                    IVOptionObservation.source_timestamp_ns <= now_ns,
+                )
+                .order_by(IVOptionObservation.source_timestamp_ns.asc())
+                .all()
+            )
+
+            def to_sample(row: IVOptionObservation) -> OptionMetricSample:
+                return OptionMetricSample(
+                    token=row.token, underlying=row.underlying, expiry=row.expiry,
+                    strike=row.strike, option_type=row.option_type, sampled_at_ns=row.sampled_at_ns,
+                    source_timestamp_ns=row.source_timestamp_ns, spot_timestamp_ns=row.spot_timestamp_ns,
+                    spot_price=row.spot_price, oi=row.oi, mark=row.mark, ltp=row.ltp, iv=row.iv,
+                    oi_timestamp_ns=getattr(row, "oi_timestamp_ns", None),
+                    iv_input=(
+                        "BID_ASK_MIDPOINT" if row.bid is not None and row.ask is not None
+                        else "LTP" if row.ltp is not None else None
+                    ),
+                    bid=row.bid, ask=row.ask, volume=row.volume,
+                )
+
+            latest_by_token = {row.token: to_sample(row) for row in latest_rows}
             with self._lock:
-                for row in rows:
-                    sample = OptionMetricSample(
-                        token=row.token, underlying=row.underlying, expiry=row.expiry,
-                        strike=row.strike, option_type=row.option_type, sampled_at_ns=row.sampled_at_ns,
-                        source_timestamp_ns=row.source_timestamp_ns, spot_timestamp_ns=row.spot_timestamp_ns,
-                        spot_price=row.spot_price,
-                        oi=row.oi, mark=row.mark, ltp=row.ltp, iv=row.iv,
-                        oi_timestamp_ns=getattr(row, "oi_timestamp_ns", None),
-                        iv_input=(
-                            'BID_ASK_MIDPOINT' if row.bid is not None and row.ask is not None
-                            else 'LTP' if row.ltp is not None else None
-                        ),
-                        bid=row.bid, ask=row.ask, volume=row.volume,
-                    )
-                    latest_by_token[row.token] = sample
-                    if row.source_timestamp_ns >= cutoff:
-                        history = self._history[row.token]
-                        if not history or history[-1].source_timestamp_ns < sample.source_timestamp_ns:
-                            history.append(sample)
-                    self._last_source_timestamp[row.token] = max(
-                        self._last_source_timestamp.get(row.token, 0), row.source_timestamp_ns
-                    )
+                for row in recent_rows:
+                    sample = to_sample(row)
+                    history = self._history[row.token]
+                    if not history or history[-1].source_timestamp_ns < sample.source_timestamp_ns:
+                        history.append(sample)
                 # Durable LAST values are display-only. They never enter the
                 # live quote feed or authorize sampling/signals.
                 self._last_display = latest_by_token.copy()
@@ -182,11 +214,13 @@ class IVOneSecondSampler:
                     token: sample for token, sample in latest_by_token.items()
                     if sample.iv is not None
                 }
+                for token, sample in latest_by_token.items():
+                    self._last_source_timestamp[token] = sample.source_timestamp_ns
                 # Mark the restored expiry so the first stale-spot cycle does
                 # not mistake these valid rows for a rollover and clear them.
                 self._retained_iv_expiry = self.configured_expiry
                 self._history_loaded = True
-            return len(rows)
+            return len(recent_rows)
         finally:
             session.close()
 
@@ -196,17 +230,42 @@ class IVOneSecondSampler:
         session = self.history_session_factory()
         inserted = 0
         try:
-            for item in samples:
-                exists = session.query(IVOptionObservation.id).filter_by(token=item.token, source_timestamp_ns=item.source_timestamp_ns).first()
-                if exists:
-                    continue
-                session.add(IVOptionObservation(
-                    token=item.token, underlying=item.underlying, expiry=item.expiry, strike=item.strike,
-                    option_type=item.option_type, source_timestamp_ns=item.source_timestamp_ns,
-                    spot_timestamp_ns=item.spot_timestamp_ns, spot_price=getattr(item, "spot_price", None), sampled_at_ns=item.sampled_at_ns,
-                    iv=item.iv, oi=item.oi, oi_timestamp_ns=item.oi_timestamp_ns, bid=item.bid, ask=item.ask, ltp=item.ltp, mark=item.mark, volume=item.volume,
-                ))
-                inserted += 1
+            # Query all source keys in one indexed lookup rather than issuing
+            # one SELECT per option contract on every one-second sampling cycle.
+            source_keys = {
+                (item.token, item.source_timestamp_ns)
+                for item in samples
+            }
+            existing_keys = set(
+                session.query(
+                    IVOptionObservation.token,
+                    IVOptionObservation.source_timestamp_ns,
+                )
+                .filter(
+                    tuple_(
+                        IVOptionObservation.token,
+                        IVOptionObservation.source_timestamp_ns,
+                    ).in_(tuple(source_keys))
+                )
+                .all()
+            )
+            new_rows = [
+                IVOptionObservation(
+                    token=item.token, underlying=item.underlying, expiry=item.expiry,
+                    strike=item.strike, option_type=item.option_type,
+                    source_timestamp_ns=item.source_timestamp_ns,
+                    spot_timestamp_ns=item.spot_timestamp_ns,
+                    spot_price=getattr(item, "spot_price", None),
+                    sampled_at_ns=item.sampled_at_ns, iv=item.iv, oi=item.oi,
+                    oi_timestamp_ns=item.oi_timestamp_ns, bid=item.bid, ask=item.ask,
+                    ltp=item.ltp, mark=item.mark, volume=item.volume,
+                )
+                for item in samples
+                if (item.token, item.source_timestamp_ns) not in existing_keys
+            ]
+            if new_rows:
+                session.add_all(new_rows)
+                inserted = len(new_rows)
             session.commit()
             self._history_persisted_count += inserted
             return inserted
@@ -215,6 +274,7 @@ class IVOneSecondSampler:
             raise
         finally:
             session.close()
+
     def sample_once(
         self,
         *,
