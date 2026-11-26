@@ -503,6 +503,26 @@ def _origin_allowed(websocket: WebSocket) -> bool:
 @router.websocket("/ws/page-updates")
 async def page_updates(websocket: WebSocket) -> None:
     if not _origin_allowed(websocket):
+        origin = str(websocket.headers.get("origin") or "").strip()
+        try:
+            parsed_origin = urlparse(origin)
+            origin_scheme = parsed_origin.scheme.lower()[:16] or "none"
+            origin_host = (parsed_origin.hostname or "none").lower()[:253]
+            # The allowlist compares scheme + netloc, so an explicit port is
+            # operationally relevant and safe to log separately.
+            origin_port = parsed_origin.port
+        except ValueError:
+            origin_scheme = "invalid"
+            origin_host = "invalid"
+            origin_port = "invalid"
+        # Log only parsed origin components. Never include the raw Origin
+        # header, which may contain paths, query strings, or user-supplied secrets.
+        _log.warning(
+            "Rejected scanner page WebSocket origin scheme=%r host=%r port=%r",
+            origin_scheme,
+            origin_host,
+            origin_port,
+        )
         await websocket.close(code=1008)
         return
     await websocket.accept()
