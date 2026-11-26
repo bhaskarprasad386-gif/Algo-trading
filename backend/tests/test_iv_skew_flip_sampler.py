@@ -720,9 +720,10 @@ def test_sampler_source_key_persistence_uses_one_select_for_many_contracts():
         for index in range(12)
     ]
 
-    assert sampler._persist_history(samples) == 12
+    # Duplicate source keys inside a single batch and across retries are harmless.
+    assert sampler._persist_history(samples + [samples[0]]) == 12
     assert sampler._persist_history(samples) == 0
-    assert len(statements) == 2, "one indexed source-key SELECT per persistence batch, not one per contract"
+    assert statements == [], "conflict-safe inserts must not require a preflight SELECT"
 
     with Session() as session:
         assert session.query(IVOptionObservation).count() == 12
@@ -927,8 +928,8 @@ def test_sampler_persistence_chunks_large_source_key_batches_for_sqlite():
         for index in range(405)
     ]
 
-    assert sampler._persist_history(samples) == 405
-    assert len(statements) == 2  # 400 keys, then the remaining five
+    assert sampler._persist_history(samples + [samples[0]]) == 405
+    assert statements == [], "bulk conflict-safe insert should not issue source-key SELECTs"
     with Session() as session:
         assert session.query(IVOptionObservation).count() == 405
     engine.dispose()
