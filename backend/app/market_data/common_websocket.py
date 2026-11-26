@@ -2474,6 +2474,194 @@ class CommonWebSocketManager:
             )
         return worker
 
+    def health_snapshot(self) -> dict[str, Any]:
+        """Return bounded feed health without building per-instrument diagnostic rosters.
+
+        The full snapshot() is intentionally retained for explicit deep diagnostics.
+        Dashboard/runtime-health polling needs counters, freshness and socket state,
+        not token-level frame maps, descriptor lookups or callback metric copies.
+        """
+        with self._lock:
+            sockets = dict(self._sockets)
+            subscriptions = self.registry.subscriptions()
+            pairs_by_mode: dict[int, set[tuple[int, str]]] = defaultdict(set)
+            for sub in subscriptions:
+                mode = getattr(sub, "mode", None)
+                key = getattr(sub, "key", None)
+                token = str(getattr(key, "token", "") or "").strip()
+                if mode is None or key is None or not token:
+                    continue
+                try:
+                    exchange_type = self._resolve_exchange_type(key)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                pairs_by_mode[mode].add((exchange_type, token))
+
+            assignments = self._build_shard_assignments(
+                pairs_by_mode, self._preferred_socket_pairs(),
+            )
+            required_groups = {
+                SocketGroup(mode=mode, shard=shard)
+                for mode, mode_assignments in assignments.items()
+                for shard in mode_assignments.values()
+            }
+            required_names = sorted(f"{group.mode}:{group.shard}" for group in required_groups)
+            connected_groups = sorted(
+                f"{group.mode}:{group.shard}"
+                for group, socket in sockets.items()
+                if bool(getattr(socket, "connected", False))
+            )
+            disconnected_groups = sorted(
+                f"{group.mode}:{group.shard}"
+                for group, socket in sockets.items()
+                if not bool(getattr(socket, "connected", False))
+            )
+            missing_groups = sorted(
+                f"{group.mode}:{group.shard}" for group in required_groups if group not in sockets
+            )
+            unconnected_required = sorted(
+                f"{group.mode}:{group.shard}" for group in required_groups
+                if group not in sockets or not bool(getattr(sockets.get(group), "connected", False))
+            )
+
+            socket_health: dict[str, dict[str, Any]] = {}
+            health_fields = (
+                "connected", "connecting", "stopping", "error_count", "reconnect_count",
+                "consecutive_failures", "last_error", "transport_thread_alive",
+                "transport_close_timed_out", "initial_subscribe_success",
+                "subscription_response_state", "subscription_rejection_count",
+                "ping_count", "pong_count", "last_ping_at_monotonic_ns",
+                "last_pong_at_monotonic_ns", "heartbeat_state", "last_pong_age_seconds",
+                "ping_interval_seconds", "ping_timeout_seconds",
+            )
+            for group, socket in sockets.items():
+                try:
+                    health = getattr(socket, "health", {})
+                    if not isinstance(health, dict):
+                        health = {}
+                except Exception as exc:
+                    health = {"health_read_error": f"{type(exc).__name__}: {exc}"}
+                socket_health[f"{group.mode}:{group.shard}"] = {
+                    key: health[key] for key in health_fields if key in health
+                }
+                if "health_read_error" in health:
+                    socket_health[f"{group.mode}:{group.shard}"]["health_read_error"] = health["health_read_error"]
+
+            now_mono = time.monotonic()
+            now_wall = time.time()
+            return {
+                "snapshot_kind": "health-lite",
+                "details_omitted": [
+                    "subscription_roster", "raw_frames_by_instrument",
+                    "socket_token_set_mismatches", "consumer_callback_metrics",
+                    "retired_worker_details",
+                ],
+                "subscriptions": len(subscriptions),
+                "active_instruments": len(subscriptions),
+                "socket_groups": len(sockets),
+                "required_socket_groups": required_names,
+                "required_socket_group_count": len(required_groups),
+                "missing_socket_groups": missing_groups,
+                "unconnected_required_groups": unconnected_required,
+                "connected_groups": connected_groups,
+                "disconnected_groups": disconnected_groups,
+                "transport_threads_alive_groups": sorted(
+                    f"{group.mode}:{group.shard}" for group, socket in sockets.items()
+                    if bool(getattr(socket, "health", {}).get("transport_thread_alive", False))
+                ),
+                "transport_close_timed_out_groups": sorted(
+                    f"{group.mode}:{group.shard}" for group, socket in sockets.items()
+                    if bool(getattr(socket, "health", {}).get("transport_close_timed_out", False))
+                ),
+                "max_socket_sessions": self._max_sockets,
+                "consumers": sorted(set(self._callbacks) | set(self._record_callbacks) | set(self._record_observers)),
+                "socket_health_by_group": socket_health,
+                "async_callback_dispatch": self._async_callback_dispatch,
+                "delivery_errors": self._delivery_errors,
+                "missing_callback_routes": self._missing_callback_routes,
+                "missing_descriptor_records": self._missing_descriptor_records,
+                "normalized_records_emitted": self._normalized_records_emitted,
+                "normalized_records_delivered": self._normalized_records_delivered,
+                "raw_callback_attempts": self._raw_callback_attempts,
+                "raw_callback_successes": self._raw_callback_successes,
+                "missing_exchange_type_frames": self._missing_exchange_type_frames,
+                "ambiguous_token_frames": self._ambiguous_token_frames,
+                "normalized_delivery_errors": self._normalized_delivery_errors,
+                "last_delivery_error": self._last_delivery_error,
+                "normalizer_errors": self._normalizer_errors,
+                "last_normalizer_error": self._last_normalizer_error,
+                "ticks_received": self._ticks_received,
+                "raw_frames_received": self._raw_frames_received,
+                "invalid_frame_types": self._invalid_frame_types,
+                "missing_token_frames": self._missing_token_frames,
+                "invalid_exchange_type_frames": self._invalid_exchange_type_frames,
+                "unmatched_frames": self._unmatched_frames,
+                "exchange_mismatch_frames": self._exchange_mismatch_frames,
+                "last_raw_frame_age_seconds": (
+                    max(0.0, now_mono - self._last_raw_frame_at)
+                    if self._last_raw_frame_at is not None else None
+                ),
+                "last_raw_frame_age_seconds_by_group": {
+                    f"{group.mode}:{group.shard}": max(0.0, now_mono - at)
+                    for group, at in self._last_raw_frame_at_by_group.items()
+                    if group in sockets
+                },
+                "last_successful_route_age_seconds_by_group": {
+                    f"{group.mode}:{group.shard}": max(0.0, now_mono - at)
+                    for group, at in self._last_successful_route_at.items()
+                    if group in sockets
+                },
+                "last_successful_delivery_age_seconds_by_group": {
+                    f"{group.mode}:{group.shard}": (
+                        None if at is None else max(0.0, now_mono - at)
+                    )
+                    for group, at in self._last_successful_delivery_at.items()
+                    if group in sockets
+                },
+                "runtime_started_at": self._runtime_started_at,
+                "ticks_by_exchange_type": dict(self._ticks_by_exchange),
+                "last_tick": dict(self._last_tick) if self._last_tick else None,
+                "latest_tick_timestamp_ns": self._latest_tick_timestamp_ns,
+                "latest_tick_timestamp_ns_by_exchange_type": dict(self._latest_tick_timestamp_ns_by_exchange_type),
+                "last_exchange_tick_age_seconds_by_exchange_type": {
+                    str(exchange_type): max(0.0, now_wall - timestamp_ns / 1_000_000_000)
+                    for exchange_type, timestamp_ns in self._latest_tick_timestamp_ns_by_exchange_type.items()
+                },
+                "last_exchange_tick_received_age_seconds_by_exchange_type": {
+                    str(exchange_type): max(0.0, now_mono - received_at)
+                    for exchange_type, received_at in self._last_exchange_tick_received_at.items()
+                },
+                "connect_failures": self._connect_failures,
+                "broker_cooldown_remaining_seconds": self._broker_cooldown_remaining(),
+                "last_connect_failure": dict(self._last_connect_failure) if self._last_connect_failure else None,
+                "socket_failure_events": self._socket_failure_events,
+                "last_socket_failure": dict(self._last_socket_failure) if self._last_socket_failure else None,
+                "failure_recovery_groups": sorted(
+                    f"{group.mode}:{group.shard}" for group in self._failure_recovery_groups
+                ),
+                "failure_recovery_worker_active": self._failure_recovery_worker_active,
+                "failure_recovery_pending_groups": sorted(
+                    f"{group.mode}:{group.shard}" for group in self._failure_recovery_pending_groups
+                ),
+                "failure_recovery_admission_rejections": self._failure_recovery_admission_rejections,
+                "recovery_attempts": self._recovery_attempts,
+                "last_recovery_at": self._last_recovery_at,
+                "recovery_backoff_current_seconds": self._recovery_backoff_current_seconds,
+                "recovery_backoff_max_seconds": self._recovery_backoff_max_seconds,
+                "recovery_backoff_errors": self._recovery_backoff_errors,
+                "recovery_backoff_resets": self._recovery_backoff_resets,
+                "recovery_backoff_last_error": self._recovery_backoff_last_error,
+                "normalized_observer_authentication": {
+                    "state": "NOT_VERIFIABLE",
+                    "authenticated": False,
+                    "evidence": "NO_BROKER_AUTH_ACKNOWLEDGEMENT",
+                    "transport_open_is_authentication": False,
+                    "subscription_send_is_authentication": False,
+                    "authentication_acknowledgement_observed": False,
+                    "parity_generation_activation_allowed": False,
+                },
+            }
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             sockets = dict(self._sockets)
