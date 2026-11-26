@@ -25,6 +25,7 @@ from app.core.exceptions import TradingAppException, trading_exception_handler, 
 from app.core.database import engine, Base, SessionLocal, check_database, check_database_bounded, DatabaseHealthProbeBusy, DatabaseHealthProbeTimeout, database_pool_snapshot
 from app.core.contention_telemetry import set_database_owner, reset_database_owner
 from app.core.event_loop_telemetry import EventLoopLagMonitor
+from app.core.dashboard_stream_telemetry import DashboardStreamTelemetry
 from app.core.schema_migrations import run_schema_migrations
 from app.core.iv_basket_guards import install_iv_basket_immutability_guards
 from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
@@ -968,6 +969,11 @@ def broker_settings():
     return HTMLResponse(content=html, media_type="text/html")
 
 
+# Browser clients are owned exclusively by the ASGI event loop.
+_dashboard_clients: set[WebSocket] = set()
+_dashboard_stream_telemetry = DashboardStreamTelemetry()
+
+
 def _build_dashboard_snapshot_payload() -> dict:
     """Build one immutable-by-convention dashboard snapshot for all viewers."""
     snapshot = live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=50)
@@ -1013,34 +1019,70 @@ def _build_dashboard_snapshot_payload() -> dict:
     }
 
 
-async def _send_dashboard_snapshot(client: WebSocket, payload: dict) -> None:
+async def _send_dashboard_snapshot(client: WebSocket, payload: dict) -> bool:
     """Bound each client's send time; a slow browser cannot stall other viewers."""
+    started = time_module.monotonic()
     try:
         await asyncio.wait_for(client.send_json(payload), timeout=0.75)
+        _dashboard_stream_telemetry.record_client_send(
+            success=True, duration_seconds=time_module.monotonic() - started
+        )
+        return True
     except Exception:
+        _dashboard_stream_telemetry.record_client_send(
+            success=False, duration_seconds=time_module.monotonic() - started
+        )
         _dashboard_clients.discard(client)
         try:
             await client.close(code=1013, reason="dashboard consumer too slow")
         except Exception:
             pass
+        return False
 
 
 async def _dashboard_snapshot_publisher_loop() -> None:
-    """Compute once per process and fan out the same snapshot to all clients."""
+    """Compute once per process, fan out once, and retain bounded health metrics."""
     while True:
         started = time_module.monotonic()
+        build_seconds = 0.0
+        fanout_seconds = 0.0
+        client_count = len(_dashboard_clients)
+        sent_count = 0
+        failed_count = 0
         try:
-            if _dashboard_clients:
+            if client_count:
+                build_started = time_module.monotonic()
                 payload = await asyncio.to_thread(_build_dashboard_snapshot_payload)
+                build_seconds = time_module.monotonic() - build_started
                 clients = tuple(_dashboard_clients)
+                client_count = len(clients)
                 if clients:
-                    await asyncio.gather(
+                    fanout_started = time_module.monotonic()
+                    results = await asyncio.gather(
                         *(_send_dashboard_snapshot(client, payload) for client in clients),
                         return_exceptions=True,
                     )
+                    fanout_seconds = time_module.monotonic() - fanout_started
+                    sent_count = sum(result is True for result in results)
+                    failed_count = len(results) - sent_count
+            _dashboard_stream_telemetry.record_publish(
+                client_count=client_count,
+                sent_count=sent_count,
+                failed_count=failed_count,
+                build_seconds=build_seconds,
+                fanout_seconds=fanout_seconds,
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            _dashboard_stream_telemetry.record_publish(
+                client_count=client_count,
+                sent_count=sent_count,
+                failed_count=max(failed_count, client_count),
+                build_seconds=build_seconds,
+                fanout_seconds=fanout_seconds,
+                error_type=type(exc).__name__,
+            )
             app_logger.warning("Dashboard snapshot publish failed: %s", exc)
         elapsed = time_module.monotonic() - started
         await asyncio.sleep(max(0.05, 1.0 - elapsed))
@@ -2393,6 +2435,7 @@ def market_data_runtime_health():
         "common_feed": common_feed,
         "provider_readiness": provider_readiness_bridge.snapshot(),
         "event_loop": event_loop_lag_monitor.snapshot(),
+        "dashboard_stream": _dashboard_stream_telemetry.snapshot(),
         "runners": {
             "cash_future": None if cash_runner is None else cash_runner.snapshot(),
             "calendar_spread": None if calendar_runner is None else calendar_runner.snapshot(),
