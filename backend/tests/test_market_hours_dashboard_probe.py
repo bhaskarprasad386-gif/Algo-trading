@@ -29,6 +29,10 @@ def test_safe_health_fields_only_keeps_bounded_diagnostic_values():
         "event_loop": {"p95_lag_bucket": "le_0.05s", "max_lag_seconds": 0.03, "secret": "must-not-escape"},
         "dashboard_stream": {
             "last_cycle_seconds": 1.2,
+        "last_build_dispatch_wait_seconds": 0.08,
+        "max_build_dispatch_wait_seconds": 0.12,
+            "last_build_dispatch_wait_seconds": 0.08,
+            "max_build_dispatch_wait_seconds": 0.12,
             "cycle_overrun_count": 2,
             "last_payload_bytes": 4096,
             "secret": "must-not-escape",
