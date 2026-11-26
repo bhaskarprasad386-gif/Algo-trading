@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.core.config import settings
+from app.core.contention_telemetry import PoolCheckoutTelemetry
 
 
 _is_sqlite = settings.DATABASE_URL.startswith("sqlite")
@@ -44,29 +45,31 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
-# Track live pool checkouts without retaining DBAPI connections or SQL values.
-_POOL_LONG_CHECKOUT_SECONDS = 30.0
-_pool_checkout_lock = threading.Lock()
-_pool_checkouts: dict[int, tuple[float, str]] = {}
+# Event-driven telemetry captures checkout ownership and hold time without retaining
+# DBAPI connections, SQL text, credentials, or request query parameters.
+_pool_checkout_telemetry = PoolCheckoutTelemetry(max_owners=24)
 
 
 def _track_pool_checkout(dbapi_connection, connection_record, connection_proxy=None) -> None:
-    with _pool_checkout_lock:
-        _pool_checkouts[id(connection_record)] = (
-            time.monotonic(), threading.current_thread().name
-        )
+    _pool_checkout_telemetry.checkout(connection_record)
 
 
 def _clear_pool_checkout(dbapi_connection, connection_record, *args) -> None:
-    with _pool_checkout_lock:
-        _pool_checkouts.pop(id(connection_record), None)
+    _pool_checkout_telemetry.checkin(connection_record)
+
+
+def _invalidate_pool_checkout(dbapi_connection, connection_record, exception=None) -> None:
+    _pool_checkout_telemetry.checkin(connection_record, event_name="invalidate")
+
+
+def _detach_pool_checkout(dbapi_connection, connection_record) -> None:
+    _pool_checkout_telemetry.checkin(connection_record, event_name="detach")
 
 
 event.listen(engine, "checkout", _track_pool_checkout)
 event.listen(engine, "checkin", _clear_pool_checkout)
-event.listen(engine, "invalidate", _clear_pool_checkout)
-# Detached DBAPI connections leave the pool without a normal checkin event.
-event.listen(engine, "detach", _clear_pool_checkout)
+event.listen(engine, "invalidate", _invalidate_pool_checkout)
+event.listen(engine, "detach", _detach_pool_checkout)
 
 
 def get_db():
@@ -187,26 +190,20 @@ def database_pool_snapshot() -> dict[str, object]:
         checked_out >= capacity if capacity is not None and isinstance(checked_out, int) else None
     )
 
-    now = time.monotonic()
-    with _pool_checkout_lock:
-        checkouts = tuple(_pool_checkouts.values())
-    ages = [(max(0.0, now - started), thread_name) for started, thread_name in checkouts]
-    oldest = max(ages, default=(0.0, None), key=lambda item: item[0])
-    active_checkout_count = len(ages)
+    checkout_metrics = _pool_checkout_telemetry.snapshot()
+    active_checkout_count = int(checkout_metrics["active_checkouts"])
     tracking_delta = (
         checked_out - active_checkout_count
         if isinstance(checked_out, int)
         else None
     )
+    snapshot.update(checkout_metrics)
     snapshot.update({
         "active_checkout_count": active_checkout_count,
-        "long_checkout_count": sum(age >= _POOL_LONG_CHECKOUT_SECONDS for age, _ in ages),
-        "oldest_checkout_seconds": round(oldest[0], 3) if ages else None,
-        "oldest_checkout_thread": oldest[1],
-        "long_checkout_threshold_seconds": _POOL_LONG_CHECKOUT_SECONDS,
+        "long_checkout_count": checkout_metrics["long_checkouts_30s"],
+        "long_checkout_threshold_seconds": 30.0,
         # Pool counters and event tracking are sampled independently. A
-        # mismatch can be a normal checkout/checkin race, so it is never
-        # reported as an untracked connection or a leak count.
+        # mismatch can be a normal checkout/checkin race, never a leak claim.
         "checkout_tracking_delta": tracking_delta,
         "untracked_checkout_count": None,
         "checkout_tracking_status": (
