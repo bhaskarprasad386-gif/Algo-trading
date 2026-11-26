@@ -44,6 +44,7 @@ from app.market_data.client import MarketDataClient
 from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
+from app.market_data.dashboard_snapshot_cache import cached_snapshot
 from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
@@ -2328,6 +2329,7 @@ def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
 
 
 @app.get("/api/v1/market-data/runtime/health")
+@cached_snapshot(ttl_seconds=5.0, max_stale_seconds=20.0)
 def market_data_runtime_health():
     """Expose process-local live-feed diagnostics for runtime troubleshooting."""
     global _provider_readiness_observer_manager_id
