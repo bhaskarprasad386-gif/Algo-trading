@@ -145,3 +145,29 @@ def test_health_probe_timeout_is_bounded_and_single_flight(monkeypatch):
     finally:
         release.set()
         assert finished.wait(timeout=2)
+
+def test_health_diagnostics_do_not_expose_raw_database_exception(monkeypatch):
+    from types import SimpleNamespace
+
+    recorded = []
+    secret_detail = "database is locked; password=must-not-leak"
+
+    monkeypatch.setattr(main, "engine", SimpleNamespace(dialect=SimpleNamespace(name="sqlite")))
+    monkeypatch.setattr(main, "database_pool_snapshot", lambda: {
+        "pool_class": "QueuePool", "checkedout": 1, "capacity": 15, "saturated": False,
+    })
+    monkeypatch.setattr(
+        main, "check_database",
+        lambda: (_ for _ in ()).throw(RuntimeError(secret_detail)),
+    )
+    monkeypatch.setattr(main.runtime_diagnostics, "record", lambda **kwargs: recorded.append(kwargs))
+
+    response = TestClient(main.app).get("/health")
+
+    assert response.status_code == 503
+    assert secret_detail not in response.text
+    assert len(recorded) == 1
+    assert secret_detail not in recorded[0]["message"]
+    assert recorded[0]["message"] == "Database readiness probe failed (RuntimeError)"
+    assert recorded[0]["context"]["database_exception_type"] == "RuntimeError"
+    assert recorded[0]["context"]["database_failure_class"] == "SQLITE_CONTENTION"
