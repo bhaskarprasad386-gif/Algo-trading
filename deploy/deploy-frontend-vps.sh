@@ -49,7 +49,7 @@ cleanup() {
   if [[ -d "$RELEASE_DIR" ]]; then cd "$APP_DIR"; git worktree remove --force "$RELEASE_DIR" >/dev/null 2>&1 || rm -rf "$RELEASE_DIR"; git worktree prune; fi
   if [[ "$status" -eq 0 ]]; then
     # Keep the previous build and dependency tree as a manual rollback point.
-    find /opt -maxdepth 1 -type d -name 'algo-frontend-rollback-*' -printf '%T@ %p\\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | while IFS= read -r old; do rm -rf "$old"; done
+    find /opt -maxdepth 1 -type d -name 'algo-frontend-rollback-*' -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | while IFS= read -r old; do rm -rf "$old"; done
   fi
   exit "$status"
 }
@@ -88,7 +88,7 @@ systemctl start "$SERVICE"
 
 healthy=0
 for attempt in $(seq 1 30); do
-  if curl --fail --silent --show-error --connect-timeout 2 --max-time 5 http://127.0.0.1:3000/ >/dev/null \\
+  if curl --fail --silent --show-error --connect-timeout 2 --max-time 5 http://127.0.0.1:3000/ >/dev/null \
     && curl --fail --silent --show-error --connect-timeout 2 --max-time 5 http://127.0.0.1:3000/errors >/dev/null; then
     healthy=1
     break
