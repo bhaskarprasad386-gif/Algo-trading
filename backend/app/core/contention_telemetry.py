@@ -126,6 +126,7 @@ class InstrumentedRLock:
         self._metrics_lock = threading.Lock()
         self._local = threading.local()
         self._acquisitions = 0
+        self._wait_samples = 0
         self._wait_total = 0.0
         self._wait_max = 0.0
         self._wait_buckets: Counter[str] = Counter()
@@ -156,6 +157,7 @@ class InstrumentedRLock:
             with self._metrics_lock:
                 if acquired:
                     self._acquisitions += 1
+                self._wait_samples += 1
                 self._wait_total += waited
                 self._wait_max = max(self._wait_max, waited)
                 self._wait_buckets[self._bucket(waited)] += 1
@@ -194,7 +196,8 @@ class InstrumentedRLock:
                 "sample_every": self.sample_every,
                 "sampled_acquisitions": count,
                 "wait_duration_buckets": dict(self._wait_buckets),
-                "average_wait_seconds": round(self._wait_total / count, 6) if count else None,
+                "sampled_waits": self._wait_samples,
+                "average_wait_seconds": round(self._wait_total / self._wait_samples, 6) if self._wait_samples else None,
                 "max_wait_seconds": round(self._wait_max, 6) if count else None,
                 "hold_duration_buckets": dict(self._hold_buckets),
                 "average_hold_seconds": round(self._hold_total / self._hold_count, 6) if self._hold_count else None,
