@@ -596,10 +596,26 @@ class IVOneSecondSampler:
                 for token, rows in previous._history.items()
                 if token in valid
             }
+            # A source sampler can be replaced while its database is down.
+            # Carry its uncommitted rows too, otherwise inherited in-memory
+            # history would advance the new sampler's cursor past lost writes.
+            prior_pending = tuple(previous._pending_history.values())
         now_ns = self.clock_ns()
         cutoff_ns = now_ns - self.history_limit * 1_000_000_000
         copied = 0
         with self._lock:
+            for item in prior_pending:
+                contract = valid.get(item.token)
+                if (
+                    contract is not None
+                    and item.underlying == self.config.symbol
+                    and item.expiry == universe.expiry
+                    and (item.strike, item.option_type) == contract
+                    and cutoff_ns <= item.source_timestamp_ns <= now_ns
+                ):
+                    self._pending_history.setdefault(
+                        (item.token, item.source_timestamp_ns), item,
+                    )
             for token, rows in prior.items():
                 strike, option_type = valid[token]
                 eligible = [
