@@ -259,6 +259,16 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
 
     monkeypatch.setattr(push, "_subscribe_local", controlled_subscribe)
 
+    # This round-trip covers protocol behavior; dispatcher teardown is tested
+    # independently below. Avoid coupling Starlette portal shutdown to the
+    # background journal task lifecycle in this integration test.
+    async def controlled_unsubscribe(queue):
+        for entry in tuple(push._subscribers):
+            if entry[0] is queue:
+                push._subscribers.discard(entry)
+
+    monkeypatch.setattr(push, "_unsubscribe_local", controlled_unsubscribe)
+
     app = FastAPI()
     app.include_router(push.router)
     page = "box-spread"
