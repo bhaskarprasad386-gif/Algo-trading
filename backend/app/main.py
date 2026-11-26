@@ -3134,18 +3134,26 @@ def health_check():
     except Exception as exc:
         failure_class = _database_health_failure_class(exc)
         failure_pool_snapshot = database_pool_snapshot()
+        # DB-driver exception strings can contain connection details or SQL
+        # context. Keep diagnostics actionable without copying raw driver text.
+        exception_type = type(exc).__name__
         runtime_diagnostics.record(
             component="Database",
             error_type=failure_class,
-            message=str(exc),
+            message=f"Database readiness probe failed ({exception_type})",
             endpoint="/health",
             context={
                 "event": "health_check",
                 "database_failure_class": failure_class,
+                "database_exception_type": exception_type,
                 "database_pool": failure_pool_snapshot,
             },
         )
-        app_logger.error(f"Health check database failure ({failure_class}): {exc}")
+        app_logger.error(
+            "Health check database failure (%s; exception=%s)",
+            failure_class,
+            exception_type,
+        )
         return JSONResponse(
             status_code=503,
             content={
