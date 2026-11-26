@@ -3084,6 +3084,26 @@ def iv_skew_flip_validation(underlying: str = "NIFTY", expiry_type: str | None =
 
 @app.get("/health")
 def health_check():
+    # Do not queue a readiness probe behind an already exhausted DB pool.
+    # This is only an early degraded response; a non-saturated pool still
+    # requires a real SELECT 1 before the endpoint can report healthy.
+    pool_snapshot = database_pool_snapshot()
+    if pool_snapshot.get("saturated") is True:
+        runtime_diagnostics.record(
+            component="Database",
+            error_type="PoolSaturated",
+            message="Database connection pool is at its configured checkout capacity",
+            endpoint="/health",
+            context={"event": "health_check", "database_pool": pool_snapshot},
+        )
+        return {
+            "status": "degraded",
+            "app": settings.app_name,
+            "version": "0.1.0",
+            "database": "Pool saturated",
+            "database_pool": pool_snapshot,
+        }
+
     try:
         check_database()
     except Exception as exc:
