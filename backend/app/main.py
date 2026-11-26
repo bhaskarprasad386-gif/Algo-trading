@@ -2637,7 +2637,7 @@ def iv_skew_flip_option_timeseries(
         raise HTTPException(
             status_code=503,
             detail={"message": "IV option time-series is temporarily unavailable.",
-                    "reason": f"{type(exc).__name__}: {exc}"},
+                    "reason": type(exc).__name__},
         ) from exc
     rows.reverse()  # keep the newest bounded window in chronological order
     observations = [
@@ -2771,7 +2771,7 @@ def capture_iv_skew_flip_broker_snapshot(underlying: str = "NIFTY"):
         app_logger.exception("Manual IV broker option snapshot failed")
         raise HTTPException(
             status_code=503,
-            detail={"message": "Angel One option-chain snapshot could not be captured.", "reason": str(exc)},
+            detail={"message": "Angel One option-chain snapshot could not be captured.", "reason": type(exc).__name__},
         ) from exc
 
 
@@ -2898,7 +2898,7 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
         app_logger.exception("IV option history read failed")
         raise HTTPException(
             status_code=503,
-            detail={"message": "Durable IV option history is temporarily unavailable.", "reason": f"{type(exc).__name__}: {exc}"},
+            detail={"message": "Durable IV option history is temporarily unavailable.", "reason": type(exc).__name__},
         ) from exc
     metrics = []
     for row in rows:
@@ -2977,7 +2977,7 @@ def save_iv_skew_flip_config(payload: dict):
                 _save_iv_scanner_enabled(True)
             except Exception as exc:
                 app_logger.exception("IV Scanner ON state could not be persisted")
-                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not started because ON state could not be saved.", "reason": str(exc)}) from exc
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not started because ON state could not be saved.", "reason": type(exc).__name__}) from exc
             try:
                 snapshot = _start_iv_skew_flip_runtime()
             except Exception as exc:
@@ -2987,7 +2987,7 @@ def save_iv_skew_flip_config(payload: dict):
                 except Exception:
                     app_logger.exception("IV Scanner failed to roll back persisted ON state after startup failure")
                 app_logger.exception("IV Scanner could not be enabled")
-                raise HTTPException(status_code=503, detail={"message": "IV Scanner ON save failed because backend runner did not start.", "reason": str(exc)}) from exc
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner ON save failed because backend runner did not start.", "reason": type(exc).__name__}) from exc
         else:
             # Persist OFF first. If the database is unavailable, leave the
             # currently running scanner untouched rather than create a
@@ -2996,7 +2996,7 @@ def save_iv_skew_flip_config(payload: dict):
                 _save_iv_scanner_enabled(False)
             except Exception as exc:
                 app_logger.exception("IV Scanner OFF state could not be persisted")
-                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not stopped because OFF state could not be saved.", "reason": str(exc)}) from exc
+                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not stopped because OFF state could not be saved.", "reason": type(exc).__name__}) from exc
             snapshot = _stop_iv_skew_flip_runtime()
         return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
                 "runner_status": snapshot.get("status", "STOPPED"),
@@ -3019,7 +3019,7 @@ def start_iv_skew_flip_scanner():
             return snapshot
         except Exception as exc:
             app_logger.exception("IV Skew / IV Flip scanner startup failed")
-            raise HTTPException(status_code=503, detail={"message": "IV scanner could not start; verify Angel One session, shared feed and instrument master.", "reason": str(exc)}) from exc
+            raise HTTPException(status_code=503, detail={"message": "IV scanner could not start; verify Angel One session, shared feed and instrument master.", "reason": type(exc).__name__}) from exc
 
 
 @app.post("/api/v1/scanner/iv-skew-flip/stop")
