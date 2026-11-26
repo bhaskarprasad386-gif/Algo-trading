@@ -8,10 +8,12 @@ buffer is lost on backend restart. The dashboard cannot use it while the API is 
 `algo-diagnostics.service` is an independent systemd process. It reads the
 `algo-trading.service` journal and, while the API is reachable, snapshots the
 process-local `/api/v1/diagnostics/errors` ring buffer into bounded SQLite storage.
-It serves persisted, sanitized ERROR/WARNING/CRITICAL summaries on
-`127.0.0.1:8765`. It preserves runtime diagnostics captured before an API outage
-and journal errors emitted while the API is down. It does not import the trading
-app, open broker sockets, call runner controls, or mutate scanner state.
+It serves persisted ERROR/WARNING/CRITICAL events on `127.0.0.1:8765`. Error
+messages and operational details are intentionally visible on the public dashboard.
+Credential and account-secret patterns are redacted before persistence and response.
+It preserves runtime diagnostics captured before an API outage and journal errors
+emitted while the API is down. It does not import the trading app, open broker
+sockets, call runner controls, or mutate scanner state.
 
 ## Install without restarting the trading API
 
@@ -40,24 +42,19 @@ systemctl is-active algo-diagnostics.service
 systemctl is-active algo-trading.service
 ```
 
-## HTTPS routing and access control
+## HTTPS routing
 
 The collector binds only to loopback. Do not expose port 8765 publicly.
-The sample `deploy/nginx-server-diagnostics.conf` is a reverse-proxy location,
-not a complete authentication policy. The `/server-diagnostics/` route returns
-operational log summaries and MUST be protected by the same trusted
-authentication/authorization policy as the dashboard before it is made publicly
-reachable. Do not assume that frontend page protection also protects this
-independent Nginx location. Do not install the sample location as an unrestricted
-public endpoint.
+The `/server-diagnostics/` HTTPS reverse-proxy route is intentionally public,
+matching the existing dashboard's no-login access model. Error logs and
+operational diagnostics are therefore viewable by anyone who can reach the
+dashboard. Credential and account-secret patterns are redacted by the collector;
+this is not an authentication boundary and should not be described as private.
 
-Add the location inside the existing HTTPS `server {}` block without replacing
-TLS or existing routes. Preserve the site's established access-control mechanism
-for this path. Then run `nginx -t` and reload Nginx only after the configuration
-test succeeds. Verify the route from an authenticated browser session and verify
-that an unauthenticated request is denied. If the existing access-control
-mechanism cannot be applied to this path, keep the route disabled until a secure
-same-origin authenticated proxy is implemented.
+Add the location from `deploy/nginx-server-diagnostics.conf` inside the existing
+HTTPS `server {}` block without replacing TLS or existing routes. Run
+`nginx -t` and reload Nginx only after the configuration test succeeds. Verify
+the public HTTPS route and verify that the collector remains loopback-only.
 
 ## API contract and bounds
 
@@ -82,9 +79,8 @@ previous logs with an empty list; the last successful sync time remains visible.
 - Journal warnings/errors appear and sample credentials are redacted.
 - API runtime events captured before an outage remain available.
 - Event retention and request limits remain bounded.
-- Authenticated HTTPS route works while API port 8000 is stopped.
-- Unauthenticated HTTPS requests to the diagnostics route are denied.
-- Only after those checks may browser access during API outage be considered verified.
+- Public HTTPS diagnostics route works while API port 8000 is stopped.
+- Collector port 8765 remains inaccessible directly from the public network.
 
 Do not touch market-data sockets, scanners, Shared Runner, broker connections, or
 order mode as part of this diagnostics rollout.
