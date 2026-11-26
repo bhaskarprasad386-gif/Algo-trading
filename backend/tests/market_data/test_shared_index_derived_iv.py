@@ -7,7 +7,7 @@ IST=ZoneInfo("Asia/Kolkata")
 
 def test_iv_inversion_for_call_and_put():
     now=datetime(2026,11,22,10,0,tzinfo=IST)
-    call=implied_volatility(220,22000,22000,"2099-12-31","CE",now=now)
+    call=implied_volatility(220,22000,22000,"2026-11-26","CE",now=now)
     put=implied_volatility(215,22000,22000,"2099-12-31","PE",now=now)
     assert call is not None and 1 < call < 500
     assert put is not None and 1 < put < 500
