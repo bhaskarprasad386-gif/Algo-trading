@@ -262,8 +262,15 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def _method_not_allowed(self) -> None:
-        self._json(405, {"status": "method_not_allowed", "allowed": ["GET"]})
+        payload = json.dumps({"status": "method_not_allowed", "allowed": ["GET"]}).encode()
+        self.send_response(405)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Allow", "GET")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def do_POST(self) -> None:  # noqa: N802
         self._method_not_allowed()
