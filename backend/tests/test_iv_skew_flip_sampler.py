@@ -407,7 +407,7 @@ def test_sampler_keeps_live_metrics_and_retries_history_after_storage_failure():
     assert first["status"] == "LIVE"
     assert first["sample_count"] == 1
     assert first["history_samples_by_token"] == {"retry-ce": 1}
-    assert "database temporarily unavailable" in first["history_persistence_error"]
+    assert first["history_persistence_error"] == "RuntimeError"
 
     second = sampler.sample_once(
         now_ns=now_ns + 1_000_000_000, now=now,
