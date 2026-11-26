@@ -55,8 +55,6 @@ function ScannerContent() {
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [lastLiveScanAt, setLastLiveScanAt] = useState<string | null>(null);
   const { data: pagePushData, status: pagePushStatus } = usePagePush("cash-future");
-  const pairHistoryRevisionRef = useRef<string | null>(null);
-  const pairHistoryRequestSequenceRef = useRef(0);
   // Prevent delayed REST recovery from overwriting authoritative page pushes.
   const liveRequestSequenceRef = useRef(0);
   const pairLiveRequestSequenceRef = useRef(0);
@@ -103,19 +101,6 @@ function ScannerContent() {
     }
   };
 
-  const loadPairHistory = async () => {
-    const requestSequence = ++pairHistoryRequestSequenceRef.current;
-    try {
-      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(`${base}/api/v1/scanner/cash-future/live/history?days=1&limit=100`, { cache: "no-store" });
-      const body = await response.json().catch(() => ({}));
-      if (requestSequence !== pairHistoryRequestSequenceRef.current) return;
-      setPairHistory(Array.isArray(body?.data) ? body.data : []);
-    } catch {
-      if (requestSequence === pairHistoryRequestSequenceRef.current) setPairHistory([]);
-    }
-  };
-
   useEffect(() => {
     let cancelled = false;
     const loadMarketSession = async () => {
@@ -147,7 +132,6 @@ function ScannerContent() {
     } else if (pagePushStatus !== "LIVE") {
       setLoading(false); setRows([]); setPairRows([]); setError(null);
     }
-    void loadPairHistory();
     if (pagePushStatus === "LIVE") return;
     const liveTimer = window.setInterval(() => {
       if (marketSession !== "OPEN") return;
@@ -180,24 +164,6 @@ function ScannerContent() {
     if (Array.isArray(pagePushData.pairs)) setPairRows(pagePushData.pairs.filter((item: unknown): item is Row => !!item && typeof item === "object"));
     if (pagePushData.stats && typeof pagePushData.stats === "object") setPairBackendStats(pagePushData.stats as Row);
     if (typeof pagePushData.scan_at === "string") setLastLiveScanAt(pagePushData.scan_at);
-  }, [pagePushData]);
-
-
-  useEffect(() => {
-    const stats = pagePushData?.stats;
-    if (!stats || typeof stats !== "object") return;
-    const revision = (stats as Record<string, unknown>).pair_events_persisted;
-    if (revision === undefined || revision === null) return;
-    const nextRevision = String(revision);
-    if (pairHistoryRevisionRef.current === null) {
-      pairHistoryRevisionRef.current = nextRevision;
-      return;
-    }
-    if (pairHistoryRevisionRef.current === nextRevision) return;
-    pairHistoryRevisionRef.current = nextRevision;
-    // The durable history API owns pagination and filtering; the push counter
-    // invalidates its cached slice when new observations are appended.
-    void loadPairHistory();
   }, [pagePushData]);
 
 
@@ -323,9 +289,8 @@ function ScannerContent() {
   const refresh = async () => {
     setRefreshing(true);
     if (marketSession === "OPEN") {
-      await Promise.all([load(), loadPairLive(), loadPairHistory()]);
+      await Promise.all([load(), loadPairLive()]);
     } else {
-      await loadPairHistory();
     }
     setRefreshing(false);
   };
