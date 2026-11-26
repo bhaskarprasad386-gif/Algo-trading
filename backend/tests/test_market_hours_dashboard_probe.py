@@ -27,6 +27,19 @@ def test_safe_health_fields_only_keeps_bounded_diagnostic_values():
             "password": "must-not-escape",
         },
         "event_loop": {"p95_lag_bucket": "le_0.05s", "max_lag_seconds": 0.03, "secret": "must-not-escape"},
+        "dashboard_stream": {
+            "last_cycle_seconds": 1.2,
+            "cycle_overrun_count": 2,
+            "last_payload_bytes": 4096,
+            "secret": "must-not-escape",
+        },
+        "persisted_summary": {
+            "status": "STALE",
+            "age_seconds": 75,
+            "refresh_errors": 1,
+            "last_error_type": "OperationalError",
+            "secret": "must-not-escape",
+        },
         "runtime_feed": {
             "status": "STALE",
             "age_seconds": 7.0,
@@ -43,6 +56,17 @@ def test_safe_health_fields_only_keeps_bounded_diagnostic_values():
         "max_lag_seconds": 0.03, "p95_lag_bucket": "le_0.05s"
     }
     assert result["feed_freshness"]["status"] == "STALE"
+    assert result["dashboard_stream"] == {
+        "last_cycle_seconds": 1.2,
+        "last_payload_bytes": 4096,
+        "cycle_overrun_count": 2,
+    }
+    assert result["persisted_summary"] == {
+        "status": "STALE",
+        "age_seconds": 75,
+        "refresh_errors": 1,
+        "last_error_type": "OperationalError",
+    }
     assert "password" not in str(result)
     assert "must-not-escape" not in str(result)
 
