@@ -1,9 +1,9 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Activity, Bell, Filter, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Zap } from "lucide-react";
+import { Activity, Bell, Filter, Search, ShieldCheck, SlidersHorizontal, Zap } from "lucide-react";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig } from "@/lib/config";
 import { usePagePush } from "@/components/page-push-provider";
@@ -46,8 +46,7 @@ function ScannerContent() {
   const [market, setMarket] = useState(requestedMarket);
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pairRows, setPairRows] = useState<Row[]>([]);
   const [pairHistory, setPairHistory] = useState<Row[]>([]);
@@ -55,51 +54,6 @@ function ScannerContent() {
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [lastLiveScanAt, setLastLiveScanAt] = useState<string | null>(null);
   const { data: pagePushData, status: pagePushStatus } = usePagePush("cash-future");
-  // Prevent delayed REST recovery from overwriting authoritative page pushes.
-  const liveRequestSequenceRef = useRef(0);
-  const pairLiveRequestSequenceRef = useRef(0);
-
-  const load = async () => {
-    const requestSequence = ++liveRequestSequenceRef.current;
-    setLoading(true);
-    setError(null);
-    try {
-      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(`${base}/api/v1/scanner/cash-future/live/fast?limit=500`, { cache: "no-store" });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body?.detail || `Scanner HTTP ${response.status}`);
-      if (requestSequence !== liveRequestSequenceRef.current) return;
-      const data = Array.isArray(body?.data) ? body.data : [];
-      setRows(data.filter((item: unknown): item is Row => !!item && typeof item === "object"));
-      if (typeof body?.scan_at === "string") setLastLiveScanAt(body.scan_at);
-    } catch (e) {
-      if (requestSequence !== liveRequestSequenceRef.current) return;
-      setRows([]);
-      setError(e instanceof Error ? e.message : "Backend unavailable");
-    } finally {
-      if (requestSequence === liveRequestSequenceRef.current) setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    setMarket(markets.includes(requestedMarket) ? requestedMarket : "ALL F&O STOCKS");
-  }, [requestedMarket]);
-
-  const loadPairLive = async () => {
-    const requestSequence = ++pairLiveRequestSequenceRef.current;
-    try {
-      const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-      const response = await fetch(`${base}/api/v1/scanner/cash-future/live/pairs?max_age_seconds=120&limit=500`, { cache: "no-store" });
-      const body = await response.json().catch(() => ({}));
-      if (requestSequence !== pairLiveRequestSequenceRef.current) return;
-      setPairRows(Array.isArray(body?.data) ? body.data : []);
-      const stats = body?.stats && typeof body.stats === "object" ? body.stats : {};
-      setPairBackendStats(stats);
-      if (typeof stats?.last_observation_at === "string") setLastLiveScanAt(stats.last_observation_at);
-    } catch {
-      // Keep the last good diagnostic snapshot visible during a transient poll failure.
-    }
-  };
 
   useEffect(() => {
     let cancelled = false;
@@ -122,29 +76,7 @@ function ScannerContent() {
   }, [pagePushStatus]);
 
   useEffect(() => {
-    // A LIVE transition invalidates any in-flight REST recovery request.
-    if (pagePushStatus === "LIVE") {
-      liveRequestSequenceRef.current += 1;
-      pairLiveRequestSequenceRef.current += 1;
-    }
-    if (marketSession === "OPEN") {
-      if (pagePushStatus !== "LIVE") { void load(); void loadPairLive(); }
-    } else if (pagePushStatus !== "LIVE") {
-      setLoading(false); setRows([]); setPairRows([]); setError(null);
-    }
-    if (pagePushStatus === "LIVE") return;
-    const liveTimer = window.setInterval(() => {
-      if (marketSession !== "OPEN") return;
-      void load(); void loadPairLive();
-    }, 15000);
-    return () => window.clearInterval(liveTimer);
-  }, [marketSession, pagePushStatus]);
-
-  useEffect(() => {
     if (!pagePushData) return;
-    // Any page push supersedes outstanding REST fallback payloads, including REMOVE.
-    liveRequestSequenceRef.current += 1;
-    pairLiveRequestSequenceRef.current += 1;
     const event = String(pagePushData.__event ?? "").toUpperCase();
     const removedKeys = Array.isArray(pagePushData.remove_keys)
       ? pagePushData.remove_keys.filter((key): key is string => typeof key === "string")
@@ -286,15 +218,6 @@ function ScannerContent() {
     return age < 60000 ? `${Math.round(age / 1000)}s ago` : `${Math.round(age / 60000)}m ago`;
   };
 
-  const refresh = async () => {
-    setRefreshing(true);
-    if (marketSession === "OPEN") {
-      await Promise.all([load(), loadPairLive()]);
-    } else {
-    }
-    setRefreshing(false);
-  };
-
   return (
     <div className="min-h-screen space-y-5 theme-bg p-4 theme-text">
       <PageTitle eyebrow="Phase 3 • Live Scanner" title="Cash Future" description="Live Cash-Future opportunities across the subscribed F&O stock-futures universe, with executable bid/ask gap, volume/OI and strategy signals." />
@@ -310,7 +233,7 @@ function ScannerContent() {
         </div>
         <div className="flex gap-2">
           <Link href="/custom-alert" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border theme-border theme-surface px-4 text-sm font-semibold theme-text hover:theme-border"><Bell className="h-4 w-4" /> Custom Alert</Link>
-          <button type="button" onClick={refresh} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border theme-border theme-surface px-4 text-sm font-semibold theme-text hover:theme-border"><RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} /> Refresh</button>
+          <span className="inline-flex min-h-10 items-center rounded-xl border theme-border theme-surface px-4 text-xs font-semibold theme-muted">REST APIs disabled</span>
         </div>
       </div>
 
