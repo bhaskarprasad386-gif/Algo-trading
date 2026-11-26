@@ -1082,6 +1082,7 @@ async def _dashboard_snapshot_publisher_loop() -> None:
                     fanout_seconds = time_module.monotonic() - fanout_started
                     sent_count = sum(result is True for result in results)
                     failed_count = len(results) - sent_count
+            cycle_seconds = time_module.monotonic() - started
             _dashboard_stream_telemetry.record_publish(
                 client_count=client_count,
                 sent_count=sent_count,
@@ -1090,10 +1091,12 @@ async def _dashboard_snapshot_publisher_loop() -> None:
                 fanout_seconds=fanout_seconds,
                 serialization_seconds=serialization_seconds,
                 payload_bytes=payload_bytes,
+                cycle_seconds=cycle_seconds,
             )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            cycle_seconds = time_module.monotonic() - started
             _dashboard_stream_telemetry.record_publish(
                 client_count=client_count,
                 sent_count=sent_count,
@@ -1102,6 +1105,7 @@ async def _dashboard_snapshot_publisher_loop() -> None:
                 fanout_seconds=fanout_seconds,
                 serialization_seconds=serialization_seconds,
                 payload_bytes=payload_bytes,
+                cycle_seconds=cycle_seconds,
                 error_type=type(exc).__name__,
             )
             app_logger.warning("Dashboard snapshot publish failed: %s", exc)
