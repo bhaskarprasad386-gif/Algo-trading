@@ -172,6 +172,11 @@ class IVOneSecondSampler:
                         == latest_source.c.latest_source_timestamp_ns
                     ),
                 )
+                .filter(
+                    IVOptionObservation.underlying == self.config.symbol,
+                    IVOptionObservation.expiry == self.configured_expiry,
+                    IVOptionObservation.source_timestamp_ns <= now_ns,
+                )
                 .all()
             )
             recent_rows = (
