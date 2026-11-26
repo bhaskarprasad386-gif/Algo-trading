@@ -33,6 +33,7 @@ export default function HomePage() {
   const [feedAge, setFeedAge] = useState<number | null>(null);
   const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; connectedGroupNames: string[]; requiredSocketGroups: string[]; requiredSocketGroupCount: number | null; missingSocketGroups: string[]; disconnectedGroups: string[]; maxSocketSessions: number; lastConnectFailure: any; lastSocketFailure: any; retiredTransportCount: number; brokerCooldownRemaining: number; failureRecoveryGroups: string[]; transportCloseTimedOutGroups: string[]; socketHealthByGroup: Record<string, any>; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; payloads: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, connectedGroupNames: [], requiredSocketGroups: [], requiredSocketGroupCount: null, missingSocketGroups: [], disconnectedGroups: [], maxSocketSessions: 3, lastConnectFailure: null, lastSocketFailure: null, retiredTransportCount: 0, brokerCooldownRemaining: 0, failureRecoveryGroups: [], transportCloseTimedOutGroups: [], socketHealthByGroup: {}, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const healthFailureCountRef = useRef(0);
+  const lastReadinessCheckAtRef = useRef(0);
   const lastDashboardServerSnapshotTimeRef = useRef<number | null>(null);
   const runnerCountersRef = useRef<Record<string, number> | null>(null);
   const runnerCounterSampleAtRef = useRef<number | null>(null);
@@ -85,7 +86,12 @@ export default function HomePage() {
         }
       }
 
-      if (processReachable) {
+      // Readiness performs a real database checkout/SELECT 1. Keep the
+      // process liveness signal frequent, but do not turn the dashboard into
+      // a five-second database load generator. The last readiness result stays
+      // visible between samples; a new DB probe runs at most every 30 seconds.
+      if (processReachable && Date.now() - lastReadinessCheckAtRef.current >= 30000) {
+        lastReadinessCheckAtRef.current = Date.now();
         try {
           const readyResponse = await fetch(base + "/health", {
             cache: "no-store",
