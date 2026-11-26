@@ -95,15 +95,18 @@ class DailyMarketDataShardCatalog:
                         """,
                         (source, timeframe, source, timeframe),
                     ).fetchall()
-                    record_count += int(summary_rows[0][0] or 0) if summary_rows else 0
+                    shard_record_count = (
+                        int(summary_rows[0][0] or 0) if summary_rows else 0
+                    )
+                    record_count += shard_record_count
                     rows = [
                         (row[1], row[2]) for row in summary_rows
-                        if row[1] is not None
+                        if row[1] is not None and shard_record_count > 0
                     ]
                     # A watermark table can predate its backfill in legacy
                     # catalogs. Fall back only when rows exist but no
                     # maintained watermark is present for this source.
-                    if not rows and record_count > 0:
+                    if not rows and shard_record_count > 0:
                         rows = connection.execute(
                             "SELECT instrument, MAX(timestamp_ns) FROM data_catalog "
                             "WHERE source=? AND timeframe=? GROUP BY instrument",
