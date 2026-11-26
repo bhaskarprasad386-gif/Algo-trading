@@ -1060,6 +1060,7 @@ async def _dashboard_snapshot_publisher_loop() -> None:
     while True:
         started = time_module.monotonic()
         build_seconds = 0.0
+        build_dispatch_wait_seconds = 0.0
         serialization_seconds = 0.0
         payload_bytes = 0
         fanout_seconds = 0.0
@@ -1068,8 +1069,18 @@ async def _dashboard_snapshot_publisher_loop() -> None:
         failed_count = 0
         try:
             if client_count:
+                dispatch_started = time_module.monotonic()
                 payload, build_seconds, serialization_seconds, payload_bytes = (
                     await asyncio.to_thread(_build_dashboard_snapshot_frame)
+                )
+                # The function reports only time spent executing build/JSON work.
+                # The residual await time estimates queueing/scheduling delay before
+                # the default executor starts the task; this helps distinguish a
+                # slow snapshot from thread-pool starvation without private APIs.
+                build_dispatch_wait_seconds = max(
+                    0.0,
+                    time_module.monotonic() - dispatch_started
+                    - build_seconds - serialization_seconds,
                 )
                 clients = tuple(_dashboard_clients)
                 client_count = len(clients)
@@ -1088,6 +1099,7 @@ async def _dashboard_snapshot_publisher_loop() -> None:
                 sent_count=sent_count,
                 failed_count=failed_count,
                 build_seconds=build_seconds,
+                build_dispatch_wait_seconds=build_dispatch_wait_seconds,
                 fanout_seconds=fanout_seconds,
                 serialization_seconds=serialization_seconds,
                 payload_bytes=payload_bytes,
