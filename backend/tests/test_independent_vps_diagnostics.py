@@ -110,7 +110,7 @@ def test_journal_collector_persists_loguru_errors_and_advances_cursor(tmp_path: 
 
     def fake_run(command, **_kwargs):
         calls.append(command)
-        return SimpleNamespace(returncode=0, stdout="".join(json.dumps(item) + "\\n" for item in records), stderr="")
+        return SimpleNamespace(returncode=0, stdout="".join(json.dumps(item) + "\n" for item in records), stderr="")
 
     monkeypatch.setattr(agent.subprocess, "run", fake_run)
     db = agent.connect_db()
@@ -144,7 +144,7 @@ def test_journal_cursor_rotation_falls_back_and_resumes(tmp_path: Path, monkeypa
         calls.append(command)
         if "--after-cursor" in command:
             return SimpleNamespace(returncode=1, stdout="", stderr="Failed to seek to cursor")
-        return SimpleNamespace(returncode=0, stdout=json.dumps(record) + "\\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout=json.dumps(record) + "\n", stderr="")
 
     monkeypatch.setattr(agent.subprocess, "run", fake_run)
     db = agent.connect_db()
