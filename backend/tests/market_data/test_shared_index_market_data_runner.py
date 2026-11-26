@@ -1,8 +1,24 @@
-from datetime import date
+from datetime import date, datetime as RealDateTime
+from zoneinfo import ZoneInfo
+import pytest
+
+import app.market_data.shared_index_market_data_runner as runner_module
 from app.market_data.shared_index_market_data_runner import (
     SharedIndexMarketDataRunner, choose_locked_expiry,
 )
 from app.market_data.contracts import MarketDataRecord, InstrumentKey, InstrumentType, OptionType
+
+
+class FrozenDateTime(RealDateTime):
+    @classmethod
+    def now(cls, tz=None):
+        fixed = RealDateTime(2026, 11, 22, 12, 0)
+        return fixed.replace(tzinfo=tz) if tz is not None else fixed
+
+
+@pytest.fixture(autouse=True)
+def freeze_runner_market_date(monkeypatch):
+    monkeypatch.setattr(runner_module, "datetime", FrozenDateTime)
 
 
 class FakeMaster:
