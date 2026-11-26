@@ -22,7 +22,7 @@ from app.core.logger import app_logger
 from app.core.daemon_worker import run_blocking_daemon
 from app.core.diagnostics import runtime_diagnostics
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
-from app.core.database import engine, Base, SessionLocal, check_database, database_pool_snapshot
+from app.core.database import engine, Base, SessionLocal, check_database, check_database_bounded, DatabaseHealthProbeBusy, DatabaseHealthProbeTimeout, database_pool_snapshot
 from app.core.schema_migrations import run_schema_migrations
 from app.core.iv_basket_guards import install_iv_basket_immutability_guards
 from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
@@ -3083,7 +3083,11 @@ def iv_skew_flip_validation(underlying: str = "NIFTY", expiry_type: str | None =
 
 
 def _database_health_failure_class(exc: Exception) -> str:
-    """Separate SQLite lock contention from generic DB probe failures."""
+    """Classify bounded probe failures before generic database failures."""
+    if isinstance(exc, DatabaseHealthProbeTimeout):
+        return "DATABASE_PROBE_TIMEOUT"
+    if isinstance(exc, DatabaseHealthProbeBusy):
+        return "DATABASE_PROBE_BUSY"
     dialect_name = getattr(getattr(engine, "dialect", None), "name", None)
     message = str(exc).lower()
     if dialect_name == "sqlite" and any(
@@ -3120,7 +3124,7 @@ def health_check():
         )
 
     try:
-        check_database()
+        check_database_bounded(check_database, timeout_seconds=0.75)
     except Exception as exc:
         failure_class = _database_health_failure_class(exc)
         failure_pool_snapshot = database_pool_snapshot()
@@ -3142,7 +3146,7 @@ def health_check():
                 "status": "degraded",
                 "app": settings.app_name,
                 "version": "0.1.0",
-                "database": "Contended" if failure_class == "SQLITE_CONTENTION" else "Disconnected",
+                "database": "Contended" if failure_class == "SQLITE_CONTENTION" else "Probe busy" if failure_class == "DATABASE_PROBE_BUSY" else "Probe timed out" if failure_class == "DATABASE_PROBE_TIMEOUT" else "Disconnected",
                 "database_error_class": failure_class,
                 "database_pool": failure_pool_snapshot,
             },
