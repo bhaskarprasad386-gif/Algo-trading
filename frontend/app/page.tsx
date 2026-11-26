@@ -299,7 +299,16 @@ export default function HomePage() {
         const status = String(body?.runtime_feed?.status ?? "NO_DATA").toUpperCase();
         const session = String(body?.market_session ?? "").toUpperCase();
         setFeedMarketSession(session === "OPEN" ? "OPEN" : session === "CLOSED" ? "CLOSED" : "UNKNOWN");
-        setFeedHealthCheckedAt(new Date().toISOString());
+        // /live-health may serve a stale-while-refresh snapshot. Age ticks from
+        // the server's checked_at timestamp, not the time this HTTP response arrived.
+        const checkedAt = typeof body?.checked_at === "string"
+          ? new Date(body.checked_at)
+          : null;
+        setFeedHealthCheckedAt(
+          checkedAt && Number.isFinite(checkedAt.getTime())
+            ? checkedAt.toISOString()
+            : new Date().toISOString()
+        );
         const age = body?.runtime_feed?.age_seconds;
         setFeedAge(age == null || !Number.isFinite(Number(age)) ? null : Number(age));
         if (session === "CLOSED") setFeedStatus("closed");
@@ -330,12 +339,24 @@ export default function HomePage() {
         if (!body || typeof body !== "object" || !body.common_feed || typeof body.common_feed !== "object" || !Array.isArray(body.common_feed.connected_groups) || !Array.isArray(body.common_feed.required_socket_groups) || !Number.isFinite(Number(body.common_feed.required_socket_group_count)) || !Number.isFinite(Number(body.common_feed.active_instruments))) throw new Error("runtime health schema incomplete");
         const feed = body.common_feed;
         const receivedAt = Date.now();
-        setRuntimeLastSuccessAt(receivedAt);
         if (typeof body.server_timestamp === "string" && Number.isFinite(new Date(body.server_timestamp).getTime())) {
           setRuntimeServerTimestamp(body.server_timestamp);
           setRuntimeServerTimestampReceivedAt(receivedAt);
         }
         const runners = body?.runners ?? {};
+        const cacheAgeSeconds = Number(body?._snapshot_cache?.age_seconds);
+        const serverSampleTime = typeof body?.server_timestamp === "string"
+          ? new Date(body.server_timestamp).getTime()
+          : NaN;
+        // A stale-while-refresh response is not a new sample. Prefer the
+        // backend cache age, then the source timestamp, and only use receipt
+        // time for older responses that expose neither freshness field.
+        const sampleAt = Number.isFinite(cacheAgeSeconds) && cacheAgeSeconds >= 0
+          ? receivedAt - cacheAgeSeconds * 1000
+          : Number.isFinite(serverSampleTime) && serverSampleTime <= receivedAt
+            ? serverSampleTime
+            : typeof body?.server_timestamp === "string" ? null : receivedAt;
+        setRuntimeLastSuccessAt(sampleAt);
         const currentCounters = {
           commonTicks: Number(feed.ticks_received ?? 0),
           cashPayloads: Number(runners.cash_future?.records_received ?? runners.cash_future?.payload_callbacks ?? runners.cash_future?.callbacks ?? 0),
