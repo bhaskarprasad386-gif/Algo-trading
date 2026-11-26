@@ -247,7 +247,8 @@ def _box_spread_targets_from_master(master, symbols, weekly_only_symbols=()):
     )
     weekly_only = set(weekly_only_symbols or ())
     if weekly_only - {"NIFTY", "SENSEX"} or weekly_only - set(selected):
-        raise ValueError("weekly-only mode is valid only for selected NIFTY/SENSEX")    today = datetime.now(IST).date()
+        raise ValueError("weekly-only mode is valid only for selected NIFTY/SENSEX")
+    today = datetime.now(IST).date()
     targets = []
     expiry_types = {}
     for symbol in selected:
@@ -497,6 +498,7 @@ def _cash_future_page_push_snapshot():
         "runner": None if live_cash_future_runner is None else live_cash_future_runner.snapshot(),
     }
 
+
 def _scanner_page_push_runtime_health(runner_name, runner):
     """Read-only feed and runner health included in scanner reconnect/live frames."""
     try:
@@ -745,7 +747,8 @@ async def lifespan(app: FastAPI):
                 task.cancel()
         shutdown_tasks = tuple(
             task
-            for task in (                _history_collector_task,
+            for task in (
+                _history_collector_task,
                 _contract_master_sync_task,
                 _live_cash_future_task,
                 _live_calendar_spread_task,
@@ -994,7 +997,8 @@ _iv_scanner_recovery_task: asyncio.Task | None = None
 _shared_index_runner_task: asyncio.Task | None = None
 _iv_option_snapshot_task: asyncio.Task | None = None
 _weekly_swing_refresh_task: asyncio.Task | None = None
-_contract_master_sync_task: asyncio.Task | None = None_live_cash_future_task: asyncio.Task | None = None
+_contract_master_sync_task: asyncio.Task | None = None
+_live_cash_future_task: asyncio.Task | None = None
 _live_calendar_spread_task: asyncio.Task | None = None
 live_calendar_spread_runner: LiveCalendarSpreadOneSecondCollector | None = None
 IST = ZoneInfo("Asia/Kolkata")
@@ -1243,7 +1247,8 @@ async def _live_synthetic_loop() -> None:
                     expiry = datetime.strptime(expiry_text.upper(), "%d%b%Y").date()
                 except ValueError:
                     try:
-                        expiry = datetime.strptime(expiry_text.upper(), "%d%b%y").date()                    except ValueError:
+                        expiry = datetime.strptime(expiry_text.upper(), "%d%b%y").date()
+                    except ValueError:
                         continue
                 if expiry < today:
                     continue
@@ -1492,7 +1497,8 @@ async def _live_box_spread_loop() -> None:
         supervisor = None
         try:
             # Box Spread uses its own recent instrument-master cache on download failure.
-            # The shared InstrumentMaster behavior for other scanners remains unchanged.            # This downloader performs synchronous network I/O; keep it off the ASGI
+            # The shared InstrumentMaster behavior for other scanners remains unchanged.
+            # This downloader performs synchronous network I/O; keep it off the ASGI
             # event loop so Angel One TLS/read timeouts cannot stall API health/routes.
             await run_blocking_daemon(
                 download_box_spread_instruments, master,
@@ -1741,7 +1747,8 @@ def _credit_butterfly_condor_page_snapshot(expiry_type: str) -> dict:
             "source": str(snapshot.get("source") or "box-spread-live-runner"),
             "read_only": True,
             "quote_contract_count": int(quotes.get("contract_count") or 0),
-            "quote_group_count": len(quotes.get("groups") or []),            "captured_at_ns": quotes.get("captured_at_ns"),
+            "quote_group_count": len(quotes.get("groups") or []),
+            "captured_at_ns": quotes.get("captured_at_ns"),
             "freshness_limit_seconds": quotes.get("freshness_limit_seconds", 5.0),
             "depth_enabled": bool(depth.get("enabled", False)),
             "depth_running": bool(depth.get("running", False)),
@@ -1990,7 +1997,8 @@ def app_strategies():
 
 @app.get("/api/v1/app/strategies/{strategy_id}/workspace")
 def app_strategy_workspace(strategy_id: str):
-    for workspace in STRATEGY_WORKSPACES:        if workspace["id"] == strategy_id:
+    for workspace in STRATEGY_WORKSPACES:
+        if workspace["id"] == strategy_id:
             return {"status": "success", "workspace": workspace}
     raise HTTPException(status_code=404, detail=f"Strategy workspace not found: {strategy_id}")
 
@@ -2239,7 +2247,8 @@ def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
             age = None
         if age is not None and (not math.isfinite(age) or age < 0):
             age = None
-        exchange_freshness[exchange_name] = {            "exchange_type": exchange_type,
+        exchange_freshness[exchange_name] = {
+            "exchange_type": exchange_type,
             "age_seconds": age,
             "status": "NO_DATA" if age is None else "STALE" if age > 5.0 else "LIVE",
         }
@@ -2488,7 +2497,8 @@ def iv_early_entry_latest_alert(
     store = AlertCooldownStore(SessionLocal, cooldown_seconds=600)
     with _iv_skew_flip_runtime_lock:
         runtime = iv_skew_flip_runtime
-        live_by_underlying = runtime.snapshot().get("early_entry_alerts_by_underlying", {}) if runtime is not None else {}        live = live_by_underlying.get(symbol or "NIFTY")
+        live_by_underlying = runtime.snapshot().get("early_entry_alerts_by_underlying", {}) if runtime is not None else {}
+        live = live_by_underlying.get(symbol or "NIFTY")
     rows = store.latest(
         limit=page_size + 1,
         before_observed_at_ns=before_observed_at_ns,
@@ -2737,7 +2747,8 @@ async def _iv_option_snapshot_daily_loop():
                     else:
                         next_delay[symbol] = 15.0 if near_close else (60.0 if received > 0 else 300.0)
                         app_logger.warning(
-                            "IV Angel One %s snapshot incomplete; preserving last valid IV and retrying: expiry=%s IV=%s/%s",                            symbol, result.get("expiry"), received, expected,
+                            "IV Angel One %s snapshot incomplete; preserving last valid IV and retrying: expiry=%s IV=%s/%s",
+                            symbol, result.get("expiry"), received, expected,
                         )
                 except Exception:
                     next_delay[symbol] = 15.0 if near_close else 300.0
@@ -2986,7 +2997,8 @@ def save_iv_skew_flip_config(payload: dict):
                 app_logger.exception("IV Scanner OFF state could not be persisted")
                 raise HTTPException(status_code=503, detail={"message": "IV Scanner was not stopped because OFF state could not be saved.", "reason": str(exc)}) from exc
             snapshot = _stop_iv_skew_flip_runtime()
-        return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,                "runner_status": snapshot.get("status", "STOPPED"),
+        return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
+                "runner_status": snapshot.get("status", "STOPPED"),
                 "runtime": snapshot, "orders_enabled": False}
 
 
