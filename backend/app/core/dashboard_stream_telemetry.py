@@ -18,6 +18,8 @@ class DashboardStreamTelemetry:
         self._last_error_type: str | None = None
         self._last_success_at: float | None = None
         self._last_build_seconds = 0.0
+        self._last_build_dispatch_wait_seconds = 0.0
+        self._max_build_dispatch_wait_seconds = 0.0
         self._last_serialization_seconds = 0.0
         self._max_serialization_seconds = 0.0
         self._last_payload_bytes = 0
@@ -51,12 +53,14 @@ class DashboardStreamTelemetry:
         failed_count: int,
         build_seconds: float,
         fanout_seconds: float,
+        build_dispatch_wait_seconds: float = 0.0,
         serialization_seconds: float = 0.0,
         payload_bytes: int = 0,
         cycle_seconds: float = 0.0,
         error_type: str | None = None,
     ) -> None:
         build = max(0.0, float(build_seconds))
+        build_dispatch_wait = max(0.0, float(build_dispatch_wait_seconds))
         fanout = max(0.0, float(fanout_seconds))
         serialization = max(0.0, float(serialization_seconds))
         cycle = max(0.0, float(cycle_seconds))
@@ -66,6 +70,10 @@ class DashboardStreamTelemetry:
             self._last_sent_count = max(0, int(sent_count))
             self._last_failed_count = max(0, int(failed_count))
             self._last_build_seconds = build
+            self._last_build_dispatch_wait_seconds = build_dispatch_wait
+            self._max_build_dispatch_wait_seconds = max(
+                self._max_build_dispatch_wait_seconds, build_dispatch_wait
+            )
             self._last_fanout_seconds = fanout
             self._last_serialization_seconds = serialization
             self._max_serialization_seconds = max(self._max_serialization_seconds, serialization)
@@ -100,6 +108,8 @@ class DashboardStreamTelemetry:
                     None if success_age is None else round(success_age, 3)
                 ),
                 "last_build_seconds": round(self._last_build_seconds, 4),
+                "last_build_dispatch_wait_seconds": round(self._last_build_dispatch_wait_seconds, 4),
+                "max_build_dispatch_wait_seconds": round(self._max_build_dispatch_wait_seconds, 4),
                 "max_build_seconds": round(self._max_build_seconds, 4),
                 "last_serialization_seconds": round(self._last_serialization_seconds, 4),
                 "max_serialization_seconds": round(self._max_serialization_seconds, 4),
