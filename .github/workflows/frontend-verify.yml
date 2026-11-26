@@ -6,7 +6,6 @@ on:
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-verify.yml"
-      - ".github/workflows/cloudflare-production-deploy.yml"
   pull_request:
     paths:
       - "frontend/**"
