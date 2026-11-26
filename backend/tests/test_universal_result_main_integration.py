@@ -11,6 +11,7 @@ def test_main_app_uses_isolated_universal_result_ledger(tmp_path) -> None:
     backend_dir = Path(__file__).resolve().parents[1]
     code = r"""
 import json
+import time
 
 from fastapi.testclient import TestClient
 
@@ -81,7 +82,6 @@ with TestClient(main.app) as client:
 
 
     # A database call that never returns must not pin the ASGI health request.
-    import time
     original_check_database = main.check_database
     try:
         def slow_database_probe():
