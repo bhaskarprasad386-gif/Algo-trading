@@ -31,8 +31,9 @@ def test_pool_checkout_telemetry_tracks_owner_hold_and_wait_buckets():
 
 def test_pool_checkout_telemetry_bounds_owner_cardinality():
     telemetry = PoolCheckoutTelemetry(max_owners=1)
-    telemetry.checkout(object(), owner="first-owner")
-    telemetry.checkout(object(), owner="second-owner")
+    records = [object(), object()]
+    telemetry.checkout(records[0], owner="first-owner")
+    telemetry.checkout(records[1], owner="second-owner")
     result = telemetry.snapshot()
     assert set(result["active_by_owner"]) <= {"first-owner", "other"}
     assert len(result["active_by_owner"]) <= 2
