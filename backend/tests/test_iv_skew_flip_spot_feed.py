@@ -720,7 +720,7 @@ def test_idle_spot_persistence_worker_does_not_open_database_session(monkeypatch
     assert feed._persist_batches == 0
     assert feed._persist_errors == 0
 
-def test_failed_spot_persistence_batch_is_retried_and_newest_value_wins(monkeypatch):
+def test_failed_spot_persistence_batch_is_retried(monkeypatch):
     from threading import Event
     from app.scanner.iv_skew_flip import spot_feed as spot_feed_module
 
