@@ -71,7 +71,7 @@ with TestClient(main.app) as client:
         main._health_db_probe_semaphore.release()
 
     assert busy.status_code == 503
-    assert busy.json()["database"] == "ProbeBusy"
+    assert busy.json()["database"] == "Probe busy"
     assert busy_elapsed < 0.5, f"busy health probe was not rejected promptly: {busy_elapsed:.2f}s"
     busy_events = main.runtime_diagnostics.snapshot(limit=5)
     assert any(
