@@ -197,11 +197,11 @@ def test_journal_cursor_rotation_falls_back_and_resumes(tmp_path: Path, monkeypa
 
 
 def test_sanitize_preserves_long_traceback_beyond_old_truncation_limit() -> None:
-    frames = "\\n".join(
+    frames = "\n".join(
         f"  File /opt/algo/module_{index}.py, line {index + 10}, in execute"
         for index in range(220)
     )
-    message = "RuntimeError: full diagnostic\\nTraceback (most recent call last):\\n" + frames + "\\nFinalBrokerError: order route unavailable"
+    message = "RuntimeError: full diagnostic\nTraceback (most recent call last):\n" + frames + "\nFinalBrokerError: order route unavailable"
     result = agent.sanitize(message)
     assert len(result) > 1200
     assert "module_219.py" in result
@@ -221,7 +221,7 @@ def test_collector_http_serves_persisted_errors_during_api_outage_and_is_get_onl
     try:
         db.execute(
             "INSERT INTO events(event_id,cursor,timestamp,severity,component,message,source,inserted_at) VALUES(?,?,?,?,?,?,?,?)",
-            ("survives-api-down", "", "2026-11-26T00:00:00+00:00", "ERROR", "BrokerGateway", "TimeoutError: broker request timed out\\nTraceback: preserved frame", "systemd-journal", 1),
+            ("survives-api-down", "", "2026-11-26T00:00:00+00:00", "ERROR", "BrokerGateway", "TimeoutError: broker request timed out\nTraceback: preserved frame", "systemd-journal", 1),
         )
         db.commit()
     finally:
