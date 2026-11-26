@@ -828,10 +828,10 @@ app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, li
 
 @app.middleware("http")
 async def database_checkout_owner_middleware(request: Request, call_next):
-    """Attach a bounded, query-free request label to DB checkouts in this request."""
+    """Attach a bounded API-group label; never retain user-supplied path identifiers."""
     parts = [part for part in request.url.path.split("/") if part]
     safe_parts = []
-    for part in parts[:5]:
+    for part in parts[:3]:
         if part.isdigit() or len(part) > 32:
             safe_parts.append(":dynamic")
         else:
