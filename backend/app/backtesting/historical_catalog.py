@@ -316,6 +316,7 @@ class HistoricalCatalog:
             FROM record_totals
             LEFT JOIN source_watermarks AS watermarks
               ON watermarks.source=? AND watermarks.timeframe=?
+            ORDER BY watermarks.instrument
             """,
             (source, timeframe, source, timeframe),
         ).fetchall()
