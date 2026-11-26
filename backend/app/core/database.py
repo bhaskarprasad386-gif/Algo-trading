@@ -72,25 +72,41 @@ event.listen(engine, "invalidate", _invalidate_pool_checkout)
 event.listen(engine, "detach", _detach_pool_checkout)
 
 # Pool.connect() is the public pool acquisition boundary. Timing this call
-# captures queue wait plus pool checkout setup for ORM and Core consumers.
-_original_pool_connect = engine.pool.connect
+# captures queue wait plus pool checkout setup for ORM and Core consumers. Reinstall
+# the wrapper after Engine.dispose(), which replaces the underlying pool instance.
+_observed_pool_identity: int | None = None
 
 
-def _observed_pool_connect(*args, **kwargs):
-    started = time.monotonic()
-    try:
-        connection = _original_pool_connect(*args, **kwargs)
-    except Exception as exc:
-        _pool_checkout_telemetry.record_wait(
-            time.monotonic() - started,
-            timed_out=type(exc).__name__ == "TimeoutError",
-        )
-        raise
-    _pool_checkout_telemetry.record_wait(time.monotonic() - started)
-    return connection
+def _install_pool_connect_observer() -> None:
+    global _observed_pool_identity
+    pool = engine.pool
+    if _observed_pool_identity == id(pool):
+        return
+    original_connect = pool.connect
+
+    def observed_connect(*args, **kwargs):
+        started = time.monotonic()
+        try:
+            connection = original_connect(*args, **kwargs)
+        except Exception as exc:
+            _pool_checkout_telemetry.record_wait(
+                time.monotonic() - started,
+                timed_out=type(exc).__name__ == "TimeoutError",
+            )
+            raise
+        _pool_checkout_telemetry.record_wait(time.monotonic() - started)
+        return connection
+
+    pool.connect = observed_connect
+    _observed_pool_identity = id(pool)
 
 
-engine.pool.connect = _observed_pool_connect
+_install_pool_connect_observer()
+
+
+@event.listens_for(engine, "engine_disposed")
+def _reinstall_pool_connect_observer(_engine) -> None:
+    _install_pool_connect_observer()
 
 
 def get_db():
