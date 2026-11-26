@@ -997,8 +997,7 @@ _iv_scanner_recovery_task: asyncio.Task | None = None
 _shared_index_runner_task: asyncio.Task | None = None
 _iv_option_snapshot_task: asyncio.Task | None = None
 _weekly_swing_refresh_task: asyncio.Task | None = None
-_contract_master_sync_task: asyncio.Task | None = None
-_live_cash_future_task: asyncio.Task | None = None
+_contract_master_sync_task: asyncio.Task | None = None_live_cash_future_task: asyncio.Task | None = None
 _live_calendar_spread_task: asyncio.Task | None = None
 live_calendar_spread_runner: LiveCalendarSpreadOneSecondCollector | None = None
 IST = ZoneInfo("Asia/Kolkata")
@@ -1997,8 +1996,7 @@ def app_strategies():
 
 @app.get("/api/v1/app/strategies/{strategy_id}/workspace")
 def app_strategy_workspace(strategy_id: str):
-    for workspace in STRATEGY_WORKSPACES:
-        if workspace["id"] == strategy_id:
+    for workspace in STRATEGY_WORKSPACES:        if workspace["id"] == strategy_id:
             return {"status": "success", "workspace": workspace}
     raise HTTPException(status_code=404, detail=f"Strategy workspace not found: {strategy_id}")
 
@@ -3159,6 +3157,5 @@ def health_check():
             },
         )
     return {"status": "ok", "app": settings.app_name, "version": "0.1.0", "database": "Connected", "database_pool": database_pool_snapshot()}
-
 
 
