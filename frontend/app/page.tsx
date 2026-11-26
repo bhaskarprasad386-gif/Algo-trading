@@ -96,12 +96,22 @@ export default function HomePage() {
           const ready = readyResponse.ok &&
             readyBody?.status === "ok" &&
             String(readyBody?.database ?? "").toLowerCase() === "connected";
+          const pool = readyBody?.database_pool;
+          const poolSummary = pool && typeof pool === "object"
+            ? " • DB pool " +
+              (Number.isFinite(pool.checkedout) ? String(pool.checkedout) : "?") + "/" +
+              (Number.isFinite(pool.capacity) ? String(pool.capacity) : "unbounded/unknown") +
+              " checked out • long-held " +
+              (Number.isFinite(pool.long_checkout_count) ? String(pool.long_checkout_count) : "?") +
+              " • oldest " +
+              (Number.isFinite(pool.oldest_checkout_seconds) ? Number(pool.oldest_checkout_seconds).toFixed(1) + "s" : "—")
+            : "";
           if (!cancelled) {
             setApiStatus(ready ? "connected" : "degraded");
             setApiDetail(ready
-              ? "API process and database readiness healthy"
+              ? "API process and database readiness healthy" + poolSummary
               : "API process reachable; database readiness degraded (" +
-                String(readyBody?.database_error_class ?? readyBody?.database ?? ("HTTP " + readyResponse.status)) + ")");
+                String(readyBody?.database_error_class ?? readyBody?.database ?? ("HTTP " + readyResponse.status)) + ")" + poolSummary);
           }
         } catch (error) {
           if (!cancelled) {
