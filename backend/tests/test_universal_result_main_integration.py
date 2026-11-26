@@ -59,6 +59,30 @@ with TestClient(main.app) as client:
     assert degraded.json()["status"] == "degraded"
     assert degraded.json()["database"] == "Disconnected"
 
+    # A database call that never returns must not pin the ASGI health request.
+    import time
+    original_check_database = main.check_database
+    try:
+        def slow_database_probe():
+            time.sleep(3.5)
+            return True
+        main.check_database = slow_database_probe
+        started = time.monotonic()
+        timed_out = client.get("/health")
+        elapsed = time.monotonic() - started
+    finally:
+        main.check_database = original_check_database
+
+    assert timed_out.status_code == 503
+    assert timed_out.json()["status"] == "degraded"
+    assert elapsed < 3.4, f"health timeout exceeded bound: {elapsed:.2f}s"
+    timeout_events = main.runtime_diagnostics.snapshot(limit=5)
+    assert any(
+        event.get("error_type") == "DatabaseProbeTimeout"
+        and event.get("endpoint") == "/health"
+        for event in timeout_events
+    )
+
 print(json.dumps({"status": "ok"}))
 """
 
