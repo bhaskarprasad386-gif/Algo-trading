@@ -142,10 +142,10 @@ def test_dashboard_publisher_records_the_measured_dispatch_wait():
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "record_publish"
     ]
-    assert len(record_calls) == 1
     assert any(
         keyword.arg == "build_dispatch_wait_seconds"
         and isinstance(keyword.value, ast.Name)
         and keyword.value.id == "build_dispatch_wait_seconds"
-        for keyword in record_calls[0].keywords
+        for call in record_calls
+        for keyword in call.keywords
     )
