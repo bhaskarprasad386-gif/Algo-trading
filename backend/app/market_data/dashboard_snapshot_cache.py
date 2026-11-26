@@ -95,7 +95,8 @@ class BoundedSnapshotCache:
         if wait_for_refresh:
             self._refresh_done.wait(self.wait_seconds)
             with self._lock:
-                if self._value is not None:
+                age = None if self._refreshed_at is None else max(0.0, monotonic() - self._refreshed_at)
+                if self._value is not None and age is not None and age <= self.max_stale_seconds:
                     return self._copy_with_metadata(stale=True)
                 raise TimeoutError("dashboard snapshot refresh did not finish within its bound")
 
@@ -103,7 +104,8 @@ class BoundedSnapshotCache:
             self._refresh(factory)
         except Exception:
             with self._lock:
-                if self._value is not None:
+                age = None if self._refreshed_at is None else max(0.0, monotonic() - self._refreshed_at)
+                if self._value is not None and age is not None and age <= self.max_stale_seconds:
                     return self._copy_with_metadata(stale=True)
             raise
         with self._lock:

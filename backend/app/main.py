@@ -1023,7 +1023,7 @@ async def dashboard_websocket(websocket: WebSocket):
         # Clients are receive-only. The shared publisher owns all snapshot work
         # and sends one bounded latest snapshot to every connected browser.
         while True:
-            await websocket.receive()
+            await websocket.receive_text()
     except WebSocketDisconnect:
         pass
     except Exception as exc:

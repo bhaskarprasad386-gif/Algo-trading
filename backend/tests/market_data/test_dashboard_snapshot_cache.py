@@ -70,3 +70,13 @@ def test_refresh_failure_keeps_last_good_snapshot(monkeypatch):
 def test_cache_rejects_invalid_bounds():
     with pytest.raises(ValueError):
         BoundedSnapshotCache(ttl_seconds=5, max_stale_seconds=4)
+
+def test_cache_never_serves_snapshot_beyond_max_stale_after_refresh_failure(monkeypatch):
+    import app.market_data.dashboard_snapshot_cache as module
+    clock = [1.0]
+    monkeypatch.setattr(module, "monotonic", lambda: clock[0])
+    cache = BoundedSnapshotCache(ttl_seconds=1, max_stale_seconds=3)
+    cache.get(lambda: {"value": "old"})
+    clock[0] = 5.0
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        cache.get(lambda: (_ for _ in ()).throw(RuntimeError("provider unavailable")))
