@@ -1,4 +1,16 @@
-from deploy import market_hours_dashboard_probe as probe
+import importlib.util
+from pathlib import Path
+
+
+_PROBE_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "deploy"
+    / "market-hours-dashboard-probe.py"
+)
+_SPEC = importlib.util.spec_from_file_location("market_hours_dashboard_probe", _PROBE_PATH)
+assert _SPEC is not None and _SPEC.loader is not None
+probe = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(probe)
 
 
 def test_percentile_uses_linear_interpolation():
