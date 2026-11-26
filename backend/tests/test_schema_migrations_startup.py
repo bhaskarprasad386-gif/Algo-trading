@@ -271,3 +271,46 @@ def test_postgres_migration_failure_rolls_back_and_restart_recovers(
         column["name"] for column in inspector.get_columns("users")
     }
     assert "alert_contacts" in inspector.get_table_names()
+
+
+def test_iv_observation_expiry_time_index_supports_bounded_restore(migration_engine, monkeypatch):
+    """The recent-history query can seek directly by underlying, expiry and time."""
+    if migration_engine.dialect.name != "sqlite":
+        pytest.skip("SQLite query-plan assertion is dialect-specific")
+
+    monkeypatch.setattr(schema_migrations, "engine", migration_engine)
+    _seed_minimal_legacy_schema(migration_engine)
+    schema_migrations.run_schema_migrations()
+
+    with migration_engine.begin() as connection:
+        index = next(
+            item for item in inspect(connection).get_indexes("iv_option_observations")
+            if item["name"] == "ix_iv_option_observation_expiry_time"
+        )
+        assert index["column_names"] == ["underlying", "expiry", "source_timestamp_ns"]
+
+        # Force the candidate index only to verify that the exact restore
+        # predicate and ordering are covered by a range search, not a full scan
+        # followed by a temporary sort.
+        plan = connection.execute(
+            text(
+                "EXPLAIN QUERY PLAN "
+                "SELECT token, source_timestamp_ns FROM iv_option_observations "
+                "INDEXED BY ix_iv_option_observation_expiry_time "
+                "WHERE underlying = :underlying AND expiry = :expiry "
+                "AND source_timestamp_ns >= :cutoff "
+                "AND source_timestamp_ns <= :now "
+                "ORDER BY source_timestamp_ns ASC"
+            ),
+            {
+                "underlying": "NIFTY",
+                "expiry": "2026-11-12",
+                "cutoff": 1_800_000_000_000_000_000,
+                "now": 1_800_000_600_000_000_000,
+            },
+        ).all()
+
+    details = " ".join(str(row[-1]) for row in plan)
+    assert "SEARCH" in details.upper()
+    assert "ix_iv_option_observation_expiry_time" in details
+    assert "TEMP B-TREE" not in details.upper()
