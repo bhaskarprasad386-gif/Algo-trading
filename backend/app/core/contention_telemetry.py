@@ -198,7 +198,7 @@ class InstrumentedRLock:
                 "wait_duration_buckets": dict(self._wait_buckets),
                 "sampled_waits": self._wait_samples,
                 "average_wait_seconds": round(self._wait_total / self._wait_samples, 6) if self._wait_samples else None,
-                "max_wait_seconds": round(self._wait_max, 6) if count else None,
+                "max_wait_seconds": round(self._wait_max, 6) if self._wait_samples else None,
                 "hold_duration_buckets": dict(self._hold_buckets),
                 "average_hold_seconds": round(self._hold_total / self._hold_count, 6) if self._hold_count else None,
                 "max_hold_seconds": round(self._hold_max, 6) if self._hold_count else None,
