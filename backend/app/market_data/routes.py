@@ -521,12 +521,13 @@ def get_market_overview():
         ] if isinstance(candles, list) else []
         latest = float(valid[-1][4]) if valid else None
         prior = float(valid[-2][4]) if len(valid) >= 2 else latest
-        with _OVERVIEW_HISTORICAL_CACHE_LOCK:
-            _OVERVIEW_HISTORICAL_CACHE[cache_key] = (monotonic_now, latest, prior)
-            # Keep only the current date's bounded index universe.
-            for old_key in tuple(_OVERVIEW_HISTORICAL_CACHE):
-                if old_key[0] != cache_key[0]:
-                    _OVERVIEW_HISTORICAL_CACHE.pop(old_key, None)
+        if latest is not None:
+            with _OVERVIEW_HISTORICAL_CACHE_LOCK:
+                _OVERVIEW_HISTORICAL_CACHE[cache_key] = (monotonic_now, latest, prior)
+                # Keep only the current date's bounded index universe.
+                for old_key in tuple(_OVERVIEW_HISTORICAL_CACHE):
+                    if old_key[0] != cache_key[0]:
+                        _OVERVIEW_HISTORICAL_CACHE.pop(old_key, None)
         return latest, prior
 
     def resolve(specs):
