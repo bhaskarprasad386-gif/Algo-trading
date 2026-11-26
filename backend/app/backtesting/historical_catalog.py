@@ -302,6 +302,25 @@ class HistoricalCatalog:
         rows = self._db.execute("SELECT DISTINCT timestamp_ns FROM data_catalog WHERE source=? AND instrument=? AND timeframe=? AND timestamp_ns BETWEEN ? AND ? ORDER BY timestamp_ns", (source, instrument, timeframe, start_ns, end_ns)).fetchall()
         return tuple(int(row[0]) for row in rows)
 
+    def source_summary(self, *, source: str, timeframe: str) -> dict[str, Any]:
+        """Return one source/timeframe aggregate using the maintained watermark index."""
+        row = self._db.execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM data_catalog WHERE source=? AND timeframe=?),
+                COUNT(*),
+                MAX(max_timestamp_ns)
+            FROM source_watermarks
+            WHERE source=? AND timeframe=?
+            """,
+            (source, timeframe, source, timeframe),
+        ).fetchone()
+        return {
+            "record_count": int(row[0] or 0),
+            "instruments": int(row[1] or 0),
+            "latest_timestamp_ns": None if row[2] is None else int(row[2]),
+        }
+
     def watermark(self, *, source: str, instrument: str, timeframe: str) -> int | None:
         row = self._db.execute("SELECT max_timestamp_ns FROM source_watermarks WHERE source=? AND instrument=? AND timeframe=?", (source, instrument, timeframe)).fetchone()
         return None if row is None else int(row[0])
