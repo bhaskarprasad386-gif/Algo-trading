@@ -91,6 +91,9 @@ class IVOneSecondSampler:
         self._history_persisted_count = 0
         self._history_persistence_error: str | None = None
         self._lock = RLock()
+        # Serialize complete sampling cycles independently of the state lock.
+        # Database persistence must never hold the lock used by snapshot readers.
+        self._sample_lock = RLock()
         self._stop = Event()
         self._thread: Thread | None = None
         self._latest: dict[str, OptionMetricSample] = {}
@@ -287,6 +290,18 @@ class IVOneSecondSampler:
         now: datetime | None = None,
         spot: SpotSnapshot | tuple[float, int] | None = None,
     ) -> dict[str, Any]:
+        # Keep source cursor checks and persistence ordering deterministic while
+        # allowing readers to acquire _lock during a slow database transaction.
+        with self._sample_lock:
+            return self._sample_once_serialized(now_ns=now_ns, now=now, spot=spot)
+
+    def _sample_once_serialized(
+        self,
+        *,
+        now_ns: int | None = None,
+        now: datetime | None = None,
+        spot: SpotSnapshot | tuple[float, int] | None = None,
+    ) -> dict[str, Any]:
         sampled_at = self.clock_ns() if now_ns is None else now_ns
         sampled_datetime = self.clock_datetime() if now is None else now
         if isinstance(sampled_at, bool) or not isinstance(sampled_at, int) or sampled_at <= 0:
@@ -409,15 +424,19 @@ class IVOneSecondSampler:
                 (token, sample) for token, sample in new_history
                 if self._last_source_timestamp.get(token) != sample.source_timestamp_ns
             ]
-            persistence_ok = True
-            try:
-                self._persist_history([sample for _, sample in pending_history])
-                self._history_persistence_error = None
-            except Exception as exc:
-                # Persistence outages must be visible and retried, but must not
-                # take down live IV sampling. Do not advance durable cursors.
-                persistence_ok = False
-                self._history_persistence_error = f"{type(exc).__name__}: {exc}"
+        # Keep the state lock out of the SQL transaction. The dedicated
+        # sample lock above preserves one-cycle-at-a-time cursor ordering.
+        persistence_ok = True
+        try:
+            self._persist_history([sample for _, sample in pending_history])
+            persistence_error = None
+        except Exception as exc:
+            # Persistence outages must be visible and retried, but must not
+            # take down live IV sampling. Do not advance durable cursors.
+            persistence_ok = False
+            persistence_error = f"{type(exc).__name__}: {exc}"
+        with self._lock:
+            self._history_persistence_error = persistence_error
             changes: dict[str, dict[str, float | int | None]] = {}
             for token, sample in updates.items():
                 previous = self._previous_cycle.get(token)
