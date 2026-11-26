@@ -6,14 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "build:next": "next build",
-    "build:cloudflare": "opennextjs-cloudflare build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "cf:build": "opennextjs-cloudflare build",
-    "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "cf:deploy": "opennextjs-cloudflare deploy",
-    "cf:deploy:local": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "postbuild": "node scripts/cloudflare-postbuild.mjs",
     "test:page-push-recovery": "node --test scripts/page-push-recovery.test.mjs",
     "test:scanner-ui-removal": "node --test scripts/scanner-ui-removal.test.mjs"
   },
@@ -30,8 +24,6 @@
     "autoprefixer": "10.4.21",
     "postcss": "8.5.3",
     "tailwindcss": "3.4.17",
-    "typescript": "5.8.3",
-    "wrangler": "4.165.0",
-    "@opennextjs/cloudflare": "1.20.17"
+    "typescript": "5.8.3"
   }
 }
