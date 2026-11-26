@@ -3119,14 +3119,16 @@ async def health_check():
             },
         )
     probe_task = asyncio.create_task(asyncio.to_thread(_run_health_database_probe))
+    # Consume worker exceptions even if the ASGI request is cancelled before
+    # it reaches the await below; the worker still owns semaphore release.
+    probe_task.add_done_callback(
+        lambda task: task.exception() if not task.cancelled() else None
+    )
     # Ensure the worker is submitted before request cancellation can occur.
     # Otherwise the acquired semaphore could outlive a to_thread coroutine
     # cancelled before its worker starts and therefore never be released.
     await asyncio.sleep(0)
     # Bound this request without cancelling the worker that owns slot release.
-    probe_task.add_done_callback(
-        lambda task: task.exception() if not task.cancelled() else None
-    )
     try:
         await asyncio.wait_for(asyncio.shield(probe_task), timeout=3.0)
     except Exception as exc:
