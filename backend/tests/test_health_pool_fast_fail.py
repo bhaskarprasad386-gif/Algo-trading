@@ -70,3 +70,24 @@ def test_health_endpoint_does_not_treat_unsupported_pool_as_healthy(monkeypatch)
     assert response.json()["status"] == "degraded"
     assert response.json()["database"] == "Disconnected"
     assert calls == ["select"]
+
+
+def test_health_endpoint_classifies_sqlite_lock_contention_separately(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(main, "engine", SimpleNamespace(dialect=SimpleNamespace(name="sqlite")))
+    monkeypatch.setattr(main, "database_pool_snapshot", lambda: {
+        "pool_class": "QueuePool", "checkedout": 2, "capacity": 15, "saturated": False,
+        "long_checkout_count": 0,
+    })
+    monkeypatch.setattr(
+        main, "check_database",
+        lambda: (_ for _ in ()).throw(RuntimeError("database is locked")),
+    )
+
+    response = TestClient(main.app).get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["database"] == "Contended"
+    assert response.json()["database_error_class"] == "SQLITE_CONTENTION"
+    assert response.json()["database_pool"]["long_checkout_count"] == 0
