@@ -719,3 +719,59 @@ def test_idle_spot_persistence_worker_does_not_open_database_session(monkeypatch
     assert feed._persist_wakeup.calls == 2
     assert feed._persist_batches == 0
     assert feed._persist_errors == 0
+
+def test_failed_spot_persistence_batch_is_retried_and_newest_value_wins(monkeypatch):
+    from threading import Event
+    from app.scanner.iv_skew_flip import spot_feed as spot_feed_module
+
+    adapter = IVSpotFeedAdapter(feed=FakeFeed(), persist_last_price=False)
+    stop = Event()
+    adapter._persist_stop = stop
+    older = spot_feed_module.SpotSnapshot(100.0, 10_000_000_000, 10_000_000_000)
+    newer = spot_feed_module.SpotSnapshot(101.0, 11_000_000_000, 11_000_000_000)
+    adapter._persist_pending["NIFTY"] = older
+
+    class ControlledWakeup:
+        def __init__(self):
+            self.calls = 0
+
+        def wait(self, timeout=None):
+            self.calls += 1
+            if self.calls == 3:
+                stop.set()
+            return True
+
+        def clear(self):
+            return None
+
+        def set(self):
+            return None
+
+    adapter._persist_wakeup = ControlledWakeup()
+    attempts = []
+    class SuccessfulSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def merge(self, row):
+            attempts.append(row)
+
+        def commit(self):
+            return None
+
+    def session_factory():
+        if not attempts:
+            # A transient failure before any row is merged.
+            raise RuntimeError("temporary database pressure")
+        return SuccessfulSession()
+
+    monkeypatch.setattr(spot_feed_module, "SessionLocal", session_factory)
+    adapter._run_persistence()
+    assert len(attempts) == 2
+    assert attempts[0].price == newer.price
+    assert adapter._persist_errors == 1
+    assert adapter._persist_batches == 1
+    assert adapter._persist_pending == {}
