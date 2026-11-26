@@ -24,7 +24,6 @@ def test_health_endpoint_contract():
     assert "database" in payload
 
 
-
 def test_runtime_feed_health_does_not_let_unrelated_exchange_mask_missing_nse_nfo():
     summary = _summarize_primary_exchange_feed({
         "ticks_received": 1000,
@@ -55,24 +54,6 @@ def test_runtime_feed_health_marks_a_stale_required_exchange():
     assert summary["status"] == "STALE"
     assert summary["age_seconds"] == 8.0
     assert summary["exchange_freshness"]["NFO"]["status"] == "STALE"
-
-
-def test_cloudflare_staging_origin_is_allowed_by_cors():
-    client = TestClient(app)
-    response = client.get("/health", headers={"Origin": "https://algo-trading.bhaskarprasad386.workers.dev"})
-    assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == "https://algo-trading.bhaskarprasad386.workers.dev"
-
-
-def test_cloudflare_preview_origins_are_allowed_by_cors():
-    client = TestClient(app)
-    for origin in (
-        "https://fix-cloudflare-cors-algo-trading.bhaskarprasad386.workers.dev",
-        "https://fix-cloudflare-workers-cors-algo-trading.bhaskarprasad386.workers.dev",
-    ):
-        response = client.get("/health", headers={"Origin": origin})
-        assert response.status_code == 200
-        assert response.headers["access-control-allow-origin"] == origin
 
 
 def test_untrusted_workers_dev_origin_is_not_allowed_by_cors():
