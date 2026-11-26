@@ -3082,7 +3082,6 @@ def iv_skew_flip_validation(underlying: str = "NIFTY", expiry_type: str | None =
         db.close()
 
 
-@app.get("/health")
 def _database_health_failure_class(exc: Exception) -> str:
     """Separate SQLite lock contention from generic DB probe failures."""
     dialect_name = getattr(getattr(engine, "dialect", None), "name", None)
@@ -3095,6 +3094,7 @@ def _database_health_failure_class(exc: Exception) -> str:
     return "DATABASE_CHECK_FAILURE"
 
 
+@app.get("/health")
 def health_check():
     # Do not queue a readiness probe behind an already exhausted DB pool.
     # This is only an early degraded response; a non-saturated pool still
