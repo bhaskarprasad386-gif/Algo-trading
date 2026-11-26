@@ -279,7 +279,15 @@ class IVOneSecondSampler:
                     statement = dialect_insert(IVOptionObservation).on_conflict_do_nothing(
                         index_elements=["token", "source_timestamp_ns"],
                     )
-                    result = session.execute(statement, rows)
+                    # ORM Session.execute() may wrap executemany results in
+                    # IteratorResult, which does not expose DBAPI rowcount.
+                    # Execute on the session's transactional Connection so
+                    # SQLite/PostgreSQL report the actual conflict-aware count.
+                    result = session.connection().execute(
+                        statement,
+                        rows,
+                        execution_options={"preserve_rowcount": True},
+                    )
                     inserted = max(0, int(result.rowcount or 0))
                 else:
                     # Keep a portable fallback for other SQLAlchemy dialects.
