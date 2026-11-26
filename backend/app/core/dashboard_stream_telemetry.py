@@ -28,6 +28,9 @@ class DashboardStreamTelemetry:
         self._last_sent_count = 0
         self._last_failed_count = 0
         self._last_client_send_seconds = 0.0
+        self._last_cycle_seconds = 0.0
+        self._max_cycle_seconds = 0.0
+        self._cycle_overrun_count = 0
         self._max_client_send_seconds = 0.0
 
     def record_client_send(self, *, success: bool, duration_seconds: float) -> None:
@@ -50,11 +53,13 @@ class DashboardStreamTelemetry:
         fanout_seconds: float,
         serialization_seconds: float = 0.0,
         payload_bytes: int = 0,
+        cycle_seconds: float = 0.0,
         error_type: str | None = None,
     ) -> None:
         build = max(0.0, float(build_seconds))
         fanout = max(0.0, float(fanout_seconds))
         serialization = max(0.0, float(serialization_seconds))
+        cycle = max(0.0, float(cycle_seconds))
         with self._lock:
             self._cycles += 1
             self._last_client_count = max(0, int(client_count))
@@ -65,6 +70,10 @@ class DashboardStreamTelemetry:
             self._last_serialization_seconds = serialization
             self._max_serialization_seconds = max(self._max_serialization_seconds, serialization)
             self._last_payload_bytes = max(0, int(payload_bytes))
+            self._last_cycle_seconds = cycle
+            self._max_cycle_seconds = max(self._max_cycle_seconds, cycle)
+            if cycle > 1.0:
+                self._cycle_overrun_count += 1
             self._max_build_seconds = max(self._max_build_seconds, build)
             self._max_fanout_seconds = max(self._max_fanout_seconds, fanout)
             if error_type:
@@ -100,6 +109,9 @@ class DashboardStreamTelemetry:
                 "last_client_count": self._last_client_count,
                 "last_sent_count": self._last_sent_count,
                 "last_failed_count": self._last_failed_count,
+                "last_cycle_seconds": round(self._last_cycle_seconds, 4),
+                "max_cycle_seconds": round(self._max_cycle_seconds, 4),
+                "cycle_overrun_count": self._cycle_overrun_count,
                 "last_client_send_seconds": round(self._last_client_send_seconds, 4),
                 "max_client_send_seconds": round(self._max_client_send_seconds, 4),
             }
