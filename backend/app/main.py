@@ -24,6 +24,7 @@ from app.core.diagnostics import runtime_diagnostics
 from app.core.exceptions import TradingAppException, trading_exception_handler, global_exception_handler
 from app.core.database import engine, Base, SessionLocal, check_database, check_database_bounded, DatabaseHealthProbeBusy, DatabaseHealthProbeTimeout, database_pool_snapshot
 from app.core.contention_telemetry import set_database_owner, reset_database_owner
+from app.core.event_loop_telemetry import EventLoopLagMonitor
 from app.core.schema_migrations import run_schema_migrations
 from app.core.iv_basket_guards import install_iv_basket_immutability_guards
 from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
@@ -644,7 +645,7 @@ async def _iv_scanner_recovery_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _dashboard_snapshot_task
+    global _dashboard_snapshot_task, _event_loop_lag_task
     global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, shoonya_market_data_supervisor, _shared_index_runner_task
     global provider_quote_parity_store, provider_quote_parity_worker
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
@@ -733,6 +734,7 @@ async def lifespan(app: FastAPI):
         _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
     paper_rule_task = asyncio.create_task(paper_rule_monitor_loop())
     _dashboard_snapshot_task = asyncio.create_task(_dashboard_snapshot_publisher_loop())
+    _event_loop_lag_task = asyncio.create_task(event_loop_lag_monitor.run())
     try:
         yield
     finally:
@@ -752,13 +754,16 @@ async def lifespan(app: FastAPI):
         paper_rule_task.cancel()
         if _dashboard_snapshot_task is not None:
             _dashboard_snapshot_task.cancel()
-        for task in (_dashboard_snapshot_task, _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
+        if _event_loop_lag_task is not None:
+            _event_loop_lag_task.cancel()
+        for task in (_dashboard_snapshot_task, _event_loop_lag_task, _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
             if task is not None:
                 task.cancel()
         shutdown_tasks = tuple(
             task
             for task in (
                 _dashboard_snapshot_task,
+                _event_loop_lag_task,
                 _history_collector_task,
                 _contract_master_sync_task,
                 _live_cash_future_task,
@@ -787,6 +792,7 @@ async def lifespan(app: FastAPI):
         for broker_name, error in broker_sessions.disconnect_all():
             app_logger.error("Broker session shutdown failed for %s: %s", broker_name, error)
         _dashboard_snapshot_task = None
+        _event_loop_lag_task = None
         _history_collector_task = None
         _contract_master_sync_task = None
         _live_cash_future_task = None
@@ -814,6 +820,8 @@ async def lifespan(app: FastAPI):
             backtest_status_store.close()
         if universal_result_ledger is not None:
             universal_result_ledger.close()
+
+event_loop_lag_monitor = EventLoopLagMonitor(interval_seconds=1.0)
 
 app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, lifespan=lifespan)
 
@@ -2384,6 +2392,7 @@ def market_data_runtime_health():
         "server_timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
         "common_feed": common_feed,
         "provider_readiness": provider_readiness_bridge.snapshot(),
+        "event_loop": event_loop_lag_monitor.snapshot(),
         "runners": {
             "cash_future": None if cash_runner is None else cash_runner.snapshot(),
             "calendar_spread": None if calendar_runner is None else calendar_runner.snapshot(),
