@@ -78,7 +78,7 @@ def cash_future_scanner(
 
 
 @router.get("/cash-future/live")
-def cash_future_live_scanner(symbols: str = Query(...), db: Session = Depends(get_db)):
+def cash_future_live_scanner(symbols: str = Query(...)):
     requested = [item.strip().upper() for item in symbols.split(",") if item.strip()]
     if not requested:
         raise HTTPException(status_code=400, detail="at least one symbol is required")
