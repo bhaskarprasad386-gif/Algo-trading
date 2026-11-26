@@ -65,7 +65,7 @@ DIAGNOSTICS_AGENT="$APP_DIR/deploy/server_diagnostics_agent.py"
 [[ -f "$DIAGNOSTICS_SERVICE_SRC" ]] || die "$DIAGNOSTICS_SERVICE_SRC not found."
 [[ -f "$DIAGNOSTICS_AGENT" ]] || die "$DIAGNOSTICS_AGENT not found."
 install -m 0644 "$DIAGNOSTICS_SERVICE_SRC" "$DIAGNOSTICS_SERVICE_DST"
-chmod 0755 "$DIAGNOSTICS_AGENT"
+chmod 0644 "$DIAGNOSTICS_AGENT"
 systemctl daemon-reload
 systemctl enable algo-diagnostics.service
 systemctl restart algo-diagnostics.service
