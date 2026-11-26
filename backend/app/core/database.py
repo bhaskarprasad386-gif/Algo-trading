@@ -83,6 +83,65 @@ def check_database() -> bool:
         connection.execute(text("SELECT 1"))
     return True
 
+class DatabaseHealthProbeBusy(RuntimeError):
+    """Another bounded health probe is still waiting for the database pool."""
+
+
+class DatabaseHealthProbeTimeout(TimeoutError):
+    """The database health probe did not finish within its response budget."""
+
+
+# At most one health-probe worker may wait on the application pool at a time.
+# A timed-out daemon worker keeps this lock until its checkout eventually
+# completes, preventing repeated health requests from accumulating threads.
+_health_probe_lock = threading.Lock()
+
+
+def check_database_bounded(probe=check_database, *, timeout_seconds: float = 0.75) -> bool:
+    """Run SELECT 1 without allowing a health request to wait on pool checkout.
+
+    The worker is intentionally single-flight. If SQLAlchemy's pool checkout
+    blocks after the initial saturation snapshot, the HTTP caller returns
+    degraded after the short budget. The one daemon worker may finish later,
+    but no additional worker is created until it releases the lock.
+    """
+    if timeout_seconds <= 0:
+        raise ValueError("health probe timeout must be positive")
+    if not _health_probe_lock.acquire(blocking=False):
+        raise DatabaseHealthProbeBusy("a previous database health probe is still in flight")
+
+    completed = threading.Event()
+    outcome: dict[str, Exception] = {}
+
+    def run_probe() -> None:
+        try:
+            probe()
+        except Exception as exc:
+            outcome["error"] = exc
+        finally:
+            _health_probe_lock.release()
+            completed.set()
+
+    worker = threading.Thread(
+        target=run_probe,
+        name="database-health-probe",
+        daemon=True,
+    )
+    try:
+        worker.start()
+    except Exception:
+        _health_probe_lock.release()
+        raise
+
+    if not completed.wait(timeout_seconds):
+        raise DatabaseHealthProbeTimeout(
+            f"database health probe exceeded {timeout_seconds:.2f}s response budget"
+        )
+    error = outcome.get("error")
+    if error is not None:
+        raise error
+    return True
+
 
 
 def database_pool_snapshot() -> dict[str, object]:
