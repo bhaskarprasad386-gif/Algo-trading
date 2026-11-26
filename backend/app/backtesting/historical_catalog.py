@@ -304,21 +304,31 @@ class HistoricalCatalog:
 
     def source_summary(self, *, source: str, timeframe: str) -> dict[str, Any]:
         """Return one source/timeframe aggregate using the maintained watermark index."""
-        row = self._db.execute(
+        rows = self._db.execute(
             """
-            SELECT
-                (SELECT COUNT(*) FROM data_catalog WHERE source=? AND timeframe=?),
-                COUNT(*),
-                MAX(max_timestamp_ns)
-            FROM source_watermarks
-            WHERE source=? AND timeframe=?
+            WITH record_totals AS (
+                SELECT COUNT(*) AS record_count
+                FROM data_catalog
+                WHERE source=? AND timeframe=?
+            )
+            SELECT record_totals.record_count, watermarks.instrument,
+                   watermarks.max_timestamp_ns
+            FROM record_totals
+            LEFT JOIN source_watermarks AS watermarks
+              ON watermarks.source=? AND watermarks.timeframe=?
             """,
             (source, timeframe, source, timeframe),
-        ).fetchone()
+        ).fetchall()
+        instrument_names = tuple(
+            str(row[1]) for row in rows if row[1] is not None
+        )
+        latest_values = [
+            int(row[2]) for row in rows if row[2] is not None
+        ]
         return {
-            "record_count": int(row[0] or 0),
-            "instruments": int(row[1] or 0),
-            "latest_timestamp_ns": None if row[2] is None else int(row[2]),
+            "record_count": int(rows[0][0] or 0) if rows else 0,
+            "instrument_names": instrument_names,
+            "latest_timestamp_ns": max(latest_values) if latest_values else None,
         }
 
     def watermark(self, *, source: str, instrument: str, timeframe: str) -> int | None:
