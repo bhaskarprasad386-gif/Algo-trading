@@ -38,6 +38,9 @@ def test_database_pool_snapshot_reports_queue_pool_occupancy(monkeypatch):
     assert snapshot["saturated"] is False
     assert snapshot["active_checkout_count"] == 0
     assert snapshot["long_checkout_count"] == 0
+    assert snapshot["checkout_tracking_delta"] == 13
+    assert snapshot["untracked_checkout_count"] == 13
+    assert snapshot["checkout_tracking_status"] == "POOL_AHEAD"
 
 
 def test_database_pool_snapshot_is_safe_for_pools_without_queuepool_counters(monkeypatch):
@@ -56,7 +59,9 @@ def test_database_pool_snapshot_is_safe_for_pools_without_queuepool_counters(mon
     assert snapshot["saturated"] is None
     assert snapshot["active_checkout_count"] == 0
     assert snapshot["long_checkout_count"] == 0
-
+    assert snapshot["checkout_tracking_delta"] is None
+    assert snapshot["untracked_checkout_count"] is None
+    assert snapshot["checkout_tracking_status"] == "UNAVAILABLE"
 
 
 def test_database_pool_snapshot_reports_active_and_long_checkouts(monkeypatch):
@@ -80,6 +85,9 @@ def test_database_pool_snapshot_reports_active_and_long_checkouts(monkeypatch):
     assert snapshot["oldest_checkout_seconds"] >= 44.0
     assert snapshot["oldest_checkout_thread"] == "history-worker"
     assert snapshot["long_checkout_threshold_seconds"] == 30.0
+    assert snapshot["checkout_tracking_delta"] == 11
+    assert snapshot["untracked_checkout_count"] == 11
+    assert snapshot["checkout_tracking_status"] == "POOL_AHEAD"
 
 
 def test_pool_checkout_tracking_is_removed_on_checkin_and_invalidation():
