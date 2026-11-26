@@ -79,29 +79,42 @@ class DailyMarketDataShardCatalog:
                 }
                 if "data_catalog" not in tables:
                     continue
-                count_row = connection.execute(
-                    "SELECT COUNT(*) FROM data_catalog WHERE source=? AND timeframe=?",
-                    (source, timeframe),
-                ).fetchone()
-                record_count += int(count_row[0] or 0)
                 if "source_watermarks" in tables:
-                    rows = connection.execute(
-                        "SELECT instrument, MAX(max_timestamp_ns) "
-                        "FROM source_watermarks WHERE source=? AND timeframe=? "
-                        "GROUP BY instrument",
-                        (source, timeframe),
+                    summary_rows = connection.execute(
+                        """
+                        WITH record_totals AS (
+                            SELECT COUNT(*) AS record_count
+                            FROM data_catalog WHERE source=? AND timeframe=?
+                        )
+                        SELECT record_totals.record_count, watermarks.instrument,
+                               watermarks.max_timestamp_ns
+                        FROM record_totals
+                        LEFT JOIN source_watermarks AS watermarks
+                          ON watermarks.source=? AND watermarks.timeframe=?
+                        ORDER BY watermarks.instrument
+                        """,
+                        (source, timeframe, source, timeframe),
                     ).fetchall()
+                    record_count += int(summary_rows[0][0] or 0) if summary_rows else 0
+                    rows = [
+                        (row[1], row[2]) for row in summary_rows
+                        if row[1] is not None
+                    ]
                     # A watermark table can predate its backfill in legacy
                     # catalogs. Fall back only when rows exist but no
                     # maintained watermark is present for this source.
-                    if not rows and int(count_row[0] or 0) > 0:
+                    if not rows and record_count > 0:
                         rows = connection.execute(
                             "SELECT instrument, MAX(timestamp_ns) FROM data_catalog "
                             "WHERE source=? AND timeframe=? GROUP BY instrument",
                             (source, timeframe),
                         ).fetchall()
                 else:
-                    # Older legacy catalogs may predate maintained watermarks.
+                    count_row = connection.execute(
+                        "SELECT COUNT(*) FROM data_catalog WHERE source=? AND timeframe=?",
+                        (source, timeframe),
+                    ).fetchone()
+                    record_count += int(count_row[0] or 0)
                     rows = connection.execute(
                         "SELECT instrument, MAX(timestamp_ns) FROM data_catalog "
                         "WHERE source=? AND timeframe=? GROUP BY instrument",
