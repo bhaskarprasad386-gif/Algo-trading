@@ -176,7 +176,6 @@ def test_non_object_snapshot_provider_is_not_authoritative(monkeypatch):
 def test_origin_policy_rejects_untrusted_hosts(monkeypatch):
     monkeypatch.setenv("SCANNER_PAGE_WS_ALLOWED_ORIGINS", "https://algo-trading.pages.dev,https://terminal.example.com")
     assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.vercel.app"}))
-    assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://terminal.example.com"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "http://localhost:3000"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.pages.dev"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://terminal.example.com"}))
@@ -271,7 +270,7 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
     try:
         with TestClient(app).websocket_connect(
             "/ws/page-updates",
-            headers={"origin": "https://algo-trading.bhaskarprasad386.workers.dev"},
+            headers={"origin": "https://terminal.example.com"},
         ) as websocket:
             assert websocket.receive_json()["type"] == "connected"
             websocket.send_json({"action": "subscribe", "page": page})
