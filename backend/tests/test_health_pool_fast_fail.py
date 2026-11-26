@@ -91,3 +91,57 @@ def test_health_endpoint_classifies_sqlite_lock_contention_separately(monkeypatc
     assert response.json()["database"] == "Contended"
     assert response.json()["database_error_class"] == "SQLITE_CONTENTION"
     assert response.json()["database_pool"]["long_checkout_count"] == 0
+
+
+def test_health_probe_timeout_is_bounded_and_single_flight(monkeypatch):
+    import threading
+    import time
+
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    calls = []
+
+    monkeypatch.setattr(main, "database_pool_snapshot", lambda: {
+        "pool_class": "QueuePool",
+        "checkedout": 14,
+        "capacity": 15,
+        "saturated": False,
+    })
+
+    def blocked_database_check():
+        calls.append("select")
+        started.set()
+        try:
+            release.wait(timeout=5)
+        finally:
+            finished.set()
+        return True
+
+    monkeypatch.setattr(main, "check_database", blocked_database_check)
+    client = TestClient(main.app)
+    try:
+        started_at = time.monotonic()
+        first = client.get("/health")
+        elapsed = time.monotonic() - started_at
+
+        assert started.is_set()
+        assert first.status_code == 503
+        assert first.json()["database_error_class"] == "DATABASE_PROBE_TIMEOUT"
+        assert first.json()["database"] == "Probe timed out"
+        assert elapsed < 1.5
+
+        # The timed-out worker is still blocked, so a second request must fail
+        # immediately instead of creating another thread waiting for a checkout.
+        second_started_at = time.monotonic()
+        second = client.get("/health")
+        second_elapsed = time.monotonic() - second_started_at
+
+        assert second.status_code == 503
+        assert second.json()["database_error_class"] == "DATABASE_PROBE_BUSY"
+        assert second.json()["database"] == "Probe busy"
+        assert second_elapsed < 0.5
+        assert calls == ["select"]
+    finally:
+        release.set()
+        assert finished.wait(timeout=2)
