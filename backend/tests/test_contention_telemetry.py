@@ -40,7 +40,7 @@ def test_pool_checkout_telemetry_bounds_owner_cardinality():
 
 
 def test_instrumented_rlock_records_outer_hold_and_acquisition_wait():
-    lock = InstrumentedRLock("test-lock")
+    lock = InstrumentedRLock("test-lock", sample_every=1)
     lock.acquire()
     lock.acquire()
     lock.release()
@@ -58,7 +58,7 @@ def test_instrumented_rlock_records_outer_hold_and_acquisition_wait():
 
     snapshot = lock.snapshot()
     assert result == [True]
-    assert snapshot["acquisitions"] == 3
+    assert snapshot["sampled_acquisitions"] == 3
     assert snapshot["max_wait_seconds"] >= 0.01
     # Reentrant nesting is counted as one outer critical-section hold.
     assert sum(snapshot["hold_duration_buckets"].values()) == 2
