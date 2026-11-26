@@ -69,7 +69,8 @@ class DashboardStreamTelemetry:
             self._max_fanout_seconds = max(self._max_fanout_seconds, fanout)
             if error_type:
                 self._publish_errors += 1
-                self._last_error_type = str(error_type)[:64]
+                candidate = str(error_type).split(":", 1)[0].strip()
+                self._last_error_type = candidate[:64] if candidate.isidentifier() else "UnknownError"
             else:
                 self._last_success_at = monotonic()
                 self._last_error_type = None
