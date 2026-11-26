@@ -11,6 +11,7 @@ from .shoonya_owner_auth import ShoonyaOwnerLogin, login_shoonya_owner, require_
 from .registry import InstrumentDescriptor
 from .contracts import InstrumentKey
 from .dashboard_snapshot_cache import cached_snapshot
+from .persisted_summary_cache import BoundedPersistedSummaryCache
 
 router = APIRouter(
     prefix="/api/v1/market-data",
@@ -35,6 +36,11 @@ _shoonya_snapshot_provider = None
 _shoonya_supervisor_provider = None
 _shared_index_runner_snapshot_provider = None
 _shared_index_runner_health_provider = None
+
+# Historical shard counts are coverage metadata, not live-feed freshness.
+_LIVE_PERSISTED_SUMMARY_CACHE = BoundedPersistedSummaryCache(
+    ttl_seconds=60.0, max_stale_seconds=300.0, max_entries=4
+)
 
 
 def configure_live_cash_future_runner_snapshot(provider) -> None:
@@ -321,121 +327,145 @@ def get_historical(
 @router.get("/live-health")
 @cached_snapshot(ttl_seconds=5.0, max_stale_seconds=20.0)
 def get_live_data_health():
-    """Return bounded live-data persistence and freshness health for the control center."""
+    """Return live tick freshness plus separately aged persisted coverage metadata."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
     from app.market_data.daily_shard_catalog import DailyMarketDataShardCatalog
     from app.core.config import settings
     from app.market_data.common_strategy_feed import shared_common_manager_snapshot
 
+    def load_persisted_summaries():
+        # This read-only catalog enumeration is intentionally decoupled from
+        # the 5-second runtime feed-health cadence. The result is valid for
+        # 60 seconds; feed tick freshness below is still recalculated per
+        # endpoint snapshot and is never inferred from persisted history.
+        catalog = DailyMarketDataShardCatalog(settings.BACKTEST_DATA_DB)
+        try:
+            return {
+                "angelone-live-1s": catalog.source_summary(
+                    source="angelone-live-1s", timeframe="1s"
+                ),
+                "angelone-live": catalog.source_summary(
+                    source="angelone-live", timeframe="event"
+                ),
+            }
+        finally:
+            catalog.close()
+
+    persisted_summaries, persisted_summary_meta = _LIVE_PERSISTED_SUMMARY_CACHE.get(
+        str(settings.BACKTEST_DATA_DB), load_persisted_summaries
+    )
+
     ist = ZoneInfo("Asia/Kolkata")
     now = datetime.now(ist)
     # Use the same holiday-aware NSE session calculation as the market overview.
     market_open = _nse_market_is_open(now)
-    catalog = DailyMarketDataShardCatalog(settings.BACKTEST_DATA_DB)
-    try:
-        sources = []
-        for source, timeframe in (("angelone-live-1s", "1s"), ("angelone-live", "event")):
-            summary = catalog.source_summary(source=source, timeframe=timeframe)
-            latest_ns = summary["latest_timestamp_ns"]
-            raw_age_seconds = None if latest_ns is None else (now.timestamp() * 1_000_000_000 - latest_ns) / 1_000_000_000
-            # A timestamp materially in the future is invalid, not a zero-age live quote.
-            age_seconds = None if raw_age_seconds is None or raw_age_seconds < -5.0 else max(0.0, raw_age_seconds)
-            status = "LIVE" if market_open and age_seconds is not None and age_seconds <= 5 else (
-                "STALE" if market_open and age_seconds is not None else "NO_DATA"
-            )
-            sources.append({
-                "source": source, "timeframe": timeframe, "records": summary["record_count"],
-                "instruments": summary["instruments"], "latest_timestamp_ns": latest_ns,
-                "age_seconds": age_seconds, "status": status,
-            })
-        one_second = next(x for x in sources if x["source"] == "angelone-live-1s")
-        common = shared_common_manager_snapshot()
-        # NSE cash (Angel exchange type 1) and NFO derivatives (type 2) are
-        # the critical feeds for the cash-future and synthetic scanners. Do not
-        # let a fresh BFO/MCX tick mask stale or absent NSE/NFO observations.
-        now_ns = int(now.timestamp() * 1_000_000_000)
-        timestamps_by_exchange = (
-            common.get("latest_tick_timestamp_ns_by_exchange_type", {}) if common else {}
+    sources = []
+    for source, timeframe in (("angelone-live-1s", "1s"), ("angelone-live", "event")):
+        summary = persisted_summaries[source]
+        latest_ns = summary["latest_timestamp_ns"]
+        raw_age_seconds = None if latest_ns is None else (
+            now.timestamp() * 1_000_000_000 - latest_ns
+        ) / 1_000_000_000
+        # A timestamp materially in the future is invalid, not a zero-age live quote.
+        age_seconds = (
+            None if raw_age_seconds is None or raw_age_seconds < -5.0
+            else max(0.0, raw_age_seconds)
         )
-        exchange_freshness: dict[str, dict[str, object]] = {}
-        for exchange_type, exchange_name in ((1, "NSE"), (2, "NFO")):
-            raw_timestamp = timestamps_by_exchange.get(str(exchange_type))
-            if raw_timestamp is None:
-                raw_timestamp = timestamps_by_exchange.get(exchange_type)
-            try:
-                timestamp_ns = int(raw_timestamp) if raw_timestamp is not None else None
-            except (TypeError, ValueError, OverflowError):
-                timestamp_ns = None
-            raw_age = (
-                (now_ns - timestamp_ns) / 1_000_000_000
-                if timestamp_ns is not None else None
-            )
-            age = (
-                None if raw_age is None or raw_age < -5.0
-                else max(0.0, raw_age)
-            )
-            exchange_freshness[exchange_name] = {
-                "exchange_type": exchange_type,
-                "latest_tick_timestamp_ns": timestamp_ns,
-                "age_seconds": age,
-                "status": (
-                    "LIVE" if market_open and age is not None and age <= 5.0
-                    else "STALE" if market_open and (age is not None or (common or {}).get("ticks_received", 0) > 0)
-                    else "NO_DATA" if market_open
-                    else "CLOSED"
-                ),
-            }
-        known_primary_ages = [
-            item["age_seconds"] for item in exchange_freshness.values()
-            if item["age_seconds"] is not None
-        ]
-        runtime_age = max(known_primary_ages) if known_primary_ages else None
-        runtime_live = market_open and all(
-            item["status"] == "LIVE" for item in exchange_freshness.values()
+        status = "LIVE" if market_open and age_seconds is not None and age_seconds <= 5 else (
+            "STALE" if market_open and age_seconds is not None else "NO_DATA"
         )
-        primary_any_data = any(
-            item["latest_tick_timestamp_ns"] is not None
-            for item in exchange_freshness.values()
+        sources.append({
+            "source": source, "timeframe": timeframe,
+            "records": summary["record_count"],
+            "instruments": summary["instruments"],
+            "latest_timestamp_ns": latest_ns,
+            "age_seconds": age_seconds, "status": status,
+        })
+    one_second = next(x for x in sources if x["source"] == "angelone-live-1s")
+    common = shared_common_manager_snapshot()
+    # NSE cash (Angel exchange type 1) and NFO derivatives (type 2) are
+    # the critical feeds for the cash-future and synthetic scanners. Do not
+    # let a fresh BFO/MCX tick mask stale or absent NSE/NFO observations.
+    now_ns = int(now.timestamp() * 1_000_000_000)
+    timestamps_by_exchange = (
+        common.get("latest_tick_timestamp_ns_by_exchange_type", {}) if common else {}
+    )
+    exchange_freshness: dict[str, dict[str, object]] = {}
+    for exchange_type, exchange_name in ((1, "NSE"), (2, "NFO")):
+        raw_timestamp = timestamps_by_exchange.get(str(exchange_type))
+        if raw_timestamp is None:
+            raw_timestamp = timestamps_by_exchange.get(exchange_type)
+        try:
+            timestamp_ns = int(raw_timestamp) if raw_timestamp is not None else None
+        except (TypeError, ValueError, OverflowError):
+            timestamp_ns = None
+        raw_age = (
+            (now_ns - timestamp_ns) / 1_000_000_000
+            if timestamp_ns is not None else None
         )
-        # Runtime tick freshness and persisted-source freshness are different signals.
-        # Never report persisted rows or an unrelated exchange's ticks as NSE/NFO health.
-        runtime_status = (
-            "CLOSED" if not market_open else
-            "LIVE" if runtime_live else
-            "STALE" if primary_any_data or (common or {}).get("ticks_received", 0) > 0 else
-            "NO_DATA"
-        )
-        feed_status = runtime_status
-        return {
-            "status": "success", "market_session": "OPEN" if market_open else "CLOSED",
-            "checked_at": now.isoformat(), "persisted": one_second["records"] > 0,
-            "raw_market_data_persistence": bool(settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED),
-            "source": one_second["source"], "timeframe": one_second["timeframe"],
-            "records": one_second["records"], "instruments": one_second["instruments"],
-            "latest_timestamp_ns": one_second["latest_timestamp_ns"],
-            "age_seconds": one_second["age_seconds"], "feed_status": feed_status,
-            "runtime_feed": {
-                "initialized": common is not None,
-                "ticks_received": common.get("ticks_received", 0) if common else 0,
-                "active_instruments": common.get("active_instruments", 0) if common else 0,
-                "socket_groups": common.get("socket_groups", 0) if common else 0,
-                "connected_groups": common.get("connected_groups", []) if common else [],
-                "disconnected_groups": common.get("disconnected_groups", []) if common else [],
-                "connect_failures": common.get("connect_failures", 0) if common else 0,
-                "last_connect_failure": common.get("last_connect_failure") if common else None,
-                "recovery_attempts": common.get("recovery_attempts", 0) if common else 0,
-                "last_recovery_at": common.get("last_recovery_at") if common else None,
-                "delivery_errors": common.get("delivery_errors", 0) if common else 0,
-                "status": runtime_status,
-                "age_seconds": runtime_age,
-                "exchange_freshness": exchange_freshness,
-                "required_exchange_types": [1, 2],
-            },
-            "sources": sources, "live_orders": "OFF",
+        age = None if raw_age is None or raw_age < -5.0 else max(0.0, raw_age)
+        exchange_freshness[exchange_name] = {
+            "exchange_type": exchange_type,
+            "latest_tick_timestamp_ns": timestamp_ns,
+            "age_seconds": age,
+            "status": (
+                "LIVE" if market_open and age is not None and age <= 5.0
+                else "STALE" if market_open and (
+                    age is not None or (common or {}).get("ticks_received", 0) > 0
+                )
+                else "NO_DATA" if market_open
+                else "CLOSED"
+            ),
         }
-    finally:
-        catalog.close()
+    known_primary_ages = [
+        item["age_seconds"] for item in exchange_freshness.values()
+        if item["age_seconds"] is not None
+    ]
+    runtime_age = max(known_primary_ages) if known_primary_ages else None
+    runtime_live = market_open and all(
+        item["status"] == "LIVE" for item in exchange_freshness.values()
+    )
+    primary_any_data = any(
+        item["latest_tick_timestamp_ns"] is not None
+        for item in exchange_freshness.values()
+    )
+    # Runtime tick freshness and persisted-source freshness are different signals.
+    # Never report persisted rows or an unrelated exchange's ticks as NSE/NFO health.
+    runtime_status = (
+        "CLOSED" if not market_open else
+        "LIVE" if runtime_live else
+        "STALE" if primary_any_data or (common or {}).get("ticks_received", 0) > 0 else
+        "NO_DATA"
+    )
+    return {
+        "status": "success", "market_session": "OPEN" if market_open else "CLOSED",
+        "checked_at": now.isoformat(), "persisted": one_second["records"] > 0,
+        "raw_market_data_persistence": bool(settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED),
+        "source": one_second["source"], "timeframe": one_second["timeframe"],
+        "records": one_second["records"], "instruments": one_second["instruments"],
+        "latest_timestamp_ns": one_second["latest_timestamp_ns"],
+        "age_seconds": one_second["age_seconds"], "feed_status": runtime_status,
+        "persisted_summary": persisted_summary_meta,
+        "runtime_feed": {
+            "initialized": common is not None,
+            "ticks_received": common.get("ticks_received", 0) if common else 0,
+            "active_instruments": common.get("active_instruments", 0) if common else 0,
+            "socket_groups": common.get("socket_groups", 0) if common else 0,
+            "connected_groups": common.get("connected_groups", []) if common else [],
+            "disconnected_groups": common.get("disconnected_groups", []) if common else [],
+            "connect_failures": common.get("connect_failures", 0) if common else 0,
+            "last_connect_failure": common.get("last_connect_failure") if common else None,
+            "recovery_attempts": common.get("recovery_attempts", 0) if common else 0,
+            "last_recovery_at": common.get("last_recovery_at") if common else None,
+            "delivery_errors": common.get("delivery_errors", 0) if common else 0,
+            "status": runtime_status,
+            "age_seconds": runtime_age,
+            "exchange_freshness": exchange_freshness,
+            "required_exchange_types": [1, 2],
+        },
+        "sources": sources, "live_orders": "OFF",
+    }
 
 
 @router.get("/common-feed-health")
