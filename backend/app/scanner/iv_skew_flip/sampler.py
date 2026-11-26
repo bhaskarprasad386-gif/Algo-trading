@@ -483,7 +483,6 @@ class IVOneSecondSampler:
                 persistence_batch = tuple(sample for _, sample in pending_history)
         # Keep the state lock out of the SQL transaction. The dedicated
         # sample lock above preserves one-cycle-at-a-time cursor ordering.
-        persistence_ok = True
         try:
             self._persist_history(list(persistence_batch))
             persistence_error = None
@@ -500,7 +499,6 @@ class IVOneSecondSampler:
             # Keep failed source-time rows queued for the next cycle. Without
             # this queue, a later tick would replace an earlier failed write
             # and silently lose durable observations during a DB outage.
-            persistence_ok = False
             persistence_error = f"{type(exc).__name__}: {exc}"
         with self._lock:
             self._history_persistence_error = persistence_error
@@ -695,6 +693,9 @@ class IVOneSecondSampler:
             sampled_at = self._last_sampled_at_ns
             error = self._last_error
             changes = dict(self._one_second_changes)
+            persistence_error = self._history_persistence_error
+            persistence_pending_count = len(self._pending_history)
+            persistence_dropped_count = self._history_persistence_dropped_count
         live_metrics = [
             {
                 "token": item.token,
@@ -775,9 +776,9 @@ class IVOneSecondSampler:
             "history_samples_by_token": history_sizes,
             "history_persistence": "ENABLED" if self.history_session_factory is not None else "DISABLED",
             "history_persisted_count": self._history_persisted_count,
-            "history_persistence_error": self._history_persistence_error,
-            "history_persistence_pending_count": len(self._pending_history),
-            "history_persistence_dropped_count": self._history_persistence_dropped_count,
+            "history_persistence_error": persistence_error,
+            "history_persistence_pending_count": persistence_pending_count,
+            "history_persistence_dropped_count": persistence_dropped_count,
             "five_minute_oi_reference_available": sum(
                 1 for item in samples if self.oi_reference(item.token) is not None
             ),
