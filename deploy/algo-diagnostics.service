@@ -1,0 +1,34 @@
+[Unit]
+Description=Algo Trading Independent VPS Diagnostics Collector
+After=network.target systemd-journald.service
+Wants=systemd-journald.service
+
+[Service]
+Type=simple
+DynamicUser=yes
+SupplementaryGroups=systemd-journal
+StateDirectory=algo-diagnostics
+StateDirectoryMode=0700
+Environment=PYTHONUNBUFFERED=1
+Environment=DIAGNOSTICS_HOST=127.0.0.1
+Environment=DIAGNOSTICS_PORT=8765
+Environment=DIAGNOSTICS_DB=/var/lib/algo-diagnostics/events.sqlite3
+Environment=DIAGNOSTICS_SOURCE_UNIT=algo-trading.service
+Environment=DIAGNOSTICS_POLL_SECONDS=5
+Environment=DIAGNOSTICS_RETENTION_DAYS=14
+Environment=DIAGNOSTICS_MAX_EVENTS=3000
+ExecStart=/usr/bin/python3 /opt/Algo-Trading/deploy/server_diagnostics_agent.py
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -40,11 +40,15 @@ export default function HomePage() {
   const [runtimeServerTimestamp, setRuntimeServerTimestamp] = useState<string | null>(null);
   const [runtimeServerTimestampReceivedAt, setRuntimeServerTimestampReceivedAt] = useState<number | null>(null);
   const [runnerLastActivity, setRunnerLastActivity] = useState<Record<string, number>>({});
+  const [sharedRunner, setSharedRunner] = useState<any>(null);
+  const [sharedRunnerLastSuccessAt, setSharedRunnerLastSuccessAt] = useState<number | null>(null);
+  const [sharedRunnerFetchFailed, setSharedRunnerFetchFailed] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [diagnosticErrors, setDiagnosticErrors] = useState<any[]>([]);
   const [diagnosticCount, setDiagnosticCount] = useState(0);
   const [diagnosticsLastSuccessAt, setDiagnosticsLastSuccessAt] = useState<number | null>(null);
   const [diagnosticsFetchFailed, setDiagnosticsFetchFailed] = useState(false);
+  const [diagnosticsApiReachable, setDiagnosticsApiReachable] = useState<boolean | null>(null);
   const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([]);
 
   useEffect(() => {
@@ -409,27 +413,59 @@ export default function HomePage() {
     let timer: number | undefined;
     const loadDiagnosticErrors = async () => {
       try {
-        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-        const response = await fetch(base + "/api/v1/diagnostics/errors?limit=50", { cache: "no-store", signal: AbortSignal.timeout(1600) });
-        if (!response.ok) throw new Error("diagnostics");
+        const response = await fetch("/server-diagnostics/api/errors?limit=100", {
+          cache: "no-store",
+          signal: AbortSignal.timeout(2500),
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) throw new Error("independent diagnostics collector unavailable");
         const body = await response.json();
         if (!body || typeof body !== "object" || !Array.isArray(body.errors)) throw new Error("diagnostics schema incomplete");
         if (!cancelled) {
           setDiagnosticsLastSuccessAt(Date.now());
           setDiagnosticsFetchFailed(false);
-          setDiagnosticErrors(Array.isArray(body?.errors) ? body.errors : []);
-          setDiagnosticCount(Number.isFinite(Number(body?.count)) ? Number(body.count) : (Array.isArray(body?.errors) ? body.errors.length : 0));
+          setDiagnosticsApiReachable(body.api_process_reachable === true);
+          setDiagnosticErrors(body.errors);
+          setDiagnosticCount(Number.isFinite(Number(body.count)) ? Number(body.count) : body.errors.length);
         }
       } catch {
         if (!cancelled) setDiagnosticsFetchFailed(true);
-        // Do not manufacture a fake runtime error when the diagnostic endpoint is unavailable.
+        // Keep last successful server events when either the API or collector route is unavailable.
       } finally {
-        if (!cancelled) timer = window.setTimeout(() => { void loadDiagnosticErrors(); }, 2000);
+        if (!cancelled) timer = window.setTimeout(() => { void loadDiagnosticErrors(); }, 5000);
       }
     };
     void loadDiagnosticErrors();
     return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const loadSharedRunner = async () => {
+      try {
+        const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+        const response = await fetch(base + "/api/v1/market-data/shared-index-runner/health-lite", {
+          cache: "no-store",
+          signal: AbortSignal.timeout(3000),
+        });
+        if (!response.ok) throw new Error("shared runner health unavailable");
+        const body = await response.json();
+        if (!cancelled && body && typeof body === "object") {
+          setSharedRunner(body);
+          setSharedRunnerLastSuccessAt(Date.now());
+          setSharedRunnerFetchFailed(false);
+        }
+      } catch {
+        if (!cancelled) setSharedRunnerFetchFailed(true);
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => { void loadSharedRunner(); }, 5000);
+      }
+    };
+    void loadSharedRunner();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
+  }, []);
+
 
 
   const apiLabel = apiStatus === "connected" ? "CONNECTED" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" ? "ERROR" : "CONNECTING";
@@ -472,6 +508,59 @@ export default function HomePage() {
     return () => window.clearTimeout(timer);
   }, [liveFeedAlertKey]);
 
+  const sharedLifecycle = sharedRunner?.lifecycle ?? {};
+  const sharedWebSocket = sharedLifecycle?.shared_websocket ?? {};
+  const socketHealthByGroup = sharedWebSocket?.socket_health_by_group ?? {};
+  const socketRoster = Array.isArray(sharedWebSocket?.subscription_roster) ? sharedWebSocket.subscription_roster : [];
+  const requiredSocketIds: string[] = Array.isArray(sharedWebSocket?.required_socket_groups) ? sharedWebSocket.required_socket_groups.map(String) : [];
+  const actualSocketIds = Object.keys(socketHealthByGroup);
+  const sharedSocketIds = Array.from(new Set([...requiredSocketIds, ...actualSocketIds])).sort().slice(0, 3);
+  const sharedSocketCards = Array.from({ length: 3 }, (_, index) => {
+    const group = sharedSocketIds[index] ?? null;
+    const health = group ? socketHealthByGroup[group] ?? null : null;
+    const subscriptions = group ? socketRoster.filter((item: any) => String(item.socket_group) === group) : [];
+    const consumers = Array.from(new Set(subscriptions.flatMap((item: any) => Array.isArray(item.consumer) ? item.consumer : [])));
+    const connected = health?.connected === true && health?.stopping !== true;
+    const heartbeat = health?.heartbeat_state ? String(health.heartbeat_state).toUpperCase() : "UNKNOWN";
+    const subscriptionRejections = Number(health?.subscription_rejection_count ?? 0);
+    const subscriptionResponse = health?.subscription_response_state ? String(health.subscription_response_state).toUpperCase() : "UNKNOWN";
+    const transportThreadAlive = health?.transport_thread_alive == null ? null : health.transport_thread_alive === true;
+    const heartbeatDegraded = /STALE|TIMEOUT|FAILED|ERROR|DEGRADED|UNHEALTHY|NO_PONG/.test(heartbeat) || health?.transport_close_timed_out === true;
+    const subscriptionDegraded = subscriptionRejections > 0 || health?.initial_subscribe_success === false || subscriptionResponse === "REJECTED";
+    const status = !group ? "NOT ASSIGNED" : !health ? "MISSING" : health.stopping ? "STOPPING" : health.connecting ? "CONNECTING" : connected && (heartbeatDegraded || subscriptionDegraded || health.transport_thread_alive === false) ? "DEGRADED" : connected ? "CONNECTED" : "DISCONNECTED";
+    return { label: "SOCKET " + (index + 1), group: group ?? "No required group", status, heartbeat, subscriptionResponse, transportThreadAlive, pongAge: health?.last_pong_age_seconds != null && Number.isFinite(Number(health.last_pong_age_seconds)) ? Number(health.last_pong_age_seconds) : null, reconnects: Number(health?.reconnect_count ?? 0), errors: Number(health?.error_count ?? 0), subscriptionRejections, subscriptions: subscriptions.length, consumers: consumers.slice(0, 3).join(" • ") || "No active consumer roster" };
+  });
+  const sharedRunnerEnabled = sharedRunner?.enabled === true;
+  const sharedRunnerReady = sharedRunner?.live_data_ready === true;
+  const sharedRunnerUnavailable = !sharedRunner || sharedRunner.state === "UNAVAILABLE" || sharedRunner.state === "NOT_INITIALIZED";
+  const sharedRunnerSampleAge = sharedRunnerLastSuccessAt == null ? null : Math.max(0, (Date.now() - sharedRunnerLastSuccessAt) / 1000);
+  const sharedRunnerSampleUnavailable = sharedRunnerFetchFailed && sharedRunnerSampleAge != null;
+  const sharedRunnerStatus = sharedRunnerSampleUnavailable ? "LAST KNOWN • HEALTH FETCH FAILED" : !sharedRunner ? "CHECKING" : sharedRunner.state === "UNAVAILABLE" ? "UNAVAILABLE" : sharedRunner.state === "NOT_INITIALIZED" ? "NOT INITIALIZED" : !sharedRunnerEnabled ? "STOPPED" : sharedRunnerReady ? "LIVE DATA READY" : sharedRunner.initial_option_bootstrap_done ? (effectiveMarketSession === "CLOSED" ? "RUNNING • MARKET CLOSED" : "RUNNING • FEED NOT READY") : "RUNNING • BOOTSTRAPPING";
+  const sharedFeedGroups = sharedRunner?.feed_health_by_group ?? {};
+  const getRecordFeed = (underlying: string, kind: string) => {
+    const group = sharedFeedGroups[underlying + ":" + kind] ?? null;
+    const rows = Number(group?.count ?? 0);
+    const fresh = Number(group?.fresh_count ?? 0);
+    const maxAge = group?.max_age_seconds != null && Number.isFinite(Number(group.max_age_seconds)) ? Number(group.max_age_seconds) : null;
+    const baseStatus = sharedRunnerUnavailable ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : rows === 0 ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : fresh === rows ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : fresh > 0 ? "PARTIAL / STALE" : "STALE";
+    const status = sharedRunnerSampleUnavailable ? "LAST SAMPLE • " + baseStatus : baseStatus;
+    return { rows, fresh, maxAge, status };
+  };
+  const getSpotFeed = (underlying: string) => {
+    const spot = sharedRunner?.latest_spots?.[underlying];
+    const age = Number(spot?.age_seconds);
+    const validAge = spot?.age_seconds != null && Number.isFinite(age) && age >= 0 ? age : null;
+    const baseStatus = sharedRunnerUnavailable ? "UNAVAILABLE" : !sharedRunnerEnabled ? "RUNNER STOPPED" : !spot ? (effectiveMarketSession === "CLOSED" ? "MARKET CLOSED" : "NO DATA") : validAge != null && validAge <= 5 ? "FRESH" : effectiveMarketSession === "CLOSED" ? "MARKET CLOSED • NO TICKS EXPECTED" : "STALE";
+    const status = sharedRunnerSampleUnavailable ? "LAST SAMPLE • " + baseStatus : baseStatus;
+    return { status, age: validAge, price: spot?.price != null && Number.isFinite(Number(spot.price)) ? Number(spot.price) : null };
+  };
+  const sharedFeedCards = [
+    { label: "NIFTY SPOT", detail: "NSE index spot", ...getSpotFeed("NIFTY") },
+    { label: "BANKNIFTY SPOT", detail: "NSE index spot", ...getSpotFeed("BANKNIFTY") },
+    { label: "NIFTY WEEKLY OPTIONS", detail: "NFO • CE + PE chain", ...getRecordFeed("NIFTY", "option") },
+    { label: "BANKNIFTY MONTHLY OPTIONS", detail: "NFO • CE + PE chain", ...getRecordFeed("BANKNIFTY", "option") },
+    { label: "NIFTY + BANKNIFTY FUTURES", detail: "NFO • index futures", ...getRecordFeed("NIFTY", "future"), extra: getRecordFeed("BANKNIFTY", "future") },
+  ];
   const scannerStatus = [
     { label: "Positive Net-Gap Signals (max 50)", value: snapshot.opportunities.toLocaleString("en-IN") },
     { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
@@ -505,7 +594,7 @@ export default function HomePage() {
         </div>
         <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1.5 rounded-lg border theme-border theme-surface-2 px-2.5 py-1.5">
           <div className="text-[9px] leading-4 theme-subtle">Exchange session is schedule-based. API response time is not the same as exchange tick time. Cash-Future freshness uses its server observation timestamp; other scanner ages reflect browser-observed counter movement.</div>
-          <div className={`inline-flex shrink-0 items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-semibold ${feedLabel === "LIVE" ? "theme-success-bg theme-success" : feedLabel === "CLOSED" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger"}`}><Radio size={12} /> {feedLabel === "LIVE" ? "Market feed LIVE" : feedLabel === "CLOSED" ? "NSE MARKET CLOSED" : `Market feed ${feedLabel.toLowerCase()}`}</div>
+          <div className={`inline-flex shrink-0 items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-semibold ${feedLabel === "LIVE" ? "theme-success-bg theme-success" : feedLabel === "CLOSED" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger"}`}><Radio size={12} /> {feedLabel === "LIVE" ? "COMMON NSE/NFO FEED LIVE" : feedLabel === "CLOSED" ? "COMMON FEED • MARKET CLOSED" : `COMMON NSE/NFO FEED ${feedLabel.toLowerCase()}`}</div>
         </div>
       </section>
 
@@ -542,76 +631,57 @@ export default function HomePage() {
 
       <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.85fr)]">
         <div className="min-w-0">
-        <section aria-label="System health">
-          <div className="mb-3 rounded-2xl border theme-border theme-surface-2 p-3">
-            <div className="mb-2 text-[10px] font-bold uppercase tracking-wide theme-subtle">Health chain • each stage is independent</div>
-            <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-              {[
-                {label:"1. API SERVER",value:apiStatus === "connected" ? "ONLINE" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" ? "UNREACHABLE" : "CHECKING",detail:"HTTP health response",ok:apiStatus === "connected",warn:apiStatus === "degraded"},
-                {label:"2. WEBSOCKET",value:commonSocketState,detail:connectedRequiredGroupCount+"/"+(runtime.requiredSocketGroupCount == null ? "?" : runtime.requiredSocketGroupCount)+" required groups",ok:commonSocketState === "CONNECTED",warn:commonSocketState === "DEGRADED" || commonSocketState === "UNKNOWN"},
-                {label:"3. FEED HEALTH",value:feedLabel,detail:"Sample age: "+feedAgeLabel,ok:effectiveFeedStatus === "live" && !runtimeTelemetryStale,warn:effectiveFeedStatus === "stale" || effectiveFeedStatus === "no-data"},
-                {label:"4. SCANNER OBSERVATION",value:observationAge == null ? "NO DATA" : observationAge <= 5 ? "RECENT" : observationAge <= 10 ? "STALE" : "STALLED",detail:observationAge == null ? "No observation timestamp" : observationAge < 60 ? Math.round(observationAge)+"s ago" : Math.round(observationAge/60)+"m ago",ok:observationAge != null && observationAge <= 5,warn:observationAge != null && observationAge > 5 && observationAge <= 10}
-              ].map((stage) => <div key={stage.label} className="min-w-0 rounded-xl border theme-border px-3 py-2">
-                <div className="text-[9px] font-bold tracking-wide theme-subtle">{stage.label}</div>
-                <div className={"mt-1 break-words text-[11px] font-extrabold "+(stage.ok ? "theme-success" : stage.warn ? "theme-warning" : "theme-danger")}>{stage.value}</div>
-                <div className="mt-1 break-words text-[9px] leading-4 theme-subtle">{stage.detail}</div>
-              </div>)}
-            </div>
-            <p className="mt-2 text-[10px] leading-4 theme-subtle">These stages are not interchangeable. Feed health does not prove executable bid/ask quotes; scanner activity does not prove a profitable signal or order execution.</p>
+        <section aria-label="System health" className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2"><Gauge size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">System Health</h2></div>
+            <div className="text-right text-[10px] theme-subtle">Auto-refresh • API sample: {runtimeServerTimestamp ? new Date(runtimeServerTimestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata" }) : "unavailable"}</div>
           </div>
-          <div className="mb-3 flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Gauge size={16} className="theme-accent" /><h2 className="text-[15px] font-semibold">System Health</h2></div><div className="text-right text-[10px] theme-subtle">Auto-refreshing • Server sample: {runtimeServerTimestamp ? new Date(runtimeServerTimestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata" }) + (runtimeServerTimestampReceivedAt == null ? "" : " • received " + Math.max(0, (Date.now() - runtimeServerTimestampReceivedAt) / 1000).toFixed(1) + "s ago") : "unavailable"}</div></div>
-          <Card className="overflow-hidden rounded-2xl border theme-border theme-surface-2 p-0 shadow-sm">
-            <div className="overflow-x-auto"><table className="w-full border-collapse text-left md:min-w-[1080px]">
-              <thead className="hidden theme-surface md:table-header-group"><tr className="border-b theme-border text-[9px] uppercase tracking-[0.12em] theme-subtle">
-                <th className="px-3 py-3 font-bold">Feed / Scanner</th><th className="px-3 py-3 font-bold">WebSocket / State</th><th className="px-3 py-3 font-bold">Live ticks / updates</th><th className="px-3 py-3 font-bold">TPS</th><th className="px-3 py-3 font-bold">Tick / update age</th><th className="px-3 py-3 font-bold">Data flow</th><th className="px-3 py-3 font-bold">Scanner position</th>
-              </tr></thead><tbody className="block md:table-row-group">
-                {(() => {
-                  const now = Date.now();
-                  const activityAge = (key: string) => runnerLastActivity[key] == null ? null : Math.max(0, (now - runnerLastActivity[key]) / 1000);
-                  const ageText = (age: number | null) => age == null ? "No recent sample" : age < 60 ? Math.round(age) + "s" : Math.round(age / 60) + "m";
-                  const freshness = (age: number | null) => age != null && age <= 10 ? "RECEIVING" : age != null && age <= 15 ? "STALE" : age == null ? "NO DATA" : "STALLED";
-                  const serverDown = apiStatus === "error";
-                  const wsState = commonSocketState;
-                  const overallFlow = serverDown ? "SERVER UNREACHABLE" : runtimeTelemetryStale ? "RUNTIME TELEMETRY UNAVAILABLE" : wsState === "DISCONNECTED" ? "WEBSOCKET DISCONNECTED" : wsState === "DEGRADED" ? "WEBSOCKET DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : wsState === "NO SUBSCRIPTIONS" ? "NO COMMON-FEED SUBSCRIPTIONS" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED • NSE TICKS NOT EXPECTED" : effectiveFeedStatus === "live" ? "LIVE TICKS" : effectiveFeedStatus === "stale" ? "STALE MARKET DATA" : effectiveFeedStatus === "error" ? "FEED HEALTH ERROR" : "NO MARKET DATA";
-                  const runnerState = (running: boolean, age: number | null) => serverDown ? "API UNREACHABLE" : runtimeTelemetryStale ? "TELEMETRY STALE" : wsState === "DISCONNECTED" ? "WEBSOCKET DOWN" : wsState === "DEGRADED" ? "FEED DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET STATUS UNKNOWN" : wsState === "NO SUBSCRIPTIONS" ? "NO FEED SUBSCRIPTIONS" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : !running ? "STOPPED" : age == null ? "NO DATA" : age <= 10 ? "RECEIVING" : age <= 15 ? "STALE" : "STALLED";
-                  const cashAge = activityAge("cashPayloads");
-                  const syntheticAge = activityAge("syntheticPayloads");
-                  const boxAge = activityAge("boxPayloads");
-                  const calendarAge = activityAge("calendarPayloads");
-                  const optionsAge = boxAge != null && calendarAge != null ? Math.min(boxAge, calendarAge) : boxAge ?? calendarAge;
-                  const cashScannerAge = observationAge;
-                  const rows = [
-                    {name:"API SERVER", state:serverDown ? "UNREACHABLE" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "connected" ? "ONLINE" : "CHECKING", updates:0, age:apiStatus === "connected" || apiStatus === "degraded" ? "Health endpoint responding" : "No response", flow:serverDown ? "SERVER UNREACHABLE" : apiStatus === "degraded" ? "DATABASE / SERVER DEGRADED" : apiStatus === "connected" ? "API + DATABASE HEALTHY" : "CHECKING", position:apiDetail},
-                    {name:"OVERALL COMMON FEED", state:serverDown ? "API UNREACHABLE" : wsState, updates:runtime.ticks, age:feedAgeLabel, flow:overallFlow, position:runtime.activeInstruments.toLocaleString("en-IN")+" active instruments • "+connectedRequiredGroupCount+"/"+(runtime.requiredSocketGroupCount == null ? "?" : runtime.requiredSocketGroupCount)+" required groups • "+runtime.socketGroups+" active sockets • cap "+runtime.maxSocketSessions},
-                    {name:"CASH-FUTURE PAYLOADS", state:serverDown ? "API UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DOWN" : wsState === "DEGRADED" ? "FEED DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET STATUS UNKNOWN" : runtimeTelemetryStale ? "TELEMETRY STALE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : freshness(cashAge), updates:runtime.runners.cash_future?.payloads ?? 0, age:ageText(cashAge), flow:serverDown ? "SERVER UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DISCONNECTED" : wsState === "DEGRADED" ? "WEBSOCKET DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : runtimeTelemetryStale ? "RUNTIME TELEMETRY UNAVAILABLE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED • NSE TICKS NOT EXPECTED" : freshness(cashAge), position:runtime.runners.cash_future?.instruments ? runtime.runners.cash_future.instruments.toLocaleString("en-IN")+" instruments • "+(runtime.runners.cash_future?.payloads ?? 0).toLocaleString("en-IN")+" cumulative payloads" : "No instrument count"},
-                    {name:"OPTIONS DATA", state:serverDown ? "API UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DOWN" : wsState === "DEGRADED" ? "FEED DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET STATUS UNKNOWN" : runtimeTelemetryStale ? "TELEMETRY STALE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : runnerState(Boolean(runtime.runners.box_spread?.running || runtime.runners.calendar_spread?.running), optionsAge), updates:(runtime.runners.box_spread?.payloads ?? 0)+(runtime.runners.calendar_spread?.payloads ?? 0), age:ageText(optionsAge), flow:serverDown ? "SERVER UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DISCONNECTED" : wsState === "DEGRADED" ? "WEBSOCKET DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : runtimeTelemetryStale ? "RUNTIME TELEMETRY UNAVAILABLE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED • NSE TICKS NOT EXPECTED" : freshness(optionsAge), position:"Box + Calendar • cumulative counters alone do not prove fresh data"},
-                    {name:"FUTURES DATA", state:serverDown ? "API UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DOWN" : wsState === "DEGRADED" ? "FEED DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET STATUS UNKNOWN" : runtimeTelemetryStale ? "TELEMETRY STALE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : runnerState(Boolean(runtime.runners.synthetic_arbitrage?.running), syntheticAge), updates:runtime.runners.synthetic_arbitrage?.payloads ?? 0, age:ageText(syntheticAge), flow:serverDown ? "SERVER UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DISCONNECTED" : wsState === "DEGRADED" ? "WEBSOCKET DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : runtimeTelemetryStale ? "RUNTIME TELEMETRY UNAVAILABLE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED • NSE TICKS NOT EXPECTED" : freshness(syntheticAge), position:"Synthetic feed • cumulative counter "+(runtime.runners.synthetic_arbitrage?.payloads ?? 0).toLocaleString("en-IN")},
-                    {name:"CASH-FUTURE SCANNER", state:serverDown ? "API UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DOWN" : wsState === "DEGRADED" ? "FEED DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET STATUS UNKNOWN" : runtimeTelemetryStale ? "TELEMETRY STALE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : !runtime.runners.cash_future?.running ? "STOPPED" : cashScannerAge != null && cashScannerAge <= 5 ? "RECEIVING" : cashScannerAge != null && cashScannerAge <= 10 ? "STALE" : cashScannerAge != null ? "STALLED" : "NO DATA", updates:runtime.runners.cash_future?.updates ?? 0, age:cashScannerAge == null ? "No observation" : ageText(cashScannerAge), flow:serverDown ? "SERVER UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DISCONNECTED" : wsState === "DEGRADED" ? "WEBSOCKET DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : runtimeTelemetryStale ? "RUNTIME TELEMETRY UNAVAILABLE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED • NSE TICKS NOT EXPECTED" : cashScannerAge != null && cashScannerAge <= 5 ? "RECENT SCANNER OBSERVATION" : cashScannerAge != null && cashScannerAge <= 10 ? "STALE SCANNER OBSERVATION" : cashScannerAge != null ? "SCANNER OBSERVATION STALLED" : "NO SCANNER OBSERVATION TIME", position:runtime.runners.cash_future?.detail ?? "UNAVAILABLE"},
-                    {name:"SYNTHETIC ARBITRAGE", state:serverDown ? "API UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DOWN" : wsState === "DEGRADED" ? "FEED DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET STATUS UNKNOWN" : runtimeTelemetryStale ? "TELEMETRY STALE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : runnerState(Boolean(runtime.runners.synthetic_arbitrage?.running), syntheticAge), updates:runtime.runners.synthetic_arbitrage?.updates ?? 0, age:ageText(syntheticAge), flow:serverDown ? "SERVER UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DISCONNECTED" : wsState === "DEGRADED" ? "WEBSOCKET DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : runtimeTelemetryStale ? "RUNTIME TELEMETRY UNAVAILABLE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED • NSE TICKS NOT EXPECTED" : freshness(syntheticAge), position:runtime.runners.synthetic_arbitrage?.detail ?? "UNAVAILABLE"},
-                    {name:"BOX SPREAD SCANNER", state:serverDown ? "API UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DOWN" : wsState === "DEGRADED" ? "FEED DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET STATUS UNKNOWN" : runtimeTelemetryStale ? "TELEMETRY STALE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : runnerState(Boolean(runtime.runners.box_spread?.running), boxAge), updates:runtime.runners.box_spread?.updates ?? 0, age:ageText(boxAge), flow:serverDown ? "SERVER UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DISCONNECTED" : wsState === "DEGRADED" ? "WEBSOCKET DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : runtimeTelemetryStale ? "RUNTIME TELEMETRY UNAVAILABLE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED • NSE TICKS NOT EXPECTED" : freshness(boxAge), position:runtime.runners.box_spread?.detail ?? "UNAVAILABLE"},
-                    {name:"CALENDAR SPREAD SCANNER", state:serverDown ? "API UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DOWN" : wsState === "DEGRADED" ? "FEED DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET STATUS UNKNOWN" : runtimeTelemetryStale ? "TELEMETRY STALE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : runnerState(Boolean(runtime.runners.calendar_spread?.running), calendarAge), updates:runtime.runners.calendar_spread?.updates ?? 0, age:ageText(calendarAge), flow:serverDown ? "SERVER UNREACHABLE" : runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : connectedRequiredGroupCount === 0 ? "WEBSOCKET DISCONNECTED" : wsState === "DEGRADED" ? "WEBSOCKET DEGRADED" : wsState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : runtimeTelemetryStale ? "RUNTIME TELEMETRY UNAVAILABLE" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED • NSE TICKS NOT EXPECTED" : freshness(calendarAge), position:runtime.runners.calendar_spread?.detail ?? "UNAVAILABLE"},
-                  ];
-                  return rows.map((row) => {
-                    const healthy = ["ONLINE","CONNECTED","RECEIVING"].includes(row.state) && ["HTTP HEALTH OK","LIVE TICKS","LIVE OBSERVATION","RECEIVING"].includes(row.flow);
-                    const danger = ["OFFLINE","API UNREACHABLE","WEBSOCKET DOWN","DISCONNECTED","NO DATA","NO RECENT UPDATES","NO RECENT OBSERVATION"].includes(row.state) || /UNREACHABLE|DISCONNECTED|NO DATA|NO RECENT/.test(row.flow);
-                    const tpsKey = row.name === "OVERALL COMMON FEED" ? "commonTicks" : row.name === "CASH MARKET DATA" || row.name === "CASH-FUTURE PAYLOADS" || row.name === "CASH-FUTURE SCANNER" ? "cashPayloads" : row.name === "OPTIONS DATA" ? "boxPayloads" : row.name === "FUTURES DATA" || row.name === "SYNTHETIC ARBITRAGE" ? "syntheticPayloads" : row.name === "CALENDAR SPREAD" ? "calendarPayloads" : null;
-                    const rowTps = tpsKey && Number.isFinite(runnerTps[tpsKey]) ? runnerTps[tpsKey] : null;
-                    const heartbeatKey = tpsKey;
-                    const heartbeatAge = heartbeatKey ? activityAge(heartbeatKey) : null;
-                    const heartbeatActive = heartbeatAge != null && heartbeatAge <= 10;
-                    return <tr key={row.name} className="mb-2 block rounded-xl border theme-border p-2 last:mb-0 md:mb-0 md:table-row md:border-0 md:border-b md:p-0">
-                      <td className="block px-3 py-2 text-[10px] font-bold md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Feed / Scanner</span>{row.name}{heartbeatKey ? <span title={heartbeatActive ? "Recent payload progress" : "No recent payload progress"} className={"ml-2 inline-block h-2 w-2 rounded-full align-middle " + (heartbeatActive ? "theme-success-bg animate-pulse" : "theme-warning-bg")} /> : null}</td><td className="block px-3 py-2 md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">WebSocket / State</span><span className={"inline-block rounded-full px-2 py-1 text-[9px] font-bold "+(healthy ? "theme-success-bg theme-success" : danger ? "theme-danger-bg theme-danger" : "theme-warning-bg theme-warning")}>{row.state}</span></td>
-                      <td className="block px-3 py-2 text-[11px] font-bold tabular-nums md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Live ticks / updates</span>{Number(row.updates).toLocaleString("en-IN")}</td><td className="block px-3 py-2 text-[10px] font-bold tabular-nums theme-accent md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Ticks per second</span>{rowTps == null ? "—" : rowTps.toFixed(1)}</td><td className="block px-3 py-2 text-[10px] font-semibold theme-muted md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Tick / update age</span>{row.age}</td>
-                      <td className="block px-3 py-2 text-[9px] font-bold md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Data flow</span><span className={healthy ? "theme-success" : danger ? "theme-danger" : "theme-warning"}>{row.flow}</span></td><td className="block max-w-[360px] px-3 py-2 text-[10px] theme-muted md:table-cell md:py-3"><span className="mb-1 block text-[9px] font-medium uppercase tracking-wide theme-subtle md:hidden">Scanner position</span>{row.position}</td>
-                    </tr>;
-                  });
-                })()}
-              </tbody></table></div>
-          </Card>
-          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">{[
-            ["Overall live ticks", runtime.ticks.toLocaleString("en-IN")],["Active instruments", runtime.activeInstruments.toLocaleString("en-IN")],
-            ["Connected groups", connectedRequiredGroupCount+"/"+(runtime.requiredSocketGroupCount == null ? "?" : runtime.requiredSocketGroupCount)],["Delivery / normalizer errors", runtime.deliveryErrors+" / "+runtime.normalizerErrors],
-          ].map(([label,value]) => <div key={label} className="rounded-xl border theme-border theme-surface-2 px-3 py-2"><div className="text-[9px] uppercase tracking-wide theme-subtle">{label}</div><div className="mt-1 text-[11px] font-bold">{value}</div></div>)}</div>
+
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Card className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
+              <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">API SERVER</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (apiStatus === "connected" ? "theme-success-bg theme-success" : apiStatus === "error" ? "theme-danger-bg theme-danger" : "theme-warning-bg theme-warning")}>{apiStatus === "connected" ? "ONLINE" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" ? "UNREACHABLE" : "CHECKING"}</span></div>
+              <div className="mt-2 break-words text-[11px] theme-muted">{apiDetail}</div>
+            </Card>
+            <Card className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
+              <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">SHARED INDEX RUNNER</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (sharedRunnerReady ? "theme-success-bg theme-success" : sharedRunnerEnabled || sharedRunnerUnavailable || sharedRunnerFetchFailed ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{sharedRunnerStatus}</span></div>
+              <div className="mt-2 break-words text-[11px] theme-muted">{sharedRunner?.runner || "shared-index-market-data"} • {sharedRunner?.initial_option_bootstrap_done ? "Option bootstrap complete" : "Option bootstrap pending"}</div>
+              <div className="mt-1 text-[9px] theme-subtle">Last health sample: {sharedRunnerSampleAge == null ? "Not received" : sharedRunnerSampleAge.toFixed(1) + "s ago"}{sharedRunner?.last_error ? " • Start error: " + String(sharedRunner.last_error).slice(0, 140) : ""}</div>
+            </Card>
+          </div>
+
+          <div className="rounded-2xl border theme-border theme-surface-2 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">Three WebSocket Sessions • Individual Transport Health</div><div className="text-[9px] theme-subtle">{sharedSocketIds.length}/3 required groups reported</div></div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {sharedSocketCards.map((socket) => {
+                const good = socket.status === "CONNECTED";
+                const warning = socket.status === "CONNECTING" || socket.status === "NOT ASSIGNED" || socket.status === "DEGRADED";
+                return <div key={socket.label} className="min-w-0 rounded-xl border theme-border p-3">
+                  <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold">{socket.label}</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (good ? "theme-success-bg theme-success" : warning ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{socket.status}</span></div>
+                  <div className="mt-1 text-[9px] theme-subtle">Group: {socket.group}</div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]"><div><span className="theme-subtle">Heartbeat</span><div className="mt-0.5 font-bold">{socket.heartbeat}</div><span className="theme-subtle">Transport thread</span><div className="mt-0.5 font-bold">{socket.transportThreadAlive == null ? "UNKNOWN" : socket.transportThreadAlive ? "ALIVE" : "DOWN"}</div><span className="theme-subtle">Subscribe response</span><div className="mt-0.5 font-bold">{socket.subscriptionResponse}</div></div><div><span className="theme-subtle">Last pong age</span><div className="mt-0.5 font-bold tabular-nums">{socket.pongAge == null ? "—" : socket.pongAge.toFixed(1) + "s"}</div></div><div><span className="theme-subtle">Subscriptions</span><div className="mt-0.5 font-bold tabular-nums">{socket.subscriptions}</div></div><div><span className="theme-subtle">Reconnects / errors</span><div className="mt-0.5 font-bold tabular-nums">{socket.reconnects} / {socket.errors}</div><span className="theme-subtle">Subscription rejects</span><div className="mt-0.5 font-bold tabular-nums">{socket.subscriptionRejections}</div></div></div>
+                  <div className="mt-2 break-words text-[9px] leading-4 theme-subtle">{socket.consumers}</div>
+                </div>;
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border theme-border theme-surface-2 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">Shared Runner Feed Health • Source Identified</div><div className="text-[9px] theme-subtle">Freshness threshold: 5 seconds</div></div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {sharedFeedCards.map((feed) => {
+                const good = feed.status === "FRESH";
+                const closed = feed.status.includes("MARKET CLOSED");
+                const lastSample = feed.status.startsWith("LAST SAMPLE");
+                const detail = "rows" in feed ? feed.fresh + "/" + feed.rows + " fresh • max age " + (feed.maxAge == null ? "—" : feed.maxAge.toFixed(1) + "s") : ("price" in feed && feed.price != null ? "LTP " + feed.price.toLocaleString("en-IN", { maximumFractionDigits: 2 }) + " • " : "") + "age " + (feed.age == null ? "—" : feed.age.toFixed(1) + "s");
+                return <div key={feed.label} className="min-w-0 rounded-xl border theme-border p-3">
+                  <div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="break-words text-[10px] font-bold">{feed.label}</div><div className="mt-0.5 text-[9px] theme-subtle">{feed.detail}</div></div><span className={"shrink-0 rounded-full px-2 py-1 text-[9px] font-extrabold " + (good ? "theme-success-bg theme-success" : closed || lastSample ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{feed.status}</span></div>
+                  <div className="mt-2 text-[10px] font-semibold tabular-nums theme-muted">{detail}</div>
+                  {"extra" in feed ? <div className="mt-1 text-[9px] theme-subtle">BANKNIFTY futures: {feed.extra.fresh}/{feed.extra.rows} fresh • {feed.extra.status}</div> : null}
+                </div>;
+              })}
+            </div>
+          </div>
+          <p className="px-1 text-[9px] leading-4 theme-subtle">Socket status reports transport and heartbeat only; it does not prove broker authentication or fresh market quotes. Each feed above is labelled by its actual source and contract family. Market-closed periods are not incorrectly treated as expected live ticks.</p>
         </section>
         </div>
 
@@ -627,7 +697,7 @@ export default function HomePage() {
               <div className="min-w-0">
                 <div className="text-[13px] font-bold">Error Diagnostics</div>
                 <div className="mt-0.5 text-[10px] theme-subtle">
-                  {diagnosticCount ? `${diagnosticCount.toLocaleString("en-IN")} runtime errors recorded since API process start (not an active-error count)` : "No errors recorded by this endpoint since API process start"}
+                  {diagnosticCount ? `${diagnosticCount.toLocaleString("en-IN")} latest persisted VPS events • journal + API runtime` : "No persisted VPS error events in the current sample"}{diagnosticsFetchFailed ? " • Collector route unreachable; retaining last sample" : diagnosticsApiReachable === false ? " • API unreachable; VPS log history remains available" : diagnosticsApiReachable === true ? " • API process reachable" : ""}
                 </div>
               </div>
             </div>
