@@ -135,61 +135,9 @@ def cash_future_live_pairs(
 
 
 @router.get("/cash-future/live/history")
-def cash_future_live_scanner_history(
-    days: int = Query(1, ge=1, le=1),
-    limit: int = Query(100, ge=1, le=100),
-    db: Session = Depends(get_db),
-):
-    """Return today's latest 100 persisted Cash-Future pair diagnostics.
-
-    The scanner UI is intentionally session-scoped: rows remain visible after
-    market close, but the next calendar day starts with an empty history.
-    """
-    now = datetime.now(IST).replace(tzinfo=None)
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    # Select the newest persisted observation per symbol/contract directly in SQL.
-    # This guarantees that one very active pair cannot consume the query window
-    # and hide other pairs from the 100-row post-market view.
-    ranked = (
-        select(
-            LiveCashFutureScannerResult.id.label("id"),
-            func.row_number().over(
-                partition_by=(
-                    LiveCashFutureScannerResult.symbol,
-                    LiveCashFutureScannerResult.contract_month,
-                ),
-                order_by=LiveCashFutureScannerResult.observed_at.desc(),
-            ).label("rn"),
-        )
-        .where(
-            LiveCashFutureScannerResult.observed_at >= day_start,
-            LiveCashFutureScannerResult.observed_at <= now,
-        )
-        .subquery()
-    )
-    rows = db.scalars(
-        select(LiveCashFutureScannerResult)
-        .join(ranked, LiveCashFutureScannerResult.id == ranked.c.id)
-        .where(ranked.c.rn == 1)
-        .order_by(LiveCashFutureScannerResult.observed_at.desc())
-        .limit(int(limit))
-    ).all()
-
-    return {
-        "status": "success",
-        "scanner": "cash-future",
-        "mode": "live-pair-history",
-        "days": 1,
-        "count": len(rows),
-        "data": [
-            {
-                **{k: v for k, v in row.__dict__.items() if not k.startswith("_")},
-                "reason_codes": tuple(filter(None, row.reason_codes.split(","))),
-            }
-            for row in rows
-        ],
-    }
-
+def cash_future_live_scanner_history():
+    """Retired endpoint: Cash-Future history reads are intentionally disabled."""
+    raise HTTPException(status_code=410, detail="Cash-Future history API is disabled")
 
 @router.get("/cash-future/live/alerts")
 def cash_future_live_alert_history(
