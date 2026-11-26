@@ -301,13 +301,14 @@ export default function HomePage() {
         setFeedMarketSession(session === "OPEN" ? "OPEN" : session === "CLOSED" ? "CLOSED" : "UNKNOWN");
         // /live-health may serve a stale-while-refresh snapshot. Age ticks from
         // the server's checked_at timestamp, not the time this HTTP response arrived.
-        const checkedAt = typeof body?.checked_at === "string"
-          ? new Date(body.checked_at)
-          : null;
+        const hasCheckedAt = typeof body?.checked_at === "string";
+        const checkedAt = hasCheckedAt ? new Date(body.checked_at) : null;
         setFeedHealthCheckedAt(
-          checkedAt && Number.isFinite(checkedAt.getTime())
-            ? checkedAt.toISOString()
-            : new Date().toISOString()
+          !hasCheckedAt
+            ? new Date().toISOString()
+            : checkedAt && Number.isFinite(checkedAt.getTime())
+              ? checkedAt.toISOString()
+              : null
         );
         const age = body?.runtime_feed?.age_seconds;
         setFeedAge(age == null || !Number.isFinite(Number(age)) ? null : Number(age));
