@@ -12,6 +12,8 @@ def test_dashboard_stream_telemetry_tracks_build_fanout_and_client_health():
         failed_count=1,
         build_seconds=0.25,
         fanout_seconds=0.76,
+        serialization_seconds=0.03,
+        payload_bytes=4096,
     )
 
     snapshot = telemetry.snapshot()
@@ -24,6 +26,9 @@ def test_dashboard_stream_telemetry_tracks_build_fanout_and_client_health():
     assert snapshot["last_failed_count"] == 1
     assert snapshot["last_build_seconds"] == 0.25
     assert snapshot["last_fanout_seconds"] == 0.76
+    assert snapshot["last_serialization_seconds"] == 0.03
+    assert snapshot["max_serialization_seconds"] == 0.03
+    assert snapshot["last_payload_bytes"] == 4096
     assert snapshot["max_client_send_seconds"] == 0.81
     assert snapshot["seconds_since_last_success"] is not None
 
