@@ -71,6 +71,27 @@ event.listen(engine, "checkin", _clear_pool_checkout)
 event.listen(engine, "invalidate", _invalidate_pool_checkout)
 event.listen(engine, "detach", _detach_pool_checkout)
 
+# Pool.connect() is the public pool acquisition boundary. Timing this call
+# captures queue wait plus pool checkout setup for ORM and Core consumers.
+_original_pool_connect = engine.pool.connect
+
+
+def _observed_pool_connect(*args, **kwargs):
+    started = time.monotonic()
+    try:
+        connection = _original_pool_connect(*args, **kwargs)
+    except Exception as exc:
+        _pool_checkout_telemetry.record_wait(
+            time.monotonic() - started,
+            timed_out=type(exc).__name__ == "TimeoutError",
+        )
+        raise
+    _pool_checkout_telemetry.record_wait(time.monotonic() - started)
+    return connection
+
+
+engine.pool.connect = _observed_pool_connect
+
 
 def get_db():
     db = SessionLocal()
