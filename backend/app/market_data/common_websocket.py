@@ -2566,12 +2566,12 @@ class CommonWebSocketManager:
                 "connected_groups": connected_groups,
                 "disconnected_groups": disconnected_groups,
                 "transport_threads_alive_groups": sorted(
-                    f"{group.mode}:{group.shard}" for group, socket in sockets.items()
-                    if bool(getattr(socket, "health", {}).get("transport_thread_alive", False))
+                    name for name, health in socket_health.items()
+                    if bool(health.get("transport_thread_alive", False))
                 ),
                 "transport_close_timed_out_groups": sorted(
-                    f"{group.mode}:{group.shard}" for group, socket in sockets.items()
-                    if bool(getattr(socket, "health", {}).get("transport_close_timed_out", False))
+                    name for name, health in socket_health.items()
+                    if bool(health.get("transport_close_timed_out", False))
                 ),
                 "max_socket_sessions": self._max_sockets,
                 "consumers": sorted(set(self._callbacks) | set(self._record_callbacks) | set(self._record_observers)),
