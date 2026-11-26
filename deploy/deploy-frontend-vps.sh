@@ -77,9 +77,9 @@ rm -rf "$NEW_DIST" "$NEW_MODULES"
 cp -a "$RELEASE_DIR/frontend/.next" "$NEW_DIST"
 cp -a "$RELEASE_DIR/frontend/node_modules" "$NEW_MODULES"
 
-SWAPPED=1
 systemctl stop "$SERVICE"
 STOPPED=1
+SWAPPED=1
 if [[ -d "$OLD_DIST" ]]; then mv "$OLD_DIST" "$BACKUP_DIR/next"; DIST_BACKED_UP=1; fi
 if [[ -d "$OLD_MODULES" ]]; then mv "$OLD_MODULES" "$BACKUP_DIR/node_modules"; MODULES_BACKED_UP=1; fi
 mv "$NEW_DIST" "$OLD_DIST"
