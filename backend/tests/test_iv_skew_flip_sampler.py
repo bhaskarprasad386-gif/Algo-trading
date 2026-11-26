@@ -863,6 +863,7 @@ def test_history_inheritance_waits_for_previous_sampler_cycle():
         # releasing its cycle lock. Inheritance must not snapshot mid-cycle.
         with previous._lock:
             previous._history["shared-ce"].append(sample)
+            previous._pending_history[("shared-ce", now_ns)] = sample
             previous._last_source_timestamp["shared-ce"] = now_ns
         assert not finished.wait(timeout=0.05)
 
@@ -871,6 +872,7 @@ def test_history_inheritance_waits_for_previous_sampler_cycle():
     assert result == [1]
     assert current.history_snapshot("shared-ce") == (sample,)
     assert current._last_source_timestamp["shared-ce"] == now_ns
+    assert current._pending_history[("shared-ce", now_ns)] == sample
 
 
 def test_empty_history_persistence_never_opens_a_database_session():
