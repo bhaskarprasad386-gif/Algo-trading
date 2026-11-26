@@ -210,7 +210,7 @@ def test_refresh_thread_start_failure_is_reported_and_does_not_stick(monkeypatch
     monkeypatch.setattr(cache_module, "Thread", FailedThread)
     cache = BoundedPersistedSummaryCache(ttl_seconds=5, max_stale_seconds=20)
 
-    with pytest.raises(RuntimeError, match="thread capacity exhausted"):
+    with pytest.raises(RuntimeError, match="persisted summary refresh failed"):
         cache.get("db", lambda: {"value": "never"})
 
     assert cache._refreshing == {}
