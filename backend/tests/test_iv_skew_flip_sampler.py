@@ -932,3 +932,38 @@ def test_sampler_persistence_chunks_large_source_key_batches_for_sqlite():
     with Session() as session:
         assert session.query(IVOptionObservation).count() == 405
     engine.dispose()
+
+
+
+def test_history_inheritance_in_opposite_directions_has_deterministic_lock_order():
+    from threading import Barrier, Thread
+
+    now_ns = 1_800_000_000_000_000_000
+    left = _sampler(QuoteSource(), lambda: now_ns)
+    right = _sampler(QuoteSource(), lambda: now_ns)
+    universe = type("Universe", (), {
+        "underlying": "NIFTY",
+        "expiry": "2026-11-12",
+        "contracts": (),
+    })()
+    start = Barrier(3)
+    errors = []
+
+    def inherit(target, source):
+        try:
+            start.wait(timeout=2)
+            target.inherit_history(source, universe)
+        except BaseException as exc:
+            errors.append(exc)
+
+    first = Thread(target=inherit, args=(left, right), daemon=True)
+    second = Thread(target=inherit, args=(right, left), daemon=True)
+    first.start()
+    second.start()
+    start.wait(timeout=2)
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive(), "left <- right inheritance deadlocked"
+    assert not second.is_alive(), "right <- left inheritance deadlocked"
+    assert errors == []
