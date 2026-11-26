@@ -777,6 +777,6 @@ def test_sampler_restore_loads_only_recent_window_and_latest_per_contract():
     assert len(statements) == 2
     assert len(sampler.history_snapshot("restore-ce")) == 1
     assert sampler.history_snapshot("restore-ce")[0].source_timestamp_ns == now_ns - 100_000_000_000
-    assert sampler._last_display["restore-ce"].ltp == 100.0 or sampler._last_display["restore-ce"].ltp == 100.0
+    assert sampler._last_display["restore-ce"].source_timestamp_ns == now_ns - 100_000_000_000
     assert sampler._last_source_timestamp["restore-ce"] == now_ns - 100_000_000_000
     engine.dispose()
