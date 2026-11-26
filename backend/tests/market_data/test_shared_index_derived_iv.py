@@ -22,7 +22,7 @@ def test_iv_velocity_requires_one_second_baseline():
     calc=SharedIndexDerivedIV()
     base=time_ns()
     row={"exchange":"NFO","segment":"NFO","token":"123","instrument_type":"option",
-          "underlying":"NIFTY","strike":22000,"expiry":"2026-11-26","option_type":"CE",
+          "underlying":"NIFTY","strike":22000,"expiry":"2026-11-27","option_type":"CE",
           "ltp":220,"fresh":True,"timestamp_ns":base}
     first=calc.decorate([row],{"NIFTY":22000})[0]
     assert first["iv_source"]=="derived_bsm"

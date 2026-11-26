@@ -3,6 +3,18 @@ from fastapi.testclient import TestClient
 from app.main import app, _summarize_primary_exchange_feed
 
 
+def test_health_liveness_endpoint_is_independent_of_database_readiness(monkeypatch):
+    def fail_database_probe():
+        raise AssertionError("liveness must not touch the database")
+
+    monkeypatch.setattr("app.main.check_database", fail_database_probe)
+    client = TestClient(app)
+    response = client.get("/health/live")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert "database" not in response.json()
+
+
 def test_health_endpoint_contract():
     client = TestClient(app)
     response = client.get("/health")
@@ -10,7 +22,6 @@ def test_health_endpoint_contract():
     payload = response.json()
     assert payload["status"] == "ok"
     assert "database" in payload
-
 
 
 def test_runtime_feed_health_does_not_let_unrelated_exchange_mask_missing_nse_nfo():
@@ -45,7 +56,7 @@ def test_runtime_feed_health_marks_a_stale_required_exchange():
     assert summary["exchange_freshness"]["NFO"]["status"] == "STALE"
 
 
-def test_workers_dev_origin_is_not_allowed_by_cors():
+def test_untrusted_workers_dev_origin_is_not_allowed_by_cors():
     client = TestClient(app)
     response = client.get("/health", headers={"Origin": "https://untrusted-project.workers.dev"})
     assert response.status_code == 200

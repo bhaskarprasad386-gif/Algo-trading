@@ -23,6 +23,15 @@ class IVOptionObservation(Base):
             "token",
             "source_timestamp_ns",
         ),
+        # The restart restore window filters expiry + source time without token.
+        # Keep this separate from contract_time, whose token position is needed
+        # by the per-contract latest-row aggregation.
+        Index(
+            "ix_iv_option_observation_expiry_time",
+            "underlying",
+            "expiry",
+            "source_timestamp_ns",
+        ),
         Index("ix_iv_option_observation_time", "source_timestamp_ns"),
     )
 

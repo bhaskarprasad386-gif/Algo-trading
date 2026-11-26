@@ -619,3 +619,252 @@ def test_spot_websocket_callback_never_waits_for_slow_database_persistence(monke
     allow_commit.set()
     delivery.join(timeout=1.0)
     adapter.stop()
+
+
+def test_spot_persistence_batches_both_indices_in_one_transaction(monkeypatch):
+    from app.scanner.iv_skew_flip import spot_feed as spot_feed_module
+
+    sessions = []
+
+    class RecordingSession:
+        def __init__(self):
+            self.rows = []
+            self.commits = 0
+            sessions.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def merge(self, row):
+            self.rows.append(row)
+
+        def commit(self):
+            self.commits += 1
+
+    monkeypatch.setattr(spot_feed_module, "SessionLocal", RecordingSession)
+    feed = FakeFeed()
+    adapter = IVSpotFeedAdapter(
+        feed=feed, clock_ns=lambda: 10_000_000_000, persist_last_price=True,
+    )
+    adapter.start(FakeMaster())
+
+    for descriptor, price in (
+        (next(item for item in feed.descriptors if item.underlying == "NIFTY"), 24125.5),
+        (next(item for item in feed.descriptors if item.underlying == "BANKNIFTY"), 51234.5),
+    ):
+        feed.callback(SimpleNamespace(
+            instrument=descriptor.key,
+            instrument_type=InstrumentType.INDEX,
+            timestamp_ns=10_000_000_000,
+            ltp=price,
+            payload={"exchange_timestamp_ns": 10_000_000_000},
+        ))
+
+    # Stop drains the bounded pending-symbol map before assertions.
+    adapter.stop()
+
+    # Constructor restoration uses one read-only session; the worker must
+    # then persist both symbols in exactly one separate write transaction.
+    assert len(sessions) == 2
+    write_sessions = [session for session in sessions if session.commits]
+    assert len(write_sessions) == 1
+    assert write_sessions[0].commits == 1
+    assert len(write_sessions[0].rows) == 4
+    assert {row.symbol for row in write_sessions[0].rows if isinstance(row, spot_feed_module.IVSpotLastPrice)} == {
+        "NIFTY", "BANKNIFTY"
+    }
+    assert {row.underlying for row in write_sessions[0].rows if isinstance(row, spot_feed_module.IVSpotObservation)} == {
+        "NIFTY", "BANKNIFTY"
+    }
+    persistence = adapter.snapshot()["record_validation"]["persistence"]
+    assert persistence["batches_committed"] == 1
+    assert persistence["observations_committed"] == 2
+    assert persistence["failed_batches"] == 0
+    assert persistence["pending_symbols"] == 0
+
+def test_idle_spot_persistence_worker_does_not_open_database_session(monkeypatch):
+    from threading import Event
+    from app.scanner.iv_skew_flip import spot_feed as spot_feed_module
+
+    feed = IVSpotFeedAdapter(feed=FakeFeed(), persist_last_price=False)
+    stop = Event()
+    feed._persist_stop = stop
+
+    class StopAfterIdleWakeups:
+        def __init__(self):
+            self.calls = 0
+
+        def wait(self, timeout=None):
+            self.calls += 1
+            if self.calls == 2:
+                stop.set()
+            return True
+
+        def clear(self):
+            return None
+
+        def set(self):
+            return None
+
+    feed._persist_wakeup = StopAfterIdleWakeups()
+
+    def unexpected_session():
+        raise AssertionError("idle worker must not acquire a database session")
+
+    monkeypatch.setattr(spot_feed_module, "SessionLocal", unexpected_session)
+    feed._run_persistence()
+    assert feed._persist_wakeup.calls == 2
+    assert feed._persist_batches == 0
+    assert feed._persist_errors == 0
+
+def test_failed_spot_persistence_batch_is_retried(monkeypatch):
+    from threading import Event
+    from app.scanner.iv_skew_flip import spot_feed as spot_feed_module
+
+    adapter = IVSpotFeedAdapter(feed=FakeFeed(), persist_last_price=False)
+    stop = Event()
+    adapter._persist_stop = stop
+    older = spot_feed_module.SpotSnapshot(100.0, 10_000_000_000, 10_000_000_000)
+    newer = spot_feed_module.SpotSnapshot(101.0, 11_000_000_000, 11_000_000_000)
+    adapter._persist_pending["NIFTY"] = older
+
+    class ControlledWakeup:
+        def __init__(self):
+            self.calls = 0
+
+        def wait(self, timeout=None):
+            self.calls += 1
+            if self.calls == 3:
+                stop.set()
+            return True
+
+        def clear(self):
+            return None
+
+        def set(self):
+            return None
+
+    adapter._persist_wakeup = ControlledWakeup()
+    attempts = []
+    session_calls = []
+
+    class SuccessfulSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def merge(self, row):
+            attempts.append(row)
+
+        def commit(self):
+            return None
+
+    def session_factory():
+        session_calls.append(True)
+        if len(session_calls) == 1:
+            # A newer tick arrives while the first DB checkout fails. The
+            # retry must persist the newest value, not the stale batch.
+            adapter._enqueue_persistence("NIFTY", newer)
+            raise RuntimeError("temporary database pressure")
+        return SuccessfulSession()
+
+    monkeypatch.setattr(spot_feed_module, "SessionLocal", session_factory)
+    adapter._run_persistence()
+    assert len(attempts) == 2
+    assert attempts[0].price == newer.price
+    assert adapter._persist_errors == 1
+    assert adapter._persist_batches == 1
+    assert adapter._persist_pending == {}
+
+
+
+def test_spot_persistence_uses_two_conflict_safe_bulk_statements_without_selects(monkeypatch):
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.core.database import Base
+    from app.models.iv_spot_last_price import IVSpotLastPrice
+    from app.models.iv_spot_observation import IVSpotObservation
+    from app.scanner.iv_skew_flip import spot_feed as spot_feed_module
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine, tables=[
+        IVSpotLastPrice.__table__, IVSpotObservation.__table__,
+    ])
+    Session = sessionmaker(bind=engine, autoflush=False)
+    with Session() as db:
+        db.add(IVSpotLastPrice(symbol="NIFTY", price=25000.0, timestamp_ns=20_000_000_000))
+        db.commit()
+    monkeypatch.setattr(spot_feed_module, "SessionLocal", Session)
+
+    adapter = IVSpotFeedAdapter(
+        feed=FakeFeed(), clock_ns=lambda: 30_000_000_000, persist_last_price=True,
+    )
+    statements = []
+
+    def capture_sql(conn, cursor, statement, parameters, context, executemany):
+        statements.append((statement, executemany))
+
+    event.listen(engine, "before_cursor_execute", capture_sql)
+    # The NIFTY retry is older than the durable LAST row and must not regress it.
+    # BANKNIFTY is a new observation. Both symbols share one worker transaction.
+    adapter._enqueue_persistence(
+        "NIFTY", spot_feed_module.SpotSnapshot(24900.0, 10_000_000_000, 30_000_000_000),
+    )
+    adapter._enqueue_persistence(
+        "BANKNIFTY", spot_feed_module.SpotSnapshot(51000.0, 30_000_000_000, 30_000_000_000),
+    )
+    adapter._ensure_persistence_worker()
+    adapter._stop_persistence_worker()
+
+    selects = [sql for sql, _ in statements if sql.lstrip().upper().startswith("SELECT")]
+    inserts = [sql for sql, _ in statements if sql.lstrip().upper().startswith("INSERT")]
+    assert selects == [], "spot persistence must not issue per-row merge SELECTs"
+    assert len(inserts) == 2, "one bulk upsert and one bulk idempotent observation insert"
+
+    with Session() as db:
+        nifty = db.query(IVSpotLastPrice).filter_by(symbol="NIFTY").one()
+        banknifty = db.query(IVSpotLastPrice).filter_by(symbol="BANKNIFTY").one()
+        observations = db.query(IVSpotObservation).all()
+        assert (nifty.price, nifty.timestamp_ns) == (25000.0, 20_000_000_000)
+        assert (banknifty.price, banknifty.timestamp_ns) == (51000.0, 30_000_000_000)
+        assert len(observations) == 2
+    assert adapter._persist_batches == 1
+    assert adapter._persisted_rows == 2
+    assert adapter._persist_errors == 0
+    engine.dispose()
+
+
+def test_spot_persistence_worker_exits_on_shutdown_failure_and_keeps_retry_queue(monkeypatch):
+    from app.scanner.iv_skew_flip import spot_feed as spot_feed_module
+
+    adapter = IVSpotFeedAdapter(feed=FakeFeed(), persist_last_price=False)
+    snapshot = spot_feed_module.SpotSnapshot(100.0, 10_000_000_000, 10_000_000_000)
+    adapter._persist_pending["NIFTY"] = snapshot
+    adapter._persist_stop.set()
+
+    class ImmediateWakeup:
+        def wait(self, timeout=None):
+            return True
+
+        def clear(self):
+            return None
+
+    adapter._persist_wakeup = ImmediateWakeup()
+
+    def unavailable_database():
+        raise RuntimeError("database unavailable during shutdown")
+
+    monkeypatch.setattr(spot_feed_module, "SessionLocal", unavailable_database)
+    adapter._run_persistence()
+
+    assert adapter._persist_pending == {"NIFTY": snapshot}
+    assert adapter._persist_errors == 1
+    assert adapter._last_persist_error == "RuntimeError"

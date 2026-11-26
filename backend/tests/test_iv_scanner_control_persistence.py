@@ -16,15 +16,15 @@ events = []
 def save(enabled):
     events.append(("save", enabled))
     if enabled is True and SAVE_FAIL_ON:
-        raise RuntimeError("database unavailable")
+        raise RuntimeError("DB_SECRET_SENTINEL database unavailable")
     if enabled is False and SAVE_FAIL_OFF:
-        raise RuntimeError("database unavailable")
+        raise RuntimeError("DB_SECRET_SENTINEL database unavailable")
     return enabled
 
 def start():
     events.append(("start",))
     if START_FAIL:
-        raise RuntimeError("runner startup failed")
+        raise RuntimeError("RUNNER_SECRET_SENTINEL runner startup failed")
     return {"status": "RUNNING"}
 
 def stop():
@@ -43,6 +43,8 @@ try:
     main.save_iv_skew_flip_config({"enabled": True})
 except HTTPException as exc:
     assert exc.status_code == 503
+    assert exc.detail["reason"] == "RuntimeError"
+    assert "DB_SECRET_SENTINEL" not in str(exc.detail)
 else:
     raise AssertionError("ON persistence failure must return HTTP 503")
 assert events == [("save", True)]
@@ -55,6 +57,8 @@ try:
     main.save_iv_skew_flip_config({"enabled": False})
 except HTTPException as exc:
     assert exc.status_code == 503
+    assert exc.detail["reason"] == "RuntimeError"
+    assert "DB_SECRET_SENTINEL" not in str(exc.detail)
 else:
     raise AssertionError("OFF persistence failure must return HTTP 503")
 assert events == [("save", False)]
@@ -68,6 +72,8 @@ try:
     main.save_iv_skew_flip_config({"enabled": True})
 except HTTPException as exc:
     assert exc.status_code == 503
+    assert exc.detail["reason"] == "RuntimeError"
+    assert "RUNNER_SECRET_SENTINEL" not in str(exc.detail)
 else:
     raise AssertionError("runner startup failure must return HTTP 503")
 assert events == [("save", True), ("start",), ("save", False)]

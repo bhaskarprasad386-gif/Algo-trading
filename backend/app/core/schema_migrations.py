@@ -343,6 +343,10 @@ def _run_schema_migrations(connection) -> None:
             "ON iv_option_observations (underlying, expiry, token, source_timestamp_ns)"
         ))
         connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_iv_option_observation_expiry_time "
+            "ON iv_option_observations (underlying, expiry, source_timestamp_ns)"
+        ))
+        connection.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_iv_option_observation_time "
             "ON iv_option_observations (source_timestamp_ns)"
         ))
