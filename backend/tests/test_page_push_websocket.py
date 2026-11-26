@@ -177,7 +177,6 @@ def test_origin_policy_rejects_untrusted_hosts(monkeypatch):
     monkeypatch.setenv("SCANNER_PAGE_WS_ALLOWED_ORIGINS", "https://terminal.example.com")
     assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.vercel.app"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "http://localhost:3000"}))
-    assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://algo-trading.vercel.app"}))
     assert push._origin_allowed(SimpleNamespace(headers={"origin": "https://terminal.example.com"}))
     assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://evil.example"}))
     assert not push._origin_allowed(SimpleNamespace(headers={"origin": "https://sub.algo-trading.vercel.app"}))
@@ -268,43 +267,44 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
         lambda: provider_calls.append("snapshot") or {"opportunities": list(snapshot_state["opportunities"])},
     )
     try:
-        with TestClient(app).websocket_connect(
-            "/ws/page-updates",
-            headers={"origin": "https://terminal.example.com"},
-        ) as websocket:
-            assert websocket.receive_json()["type"] == "connected"
-            websocket.send_json({"action": "subscribe", "page": page})
-            initial = websocket.receive_json()
-            assert initial["event"] == "SNAPSHOT"
-            assert initial["sequence"] == 0
-            assert initial["data"]["opportunities"][0]["id"] == "initial"
-
-            push.publish_page_update(page, "PATCH", {"opportunity_updates": [{"id": "fresh"}]})
-            # Ignore any duplicate/stale frame left by a concurrent journal
-            # dispatcher; only a strictly-forward frame may advance this test.
-            patch = websocket.receive_json()
-            while patch.get("sequence", 0) <= initial["sequence"]:
+        with TestClient(app) as client:
+            with client.websocket_connect(
+                "/ws/page-updates",
+                headers={"origin": "https://terminal.example.com"},
+            ) as websocket:
+                assert websocket.receive_json()["type"] == "connected"
+                websocket.send_json({"action": "subscribe", "page": page})
+                initial = websocket.receive_json()
+                assert initial["event"] == "SNAPSHOT"
+                assert initial["sequence"] == 0
+                assert initial["data"]["opportunities"][0]["id"] == "initial"
+    
+                push.publish_page_update(page, "PATCH", {"opportunity_updates": [{"id": "fresh"}]})
+                # Ignore any duplicate/stale frame left by a concurrent journal
+                # dispatcher; only a strictly-forward frame may advance this test.
                 patch = websocket.receive_json()
-            assert patch["sequence"] == initial["sequence"] + 1
-            if patch["event"] == "PATCH":
-                assert patch["data"]["opportunity_updates"][0]["id"] == "fresh"
-                expected_snapshot_calls = 1
-            else:
-                # Recovery may replace a queued frame with an authoritative snapshot
-                # if the journal dispatcher signals a reset concurrently.
-                assert patch["event"] == "SNAPSHOT"
-                assert any(row["id"] == "fresh" for row in patch["data"]["opportunities"])
-                expected_snapshot_calls = 2
-
-            websocket.send_json({"action": "resync", "page": page})
-            resynced = websocket.receive_json()
-            assert resynced["event"] == "SNAPSHOT"
-            assert resynced["sequence"] == patch["sequence"]
-            # The journal tailer may request an additional authoritative snapshot
-            # when a concurrent cursor/reset signal races this isolated round-trip.
-            # We still require the initial snapshot plus explicit resync snapshots.
-            assert len(provider_calls) >= expected_snapshot_calls + 1
-    finally:
+                while patch.get("sequence", 0) <= initial["sequence"]:
+                    patch = websocket.receive_json()
+                assert patch["sequence"] == initial["sequence"] + 1
+                if patch["event"] == "PATCH":
+                    assert patch["data"]["opportunity_updates"][0]["id"] == "fresh"
+                    expected_snapshot_calls = 1
+                else:
+                    # Recovery may replace a queued frame with an authoritative snapshot
+                    # if the journal dispatcher signals a reset concurrently.
+                    assert patch["event"] == "SNAPSHOT"
+                    assert any(row["id"] == "fresh" for row in patch["data"]["opportunities"])
+                    expected_snapshot_calls = 2
+    
+                websocket.send_json({"action": "resync", "page": page})
+                resynced = websocket.receive_json()
+                assert resynced["event"] == "SNAPSHOT"
+                assert resynced["sequence"] == patch["sequence"]
+                # The journal tailer may request an additional authoritative snapshot
+                # when a concurrent cursor/reset signal races this isolated round-trip.
+                # We still require the initial snapshot plus explicit resync snapshots.
+                assert len(provider_calls) >= expected_snapshot_calls + 1
+        finally:
         push.configure_snapshot_provider(page, None)
 
 
