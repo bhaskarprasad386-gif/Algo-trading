@@ -3,7 +3,11 @@ from fastapi.testclient import TestClient
 from app.main import app, _summarize_primary_exchange_feed
 
 
-def test_health_liveness_endpoint_is_independent_of_database_readiness():
+def test_health_liveness_endpoint_is_independent_of_database_readiness(monkeypatch):
+    def fail_database_probe():
+        raise AssertionError("liveness must not touch the database")
+
+    monkeypatch.setattr("app.main.check_database", fail_database_probe)
     client = TestClient(app)
     response = client.get("/health/live")
     assert response.status_code == 200
