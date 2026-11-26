@@ -122,11 +122,28 @@ def database_pool_snapshot() -> dict[str, object]:
         checkouts = tuple(_pool_checkouts.values())
     ages = [(max(0.0, now - started), thread_name) for started, thread_name in checkouts]
     oldest = max(ages, default=(0.0, None), key=lambda item: item[0])
+    active_checkout_count = len(ages)
+    tracking_delta = (
+        checked_out - active_checkout_count
+        if isinstance(checked_out, int)
+        else None
+    )
     snapshot.update({
-        "active_checkout_count": len(ages),
+        "active_checkout_count": active_checkout_count,
         "long_checkout_count": sum(age >= _POOL_LONG_CHECKOUT_SECONDS for age, _ in ages),
         "oldest_checkout_seconds": round(oldest[0], 3) if ages else None,
         "oldest_checkout_thread": oldest[1],
         "long_checkout_threshold_seconds": _POOL_LONG_CHECKOUT_SECONDS,
+        # These counters are sampled independently; a non-zero delta can be
+        # a short-lived snapshot race or a missed lifecycle event, not proof
+        # of a connection leak. Persistent positive deltas warrant inspection.
+        "checkout_tracking_delta": tracking_delta,
+        "untracked_checkout_count": max(0, tracking_delta) if tracking_delta is not None else None,
+        "checkout_tracking_status": (
+            "MATCH" if tracking_delta == 0
+            else "POOL_AHEAD" if tracking_delta is not None and tracking_delta > 0
+            else "TRACKER_AHEAD" if tracking_delta is not None
+            else "UNAVAILABLE"
+        ),
     })
     return snapshot
