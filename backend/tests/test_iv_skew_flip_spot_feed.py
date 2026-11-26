@@ -867,4 +867,4 @@ def test_spot_persistence_worker_exits_on_shutdown_failure_and_keeps_retry_queue
 
     assert adapter._persist_pending == {"NIFTY": snapshot}
     assert adapter._persist_errors == 1
-    assert "database unavailable" in adapter._last_persist_error
+    assert adapter._last_persist_error == "RuntimeError"
