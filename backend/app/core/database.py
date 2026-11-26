@@ -99,6 +99,24 @@ def database_pool_snapshot() -> dict[str, object]:
         except Exception:
             snapshot[name] = None
 
+    max_overflow = getattr(pool, "_max_overflow", None)
+    try:
+        max_overflow = int(max_overflow) if max_overflow is not None else None
+    except (TypeError, ValueError):
+        max_overflow = None
+    checked_out = snapshot.get("checkedout")
+    pool_size = snapshot.get("size")
+    capacity = (
+        pool_size + max_overflow
+        if isinstance(pool_size, int) and max_overflow is not None and max_overflow >= 0
+        else None
+    )
+    snapshot["max_overflow"] = max_overflow
+    snapshot["capacity"] = capacity
+    snapshot["saturated"] = (
+        checked_out >= capacity if capacity is not None and isinstance(checked_out, int) else None
+    )
+
     now = time.monotonic()
     with _pool_checkout_lock:
         checkouts = tuple(_pool_checkouts.values())
