@@ -172,22 +172,20 @@ def test_live_alert_history_route_returns_persisted_alerts(tmp_path):
     assert response["data"][0]["gross_profit"] == 200.0
 
 
-def test_live_fast_scanner_route_uses_process_local_snapshot(monkeypatch):
-    from app.scanner.auto_routes import cash_future_live_fast_scanner
+def test_live_fast_and_pairs_endpoints_are_disabled_without_database_access():
+    import inspect
 
-    class StubScanner:
-        def health(self):
-            return {"last_observation_at": "2026-10-09T09:15:01+05:30"}
+    import pytest
+    from fastapi import HTTPException
 
-        def snapshot(self, *, max_age_seconds, limit):
-            assert max_age_seconds == 5.0
-            assert limit == 10
-            return [{"symbol": "ABC", "contract_month": "CURRENT", "gap_pct": 1.2}]
+    from app.scanner.auto_routes import cash_future_live_fast_scanner, cash_future_live_pairs
 
-    monkeypatch.setattr("app.main.live_cash_future_scanner", StubScanner())
-    response = cash_future_live_fast_scanner(max_age_seconds=5.0, limit=10)
-    assert response["mode"] == "live-fast"
-    assert response["data"][0]["symbol"] == "ABC"
+    for endpoint in (cash_future_live_fast_scanner, cash_future_live_pairs):
+        assert "db" not in inspect.signature(endpoint).parameters
+        with pytest.raises(HTTPException) as raised:
+            endpoint()
+        assert raised.value.status_code == 410
+        assert raised.value.detail == "Cash-Future live API is disabled"
 
 
 def test_live_scanner_history_endpoint_is_disabled_without_database_access():
