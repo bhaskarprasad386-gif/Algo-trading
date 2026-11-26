@@ -3083,6 +3083,18 @@ def iv_skew_flip_validation(underlying: str = "NIFTY", expiry_type: str | None =
 
 
 @app.get("/health")
+def _database_health_failure_class(exc: Exception) -> str:
+    """Separate SQLite lock contention from generic DB probe failures."""
+    dialect_name = getattr(getattr(engine, "dialect", None), "name", None)
+    message = str(exc).lower()
+    if dialect_name == "sqlite" and any(
+        marker in message
+        for marker in ("database is locked", "database table is locked", "database is busy")
+    ):
+        return "SQLITE_CONTENTION"
+    return "DATABASE_CHECK_FAILURE"
+
+
 def health_check():
     # Do not queue a readiness probe behind an already exhausted DB pool.
     # This is only an early degraded response; a non-saturated pool still
@@ -3110,22 +3122,29 @@ def health_check():
     try:
         check_database()
     except Exception as exc:
+        failure_class = _database_health_failure_class(exc)
+        failure_pool_snapshot = database_pool_snapshot()
         runtime_diagnostics.record(
             component="Database",
-            error_type=type(exc).__name__,
+            error_type=failure_class,
             message=str(exc),
             endpoint="/health",
-            context={"event": "health_check"},
+            context={
+                "event": "health_check",
+                "database_failure_class": failure_class,
+                "database_pool": failure_pool_snapshot,
+            },
         )
-        app_logger.error(f"Health check database failure: {exc}")
+        app_logger.error(f"Health check database failure ({failure_class}): {exc}")
         return JSONResponse(
             status_code=503,
             content={
                 "status": "degraded",
                 "app": settings.app_name,
                 "version": "0.1.0",
-                "database": "Disconnected",
-                "database_pool": database_pool_snapshot(),
+                "database": "Contended" if failure_class == "SQLITE_CONTENTION" else "Disconnected",
+                "database_error_class": failure_class,
+                "database_pool": failure_pool_snapshot,
             },
         )
     return {"status": "ok", "app": settings.app_name, "version": "0.1.0", "database": "Connected", "database_pool": database_pool_snapshot()}
