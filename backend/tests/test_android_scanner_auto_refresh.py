@@ -15,7 +15,7 @@ def test_android_cash_future_scanner_is_disabled_without_auto_refresh():
     assert "disableCashFutureScanner()" in body
     assert "cbScannerAutoRefresh.isEnabled = false" in body
     assert "etScannerRefreshSeconds.isEnabled = false" in body
-    assert "Cash-Future scanner is disabled" in body
+    assert "CASH-FUTURE SCANNER DISABLED" in body
     assert "runCashFutureScanner" not in body
     assert "scannerRefreshHandler.postDelayed" not in body
     assert "scannerRefreshRunnable" not in body
