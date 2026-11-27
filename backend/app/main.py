@@ -12,7 +12,7 @@ import threading
 import math
 import time as time_module
 import uuid
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func
@@ -40,11 +40,9 @@ from app.models.iv_early_entry_notification import IVEarlyEntryNotificationOutbo
 from app.models.iv_constituent_basket_version import IVConstituentBasketVersion  # noqa: F401 - register isolated IV basket history table
 from app.algo.auth import AngelOneAuth
 from app.market_data.client import MarketDataClient
-from app.market_data.common_strategy_feed import shared_common_manager
 from app.market_data.dashboard_snapshot_cache import cached_snapshot
 from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
-from app.market_data.common_websocket import CommonWebSocketManager
-from app.market_data.websocket import MarketDataWebSocket
+from app.market_data.shared_index_local_feed import SharedIndexRunnerLocalFeedManager
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS, BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
 from app.market_data.box_spread_runner_supervisor import BoxSpreadRunnerSupervisor
 from app.market_data.instruments import InstrumentMaster
@@ -55,7 +53,7 @@ from app.market_data.provider_readiness_bridge import ProviderReadinessBridge
 from app.scanner.early_impulse_shoonya_observer import early_impulse_observer
 from app.market_data.box_spread_expiry import classify_index_expiry_dates
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
-from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS_ORDERED, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
+from app.market_data.nifty50_universe import OPTION_STRATEGY_INDEX_SYMBOLS
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
@@ -97,19 +95,16 @@ install_iv_basket_immutability_guards(engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 shared_index_market_data_runner = SharedIndexMarketDataRunner(instrument_master=instrument_master)
-box_market_data_auth = AngelOneAuth()
-box_isolated_feed_manager = CommonWebSocketManager(
-    socket_factory=lambda: MarketDataWebSocket(auth=box_market_data_auth, auto_reconnect=False),
-    async_callback_dispatch=True,
-)
+# Box Spread is a local consumer of the Shared Runner's published records.
+# This manager has no broker socket factory and cannot create another connection.
+box_shared_feed_manager = SharedIndexRunnerLocalFeedManager(shared_index_market_data_runner)
+box_shared_feed_manager.attach()
 configure_shared_index_runner_snapshot(shared_index_market_data_runner.snapshot)
 configure_shared_index_runner_health_snapshot(shared_index_market_data_runner.health_snapshot)
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
 provider_quote_parity_worker: BoundedQuoteParityWorker | None = None
 provider_readiness_bridge = ProviderReadinessBridge()
 early_impulse_observer.configure_readiness(provider_readiness_bridge)
-_provider_readiness_observer_lock = threading.Lock()
-_provider_readiness_observer_manager_id: int | None = None
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
 _iv_skew_flip_runtime_lock = threading.RLock()
 live_box_spread_latest_results: tuple = ()
@@ -407,6 +402,14 @@ def _box_shadow_page_snapshot():
     return _box_shadow_page_cache
 
 
+def _shared_runner_feed_snapshot() -> dict:
+    """Read broker feed diagnostics from the sole Shared Runner owner."""
+    runner_snapshot = shared_index_market_data_runner.snapshot()
+    lifecycle = runner_snapshot.get("lifecycle", {}) if isinstance(runner_snapshot, dict) else {}
+    feed = lifecycle.get("shared_websocket", {}) if isinstance(lifecycle, dict) else {}
+    return dict(feed) if isinstance(feed, dict) else {}
+
+
 def _box_page_push_snapshot():
     """Compose reconnect state from existing Box runner/feed snapshots only."""
     try:
@@ -668,7 +671,7 @@ async def lifespan(app: FastAPI):
                 if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
                     app_logger.error("Background task shutdown failed: %s", result)
         try:
-            box_isolated_feed_manager.close()
+            box_shared_feed_manager.close()
         except Exception:
             app_logger.exception("Shared Runner local fan-out shutdown failed")
         # Broker adapters own authenticated provider sessions in process memory.
@@ -976,7 +979,6 @@ def _signal_live_runner_shutdown() -> None:
             continue
         app_logger.warning("Live runner has no interrupt event during shutdown: %s", type(runner).__name__)
 
-MARKET_CLOSE = time(15, 30)
 
 
 def _stop_live_runner_nonblocking(runner, *, name: str) -> None:
@@ -1131,7 +1133,7 @@ async def _live_box_spread_loop() -> None:
                 auth=AngelOneAuth(),
                 on_results=lambda results: _update_live_box_spread_results(results),
                     on_spot_price=_publish_box_spot_page_update,
-                shared_feed_manager=box_isolated_feed_manager,
+                shared_feed_manager=box_shared_feed_manager,
             )
             live_box_spread_runner = runner
             worker, worker_errors = _start_box_spread_runner_worker(runner)
@@ -1148,7 +1150,7 @@ async def _live_box_spread_loop() -> None:
                     consumer_namespace=f"box-stage-{uuid.uuid4().hex[:12]}",
                     publish_enabled=False,
                     publication_gate=runner.publication_gate,
-                    shared_feed_manager=box_isolated_feed_manager,
+                    shared_feed_manager=box_shared_feed_manager,
                 )
 
             def set_active_runner(active_runner):
