@@ -694,11 +694,9 @@ async def lifespan(app: FastAPI):
     elif not settings.SHOONYA_MARKET_DATA_ENABLED:
         configure_shoonya_snapshot(None)
         configure_shoonya_supervisor(None)
-    # Restore the opt-in IV Scanner asynchronously after lifespan startup.
-    # The API must become available even while Angel One's static master host
-    # is timing out; the recovery task below owns retries and cache validation.
-    if _iv_scanner_recovery_task is None:
-        _iv_scanner_recovery_task = asyncio.create_task(_iv_scanner_recovery_loop())
+    # IV Skew Flip is intentionally not started: the production Angel One
+    # WebSocket has one owner, SharedIndexMarketDataRunner, until IV is migrated
+    # to consume its published records without opening another feed consumer.
     # Shared Index Market Data is data-only and isolated: no strategy signals or orders.
     if _shared_index_runner_task is None:
         _shared_index_runner_task = asyncio.create_task(_shared_index_market_data_recovery_loop())
@@ -2451,6 +2449,10 @@ def _save_iv_scanner_enabled(enabled: bool) -> bool:
 
 def _start_iv_skew_flip_runtime(*, iv_instruments=None):
     global iv_skew_flip_runtime
+    raise RuntimeError(
+        "IV Skew Flip live feed is paused: the production Angel One WebSocket "
+        "is reserved exclusively for SharedIndexMarketDataRunner (NIFTY/BANKNIFTY)"
+    )
     # Serialize start/stop requests so simultaneous UI/API requests cannot
     # create duplicate IV consumers or publish a half-started runtime.
     with _iv_skew_flip_runtime_lock:
