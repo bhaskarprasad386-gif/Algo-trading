@@ -286,6 +286,9 @@ class CommonWebSocketManager:
         # scheduled. If the callback recovery worker cannot start, the periodic
         # supervisor can retire these transports instead of orphaning them.
         self._failure_recovery_pending_transports: dict[SocketGroup, dict[str, Any]] = {}
+        # Integrity faults are handed off to the shared supervisor so SDK
+        # transport callbacks never perform recovery work on their own thread.
+        self._callback_integrity_fault_pending: dict[SocketGroup, tuple[Any, int]] = {}
         self._failure_recovery_admission_rejections = 0
         # Retired transports remain visible until their close worker actually exits.
         # Store metadata only; never retain broker frames or authentication payloads.
@@ -1776,6 +1779,26 @@ class CommonWebSocketManager:
                     "subscription/reconcile will retry: %s", exc,
                 )
 
+    def _process_pending_callback_integrity_faults(self) -> None:
+        with self._lock:
+            pending = list(self._callback_integrity_fault_pending.items())
+            for group, _ in pending:
+                self._callback_integrity_fault_pending.pop(group, None)
+        for group, (socket, generation) in pending:
+            try:
+                self._schedule_socket_failure_recovery(
+                    group, socket, generation, "callback_dispatch_integrity_fault"
+                )
+            except Exception as exc:
+                with self._lock:
+                    current = self._sockets.get(group) is socket and self._socket_generation.get(group) == generation
+                    if current:
+                        self._callback_integrity_fault_pending[group] = (socket, generation)
+                runtime_diagnostics.record(
+                    component="Common Market Feed", error_type=type(exc).__name__,
+                    message=str(exc), context={"event": "callback_integrity_fault_handoff", "group": f"{group.mode}:{group.shard}"},
+                )
+
     def _recovery_loop(self) -> None:
         # Subscription changes intentionally remain pending during a shared
         # broker cooldown. Reconcile once when that cooldown expires so the
@@ -1795,11 +1818,14 @@ class CommonWebSocketManager:
                 has_pending_retirement_closes = bool(self._retired_transport_close_pending)
                 has_pending_callback_retirements = bool(self._callback_retirement_start_pending)
                 has_pending_callback_watchers = bool(self._callback_retirement_watch_pending)
+                has_pending_integrity_faults = bool(self._callback_integrity_fault_pending)
             if not (has_intent or has_pending_failure_transports or has_pending_retirement_watchers
-                    or has_pending_retirement_closes or has_pending_callback_retirements or has_pending_callback_watchers):
+                    or has_pending_retirement_closes or has_pending_callback_retirements or has_pending_callback_watchers
+                    or has_pending_integrity_faults):
                 retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 continue
             try:
+                self._process_pending_callback_integrity_faults()
                 self._retry_pending_retired_transport_closes()
                 self._retry_pending_retired_transport_watchers()
                 self._retry_pending_callback_retirements()
@@ -2228,12 +2254,13 @@ class CommonWebSocketManager:
             ),),
         )
         if not accepted and adapter.snapshot().get("integrity_fault"):
-            # The recovery scheduler already coalesces generations and retains
-            # failed worker starts for the shared supervisor; avoid a naked
-            # callback-thread spawn that could silently lose the integrity fault.
-            self._schedule_socket_failure_recovery(
-                group, socket, generation, "callback_dispatch_integrity_fault"
-            )
+            # Keep the SDK callback bounded: hand off integrity-fault recovery to
+            # the manager-owned supervisor instead of spawning an unmanaged worker.
+            with self._lock:
+                if (not self._closed and self._sockets.get(group) is socket
+                        and self._socket_generation.get(group) == generation):
+                    self._callback_integrity_fault_pending[group] = (socket, generation)
+            self._ensure_recovery_supervisor()
 
     def _is_current_data_generation(self, group: SocketGroup, generation: int | None) -> bool:
         """Fence deferred work from a socket generation that has since retired."""
@@ -3406,6 +3433,7 @@ class CommonWebSocketManager:
                 "failure_recovery_admission_rejections": self._failure_recovery_admission_rejections,
                 "retired_transport_count": len(self._retired_transports),
                 "retired_transport_close_start_pending_count": len(self._retired_transport_close_pending),
+                "callback_integrity_fault_pending_count": len(self._callback_integrity_fault_pending),
                 "retired_transports": [dict(item) for item in self._retired_transports.values()],
                 "retired_transport_groups": sorted({
                     str(item.get("group")) for item in self._retired_transports.values()
