@@ -107,3 +107,17 @@ def test_local_feed_deduplicates_ticks_and_clears_only_requested_consumer():
         one.stop()
         two.stop()
         manager.close()
+
+
+def test_local_fanout_does_not_buffer_ticks_without_box_consumers():
+    runner = FakeSharedRunner()
+    manager = SharedIndexRunnerLocalFeedManager(runner)
+    manager.attach()
+    _descriptor, record = _spot()
+
+    try:
+        runner.publish(record)
+        assert manager.snapshot()["queue_depth"] == 0
+        assert manager.snapshot()["queue_dropped"] == 0
+    finally:
+        manager.close()
