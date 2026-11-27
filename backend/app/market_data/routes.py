@@ -633,6 +633,7 @@ def get_market_overview():
     ]
     master = InstrumentMaster()
     client = MarketDataClient()
+    historical_client = HistoricalDataClient(client)
     ist = ZoneInfo("Asia/Kolkata")
     now = datetime.now(ist)
     market_open = _nse_market_is_open(now)
@@ -642,6 +643,40 @@ def get_market_overview():
             cached = _CLOSED_OVERVIEW_CACHE.get(cache_key)
         if cached is not None:
             return cached
+
+    def last_trading_closes(exchange, token):
+        """Return a 15-minute cached historical close; it is not a live quote."""
+        now = datetime.now(ist)
+        cache_key = (now.date().isoformat(), exchange, str(token))
+        monotonic_now = __import__("time").monotonic()
+        with _OVERVIEW_HISTORICAL_CACHE_LOCK:
+            cached = _OVERVIEW_HISTORICAL_CACHE.get(cache_key)
+            if cached is not None and monotonic_now - cached[0] < 900.0:
+                return cached[1], cached[2]
+        from_date = (now - timedelta(days=10)).strftime("%Y-%m-%d 00:00")
+        to_date = now.strftime("%Y-%m-%d %H:%M")
+        response = historical_client.get_candles(
+            exchange=exchange,
+            symboltoken=token,
+            interval="ONE_DAY",
+            from_date=from_date,
+            to_date=to_date,
+        )
+        candles = response.get("data") or []
+        valid = [
+            row for row in candles
+            if isinstance(row, (list, tuple)) and len(row) >= 5 and row[4] is not None
+        ] if isinstance(candles, list) else []
+        latest = float(valid[-1][4]) if valid else None
+        prior = float(valid[-2][4]) if len(valid) >= 2 else latest
+        if latest is not None:
+            with _OVERVIEW_HISTORICAL_CACHE_LOCK:
+                _OVERVIEW_HISTORICAL_CACHE[cache_key] = (monotonic_now, latest, prior)
+                # Keep only the current date's bounded index universe.
+                for old_key in tuple(_OVERVIEW_HISTORICAL_CACHE):
+                    if old_key[0] != cache_key[0]:
+                        _OVERVIEW_HISTORICAL_CACHE.pop(old_key, None)
+        return latest, prior
 
     def resolve(specs):
         resolved = []
@@ -688,8 +723,26 @@ def get_market_overview():
                         else "LIVE" if quote
                         else "NO_QUOTE"
                     )
-                    ltp = quote.get("ltp")
-                    close = quote.get("close")
+                    fallback_ltp = None
+                    fallback_previous = None
+                    status = (
+                        "STALE" if quote and quote_is_stale
+                        else "LIVE" if quote
+                        else "NO_QUOTE"
+                    )
+                    if not exchange_open:
+                        try:
+                            fallback_ltp, fallback_previous = last_trading_closes(exchange, item["symboltoken"])
+                            if fallback_ltp is not None:
+                                status = "CLOSED_LAST_CLOSE"
+                        except Exception as fallback_exc:
+                            errors.append({
+                                "exchange": exchange,
+                                "symbol": item["symbol"],
+                                "error": f"last_close_fallback_failed: {fallback_exc}",
+                            })
+                    ltp = quote.get("ltp") if quote.get("ltp") is not None else fallback_ltp
+                    close = quote.get("close") if quote.get("close") is not None else fallback_previous
                     rows.append({"exchange": exchange, "symbol": item["symbol"], "token": item["symboltoken"],
                                  "ltp": ltp, "open": quote.get("open"), "high": quote.get("high"),
                                  "low": quote.get("low"), "close": close, "change_percent": quote.get("percentChange"),
@@ -711,7 +764,7 @@ def get_market_overview():
         "indices": indices,
         "errors": index_errors,
     }
-    if not market_open and not mcx_market_open:
+    if not market_open:
         with _CLOSED_OVERVIEW_CACHE_LOCK:
             _CLOSED_OVERVIEW_CACHE.clear()
             _CLOSED_OVERVIEW_CACHE[cache_key] = result
