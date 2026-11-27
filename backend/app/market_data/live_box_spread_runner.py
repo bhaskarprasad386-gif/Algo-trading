@@ -787,6 +787,70 @@ class LiveBoxSpreadRunner:
             if feed_thread is not None and callable(getattr(feed_thread, "is_alive", None)) and feed_thread.is_alive():
                 feed_thread.join(timeout=2.0)
 
+    def health_snapshot(self):
+        """Return bounded Box Spread health counters without materializing depth rows."""
+        recorder = self.recorder
+        if recorder is None:
+            recorder_health = {}
+        else:
+            with recorder._lock:
+                recorder_health = {
+                    "running": not recorder.stop_event.is_set(),
+                    "subscriptions": len(recorder.subscriptions),
+                    "records_received": recorder._records_received,
+                    "observations_emitted": recorder._observations_emitted,
+                    "missing_executable_quote": recorder._missing_executable_quote,
+                    "out_of_order_records": recorder._out_of_order_records,
+                    "stale_buffer_discards": recorder._stale_buffer_discards,
+                    "future_buffer_discards": recorder._future_buffer_discards,
+                }
+        scanner = self.scanner
+        scanner_health = {}
+        if scanner is not None:
+            with scanner._lock:
+                scanner_health = {
+                    "counts": dict(scanner._diagnostic_counts),
+                    "last_scan": dict(scanner._last_diagnostics),
+                    "active_buckets": len(scanner._buckets),
+                }
+        with self.depth_shadow._lock:
+            depth_health = {
+                "enabled": self.depth_shadow.enabled,
+                "running": self.depth_shadow._started,
+                "record_count": len(self.depth_shadow._records),
+                "counts": dict(self.depth_shadow._counts),
+            }
+        with self._depth_shadow_lock:
+            comparison_count = len(self._depth_shadow_last_comparisons)
+        return {
+            "running": not self.stop_event.is_set(),
+            "targets": len(self.targets),
+            "target_symbols": tuple(sorted({target.underlying.strip().upper() for target in self.targets})),
+            "reconfigure_pending": self._reconfigure_event.is_set(),
+            "underlying_feed_thread_alive": bool(
+                self._feed_thread
+                and callable(getattr(self._feed_thread, "is_alive", None))
+                and self._feed_thread.is_alive()
+            ),
+            "readiness": {
+                "state": self._readiness.get("state", "unknown"),
+                "ready_symbol_count": len(self._readiness.get("ready_symbols") or ()),
+                "waiting_symbol_count": len(self._readiness.get("waiting_symbols") or ()),
+                "unavailable_symbol_count": len(self._readiness.get("unavailable_symbols") or ()),
+            },
+            "records_received": recorder_health.get("records_received", 0),
+            "scanner_updates": scanner_health.get("counts", {}).get("ticks_accepted_for_assembly", 0),
+            "observations": scanner_health.get("counts", {}).get("ticks_accepted_for_assembly", 0),
+            "payload_callbacks": recorder_health.get("records_received", 0),
+            "recorder": recorder_health,
+            "scanner": scanner_health,
+            "depth_shadow": {
+                **depth_health,
+                "last_comparison_count": comparison_count,
+                "comparison_diagnostics": self.depth_shadow_diagnostics.snapshot(),
+            },
+        }
+
     def snapshot(self):
         """Return lightweight runtime state for shared-feed diagnostics."""
         depth_snapshot = self.depth_shadow.snapshot()
