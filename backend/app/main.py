@@ -70,7 +70,7 @@ from app.strategy_engine.routes import router as arbitrage_router
 from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot, configure_shoonya_snapshot, configure_shoonya_supervisor, configure_shared_index_runner_snapshot, configure_shared_index_runner_health_snapshot
 from app.scanner.routes import full_fno_router, configure_live_cash_future_snapshot
 from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop, configure_page_update_callback as configure_weekly_swing_page_push, nifty200_scan_status
-from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
+from app.scanner.auto_routes import discover_cash_future_symbols
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
 from app.scanner.calendar_spread_routes import configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot
@@ -826,7 +826,6 @@ app.include_router(market_data_router)
 app.include_router(provider_quote_parity_router)
 app.include_router(weekly_swing_scanner_router)
 app.include_router(full_fno_router)
-app.include_router(auto_scanner_router)
 app.include_router(alert_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))
