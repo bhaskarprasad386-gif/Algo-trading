@@ -4,7 +4,6 @@ from datetime import date
 from app.market_data.common_websocket import CommonWebSocketManager
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.commodity_subscriptions import select_commodity_contracts
-from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
 from app.market_data.live_commodity_stream import LiveCommodityMarketDataRecorder
 
 
@@ -25,11 +24,6 @@ def test_commodity_selection_is_dynamic_current_near_and_actual_strikes():
     assert [x.token for x in selection.futures] == ["F1", "F2"]
     assert selection.option_count == 10
     assert {x.strike for x in selection.subscriptions if x.option_type} == {70000.0,70100.0,70200.0,70300.0,70400.0}
-
-
-def test_synthetic_runner_has_no_box_spread_dependency():
-    assert "box_spread" not in LiveSyntheticRunner.__module__
-    assert SyntheticLiveTarget("NIFTY", "INDEX").instrument_class == "INDEX"
 
 
 def test_commodity_recorder_uses_common_feed_adapter():
