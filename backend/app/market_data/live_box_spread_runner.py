@@ -3,9 +3,7 @@ from __future__ import annotations
 from threading import Thread, Event, Lock
 from dataclasses import replace
 from time import time_ns, sleep, monotonic
-from sqlalchemy import select
 from app.algo.auth import AngelOneAuth
-from app.core.database import SessionLocal
 from app.core.config import settings
 from app.backtesting.arbitrage_scan_policy import ScanPolicy
 from app.market_data.instruments import InstrumentMaster
@@ -15,7 +13,6 @@ from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecor
 from app.market_data.live_synthetic_underlying import LiveSyntheticUnderlyingFeed
 from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker, concrete_strikes_from_master
 from app.market_data.box_spread_subscriptions import select_box_contracts
-from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
 from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 from app.scanner.live_box_spread_pipeline import LiveBoxSpreadPipeline
 from app.scanner.box_spread_publication_gate import BOX_SPREAD_PUBLICATION_GATE
@@ -24,18 +21,11 @@ from app.scanner.box_spread_live_depth_shadow import BoxLiveDepthShadowFeed
 from app.scanner.box_spread_depth_shadow_diagnostics import BoxDepthShadowDiagnostics
 from app.core.logger import app_logger
 
-BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
-# Temporarily excluded from the Box Spread scanner universe and all its feeds.
-BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS = frozenset({"MIDCPNIFTY"})
-WEEKLY_EXPIRY_PRIORITY_SYMBOLS = frozenset({"NIFTY", "SENSEX"})
-INDEX_EDGE_THRESHOLDS = {
-    "NIFTY": 5.0,
-    "FINNIFTY": 5.0,
-    "MIDCPNIFTY": 10.0,
-    "BANKNIFTY": 10.0,
-    "SENSEX": 10.0,
-    "BANKEX": 10.0,
-}
+BSE_INDEX_SYMBOLS = frozenset()
+BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS = frozenset()
+WEEKLY_EXPIRY_PRIORITY_SYMBOLS = frozenset({"NIFTY"})
+LOCKED_BOX_INDEX_SYMBOLS = frozenset({"NIFTY", "BANKNIFTY"})
+INDEX_EDGE_THRESHOLDS = {"NIFTY": 5.0, "BANKNIFTY": 10.0}
 
 def _depth_edge_below_minimum(depth_edge: float, minimum_edge: float) -> bool:
     """Apply the configured per-index floor to the final four-leg depth VWAP edge."""
@@ -105,7 +95,15 @@ class BoxSpreadLiveTarget:
 
 class LiveBoxSpreadRunner:
     def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,on_spot_price=None,policy=None,consumer_namespace="box",publish_enabled=True,publication_gate=None,shared_feed_manager=None):
-        self.data_db=data_db; self.targets=tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper()))); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
+        self.data_db=data_db
+        self.targets=tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper())))
+        if any(
+            target.instrument_class.strip().upper() != "INDEX"
+            or target.underlying.strip().upper() not in LOCKED_BOX_INDEX_SYMBOLS
+            for target in self.targets
+        ):
+            raise ValueError("live Box Spread runner is locked to NIFTY and BANKNIFTY index contracts")
+        self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
         self.consumer_namespace = str(consumer_namespace or "box").strip()
         if not self.consumer_namespace or any(not (char.isalnum() or char in "-_:") for char in self.consumer_namespace):
             raise ValueError("consumer_namespace must contain only letters, numbers, hyphens, underscores or colons")
@@ -437,50 +435,6 @@ class LiveBoxSpreadRunner:
             ))
         return tuple(descriptors)
 
-    def _open_position_subscriptions(self):
-        """Keep option contracts for persisted open paper positions in the common feed."""
-        with SessionLocal() as session:
-            trades = session.scalars(
-                select(BoxSpreadPaperTradeRecord).where(
-                    BoxSpreadPaperTradeRecord.status.notin_(("CLOSED", "CANCELLED"))
-                )
-            ).all()
-            if not trades:
-                return []
-            entries = session.scalars(
-                select(BoxSpreadPaperLedgerEntry).where(
-                    BoxSpreadPaperLedgerEntry.trade_id.in_([trade.id for trade in trades])
-                )
-            ).all()
-        signed_by_trade = {}
-        for entry in entries:
-            role_map = signed_by_trade.setdefault(entry.trade_id, {})
-            role_map[entry.role] = role_map.get(entry.role, 0) + (
-                entry.quantity if entry.action == "BUY" else -entry.quantity
-            )
-        subscriptions = []
-        selected_symbols = {target.underlying.strip().upper() for target in self.targets}
-        for trade in trades:
-            if str(trade.underlying or "").strip().upper() not in selected_symbols:
-                continue
-            if not any(signed_by_trade.get(trade.id, {}).values()):
-                continue
-            try:
-                selection = select_box_contracts(
-                    self.master, underlying=trade.underlying,
-                    instrument_class=trade.instrument_class,
-                    atm_strike=(float(trade.low_strike) + float(trade.high_strike)) / 2.0,
-                    expiry=trade.expiry, allowed_stock_symbols=self.allowed_stock_symbols,
-                    policy=self.policy,
-                    required_strikes=(float(trade.low_strike), float(trade.high_strike)),
-                )
-                subscriptions.extend(selection.subscriptions)
-            except (LookupError, ValueError) as exc:
-                app_logger.warning(
-                    "Box Spread paper position quote subscription unavailable for trade {}: {}",
-                    trade.id, exc,
-                )
-        return subscriptions
     def _run_session(self):
         # A reconfigured session may reclaim an idle gate, but must never
         # override a newer staged runner that already owns publication.
@@ -637,8 +591,6 @@ class LiveBoxSpreadRunner:
                     subscription_counts.setdefault(symbol_key, [])
                     subscription_counts[symbol_key].append({"expiry": contract_expiry, "count": len(sel.subscriptions)})
                     subs.extend(sel.subscriptions)
-                # Preserve held-position strikes when the ATM subscription window moves.
-                subs.extend(self._open_position_subscriptions())
                 self._readiness = {
                     "state": "ready" if subs else "waiting_for_contracts",
                     "ready_symbols": ready_symbols,
@@ -750,7 +702,7 @@ class LiveBoxSpreadRunner:
                         )
                         self.recorder.stop()
                 if not self.depth_shadow.enabled:
-                    raise RuntimeError("Box Spread live paper opportunities require the dedicated five-level depth feed")
+                    raise RuntimeError("Box Spread live opportunities require the dedicated five-level depth feed")
                 # Fail closed: never start an L1-only live opportunity publisher.
                 depth_descriptors = self._depth_shadow_descriptors(subs)
                 self.depth_shadow.start(depth_descriptors)
