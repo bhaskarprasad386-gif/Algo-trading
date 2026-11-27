@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from queue import Empty, Full, Queue
 from threading import Lock, RLock, Thread
+from time import time_ns
 from typing import Any, Callable
 
 from .registry import InstrumentRegistry
@@ -32,6 +33,7 @@ class SharedIndexRunnerLocalFeedManager:
         self._delivered = 0
         self._callback_errors = 0
         self._queue_dropped = 0
+        self._stale_dropped = 0
 
     def attach(self) -> None:
         """Route the runner's already-accepted records into the bounded queue."""
@@ -59,9 +61,20 @@ class SharedIndexRunnerLocalFeedManager:
             self._queue.put_nowait(record)
             return True
         except Full:
+            # Prefer the newest market state over an old backlog. Remove one
+            # queued frame without blocking the broker's publish callback.
+            try:
+                self._queue.get_nowait()
+                self._queue.task_done()
+            except Empty:
+                pass
             with self._lock:
                 self._queue_dropped += 1
-            return False
+            try:
+                self._queue.put_nowait(record)
+                return True
+            except Full:
+                return False
 
     def register_normalized_callback(self, consumer: str, callback: Callable[[Any], None]) -> None:
         name = str(consumer or "").strip()
@@ -175,6 +188,14 @@ class SharedIndexRunnerLocalFeedManager:
                 return
             key = getattr(getattr(record, "instrument", None), "value", "")
             timestamp_ns = getattr(record, "timestamp_ns", 0)
+            state = getattr(self.runner, "state", None)
+            max_age_ns = getattr(state, "max_age_ns", 5_000_000_000)
+            age_ns = time_ns() - timestamp_ns if isinstance(timestamp_ns, int) else max_age_ns + 1
+            if age_ns > max_age_ns or age_ns < -1_000_000_000:
+                with self._lock:
+                    self._stale_dropped += 1
+                self._queue.task_done()
+                continue
             with self._lock:
                 consumers = tuple(self._owners.get(key, ()))
                 callbacks = tuple(
@@ -211,6 +232,7 @@ class SharedIndexRunnerLocalFeedManager:
                 "delivered_records": self._delivered,
                 "callback_errors": self._callback_errors,
                 "queue_dropped": self._queue_dropped,
+                "stale_dropped": self._stale_dropped,
                 "queue_depth": self._queue.qsize(),
                 "queue_capacity": self._queue.maxsize,
             }
