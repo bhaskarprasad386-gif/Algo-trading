@@ -278,6 +278,10 @@ class CommonWebSocketManager:
         self._failure_recovery_worker_active = False
         self._failure_recovery_pending_groups: set[SocketGroup] = set()
         self._failure_recovery_pending_versions: dict[SocketGroup, int] = {}
+        # Keep ownership of invalidated sockets until their close is actually
+        # scheduled. If the callback recovery worker cannot start, the periodic
+        # supervisor can retire these transports instead of orphaning them.
+        self._failure_recovery_pending_transports: dict[SocketGroup, dict[str, Any]] = {}
         self._failure_recovery_admission_rejections = 0
         # Retired transports remain visible until their close worker actually exits.
         # Store metadata only; never retain broker frames or authentication payloads.
@@ -1344,10 +1348,17 @@ class CommonWebSocketManager:
                             self._clear_failure_recovery_group_locked(group, generation)
             finally:
                 with self._lock:
+                    pending = self._failure_recovery_pending_transports.get(group)
+                    if pending is not None and pending.get("generation") == generation:
+                        self._failure_recovery_pending_transports.pop(group, None)
                     self._failure_recovery_worker_active = False
 
         def _recover() -> None:
             try:
+                with self._lock:
+                    pending = self._failure_recovery_pending_transports.get(group)
+                    if pending is not None and pending.get("generation") == generation:
+                        pending["close_scheduled"] = True
                 close_worker = self._close_socket_tracked(
                     socket, group=group, generation=generation, reason="failure_callback",
                     on_finished=_recover_after_close,
@@ -1367,7 +1378,13 @@ class CommonWebSocketManager:
                     group, exc,
                 )
                 with self._lock:
-                    self._clear_failure_recovery_group_locked(group, generation)
+                    pending = self._failure_recovery_pending_transports.get(group)
+                    if pending is not None and pending.get("generation") == generation:
+                        pending["close_scheduled"] = False
+                    self._failure_recovery_pending_groups.add(group)
+                    self._failure_recovery_pending_versions[group] = (
+                        self._failure_recovery_pending_versions.get(group, 0) + 1
+                    )
                     self._failure_recovery_worker_active = False
 
         # A simultaneous shard outage must not spawn one recovery thread per
@@ -1427,11 +1444,84 @@ class CommonWebSocketManager:
                     self._clear_failure_recovery_group_locked(group, generation)
                     self._failure_recovery_worker_active = False
 
-        Thread(
+        with self._lock:
+            self._failure_recovery_pending_transports[group] = {
+                "socket": socket,
+                "generation": generation,
+                "reason": str(reason),
+                "on_finished": _recover_after_close,
+                "close_scheduled": False,
+            }
+        worker = Thread(
             target=_recover_with_admission,
             name=f"common-ws-failure-recovery-{group.mode}-{group.shard}",
             daemon=True,
-        ).start()
+        )
+        try:
+            worker.start()
+        except Exception as exc:
+            # The socket has already been invalidated. Retain it for the
+            # supervisor's close retry and release the global worker admission.
+            with self._lock:
+                pending = self._failure_recovery_pending_transports.get(group)
+                if pending is not None and pending.get("generation") == generation:
+                    pending["close_scheduled"] = False
+                self._failure_recovery_worker_active = False
+                self._failure_recovery_pending_groups.add(group)
+                self._failure_recovery_pending_versions[group] = (
+                    self._failure_recovery_pending_versions.get(group, 0) + 1
+                )
+            runtime_diagnostics.record(
+                component="Common Market Feed",
+                error_type=type(exc).__name__,
+                message=f"failure recovery worker start failed: {exc}",
+                context={"event": "failure_recovery_worker_start", "group": f"{group.mode}:{group.shard}", "generation": generation},
+            )
+            app_logger.warning(
+                "Common feed failure recovery worker could not start; supervisor will retry transport retirement group=%s: %s",
+                f"{group.mode}:{group.shard}", exc,
+            )
+
+    def _retry_pending_failure_transport_closes(self) -> None:
+        """Retire invalidated sockets whose callback recovery worker could not start."""
+        with self._lock:
+            if self._closed:
+                return
+            pending_items = [
+                (group, dict(record))
+                for group, record in self._failure_recovery_pending_transports.items()
+                if not record.get("close_scheduled")
+            ]
+            for group, record in pending_items:
+                current = self._failure_recovery_pending_transports.get(group)
+                if current is not None and current.get("generation") == record.get("generation"):
+                    current["close_scheduled"] = True
+
+        for group, record in pending_items:
+            try:
+                self._close_socket_tracked(
+                    record["socket"],
+                    group=group,
+                    generation=record["generation"],
+                    reason="failure_callback_supervisor_retry",
+                    on_finished=record["on_finished"],
+                )
+            except Exception as exc:
+                with self._lock:
+                    current = self._failure_recovery_pending_transports.get(group)
+                    if current is not None and current.get("generation") == record.get("generation"):
+                        current["close_scheduled"] = False
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type=type(exc).__name__,
+                    message=f"supervisor retry could not schedule failed socket close: {exc}",
+                    context={"event": "failure_recovery_close_retry", "group": f"{group.mode}:{group.shard}", "generation": record["generation"]},
+                )
+                app_logger.warning(
+                    "Common feed supervisor could not schedule pending failed-socket close group=%s: %s",
+                    f"{group.mode}:{group.shard}", exc,
+                )
+
     def _has_pending_socket_operation_locked(self, group: SocketGroup) -> bool:
         """Return whether a broker SDK operation still owns this shard.
 
@@ -1690,10 +1780,12 @@ class CommonWebSocketManager:
                 if self._closed:
                     return
                 has_intent = bool(self.registry.subscriptions())
-            if not has_intent:
+                has_pending_failure_transports = bool(self._failure_recovery_pending_transports)
+            if not has_intent and not has_pending_failure_transports:
                 retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 continue
             try:
+                self._retry_pending_failure_transport_closes()
                 # Before/after the regular session, tick silence is expected;
                 # don't churn otherwise-connected sockets every 30 seconds.
                 silent_timeout = (
