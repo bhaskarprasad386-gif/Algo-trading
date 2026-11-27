@@ -115,27 +115,25 @@ def test_reactivating_existing_channel_does_not_enqueue_recovery(monkeypatch):
     push._set_channels(queue, frozenset({"iv-skew-flip"}))
     first = queue.get_nowait()
     assert first["event"] == "SNAPSHOT_REQUIRED"
-    push._set_channels(queue, frozenset({"iv-skew-flip", "iv-skew-flip"}))
-    second = queue.get_nowait()
-    assert second["page"] == "iv-skew-flip"
-    assert second["event"] == "SNAPSHOT_REQUIRED"
+    push._set_channels(queue, frozenset({"iv-skew-flip"}))
     assert queue.empty()
 
 
 def test_channel_activation_queue_overflow_marks_all_active_pages_for_resync(monkeypatch):
     queue = asyncio.Queue(maxsize=2)
-    queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 8})
     monkeypatch.setattr(push, "_subscribers", set())
     monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 9 if page == "iv-skew-flip" else 4)
     push._set_channels(queue, frozenset({"iv-skew-flip"}))
-    first = queue.get_nowait()
-    assert first["event"] == "SNAPSHOT_REQUIRED"
+    assert queue.get_nowait()["event"] == "SNAPSHOT_REQUIRED"
     queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 10})
     queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 11})
-    push._set_channels(queue, frozenset({"iv-skew-flip", "iv-skew-flip"}))
+
+    push._set_channels(queue, frozenset({"iv-skew-flip", "weekly-swing"}))
+
     markers = [queue.get_nowait(), queue.get_nowait()]
-    assert {frame["page"] for frame in markers} == {"iv-skew-flip", "iv-skew-flip"}
+    assert {frame["page"] for frame in markers} == {"iv-skew-flip", "weekly-swing"}
     assert all(frame["event"] == "SNAPSHOT_REQUIRED" for frame in markers)
+
 
 def test_snapshot_provider_is_read_only_and_page_scoped():
     observed = []
@@ -321,13 +319,12 @@ def test_page_resync_preserves_other_subscribed_channel_events():
     async def scenario():
         queue = asyncio.Queue(maxsize=4)
         queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 2})
-        queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 8})
+        queue.put_nowait({"page": "weekly-swing", "event": "PATCH", "sequence": 8})
         waiter = asyncio.create_task(queue.get())
-        await asyncio.sleep(0)
-        assert waiter.done()
+        await asyncio.wait_for(waiter, timeout=0.5)
         next_waiter = await push._restart_event_waiter(queue, waiter, "iv-skew-flip")
         preserved = await asyncio.wait_for(next_waiter, timeout=0.1)
-        assert preserved["page"] == "iv-skew-flip"
+        assert preserved["page"] == "weekly-swing"
         next_waiter.cancel()
         await asyncio.gather(next_waiter, return_exceptions=True)
     asyncio.run(scenario())
@@ -477,25 +474,19 @@ def test_journal_dispatch_uses_page_sequence_cursor_not_global_event_id(monkeypa
 
 def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch):
     async def scenario():
-        queue = asyncio.Queue(maxsize=3)
-        pages = {"iv-skew-flip", "iv-skew-flip", "weekly-swing"}
-        for page in pages:
-            queue.put_nowait({"page": page, "event": "PATCH", "sequence": 1})
+        queue = asyncio.Queue(maxsize=1)
+        pages = {"iv-skew-flip", "weekly-swing"}
+        queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 1})
+        queue.put_nowait({"page": "weekly-swing", "event": "PATCH", "sequence": 1}) if not queue.full() else None
         monkeypatch.setattr(push, "_subscribers", {(queue, frozenset(pages))})
         monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 7)
         waiter = asyncio.create_task(queue.get())
-        # Await completion deterministically: helper needs the completed task's
-        # result to restore the consumed frame, not a scheduling assumption.
         await asyncio.wait_for(waiter, timeout=0.5)
-        # Add one more so restoring the consumed frame plus retained queue
-        # exceeds this test queue size.
         queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 2})
-        next_waiter = await push._restart_event_waiter(queue, waiter, "iv-skew-flip")
-        # Cancel the restarted consumer before inspecting the recovery queue so
-        # it cannot race the test and steal one of the snapshot markers.
+        next_waiter = await push._restart_event_waiter(queue, waiter, "weekly-swing")
         next_waiter.cancel()
         await asyncio.gather(next_waiter, return_exceptions=True)
-        markers = [queue.get_nowait() for _ in range(3)]
+        markers = [queue.get_nowait(), queue.get_nowait()]
         assert {frame["page"] for frame in markers} == pages
         assert all(frame["event"] == "SNAPSHOT_REQUIRED" and frame["sequence"] == 7 for frame in markers)
     asyncio.run(scenario())
