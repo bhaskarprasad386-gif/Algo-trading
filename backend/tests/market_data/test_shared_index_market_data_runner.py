@@ -449,6 +449,22 @@ def test_stale_master_refresh_failure_cannot_pollute_restarted_runner_epoch():
 
 
 def test_futures_rollover_is_serialized_with_runner_stop():
+
+def test_futures_rollover_selection_is_cached_for_market_date(monkeypatch):
+    rows = _rows()
+    runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=RunnerManager())
+    runner._rows = tuple(rows)
+    runner._futures_expiries = {"NIFTY": "2026-11-26", "BANKNIFTY": "2026-12-24"}
+    calls = []
+    original = runner.choose_nearest_future
+    def counted(rows_arg, underlying, *, today=None):
+        calls.append(underlying)
+        return original(rows_arg, underlying, today=today)
+    monkeypatch.setattr(runner, "choose_nearest_future", counted)
+    assert runner._check_futures_rollover() == ()
+    assert runner._check_futures_rollover() == ()
+    assert calls == ["NIFTY", "BANKNIFTY"]
+
     from threading import Event, Thread
     import time
 
