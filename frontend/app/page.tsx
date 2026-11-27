@@ -8,11 +8,7 @@ import { appConfig, getDashboardWsUrl } from "@/lib/config";
 
 const markets = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
 const strategies = [
-  { name: "Cash Future", detail: "Live Scanner • F&O •", href: "/scanner", icon: Radio },
-  { name: "Calendar Spread", detail: "Time spread • NIFTY •", href: "/strategies/calendar-spread", icon: Activity },
-  { name: "Synthetic Arbitrage", detail: "Cash-Synth • Arbitrage •", href: "/strategies/synthetic-arbitrage", icon: Zap },
   { name: "Box Spread", detail: "Options • Box •", href: "/strategies/box-spread", icon: Gauge },
-  { name: "Strategy Scanner", detail: "Dedicated workspaces •", href: "/scanner", icon: Radio },
 ];
 
 export default function HomePage() {
