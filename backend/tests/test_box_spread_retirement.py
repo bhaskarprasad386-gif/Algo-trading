@@ -40,7 +40,7 @@ def test_box_spread_and_retired_scanners_have_no_public_channels_or_alerts():
     assert 'href: "/strategies/box-spread"' not in dashboard
     assert not (REPO / "frontend" / "app" / "strategies" / "box-spread" / "page.tsx").exists()
     channel_block = page_push.split("PAGE_CHANNELS = frozenset({", 1)[1].split("})", 1)[0]
-    for retired in ("box-spread", "cash-future", "calendar-spread", "synthetic-arbitrage"):
+    for retired in ("box-spread", "cash-future", "calendar-spread", "synthetic-arbitrage", "credit-butterfly-condor-weekly", "credit-butterfly-condor-monthly"):
         assert f'"{retired}"' not in channel_block
     assert "STRATEGIES = set()" in alerts
     assert 'history_models = {}' in alerts
