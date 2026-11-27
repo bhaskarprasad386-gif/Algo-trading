@@ -100,7 +100,11 @@ def test_non_runner_cannot_register_or_unregister_callback_routes():
     )
     for operation in blocked:
         with pytest.raises(PermissionError, match="exclusively"):
-            operation("cash-future-live", lambda *_args, **_kwargs: None)
+            if operation in {manager.register_callback, manager.register_normalized_callback,
+                             manager.register_normalized_observer, manager.register_transport_observer}:
+                operation("cash-future-live", lambda *_args, **_kwargs: None)
+            else:
+                operation("cash-future-live")
     assert manager._callbacks == {}
     assert manager._record_callbacks == {}
     assert manager._record_observers == {}
