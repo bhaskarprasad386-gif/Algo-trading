@@ -151,7 +151,7 @@ def test_dashboard_publisher_records_the_measured_dispatch_wait():
     )
 
 
-def test_dashboard_payload_gates_disabled_scanner_snapshot_work():
+def test_dashboard_payload_contains_only_box_spread_read_model():
     main_path = Path(__file__).resolve().parents[1] / "app" / "main.py"
     tree = ast.parse(main_path.read_text(encoding="utf-8"))
     payload = next(
@@ -160,24 +160,19 @@ def test_dashboard_payload_gates_disabled_scanner_snapshot_work():
         and node.name == "_build_dashboard_snapshot_payload"
     )
     source = ast.unparse(payload)
-    assert "if cash_future_enabled else []" in source
-    assert "if calendar_enabled else []" in source
-    assert "if synthetic_enabled else ()" in source
-    assert "if box_enabled else ()" in source
-    assert "LIVE_CASH_FUTURE_DATA_ENABLED" in source
-    assert "LIVE_CALENDAR_SPREAD_DATA_ENABLED" in source
+    assert '"box_spread"' in source
+    assert "live_cash_future_scanner" not in source
+    assert "live_calendar_spread_scanner" not in source
+    assert "live_synthetic_latest_results" not in source
+    assert '"cash_future"' not in source
+    assert '"calendar_spread"' not in source
+    assert '"synthetic_arbitrage"' not in source
 
 
-def test_cash_future_page_push_snapshot_short_circuits_disabled_scanner():
+def test_retired_cash_future_page_push_provider_is_absent():
     main_path = Path(__file__).resolve().parents[1] / "app" / "main.py"
-    tree = ast.parse(main_path.read_text(encoding="utf-8"))
-    function = next(
-        node for node in tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_cash_future_page_push_snapshot"
-    )
-    source = ast.unparse(function)
-    guard = source.index("if not settings.LIVE_CASH_FUTURE_DATA_ENABLED")
-    scanner_call = source.index("live_cash_future_scanner.health()")
-    assert guard < scanner_call
-    assert "'status': 'DISABLED'" in source
+    source = main_path.read_text(encoding="utf-8")
+    assert "def _cash_future_page_push_snapshot" not in source
+    assert 'publish_page_update("cash-future"' not in source
+    assert "async def _live_cash_future_loop" not in source
+    assert "async def _cash_future_history_loop" not in source
