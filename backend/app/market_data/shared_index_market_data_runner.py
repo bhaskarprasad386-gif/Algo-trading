@@ -56,8 +56,8 @@ def _readiness_from_groups(*, running: bool, bootstrap_done: bool,
     for underlying in LOCKED:
         group = feed_groups.get(f"{underlying}:option", {})
         option_sides[underlying] = {
-            "CE": {"fresh": int(group.get("ce_fresh_count", 0)), "total": 31},
-            "PE": {"fresh": int(group.get("pe_fresh_count", 0)), "total": 31},
+            "CE": {"fresh": int(group.get("ce_fresh_count", 0)), "total": int(group.get("ce_count", 0))},
+            "PE": {"fresh": int(group.get("pe_fresh_count", 0)), "total": int(group.get("pe_count", 0))},
         }
     # Require at least half of each CE/PE side to be fresh. This tolerates
     # illiquid wings while preventing a single live contract from declaring a
