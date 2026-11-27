@@ -36,11 +36,9 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
     if cls == "STOCK" and symbol not in {s.strip().upper() for s in allowed_stock_symbols}:
         raise ValueError("stock is outside the configured top-15 liquid stock universe")
 
-    if cls == "COMMODITY":
-        raise ValueError("commodity contracts are no longer supported")
     expected_exchange = exchange.upper() if exchange else "NFO"
-    future_type = {"STOCK": "FUTSTK", "INDEX": "FUTIDX", "COMMODITY": "FUTCOM"}[cls]
-    option_types = {"STOCK": {"OPTSTK"}, "INDEX": {"OPTIDX"}, "COMMODITY": {"OPTFUT"}}[cls]
+    future_type = {"STOCK": "FUTSTK", "INDEX": "FUTIDX"}[cls]
+    option_types = {"STOCK": {"OPTSTK"}, "INDEX": {"OPTIDX"}}[cls]
     if cls == "INDEX" and exchange is None:
         available_segments = {
             str(item.get("exch_seg","")).upper()
@@ -126,7 +124,7 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
             for option_type in ("CE", "PE"):
                 item = options_by_strike[strike][option_type]
                 subscriptions.append(SyntheticSubscription(
-                    exchange_type={"NFO":2,"BFO":4,"MCX":5}[expected_exchange],
+                    exchange_type={"NFO": 2, "BFO": 4}[expected_exchange],
                     token=str(item.get("token","")).strip(),
                     symbol=str(item.get("symbol","")).strip(), underlying=symbol,
                     instrument_class=cls, expiry=str(item.get("expiry","")).strip(),
