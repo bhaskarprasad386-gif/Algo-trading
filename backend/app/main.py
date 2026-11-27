@@ -57,7 +57,7 @@ from app.market_data.provider_readiness_bridge import ProviderReadinessBridge
 from app.scanner.early_impulse_shoonya_observer import early_impulse_observer
 from app.market_data.box_spread_expiry import classify_index_expiry_dates
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
-from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_LIQUID_STOCK_SYMBOLS_ORDERED, OPTION_STRATEGY_INDEX_SYMBOLS, NIFTY50_INDEX_SYMBOLS
+from app.market_data.nifty50_universe import OPTION_STRATEGY_INDEX_SYMBOLS
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
@@ -641,7 +641,7 @@ async def lifespan(app: FastAPI):
             _dashboard_snapshot_task.cancel()
         if _event_loop_lag_task is not None:
             _event_loop_lag_task.cancel()
-        for task in (_dashboard_snapshot_task, _event_loop_lag_task, _history_collector_task, _contract_master_sync_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
+        for task in (_dashboard_snapshot_task, _event_loop_lag_task, _history_collector_task, _contract_master_sync_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
             if task is not None:
                 task.cancel()
         shutdown_tasks = tuple(
