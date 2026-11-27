@@ -10,7 +10,11 @@ from app.market_data.shared_index_local_feed import SharedIndexRunnerLocalFeedMa
 
 class FakeSharedRunner:
     def __init__(self):
-        self.state = SimpleNamespace(_publish=lambda _record: None)
+        self.state = SimpleNamespace(
+            _publish=lambda _record: None,
+            _allowed_keys=None,
+            is_instrument_allowed=lambda key: self.state._allowed_keys is not None and key.value in self.state._allowed_keys,
+        )
 
     def publish(self, record):
         self.state._publish(record)
@@ -44,6 +48,7 @@ def test_local_feed_delivers_shared_runner_records_without_broker_manager():
     manager = SharedIndexRunnerLocalFeedManager(runner)
     manager.attach()
     descriptor, record = _spot()
+    runner.state._allowed_keys = {descriptor.key.value}
     received = Event()
     observed = []
 
@@ -68,6 +73,7 @@ def test_local_feed_deduplicates_ticks_and_clears_only_requested_consumer():
     manager = SharedIndexRunnerLocalFeedManager(runner)
     manager.attach()
     descriptor, record = _spot()
+    runner.state._allowed_keys = {descriptor.key.value}
     first = Event()
     second = Event()
     update_received = Event()
@@ -132,6 +138,7 @@ def test_local_fanout_can_reattach_after_application_lifespan_shutdown():
     manager.attach()
     manager.close()
     manager.attach()
+    runner.state._allowed_keys = {descriptor.key.value}
     feed = CommonStrategyMarketFeed("box-after-restart", manager=manager)
     try:
         feed.start((descriptor,), lambda _item: received.set())
@@ -139,4 +146,24 @@ def test_local_fanout_can_reattach_after_application_lifespan_shutdown():
         assert received.wait(1.0)
     finally:
         feed.stop()
+        manager.close()
+
+
+def test_local_feed_rejects_instruments_not_owned_by_shared_runner():
+    runner = FakeSharedRunner()
+    manager = SharedIndexRunnerLocalFeedManager(runner)
+    manager.attach()
+    descriptor, _record = _spot()
+    try:
+        feed = CommonStrategyMarketFeed("box-invalid-universe", manager=manager)
+        try:
+            try:
+                feed.start((descriptor,), lambda _item: None)
+            except PermissionError as exc:
+                assert "currently owned by SharedIndexMarketDataRunner" in str(exc)
+            else:
+                raise AssertionError("unowned instrument subscription must fail closed")
+        finally:
+            feed.stop()
+    finally:
         manager.close()
