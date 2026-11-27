@@ -493,25 +493,50 @@ async def _restart_event_waiter(queue: asyncio.Queue, event_task: asyncio.Task, 
     return asyncio.create_task(queue.get())
 
 
+def _normalize_origin(value: str) -> tuple[str, str, int] | None:
+    """Parse an origin into a canonical scheme/host/effective-port tuple."""
+    try:
+        parsed = urlparse(str(value).strip())
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        port = parsed.port
+    except ValueError:
+        return None
+    scheme = parsed.scheme.lower()
+    host = parsed.hostname.rstrip(".").lower()
+    if not host:
+        return None
+    effective_port = port if port is not None else (443 if scheme == "https" else 80)
+    if not 1 <= effective_port <= 65535:
+        return None
+    return scheme, host, effective_port
+
+
 def _origin_allowed(websocket: WebSocket) -> bool:
     origin = str(websocket.headers.get("origin") or "").strip()
+    # Non-browser clients may omit Origin. Browser-supplied values are checked
+    # strictly against configured authorities below.
     if not origin:
         return True
-    try:
-        parsed = urlparse(origin)
-    except ValueError:
+    requested = _normalize_origin(origin)
+    if requested is None:
         return False
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
-        return False
-    normalized = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
     configured = {
-        value.strip().rstrip("/").lower()
+        normalized
         for value in os.getenv("SCANNER_PAGE_WS_ALLOWED_ORIGINS", "").split(",")
-        if value.strip()
+        if (normalized := _normalize_origin(value.strip())) is not None
     }
-    host = (parsed.hostname or "").lower()
-    return normalized in configured or (
-        host in {"localhost", "127.0.0.1"}
+    scheme, host, _port = requested
+    return requested in configured or (
+        scheme in {"http", "https"} and host in {"localhost", "127.0.0.1", "::1"}
     )
 
 
