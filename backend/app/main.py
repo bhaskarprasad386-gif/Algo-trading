@@ -495,8 +495,20 @@ configure_weekly_swing_page_push(
 )
 configure_page_push_snapshot("box-spread", _box_page_push_snapshot)
 def _cash_future_page_push_snapshot():
+    # The REST live APIs and runner are disabled by configuration. Reconnect
+    # snapshots must not invoke the dormant scanner's ranking/pair aggregation.
+    if not settings.LIVE_CASH_FUTURE_DATA_ENABLED:
+        return {
+            "status": "DISABLED",
+            "rows": [],
+            "pairs": [],
+            "stats": {"status": "DISABLED"},
+            "scan_at": None,
+            "runner": None,
+        }
     stats = live_cash_future_scanner.health()
     return {
+        "status": "LIVE",
         "rows": live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=500),
         "pairs": live_cash_future_scanner.pair_snapshot(max_age_seconds=120.0, limit=500),
         "stats": stats,
@@ -972,12 +984,39 @@ _dashboard_stream_telemetry = DashboardStreamTelemetry()
 
 
 def _build_dashboard_snapshot_payload() -> dict:
-    """Build one immutable-by-convention dashboard snapshot for all viewers."""
-    snapshot = live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=50)
-    health = live_cash_future_scanner.health()
-    calendar_snapshot = live_calendar_spread_scanner.snapshot(limit=200)
-    synthetic_snapshot = _fresh_live_synthetic_results(live_synthetic_latest_results)
-    box_snapshot = live_box_spread_latest_results
+    """Build one immutable-by-convention dashboard snapshot for all viewers.
+
+    Disabled scanner families contribute empty read models and are never asked
+    to build snapshots. This keeps the legacy dashboard wire shape stable
+    without doing hidden calculation/aggregation for stopped runners.
+    """
+    cash_future_enabled = bool(settings.LIVE_CASH_FUTURE_DATA_ENABLED)
+    calendar_enabled = bool(settings.LIVE_CALENDAR_SPREAD_DATA_ENABLED)
+    synthetic_enabled = bool(
+        not LIVE_SYNTHETIC_RUNNER_FORCE_DISABLED
+        and settings.LIVE_SYNTHETIC_DATA_ENABLED
+    )
+    box_enabled = bool(
+        not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED
+        and settings.LIVE_BOX_SPREAD_DATA_ENABLED
+    )
+    snapshot = (
+        live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=50)
+        if cash_future_enabled else []
+    )
+    health = (
+        live_cash_future_scanner.health()
+        if cash_future_enabled else {"status": "DISABLED"}
+    )
+    calendar_snapshot = (
+        live_calendar_spread_scanner.snapshot(limit=200)
+        if calendar_enabled else []
+    )
+    synthetic_snapshot = (
+        _fresh_live_synthetic_results(live_synthetic_latest_results)
+        if synthetic_enabled else ()
+    )
+    box_snapshot = live_box_spread_latest_results if box_enabled else ()
 
     def _ts(items):
         if not items:
@@ -2562,6 +2601,10 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
         iv_feed_manager = shared_common_manager()
         runtime = IVSkewFlipRuntime(
             instrument_master=instrument_master,
+            # Universe/early-move refresh is bounded at the supported 3s
+            # cadence; one-second OI sampler and 60s signal evaluation remain
+            # independent and retain their existing semantics.
+            refresh_seconds=3.0,
             equity_pressure_enabled=bool(equity_baskets),
             equity_baskets=equity_baskets,
             equity_pressure_unavailable_reason=equity_pressure_error,
