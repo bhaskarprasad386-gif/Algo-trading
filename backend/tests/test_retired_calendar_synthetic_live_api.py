@@ -112,3 +112,18 @@ def test_retired_strategy_models_and_full_fno_backtest_are_not_registered_or_imp
         "scanner/result_chunk_store.py",
     ):
         assert not (root / "app" / retired_path).exists()
+
+
+def test_retired_full_fno_paper_backtest_has_no_android_entrypoint_or_api():
+    root = Path(__file__).parents[1]
+    mobile = root.parent / "mobile" / "android" / "app" / "src" / "main"
+    main_activity = (mobile / "java" / "com" / "algotrading" / "app" / "MainActivity.kt").read_text(encoding="utf-8")
+    api = (mobile / "java" / "com" / "algotrading" / "app" / "ApiService.kt").read_text(encoding="utf-8")
+    manifest = (mobile / "AndroidManifest.xml").read_text(encoding="utf-8")
+    home_layout = (mobile / "res" / "layout" / "activity_main.xml").read_text(encoding="utf-8")
+
+    for source in (main_activity, api, manifest, home_layout):
+        assert "FullFno" not in source
+        assert "full-fno" not in source
+    assert not (mobile / "java" / "com" / "algotrading" / "app" / "FullFnoBacktestActivity.kt").exists()
+    assert not (mobile / "res" / "layout" / "activity_full_fno_backtest.xml").exists()
