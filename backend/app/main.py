@@ -56,7 +56,6 @@ from app.market_data.live_synthetic_underlying import filter_resolvable_index_sy
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS, BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
 from app.market_data.box_spread_runner_supervisor import BoxSpreadRunnerSupervisor
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.shoonya_supervisor import ShoonyaMarketDataSupervisor
 from app.market_data.provider_quote_parity_store import SQLiteQuoteParityStore
 from app.market_data.provider_quote_parity_routes import router as provider_quote_parity_router, configure_store as configure_provider_quote_parity_store, configure_worker as configure_provider_quote_parity_worker
 from app.market_data.provider_quote_parity_worker import BoundedQuoteParityWorker
@@ -115,7 +114,6 @@ shared_index_market_data_runner = SharedIndexMarketDataRunner(instrument_master=
 box_shared_feed_manager = SharedIndexRunnerLocalFeedManager(shared_index_market_data_runner)
 configure_shared_index_runner_snapshot(shared_index_market_data_runner.snapshot)
 configure_shared_index_runner_health_snapshot(shared_index_market_data_runner.health_snapshot)
-shoonya_market_data_supervisor: ShoonyaMarketDataSupervisor | None = None
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
 provider_quote_parity_worker: BoundedQuoteParityWorker | None = None
 provider_readiness_bridge = ProviderReadinessBridge()
@@ -630,7 +628,7 @@ async def _iv_scanner_recovery_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _dashboard_snapshot_task, _event_loop_lag_task
-    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, shoonya_market_data_supervisor, _shared_index_runner_task
+    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, _shared_index_runner_task
     global provider_quote_parity_store, provider_quote_parity_worker
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     if settings.PROVIDER_QUOTE_PARITY_ENABLED:
@@ -671,7 +669,6 @@ async def lifespan(app: FastAPI):
     # A single market-data WebSocket owner is permitted in production:
     # SharedIndexMarketDataRunner for NIFTY/BANKNIFTY only. The isolated
     # Shoonya supervisor is deliberately not started by application lifespan.
-    shoonya_market_data_supervisor = None
     configure_shoonya_snapshot(None)
     configure_shoonya_supervisor(None)
     # IV Skew Flip is intentionally not started: the production Angel One
