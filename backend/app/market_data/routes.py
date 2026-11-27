@@ -400,8 +400,8 @@ def get_live_data_health():
     one_second = next(x for x in sources if x["source"] == "angelone-live-1s")
     common = shared_common_manager_snapshot()
     # NSE cash (Angel exchange type 1) and NFO derivatives (type 2) are
-    # the critical feeds for the cash-future and synthetic scanners. Do not
-    # let a fresh BFO tick mask stale or absent NSE/NFO observations.
+    # the critical feeds for active F&O scanners. Do not let a fresh BFO
+    # tick mask stale or absent NSE/NFO observations.
     now_ns = int(now.timestamp() * 1_000_000_000)
     timestamps_by_exchange = (
         common.get("latest_tick_timestamp_ns_by_exchange_type", {}) if common else {}
