@@ -6,6 +6,28 @@ import Link from "next/link";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig, getDashboardWsUrl } from "@/lib/config";
 
+function LiveTickAge({ timestampNs }: { timestampNs: number | null | undefined }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const ns = timestampNs == null ? NaN : Number(timestampNs);
+  const tickMs = ns / 1_000_000;
+  if (!Number.isFinite(ns) || ns <= 0 || !Number.isFinite(tickMs)) {
+    return <span className="tabular-nums">Last tick: unavailable</span>;
+  }
+  const age = (now - tickMs) / 1000;
+  if (!Number.isFinite(age) || age < -5) {
+    return <span className="tabular-nums">Last tick: clock skew</span>;
+  }
+  const tickTime = new Date(tickMs).toLocaleTimeString("en-IN", {
+    hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata",
+  });
+  const ageLabel = age < 0 ? "under 1s" : age < 60 ? age.toFixed(1) + "s" : Math.floor(age / 60) + "m " + Math.floor(age % 60) + "s";
+  return <span className="tabular-nums">Last tick {tickTime} IST • age {ageLabel}</span>;
+}
+
 const markets = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
 const strategies = [
   { name: "Cash Future", detail: "Live Scanner • F&O •", href: "/scanner", icon: Radio },
@@ -31,8 +53,16 @@ export default function HomePage() {
   const [lastDashboardMessageAt, setLastDashboardMessageAt] = useState<number | null>(null);
   const [feedStatus, setFeedStatus] = useState<"checking" | "live" | "stale" | "no-data" | "closed" | "error">("checking");
   const [feedAge, setFeedAge] = useState<number | null>(null);
+  const [latestTickTimestampNsByExchange, setLatestTickTimestampNsByExchange] = useState<Record<string, number | null>>({ NSE: null, NFO: null });
   const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; connectedGroupNames: string[]; requiredSocketGroups: string[]; requiredSocketGroupCount: number | null; missingSocketGroups: string[]; disconnectedGroups: string[]; maxSocketSessions: number; lastConnectFailure: any; lastSocketFailure: any; retiredTransportCount: number; brokerCooldownRemaining: number; failureRecoveryGroups: string[]; transportCloseTimedOutGroups: string[]; socketHealthByGroup: Record<string, any>; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; payloads: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, connectedGroupNames: [], requiredSocketGroups: [], requiredSocketGroupCount: null, missingSocketGroups: [], disconnectedGroups: [], maxSocketSessions: 3, lastConnectFailure: null, lastSocketFailure: null, retiredTransportCount: 0, brokerCooldownRemaining: 0, failureRecoveryGroups: [], transportCloseTimedOutGroups: [], socketHealthByGroup: {}, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const healthFailureCountRef = useRef(0);
+  const noteApiReachable = () => {
+    healthFailureCountRef.current = 0;
+    setApiStatus((current) => current === "error" ? "connected" : current);
+    setApiDetail((current) => current.startsWith("API process liveness probe failed")
+      ? "API HTTP endpoint responded successfully; previous liveness failure was transient"
+      : current);
+  };
   const lastReadinessCheckAtRef = useRef(0);
   const lastDashboardServerSnapshotTimeRef = useRef<number | null>(null);
   const runnerCountersRef = useRef<Record<string, number> | null>(null);
@@ -69,7 +99,7 @@ export default function HomePage() {
         const liveBody = await liveResponse.json();
         if (liveBody?.status !== "ok") throw new Error("invalid liveness response");
         processReachable = true;
-        healthFailureCountRef.current = 0;
+        noteApiReachable();
       } catch (error) {
         healthFailureCountRef.current += 1;
         if (!cancelled) {
@@ -248,6 +278,7 @@ export default function HomePage() {
       try {
         const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/market-data/overview", { cache: "no-store", signal: AbortSignal.timeout(4500) });
         if (!response.ok) throw new Error("market overview");
+        noteApiReachable();
         const body = await response.json();
         const next: Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null; status: string }> = {};
         const sessionValue = body?.nse_market_session ?? body?.market_session;
@@ -291,6 +322,7 @@ export default function HomePage() {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
         const response = await fetch(`${base}/api/v1/market-data/live-health`, { cache: "no-store", signal: AbortSignal.timeout(4500) });
         if (!response.ok) throw new Error("feed health");
+        noteApiReachable();
         const body = await response.json();
         if (cancelled) return;
         // The dashboard's feed badge represents live runtime ticks, not persisted history.
@@ -312,6 +344,17 @@ export default function HomePage() {
         );
         const age = body?.runtime_feed?.age_seconds;
         setFeedAge(age == null || !Number.isFinite(Number(age)) ? null : Number(age));
+        const exchangeFreshness = body?.runtime_feed?.exchange_freshness;
+        if (exchangeFreshness && typeof exchangeFreshness === "object") {
+          const next: Record<string, number | null> = { NSE: null, NFO: null };
+          for (const exchange of ["NSE", "NFO"]) {
+            const raw = exchangeFreshness[exchange]?.latest_tick_timestamp_ns;
+            const ns = raw == null ? NaN : Number(raw);
+            const ms = ns / 1_000_000;
+            next[exchange] = Number.isFinite(ns) && ns > 0 && Number.isFinite(ms) && ms <= Date.now() + 5000 ? ns : null;
+          }
+          setLatestTickTimestampNsByExchange(next);
+        }
         if (session === "CLOSED") setFeedStatus("closed");
         else if (session !== "OPEN") setFeedStatus("no-data");
         else if (status === "LIVE" && age != null && Number.isFinite(Number(age)) && Number(age) >= 0 && Number(age) <= 5) setFeedStatus("live");
@@ -335,6 +378,7 @@ export default function HomePage() {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
         const response = await fetch(base + "/api/v1/market-data/runtime/health", { cache: "no-store", signal: AbortSignal.timeout(5000) });
         if (!response.ok) throw new Error("runtime health");
+        noteApiReachable();
         const body = await response.json();
         if (cancelled) return;
         if (!body || typeof body !== "object" || !body.common_feed || typeof body.common_feed !== "object" || !Array.isArray(body.common_feed.connected_groups) || !Array.isArray(body.common_feed.required_socket_groups) || !Number.isFinite(Number(body.common_feed.required_socket_group_count)) || !Number.isFinite(Number(body.common_feed.active_instruments))) throw new Error("runtime health schema incomplete");
@@ -516,6 +560,7 @@ export default function HomePage() {
           signal: AbortSignal.timeout(3000),
         });
         if (!response.ok) throw new Error("shared runner health unavailable");
+        noteApiReachable();
         const body = await response.json();
         if (!cancelled && body && typeof body === "object") {
           setSharedRunner(body);
@@ -638,7 +683,7 @@ export default function HomePage() {
 
   return (
     <div className="dashboard-page space-y-3">
-      <div className="mb-2 flex flex-col gap-1.5 rounded-xl border theme-border theme-surface-2 px-2.5 py-2 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 items-center gap-2"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg theme-accent-bg theme-accent"><LayoutDashboard size={16} /></span><div className="min-w-0"><div className="text-[9px] font-bold uppercase tracking-[0.16em] theme-accent">ALGO TRADING · LIVE MARKET OPERATIONS</div><h1 className="text-base font-bold leading-tight sm:text-lg">Trading Dashboard</h1><p className="mt-0.5 text-[10px] leading-4 theme-subtle">Connectivity does not confirm valid quotes or a trade opportunity.</p></div></div><div className="flex items-center gap-1.5 self-start rounded-full border theme-border px-2.5 py-1.5 text-[9px] font-bold sm:self-auto"><span className={"h-2 w-2 rounded-full "+(apiStatus === "error" ? "theme-danger-bg" : apiStatus === "connected" && !runtimeTelemetryStale && !dashboardStreamStale && commonSocketState === "CONNECTED" && effectiveFeedStatus === "live" ? "theme-success-bg" : "theme-warning-bg")}></span>{apiStatus === "error" ? "API UNREACHABLE" : apiStatus === "degraded" ? "SERVER DEGRADED" : apiStatus !== "connected" ? "CHECKING SERVER" : runtimeTelemetryStale ? "RUNTIME TELEMETRY STALE" : dashboardStreamStale ? "DASHBOARD STREAM STALE" : commonSocketState === "DISCONNECTED" ? "WEBSOCKET DISCONNECTED" : commonSocketState === "DEGRADED" ? "WEBSOCKET DEGRADED" : commonSocketState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : effectiveFeedStatus === "stale" ? "MARKET DATA STALE" : effectiveFeedStatus === "live" && commonSocketState === "CONNECTED" ? "FEED CONNECTED • SIGNAL NOT CONFIRMED" : "NO LIVE MARKET DATA"}</div></div>
+      <div className="mb-2 flex flex-col gap-1.5 rounded-xl border theme-border theme-surface-2 px-2.5 py-2 sm:flex-row sm:items-center sm:justify-between"><div className="flex min-w-0 items-center gap-2"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg theme-accent-bg theme-accent"><LayoutDashboard size={16} /></span><div className="min-w-0"><div className="text-[9px] font-bold uppercase tracking-[0.16em] theme-accent">ALGO TRADING · LIVE MARKET OPERATIONS</div><h1 className="text-base font-bold leading-tight sm:text-lg">Trading Dashboard</h1><p className="mt-0.5 text-[10px] leading-4 theme-subtle">Connectivity does not confirm valid quotes or a trade opportunity.</p></div></div><div className="flex items-center gap-1.5 self-start rounded-full border theme-border px-2.5 py-1.5 text-[9px] font-bold sm:self-auto"><span className={"h-2 w-2 rounded-full "+(apiStatus === "error" ? "theme-danger-bg" : apiStatus === "connected" && !runtimeTelemetryStale && !dashboardStreamStale && commonSocketState === "CONNECTED" && effectiveFeedStatus === "live" ? "theme-success-bg" : "theme-warning-bg")}></span>{apiStatus === "error" && wsLabel === "CONNECTED" ? "HTTP PROBE FAILED • WS LIVE" : apiStatus === "error" ? "API UNREACHABLE" : apiStatus === "degraded" ? "SERVER DEGRADED" : apiStatus !== "connected" ? "CHECKING SERVER" : runtimeTelemetryStale ? "RUNTIME TELEMETRY STALE" : dashboardStreamStale ? "DASHBOARD STREAM STALE" : commonSocketState === "DISCONNECTED" ? "WEBSOCKET DISCONNECTED" : commonSocketState === "DEGRADED" ? "WEBSOCKET DEGRADED" : commonSocketState === "UNKNOWN" ? "WEBSOCKET HEALTH UNKNOWN" : effectiveMarketSession === "UNKNOWN" ? "MARKET SESSION UNKNOWN" : effectiveMarketSession === "CLOSED" ? "NSE MARKET CLOSED" : effectiveFeedStatus === "stale" ? "MARKET DATA STALE" : effectiveFeedStatus === "live" && commonSocketState === "CONNECTED" ? "FEED CONNECTED • SIGNAL NOT CONFIRMED" : "NO LIVE MARKET DATA"}</div></div>
       <section aria-label="Market and connection status">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
           {[
@@ -707,8 +752,8 @@ export default function HomePage() {
 
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Card className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
-              <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">API SERVER</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (apiStatus === "connected" ? "theme-success-bg theme-success" : apiStatus === "error" ? "theme-danger-bg theme-danger" : "theme-warning-bg theme-warning")}>{apiStatus === "connected" ? "ONLINE" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" ? "UNREACHABLE" : "CHECKING"}</span></div>
-              <div className="mt-2 break-words text-[11px] theme-muted">{apiDetail}</div>
+              <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">API SERVER</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (apiStatus === "connected" ? "theme-success-bg theme-success" : apiStatus === "error" ? "theme-danger-bg theme-danger" : "theme-warning-bg theme-warning")}>{apiStatus === "connected" ? "ONLINE" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" && wsLabel === "CONNECTED" ? "HTTP PROBE FAILED • WS LIVE" : apiStatus === "error" ? "UNREACHABLE" : "CHECKING"}</span></div>
+              <div className="mt-2 break-words text-[11px] theme-muted">{apiDetail}{apiStatus === "error" && wsLabel === "CONNECTED" ? " • Dashboard WebSocket is still receiving snapshots; API process is not confirmed offline." : ""}</div>
             </Card>
             <Card className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
               <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">SHARED INDEX RUNNER</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (sharedRunnerReady ? "theme-success-bg theme-success" : sharedRunnerEnabled || sharedRunnerUnavailable || sharedRunnerFetchFailed ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{sharedRunnerStatus}</span></div>
@@ -735,6 +780,16 @@ export default function HomePage() {
 
           <div className="rounded-2xl border theme-border theme-surface-2 p-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">Shared Runner Feed Health • Source Identified</div><div className="text-[9px] theme-subtle">Freshness threshold: 5 seconds</div></div>
+            <div className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {(["NSE", "NFO"] as const).map((exchange) => (
+                <div key={exchange} className="rounded-xl border theme-border p-3">
+                  <div className="text-[10px] font-bold">{exchange} • LATEST BROKER TICK</div>
+                  <div className="mt-1 text-[10px] theme-muted">
+                    <LiveTickAge timestampNs={latestTickTimestampNsByExchange[exchange]} />
+                  </div>
+                </div>
+              ))}
+            </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {sharedFeedCards.map((feed) => {
                 const good = feed.status === "FRESH";
