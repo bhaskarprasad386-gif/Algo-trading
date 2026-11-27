@@ -265,8 +265,6 @@ def _box_spread_targets_from_master(master, symbols, weekly_only_symbols=()):
         if symbol not in BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
     )
     weekly_only = set(weekly_only_symbols or ())
-    if "NIFTY" in selected:
-        weekly_only.add("NIFTY")
     if weekly_only - {"NIFTY"} or weekly_only - set(selected):
         raise ValueError("weekly-only mode is valid only for selected NIFTY")
     today = datetime.now(IST).date()
