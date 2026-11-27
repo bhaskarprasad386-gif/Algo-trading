@@ -1209,3 +1209,17 @@ def test_production_shared_runner_mode_uses_read_only_adapters_without_direct_ma
         runtime.option_feed_factory("NIFTY_WEEKLY"),
         IVSharedRunnerOptionFeedAdapter,
     )
+
+
+
+def test_shared_runner_mode_never_constructs_an_iv_owned_future_websocket_feed():
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        shared_runner=object(),
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+
+    assert not hasattr(runtime.future_feed, "feed")
+    assert runtime.future_feed.snapshot()["status"] == "DISABLED_BY_SCOPE"
+    assert runtime.future_feed.snapshot()["owns_subscriptions"] is False
+    assert runtime.spot_feed.snapshot()["subscription_owner"] == "shared-index-market-data"
