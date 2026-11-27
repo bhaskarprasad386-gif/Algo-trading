@@ -44,15 +44,11 @@ from app.models.synthetic_trace_status_check import SyntheticTraceStatusCheck
 from app.models.synthetic_trace_opportunity import SyntheticTraceOpportunity
 from app.algo.auth import AngelOneAuth
 from app.market_data.client import MarketDataClient
-from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
 from app.market_data.dashboard_snapshot_cache import cached_snapshot
 from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
 from app.market_data.common_websocket import CommonWebSocketManager
 from app.market_data.websocket import MarketDataWebSocket
-from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
-from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
-from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS, BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
 from app.market_data.box_spread_runner_supervisor import BoxSpreadRunnerSupervisor
 from app.market_data.instruments import InstrumentMaster
@@ -68,13 +64,8 @@ BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.market_data.routes import router as market_data_router, configure_shared_index_runner_snapshot, configure_shared_index_runner_health_snapshot
-from app.scanner.routes import full_fno_router, configure_live_cash_future_snapshot
+from app.scanner.routes import full_fno_router
 from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop, configure_page_update_callback as configure_weekly_swing_page_push, nifty200_scan_status
-from app.scanner.auto_routes import discover_cash_future_symbols
-from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
-from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
-from app.scanner.calendar_spread_routes import configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot
-from app.scanner.live_synthetic_routes import configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
 
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_shared_snapshot as configure_live_box_spread_shared_snapshot, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, index_spot_snapshot as get_live_box_index_spot_snapshot, set_expiry_types as set_live_box_expiry_types, butterfly_condor_shadow as get_box_shadow_snapshot, edge_timing_analysis as get_box_edge_timing_analysis
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
@@ -92,7 +83,6 @@ from app.scanner.butterfly_condor_shadow import evaluate_butterfly_condor_snapsh
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
 from app.backtesting.replay_routes import create_replay_router
-from app.scanner.cash_future_collector import CashFutureHistoryCollector
 from app.brokers.routes import router as brokers_router
 from app.brokers.session_store import broker_sessions
 from app.backtesting.download_status_routes import create_download_status_router
@@ -124,29 +114,6 @@ provider_readiness_bridge = ProviderReadinessBridge()
 early_impulse_observer.configure_readiness(provider_readiness_bridge)
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
 _iv_skew_flip_runtime_lock = threading.RLock()
-live_cash_future_scanner = LiveCashFutureScanner()
-configure_live_cash_future_snapshot(live_cash_future_scanner.snapshot)
-live_calendar_spread_scanner = LiveCalendarSpreadScanner(
-    minimum_gap_points=settings.LIVE_CALENDAR_SPREAD_MIN_GAP_POINTS,
-    minimum_gross_profit=settings.LIVE_CALENDAR_SPREAD_MIN_GROSS_PROFIT,
-)
-configure_calendar_spread_scanner(live_calendar_spread_scanner)
-configure_calendar_spread_feed_snapshot(lambda: None if live_calendar_spread_runner is None else live_calendar_spread_runner.snapshot())
-live_synthetic_latest_results: tuple = ()
-live_synthetic_runner: LiveSyntheticRunner | None = None
-_live_synthetic_universe_selection = "INDEX"
-_live_synthetic_universe_restart_requested = threading.Event()
-_live_synthetic_universe_status = {
-    "configured_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
-    "eligible_future_symbols": [],
-    "missing_future_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
-    "configured_index_symbols": sorted(NIFTY50_INDEX_SYMBOLS),
-    "eligible_index_symbols": [],
-    "missing_index_underlyings": [],
-    "eligible_target_symbols": [],
-    "missing_option_expiry_symbols": [],
-    "checked_at": None,
-}
 live_box_spread_latest_results: tuple = ()
 live_box_spread_runner: LiveBoxSpreadRunner | None = None
 live_box_spread_supervisor: BoxSpreadRunnerSupervisor | None = None
@@ -314,9 +281,6 @@ def _box_spread_targets_from_master(master, symbols, weekly_only_symbols=()):
     return tuple(targets), expiry_types
 
 
-configure_live_synthetic(lambda: live_synthetic_latest_results)
-configure_live_synthetic_diagnostics(lambda: None if live_synthetic_runner is None else live_synthetic_runner.snapshot())
-configure_live_synthetic_pairs(lambda: None if live_synthetic_runner is None else live_synthetic_runner.pair_monitor_snapshot())
 configure_live_box_spread(lambda: live_box_spread_latest_results)
 def _get_box_spread_active_index_symbols():
     """Expose the publisher's active index universe during make-before-break handoff.
@@ -603,7 +567,7 @@ async def _iv_scanner_recovery_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _dashboard_snapshot_task, _event_loop_lag_task
-    global _history_collector_task, _contract_master_sync_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, _shared_index_runner_task
+    global _history_collector_task, _contract_master_sync_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, _shared_index_runner_task
     global provider_quote_parity_store, provider_quote_parity_worker
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     if settings.PROVIDER_QUOTE_PARITY_ENABLED:
@@ -684,9 +648,7 @@ async def lifespan(app: FastAPI):
                 _event_loop_lag_task,
                 _history_collector_task,
                 _contract_master_sync_task,
-                _live_calendar_spread_task,
-                _live_synthetic_task,
-                _live_box_spread_task,
+                                _live_box_spread_task,
                 _weekly_swing_refresh_task,
                 _iv_option_snapshot_task,
                 _iv_scanner_recovery_task,
@@ -715,8 +677,6 @@ async def lifespan(app: FastAPI):
         _event_loop_lag_task = None
         _history_collector_task = None
         _contract_master_sync_task = None
-        _live_calendar_spread_task = None
-        _live_synthetic_task = None
         _live_box_spread_task = None
         _weekly_swing_refresh_task = None
         _iv_option_snapshot_task = None
@@ -979,12 +939,7 @@ _shared_index_runner_task: asyncio.Task | None = None
 _iv_option_snapshot_task: asyncio.Task | None = None
 _weekly_swing_refresh_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None
-_live_calendar_spread_task: asyncio.Task | None = None
-live_calendar_spread_runner: LiveCalendarSpreadOneSecondCollector | None = None
 IST = ZoneInfo("Asia/Kolkata")
-_live_synthetic_task: asyncio.Task | None = None
-# Synthetic Future runner is intentionally disabled; keep its routes/history isolated.
-LIVE_SYNTHETIC_RUNNER_FORCE_DISABLED = True
 # Box Spread runs on a dedicated isolated broker-feed manager.
 LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = False
 _live_box_spread_task: asyncio.Task | None = None
@@ -1006,11 +961,7 @@ def _signal_live_runner_shutdown() -> None:
             name="box-spread-supervisor-shutdown",
             daemon=True,
         ).start()
-    for runner in (
-        live_calendar_spread_runner,
-        live_synthetic_runner,
-        live_box_spread_runner,
-    ):
+    for runner in (live_box_spread_runner,):
         if runner is None:
             continue
         stop_event = getattr(runner, "stop_event", None)
@@ -1022,32 +973,6 @@ def _signal_live_runner_shutdown() -> None:
             stop_requested.set()
             continue
         app_logger.warning("Live runner has no interrupt event during shutdown: %s", type(runner).__name__)
-
-MARKET_CLOSE = time(15, 30)
-
-
-def _collector_enabled() -> bool:
-    return settings.CASH_FUTURE_HISTORY_ENABLED
-
-
-def _collector_symbols() -> list[str]:
-    configured = [item.strip().upper() for item in settings.CASH_FUTURE_HISTORY_SYMBOLS.split(",") if item.strip()]
-    if configured:
-        return configured
-    try:
-        return discover_cash_future_symbols(limit=50)
-    except Exception as exc:
-        app_logger.warning(f"Cash-Future dynamic symbol discovery failed: {exc}")
-        return []
-
-
-def _collector_interval() -> int:
-    return max(15, settings.CASH_FUTURE_HISTORY_INTERVAL_SECONDS)
-
-
-def _market_is_open(now: datetime) -> bool:
-    return now.weekday() < 5 and MARKET_OPEN <= now.time() <= MARKET_CLOSE
-
 
 def _stop_live_runner_nonblocking(runner, *, name: str) -> None:
     """Request runner shutdown without blocking the asyncio event loop.
@@ -1103,248 +1028,6 @@ async def _run_live_runner_in_daemon_thread(
     finally:
         if stop_on_exit:
             _stop_live_runner_nonblocking(runner, name=f"{name}-stop")
-
-
-_last_cash_future_page_push_at = 0.0
-
-
-async def _live_synthetic_loop() -> None:
-    """Supervise the synthetic live runner with bounded retry backoff."""
-    global live_synthetic_runner, live_synthetic_latest_results
-    retry_delay = 5.0
-    max_retry_delay = 60.0
-    while True:
-        master = InstrumentMaster()
-        runner = None
-        try:
-            # Instrument-master HTTP I/O must not block ASGI health routes or shutdown.
-            # Keep all synthetic runner construction and lifecycle work on the event loop.
-            await run_blocking_daemon(master.download, thread_name="synthetic-instrument-master-fetch")
-            today = datetime.now(IST).date()
-            top15_liquid_stocks: set[str] = set()
-            index_symbols: set[str] = set()
-            commodity_symbols: set[str] = set()
-            for item in master.instruments:
-                segment = str(item.get("exch_seg", "")).strip().upper()
-                typ = str(item.get("instrumenttype", "")).strip().upper()
-                expiry_text = str(item.get("expiry", "")).strip()
-                name = str(item.get("name", "")).strip().upper()
-                if not expiry_text or not name:
-                    continue
-                try:
-                    expiry = datetime.strptime(expiry_text.upper(), "%d%b%Y").date()
-                except ValueError:
-                    try:
-                        expiry = datetime.strptime(expiry_text.upper(), "%d%b%y").date()
-                    except ValueError:
-                        continue
-                if expiry < today:
-                    continue
-                if typ == "FUTSTK" and segment == "NFO" and name in TOP15_LIQUID_STOCK_SYMBOLS:
-                    top15_liquid_stocks.add(name)
-                elif (
-                    typ == "FUTIDX"
-                    and segment in {"NFO", "BFO"}
-                    and name in NIFTY50_INDEX_SYMBOLS
-                ):
-                    index_symbols.add(name)
-                elif typ == "FUTCOM" and segment == "MCX":
-                    commodity_symbols.add(name)
-
-            stock_symbols = [symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED if symbol in top15_liquid_stocks]
-            missing_future_symbols = [symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED if symbol not in top15_liquid_stocks]
-            raw_index_symbols = sorted(index_symbols)
-            index_symbols = list(filter_resolvable_index_symbols(master, raw_index_symbols))
-            missing_index_underlyings = sorted(set(raw_index_symbols) - set(index_symbols))
-            commodity_symbols = sorted(commodity_symbols)
-            if missing_index_underlyings:
-                app_logger.warning(
-                    "Synthetic live index underlyings skipped because no concrete Angel token exists: {}",
-                    ", ".join(missing_index_underlyings),
-                )
-
-            # The selected universe is authoritative: ALL = supported indices + top 15 liquid stocks.
-            # An index-only selection must never silently fall back to stocks or other indices.
-            selection = _live_synthetic_universe_selection
-            if selection == "INDEX":
-                target_specs = [(symbol, "INDEX") for symbol in index_symbols]
-            elif selection == "ALL":
-                target_specs = (
-                    [(symbol, "STOCK") for symbol in stock_symbols]
-                    + [(symbol, "INDEX") for symbol in index_symbols]
-                )
-            elif selection == "TOP15":
-                target_specs = [(symbol, "STOCK") for symbol in stock_symbols]
-            elif selection in NIFTY50_INDEX_SYMBOLS:
-                target_specs = [(selection, "INDEX")] if selection in index_symbols else []
-            else:
-                target_specs = []
-            targets = []
-            missing_expiry = []
-            for symbol, instrument_class in target_specs:
-                # Synthetic Future must pair options with the listed future's
-                # expiry for both stocks and indices; weekly options belong to
-                # the separate Box Spread scanner only.
-                expiry_selector = select_monthly_option_expiry
-                expiry = expiry_selector(
-                    master.instruments,
-                    underlying=symbol,
-                    instrument_class=instrument_class,
-                    today=today,
-                )
-                if expiry is None:
-                    missing_expiry.append(symbol)
-                    continue
-                targets.append(SyntheticLiveTarget(symbol, instrument_class, expiry=expiry))
-            targets = tuple(targets)
-            _live_synthetic_universe_status.update({
-                "configured_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
-                "eligible_future_symbols": list(stock_symbols),
-                "missing_future_symbols": list(missing_future_symbols),
-                "configured_index_symbols": sorted(NIFTY50_INDEX_SYMBOLS),
-                "eligible_index_symbols": list(index_symbols),
-                "missing_index_underlyings": list(missing_index_underlyings),
-                "eligible_target_symbols": [target.underlying for target in targets],
-                "missing_option_expiry_symbols": sorted(set(missing_expiry)),
-                "checked_at": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
-            })
-            if missing_expiry:
-                app_logger.warning(
-                    "Synthetic live targets skipped because no current option expiry exists: {}",
-                    ", ".join(sorted(set(missing_expiry))),
-                )
-            if not targets:
-                app_logger.warning(
-                    "Synthetic live runner found no eligible top-15 stock/monthly-index option targets; retrying in {:.1f}s",
-                    retry_delay,
-                )
-                await asyncio.sleep(retry_delay)
-                retry_delay = min(max_retry_delay, retry_delay * 2.0)
-                continue
-
-            runner = LiveSyntheticRunner(
-                settings.BACKTEST_DATA_DB,
-                targets,
-                allowed_stock_symbols=frozenset(),
-                instrument_master=master,
-                auth=AngelOneAuth(),
-                stock_universe_provider=lambda: tuple(stock_symbols),
-                on_results=lambda results: _update_live_synthetic_results(results),
-            )
-            live_synthetic_runner = runner
-            await _run_live_runner_in_daemon_thread(
-                runner, name="live-synthetic-runner"
-            )
-            if not runner.stop_event.is_set():
-                app_logger.warning(
-                    "Live Synthetic runner exited unexpectedly; retrying in {:.1f}s",
-                    retry_delay,
-                )
-                await asyncio.sleep(retry_delay)
-                retry_delay = min(max_retry_delay, retry_delay * 2.0)
-            elif _live_synthetic_universe_restart_requested.is_set():
-                _live_synthetic_universe_restart_requested.clear()
-                retry_delay = 5.0
-                continue
-            else:
-                return
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            app_logger.error(
-                "Live Synthetic runner failed; retrying in {:.1f}s: {}",
-                retry_delay, exc,
-            )
-            await asyncio.sleep(retry_delay)
-            retry_delay = min(max_retry_delay, retry_delay * 2.0)
-        finally:
-            if runner is not None:
-                _stop_live_runner_nonblocking(
-                    runner, name="live-synthetic-final-stop"
-                )
-            if live_synthetic_runner is runner:
-                live_synthetic_runner = None
-
-
-def _fresh_live_synthetic_results(results: tuple, max_age_seconds: float = 5.0) -> tuple:
-    """Keep dashboard integration counts aligned with the live endpoint's freshness window."""
-    cutoff_ns = time_module.time_ns() - int(max_age_seconds * 1_000_000_000)
-    fresh = []
-    for result in results:
-        try:
-            timestamp_ns = int(result.option.timestamp_ns)
-        except (AttributeError, TypeError, ValueError, OverflowError):
-            continue
-        if timestamp_ns >= cutoff_ns:
-            fresh.append(result)
-    return tuple(fresh)
-
-
-# The scanner callback can run once per underlying/scan bucket. Replacing the
-# global tuple on every callback lets a quiet stock or index erase fresh results
-# emitted by another symbol milliseconds earlier. Keep a bounded, freshness-only
-# cross-symbol snapshot; the live API still enforces its own five-second cutoff.
-_live_synthetic_results_lock = threading.Lock()
-
-
-def _synthetic_result_key(result) -> tuple:
-    option = getattr(result, "option", None)
-    if option is None:
-        return ("", "", "", "", "")
-    try:
-        strike = format(float(getattr(option, "strike", "")), ".12g")
-    except (TypeError, ValueError, OverflowError):
-        strike = str(getattr(option, "strike", "") or "").strip().upper()
-    return (
-        str(getattr(option, "underlying", "") or "").strip().upper(),
-        str(getattr(option, "instrument_class", "") or "").strip().upper(),
-        str(getattr(option, "expiry", "") or "").strip().upper(),
-        strike,
-        str(getattr(result, "direction", "") or "").strip().upper(),
-    )
-
-
-def _update_live_synthetic_results(results: tuple) -> None:
-    global live_synthetic_latest_results
-    # Keep only genuinely fresh results and merge by contract/direction. Empty
-    # per-symbol scans must not erase other symbols' still-fresh opportunities.
-    with _live_synthetic_results_lock:
-        combined = _fresh_live_synthetic_results(
-            tuple(live_synthetic_latest_results) + tuple(results or ())
-        )
-        latest = {}
-        for result in combined:
-            key = _synthetic_result_key(result)
-            try:
-                timestamp_ns = int(result.option.timestamp_ns)
-            except (AttributeError, TypeError, ValueError, OverflowError):
-                continue
-            try:
-                edge = float(getattr(result, "executable_edge", 0) or 0)
-            except (TypeError, ValueError, OverflowError):
-                edge = 0.0
-            previous = latest.get(key)
-            if previous is None or timestamp_ns > previous[0] or (
-                timestamp_ns == previous[0] and edge > previous[1]
-            ):
-                latest[key] = (timestamp_ns, edge, result)
-        live_synthetic_latest_results = tuple(item[2] for item in latest.values())
-    _publish_synthetic_page_update()
-
-
-_last_synthetic_page_push_at = 0.0
-
-
-def _publish_synthetic_page_update(*, force: bool = False) -> None:
-    global _last_synthetic_page_push_at
-    now = time_module.monotonic()
-    if not force and now - _last_synthetic_page_push_at < 0.5:
-        return
-    _last_synthetic_page_push_at = now
-    try:
-        publish_page_update("synthetic-arbitrage", "PATCH", _synthetic_page_push_snapshot())
-    except Exception as exc:
-        app_logger.warning("Synthetic page push skipped: {}", exc)
 
 
 def _start_box_spread_runner_worker(runner):
@@ -1727,61 +1410,6 @@ def _update_live_box_spread_results(results: tuple) -> None:
 
 
 _last_calendar_spread_page_push_at = 0.0
-
-
-def _observe_calendar_spread_payload(payload):
-    global _last_calendar_spread_page_push_at
-    result = live_calendar_spread_scanner.observe(payload, session_factory=SessionLocal)
-    now = time_module.monotonic()
-    if now - _last_calendar_spread_page_push_at >= 0.5:
-        _last_calendar_spread_page_push_at = now
-        try:
-            publish_page_update("calendar-spread", "SNAPSHOT", _calendar_spread_page_push_snapshot())
-        except Exception as exc:
-            app_logger.warning("Calendar Spread page push skipped: {}", exc)
-    return result
-
-
-async def _live_calendar_spread_loop() -> None:
-    """Supervise Calendar Spread collector exits with bounded exponential retry."""
-    global live_calendar_spread_runner
-    retry_delay = 5.0
-    max_retry_delay = 60.0
-    while True:
-        collector = LiveCalendarSpreadOneSecondCollector(
-            settings.BACKTEST_DATA_DB,
-            auth=AngelOneAuth(),
-            instrument_master=instrument_master,
-            on_observation=_observe_calendar_spread_payload,
-        )
-        live_calendar_spread_runner = collector
-        try:
-            worker_errors: list[BaseException] = []
-            await _run_live_runner_in_daemon_thread(
-                collector,
-                name="live-calendar-spread-runner",
-                error_holder=worker_errors,
-                stop_on_exit=False,
-            )
-            if collector.stop_event.is_set():
-                return
-            app_logger.warning(
-                "Live Calendar Spread runner exited unexpectedly; retrying in {:.1f}s",
-                retry_delay,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            app_logger.error(
-                "Live Calendar Spread runner failed; retrying in {:.1f}s: {}",
-                retry_delay, exc,
-            )
-        finally:
-            _stop_live_runner_nonblocking(collector, name="live-calendar-final-stop")
-            if live_calendar_spread_runner is collector:
-                live_calendar_spread_runner = None
-        await asyncio.sleep(retry_delay)
-        retry_delay = min(max_retry_delay, retry_delay * 2.0)
 
 
 def _sync_contract_master_snapshot(database_path: str, snapshot_date):
