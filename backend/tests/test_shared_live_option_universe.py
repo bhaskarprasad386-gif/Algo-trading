@@ -26,6 +26,7 @@ def test_box_stock_option_window_is_concrete_and_symmetric():
         atm_strike=100.0, expiry="26NOV2026",
         allowed_stock_symbols=TOP15_LIQUID_STOCK_SYMBOLS,
     )
+    box_tokens = {item.token for item in box.subscriptions if item.option_type in {"CE", "PE"}}
     assert len(box_tokens) == 15 * 2
     assert {item.strike for item in box.subscriptions} == set(float(x) for x in range(93, 108))
 
@@ -54,3 +55,6 @@ def test_nifty_weekly_atm15_options_are_box_spread_only():
         master, underlying="NIFTY", instrument_class="INDEX",
         atm_strike=130.0, expiry="22OCT2026",
     )
+    box_options = {item.token for item in box.subscriptions if item.option_type in {"CE", "PE"}}
+    assert len(box_options) == 31 * 2
+    assert all(token.startswith("22OCT2026-") for token in box_options)
