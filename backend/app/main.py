@@ -159,9 +159,8 @@ live_box_spread_runner: LiveBoxSpreadRunner | None = None
 live_box_spread_supervisor: BoxSpreadRunnerSupervisor | None = None
 BOX_SPREAD_INDEX_SELECTION_LOCK = threading.Lock()
 BOX_SPREAD_INDEX_PRESETS = {
-    "ALL": tuple(sorted(OPTION_STRATEGY_INDEX_SYMBOLS)),
-    "NIFTY_SENSEX": ("NIFTY", "SENSEX"),
-    "NIFTY_SENSEX_BANKNIFTY": ("NIFTY", "SENSEX", "BANKNIFTY"),
+    "ALL": ("NIFTY", "BANKNIFTY"),
+    "NIFTY_BANKNIFTY": ("NIFTY", "BANKNIFTY"),
 }
 BOX_SPREAD_LIVE_INDEX_UNIVERSE = frozenset({"NIFTY", "BANKNIFTY"})
 BOX_SPREAD_DEFAULT_INDEX_SELECTION = ("NIFTY", "BANKNIFTY")
@@ -201,7 +200,14 @@ def _get_box_spread_index_selection():
             saved = db.get(BoxSpreadIndexSelection, 1)
             if saved is not None:
                 payload = _read_box_spread_selection_payload(saved.symbols_json)
-                return _normalize_box_spread_index_symbols(payload["symbols"])
+                # Older deployments may have persisted SENSEX/MIDCPNIFTY or other
+                # indices. Migrate the effective live selection to the locked
+                # NIFTY/BANKNIFTY universe without broadening subscriptions.
+                locked = tuple(
+                    symbol for symbol in payload["symbols"]
+                    if str(symbol or "").strip().upper() in BOX_SPREAD_LIVE_INDEX_UNIVERSE
+                )
+                return _normalize_box_spread_index_symbols(locked or BOX_SPREAD_DEFAULT_INDEX_SELECTION)
     except Exception as exc:
         app_logger.exception("Box Spread index selection read failed; refusing to broaden the live subscription universe")
         raise RuntimeError("Box Spread index selection is unavailable; live index subscriptions are paused until it can be read") from exc
@@ -2132,7 +2138,7 @@ def get_box_spread_index_selection():
         "status": "success",
         "symbols": list(selected),
         "weekly_only_symbols": list(weekly_only),
-        "available_indices": sorted(OPTION_STRATEGY_INDEX_SYMBOLS),
+        "available_indices": sorted(BOX_SPREAD_LIVE_INDEX_UNIVERSE),
         "presets": {key: list(value) for key, value in BOX_SPREAD_INDEX_PRESETS.items()},
         "runtime": runtime,
     }
