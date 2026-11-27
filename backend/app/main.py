@@ -469,7 +469,7 @@ configure_page_push_snapshot("box-spread", _box_page_push_snapshot)
 def _scanner_page_push_runtime_health(runner_name, runner):
     """Read-only feed and runner health included in scanner reconnect/live frames."""
     try:
-        feed_manager = shared_common_manager()
+        feed_manager = box_isolated_feed_manager
         health_snapshot = getattr(feed_manager, "health_snapshot", None)
         common_feed = health_snapshot() if callable(health_snapshot) else feed_manager.snapshot()
         feed_health = _summarize_primary_exchange_feed(common_feed)
