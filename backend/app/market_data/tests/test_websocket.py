@@ -864,6 +864,9 @@ def test_initial_subscribe_worker_start_failure_fails_closed(monkeypatch):
     client.tokens = ["101"]
     client.on_failure = failures.append
     monkeypatch.setattr(websocket_module, "Thread", BrokenThread)
+    # Keep this test scoped to subscribe-worker admission; close-worker
+    # startup failure has its own regression test in test_transport_abort.py.
+    monkeypatch.setattr(websocket_module, "_close_sdk_connection_bounded", lambda *args, **kwargs: True)
 
     client._subscribe_initial_bounded(socket)
 
