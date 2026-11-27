@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from app.market_data.live_synthetic_stream import SyntheticSubscription
+from app.market_data.box_spread_market_data import BoxSpreadSubscription
 from app.scanner.box_spread_contract_resolver import (
     BoxSpreadContractResolutionError,
     resolve_box_spread_contracts,
@@ -14,19 +14,19 @@ EXPIRY = "29OCT2026"
 
 def _chain(*, underlying="NIFTY", instrument_class="INDEX", exchange_type=2, lot_size=25):
     return [
-        SyntheticSubscription(
+        BoxSpreadSubscription(
             exchange_type, "1001", f"{underlying}{EXPIRY}25000CE",
             underlying, instrument_class, EXPIRY, "CE", 25000, lot_size,
         ),
-        SyntheticSubscription(
+        BoxSpreadSubscription(
             exchange_type, "1002", f"{underlying}{EXPIRY}25100CE",
             underlying, instrument_class, EXPIRY, "CE", 25100, lot_size,
         ),
-        SyntheticSubscription(
+        BoxSpreadSubscription(
             exchange_type, "1003", f"{underlying}{EXPIRY}25100PE",
             underlying, instrument_class, EXPIRY, "PE", 25100, lot_size,
         ),
-        SyntheticSubscription(
+        BoxSpreadSubscription(
             exchange_type, "1004", f"{underlying}{EXPIRY}25000PE",
             underlying, instrument_class, EXPIRY, "PE", 25000, lot_size,
         ),
@@ -71,7 +71,7 @@ def test_accepts_short_direction_without_changing_contract_identity():
 def test_ignores_unrelated_future_subscription_without_option_expiry():
     subscriptions = _chain()
     subscriptions.append(
-        SyntheticSubscription(2, "future-token", "NIFTYFUT", "NIFTY", "INDEX")
+        BoxSpreadSubscription(2, "future-token", "NIFTYFUT", "NIFTY", "INDEX")
     )
     assert _resolve(subscriptions).lot_size == 25
 
