@@ -38,12 +38,15 @@ def test_box_spread_and_retired_scanners_have_no_public_channels_or_alerts():
 
     assert 'href: "/strategies/box-spread"' not in shell
     assert 'pathname.startsWith("/strategies/box-spread")' not in shell
+    assert "/strategies/credit-butterfly-condor" not in shell
     assert 'href: "/strategies/box-spread"' not in dashboard
     assert "box_spread" not in dashboard
     assert "BoxSpread" not in custom_alerts
     assert "box-spread" not in custom_alerts
     assert not (REPO / "frontend" / "app" / "strategies" / "box-spread" / "page.tsx").exists()
     assert not (REPO / "frontend" / "components" / "strategy-workspace.tsx").exists()
+    assert not (REPO / "frontend" / "app" / "strategies" / "credit-butterfly-condor" / "monthly" / "page.tsx").exists()
+    assert not (REPO / "frontend" / "components" / "CreditButterflyCondorWorkspace.tsx").exists()
     channel_block = page_push.split("PAGE_CHANNELS = frozenset({", 1)[1].split("})", 1)[0]
     for retired in ("box-spread", "cash-future", "calendar-spread", "synthetic-arbitrage", "credit-butterfly-condor-weekly", "credit-butterfly-condor-monthly"):
         assert f'"{retired}"' not in channel_block
