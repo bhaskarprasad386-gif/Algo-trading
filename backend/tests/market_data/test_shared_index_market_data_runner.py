@@ -582,11 +582,11 @@ def test_concurrent_nifty_bank_option_rotations_are_serialized_and_atomic(monkey
     assert first_done.is_set() and second_done.is_set()
     active = tuple(runner.lifecycle._option_keys)
     descriptors = [manager.registry.get(key) for key in active]
-    assert len(active) == 48
-    assert len({descriptor.key for descriptor in descriptors}) == 48
+    assert len(active) == 124
+    assert len({descriptor.key for descriptor in descriptors}) == 124
     assert {descriptor.underlying for descriptor in descriptors} == {"NIFTY", "BANKNIFTY"}
     assert len([d for d in descriptors if d.underlying == "NIFTY"]) == 62
-    assert len([d for d in descriptors if d.underlying == "BANKNIFTY"]) == 22
+    assert len([d for d in descriptors if d.underlying == "BANKNIFTY"]) == 62
     assert set(manager.registry.active_keys()) == set(runner.lifecycle.active_keys())
     runner.stop()
 
