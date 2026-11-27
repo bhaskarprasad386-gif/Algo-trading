@@ -51,19 +51,10 @@ class Settings(BaseSettings):
     # Refresh Angel authentication before a long-running WebSocket can reuse an expired session.
     ANGEL_SESSION_REFRESH_INTERVAL_SECONDS: float = 21600.0
 
-    # Cash-Future history collector
-    CASH_FUTURE_HISTORY_ENABLED: bool = False
-    CASH_FUTURE_HISTORY_SYMBOLS: str = ""
-    CASH_FUTURE_HISTORY_INTERVAL_SECONDS: int = 60
-
-    # Continuous live Cash-Future feed; broker/WebSocket scanning stays live even when persistence is disabled.
-    LIVE_CASH_FUTURE_DATA_ENABLED: bool = False
     # Keep live market data in memory only; alert history uses the normal trading DB.
     LIVE_MARKET_DATA_PERSISTENCE_ENABLED: bool = False
     # Historical download/replay/backtesting subsystem is currently unavailable by default.
     BACKTESTING_ENABLED: bool = False
-    # New live records are partitioned by IST trading day; legacy base data remains readable.
-    LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED: bool = True
     LIVE_MARKET_DATA_RETENTION_DAYS: int = 1
     # Shared latest-snapshot cache; bounded in-process now, Redis-ready interface later.
     MARKET_DATA_CACHE_MAX_ENTRIES: int = 2000
@@ -72,41 +63,6 @@ class Settings(BaseSettings):
     MARKET_DATA_INGEST_BATCH_SIZE: int = 100
     MARKET_DATA_INGEST_FLUSH_SECONDS: float = 5.0
     MARKET_DATA_INGEST_PUT_TIMEOUT_SECONDS: float = 2.0
-    LIVE_CALENDAR_SPREAD_DATA_ENABLED: bool = False
-    LIVE_CALENDAR_SPREAD_MIN_GAP_POINTS: float = 0.0
-    LIVE_CALENDAR_SPREAD_MIN_GROSS_PROFIT: float = 0.0
-    # Separate display-capacity budget; never inherit Cash-Future sizing implicitly.
-    LIVE_CALENDAR_SPREAD_CAPITAL: float = 10_000_000.0
-    LIVE_CALENDAR_SPREAD_RESULT_RETENTION_DAYS: int = 90
-    LIVE_SYNTHETIC_DATA_ENABLED: bool = False
-    LIVE_SYNTHETIC_MIN_ARBITRAGE_POINTS: float = 0.0
-    # Explicit assumptions; override with broker/strategy-calibrated environment values.
-    LIVE_SYNTHETIC_CARRY_RATE: float = 0.055
-    LIVE_SYNTHETIC_FEES_PER_UNIT: float = 1.0
-    LIVE_SYNTHETIC_RESULT_RETENTION_DAYS: int = 90
-    LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT: float = 0.0
-    # Restrict the 1-second Cash-Future feed to a configured universe; empty means all active F&O stock futures.
-    LIVE_CASH_FUTURE_SYMBOLS: str = ""
-    LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS: float = 1.0
-    LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS: float = 3.0
-    LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS: float = 60.0
-    LIVE_CASH_FUTURE_COST_BPS: float = 10.0
-    LIVE_CASH_FUTURE_SLIPPAGE_BPS: float = 5.0
-    LIVE_CASH_FUTURE_ESTIMATED_COST_PER_LOT: float = 0.0
-    LIVE_CASH_FUTURE_SLIPPAGE_PER_LOT: float = 0.0
-    LIVE_CASH_FUTURE_MIN_STABLE_OBSERVATIONS: int = 1
-    LIVE_CASH_FUTURE_CAPITAL: float = 10_000_000.0
-    LIVE_CASH_FUTURE_MIN_LIQUIDITY_QTY: int = 0
-    LIVE_CASH_FUTURE_RESULT_RETENTION_DAYS: int = 90
-    LIVE_CASH_FUTURE_ALERT_MIN_GROSS_PROFIT: float = 0.0
-    LIVE_CASH_FUTURE_ALERT_MIN_NET_PROFIT: float = 0.0
-    LIVE_CASH_FUTURE_ALERT_MIN_ANNUALIZED_GAP_PCT: float = 0.0
-    LIVE_CASH_FUTURE_ALERT_LOTS: int = 1
-    LIVE_CASH_FUTURE_RANK_GAP_WEIGHT: float = 0.30
-    LIVE_CASH_FUTURE_RANK_NET_WEIGHT: float = 0.25
-    LIVE_CASH_FUTURE_RANK_ANNUALIZED_WEIGHT: float = 0.20
-    LIVE_CASH_FUTURE_RANK_STABILITY_WEIGHT: float = 0.10
-    LIVE_CASH_FUTURE_RANK_LIQUIDITY_WEIGHT: float = 0.15
 
     # WhatsApp Cloud API alerts; disabled until deployment credentials are supplied.
     WHATSAPP_ENABLED: bool = False
