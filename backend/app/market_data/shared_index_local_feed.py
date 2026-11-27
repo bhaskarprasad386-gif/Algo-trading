@@ -64,12 +64,19 @@ class SharedIndexRunnerLocalFeedManager:
             targets = tuple(keys) if keys is not None else self.registry.active_keys()
             for key in targets:
                 self.registry.unsubscribe(name, key)
+            self.registry.unregister_many(targets)
             self._prune_worker_locked()
 
     def clear_consumer(self, consumer: str) -> None:
         name = str(consumer or "").strip()
         with self._lock:
+            owned_keys = tuple(
+                subscription.key
+                for subscription in self.registry.subscriptions()
+                if name in subscription.consumers
+            )
             self.registry.clear_consumer(name)
+            self.registry.unregister_many(owned_keys)
             self._callbacks.pop(name, None)
             for key in tuple(self._last_timestamp):
                 if key[0] == name:
