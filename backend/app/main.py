@@ -679,8 +679,9 @@ async def lifespan(app: FastAPI):
         _shared_index_runner_task = asyncio.create_task(_shared_index_market_data_recovery_loop())
     if _weekly_swing_refresh_task is None:
         _weekly_swing_refresh_task = asyncio.create_task(weekly_swing_daily_refresh_loop())
-    if _iv_option_snapshot_task is None:
-        _iv_option_snapshot_task = asyncio.create_task(_iv_option_snapshot_daily_loop())
+    # Broker-native IV snapshots are not fetched independently. IV calculation
+    # and the legacy snapshot poller remain disabled until they can consume the
+    # Shared Runner's already-published option records without extra API traffic.
     if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
     # Box Spread consumes only records published by SharedIndexMarketDataRunner.
