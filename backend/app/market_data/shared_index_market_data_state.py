@@ -23,6 +23,9 @@ class SharedIndexMarketDataState:
         self.max_age_ns = int(max_age_seconds * 1_000_000_000)
         self._lock = RLock()
         self._latest: dict[str, Any] = {}
+        # Secondary indexes avoid rebuilding the full enriched snapshot for IV.
+        self._latest_by_token: dict[str, Any] = {}
+        self._latest_by_underlying_type: dict[tuple[str, str], Any] = {}
         # Once the runner publishes its owned universe, late ticks for retired
         # contracts are rejected instead of repopulating the cache after rotation.
         self._allowed_keys: set[str] | None = None
@@ -63,6 +66,13 @@ class SharedIndexMarketDataState:
                 self._capacity_dropped += 1
                 return False
             self._latest[key] = record
+            token = str(getattr(getattr(record, "instrument", None), "token", "") or "")
+            if token:
+                self._latest_by_token[token] = record
+            underlying = str(getattr(record, "underlying", "") or "").strip().upper()
+            kind = str(getattr(getattr(record, "instrument_type", None), "value", "") or "").lower()
+            if underlying and kind:
+                self._latest_by_underlying_type[(underlying, kind)] = record
             cutoff = ts - 5_000_000_000
             if record.oi is not None:
                 history = self._oi_history.setdefault(key, deque(maxlen=self.MAX_OI_HISTORY))
@@ -104,6 +114,8 @@ class SharedIndexMarketDataState:
             for key in tuple(self._latest):
                 get_shared_market_data_cache().delete(key)
             self._latest.clear()
+            self._latest_by_token.clear()
+            self._latest_by_underlying_type.clear()
             self._allowed_keys = None
             self._oi_history.clear()
             self._volume_history.clear()
@@ -124,7 +136,15 @@ class SharedIndexMarketDataState:
             self._allowed_keys = allowed
             removed = [key for key in self._latest if key not in allowed]
             for key in removed:
-                self._latest.pop(key, None)
+                retired = self._latest.pop(key, None)
+                if retired is not None:
+                    token = str(getattr(getattr(retired, "instrument", None), "token", "") or "")
+                    if token and self._latest_by_token.get(token) is retired:
+                        self._latest_by_token.pop(token, None)
+                    underlying = str(getattr(retired, "underlying", "") or "").strip().upper()
+                    kind = str(getattr(getattr(retired, "instrument_type", None), "value", "") or "").lower()
+                    if underlying and kind and self._latest_by_underlying_type.get((underlying, kind)) is retired:
+                        self._latest_by_underlying_type.pop((underlying, kind), None)
                 # Retired contracts must not leave replayable quotes in the shared cache.
                 get_shared_market_data_cache().delete(key)
                 self._oi_history.pop(key, None)
@@ -132,6 +152,25 @@ class SharedIndexMarketDataState:
                 self._tick_history.pop(key, None)
             return len(removed)
 
+
+
+    def latest_records_for_tokens(self, tokens) -> tuple[dict[str, Any], ...]:
+        """Return raw latest records for requested broker tokens via the token index."""
+        requested = tuple(dict.fromkeys(str(token) for token in tokens if str(token)))
+        with self._lock:
+            records = tuple(self._latest_by_token[token] for token in requested if token in self._latest_by_token)
+        return tuple(record.as_dict() for record in records)
+
+    def latest_records_for_instruments(self, instrument_type: str, underlyings) -> tuple[dict[str, Any], ...]:
+        """Return raw latest records for a small set of underlying/type pairs."""
+        kind = str(instrument_type or "").strip().lower()
+        symbols = tuple(dict.fromkeys(str(item).strip().upper() for item in underlyings if str(item).strip()))
+        with self._lock:
+            records = tuple(
+                record for symbol in symbols
+                if (record := self._latest_by_underlying_type.get((symbol, kind))) is not None
+            )
+        return tuple(record.as_dict() for record in records)
 
     def records_snapshot(self) -> list[dict[str, Any]]:
         """Return bounded current records with per-contract OI change over ~1s."""
