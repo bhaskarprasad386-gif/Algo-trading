@@ -506,3 +506,35 @@ def test_callback_dispatch_metrics_are_monotonic_and_queue_high_water_is_bounded
     # The second batch waited behind the deliberately blocked first callback;
     # its consumer kind must receive that queue-wait attribution as well.
     assert final["callback_kind_metrics"]["normalized_record"]["queue_wait_max_ns"] > 0
+
+
+def test_worker_start_failure_clears_unstarted_thread_and_allows_retry(monkeypatch):
+    from app.market_data import angel_callback_dispatch as dispatch_module
+
+    adapter = AngelShardCallbackAdapter(capacity=2)
+    adapter.activate_generation(1)
+    original_thread = dispatch_module.Thread
+
+    class BrokenThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("thread quota exhausted")
+
+    monkeypatch.setattr(dispatch_module, "Thread", BrokenThread)
+    with pytest.raises(RuntimeError, match="thread quota exhausted"):
+        adapter.start()
+
+    assert adapter._thread is None
+    assert adapter.snapshot()["running"] is False
+    # Shutdown after failed startup must not attempt to join an unstarted
+    # Thread or mask the original startup failure.
+    adapter.stop(timeout=1.0, drain=True)
+
+    monkeypatch.setattr(dispatch_module, "Thread", original_thread)
+    retry = AngelShardCallbackAdapter(capacity=2)
+    retry.activate_generation(1)
+    retry.start()
+    retry.stop(timeout=1.0, drain=True)
+    assert retry.snapshot()["closed"] is True
