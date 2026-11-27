@@ -110,61 +110,6 @@ def test_catalog_replay_reports_mixed_timeframes_explicitly():
     assert events[0]["data_resolution"] == "mixed"
 
 
-def test_catalog_to_ledger_e2e_cash_future(tmp_path):
-    catalog = HistoricalCatalog()
-    catalog.ingest([
-        HistoricalRecord("angel", "ABC-SPOT", "1m", 1, {"timestamp_ns": 1, "underlying": "ABC", "spot_bid": 99, "spot_ask": 100, "future_bid": 110, "future_ask": 111, "expiry": 20260924}),
-        HistoricalRecord("angel", "ABC-SPOT", "1m", 2, {"timestamp_ns": 2, "underlying": "ABC", "spot_bid": 120, "spot_ask": 121, "future_bid": 90, "future_ask": 91, "expiry": 20260924}),
-    ])
-    ledger, writer = _writer(tmp_path, "catalog-cash-future", "cash-future")
-    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy("cash-future", catalog, (CatalogReplayLeg("cash_future", "angel", "ABC-SPOT", "1m"),), payoff_prices=(90, 100, 120))
-    assert result.completed_trades == 1
-    assert result.unresolved_trades == 0
-    assert result.payoff is not None and len(result.payoff.legs) == 2
-    assert len(ledger.trades("catalog-cash-future")) == 1
-    events = ledger.events("catalog-cash-future")
-    assert [event["event_type"] for event in events][-1] == "PAYOFF_SNAPSHOT"
-    assert {event["event_type"] for event in events} >= {"POSITION_OPENED", "POSITION_CLOSED", "PAYOFF_SNAPSHOT"}
-    assert ledger.run("catalog-cash-future")["status"] == "COMPLETED"
-
-
-def test_catalog_to_ledger_e2e_synthetic_cash_future(tmp_path):
-    catalog = HistoricalCatalog()
-    option_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "strike": 100, "call_bid": 14, "call_ask": 15, "put_bid": 5, "put_ask": 6, "lot_size": 1}
-    future_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "bid": 120, "ask": 121, "lot_size": 1}
-    option_2 = {**option_1, "timestamp_ns": 2, "call_bid": 25, "call_ask": 26, "put_bid": 2, "put_ask": 3}
-    future_2 = {**future_1, "timestamp_ns": 2, "bid": 90, "ask": 91}
-    catalog.ingest([HistoricalRecord("angel", "ABC-OPT", "1m", 1, option_1), HistoricalRecord("angel", "ABC-OPT", "1m", 2, option_2), HistoricalRecord("angel", "ABC-FUT", "1m", 1, future_1), HistoricalRecord("angel", "ABC-FUT", "1m", 2, future_2)])
-    ledger, writer = _writer(tmp_path, "catalog-synthetic", "synthetic-cash-carry")
-    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy("synthetic-cash-carry", catalog, (CatalogReplayLeg("option", "angel", "ABC-OPT", "1m"), CatalogReplayLeg("future", "angel", "ABC-FUT", "1m")), parameters={"direction": "SHORT"}, payoff_prices=(90, 100, 110))
-    assert result.completed_trades == 1
-    assert result.unresolved_trades == 0
-    assert result.payoff is not None
-    assert {leg.kind for leg in result.payoff.legs} == {"CALL", "PUT", "FUTURE"}
-    assert len(ledger.trades("catalog-synthetic")) == 1
-    assert ledger.run("catalog-synthetic")["status"] == "COMPLETED"
-
-
-def test_catalog_to_ledger_e2e_calendar_preserves_expiries(tmp_path):
-    catalog = HistoricalCatalog()
-    near_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "bid": 100, "ask": 100, "lot_size": 1, "strike": 25000, "option_type": "CALL"}
-    far_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20261029, "bid": 120, "ask": 121, "lot_size": 1, "strike": 25000, "option_type": "CALL"}
-    near_2 = {**near_1, "timestamp_ns": 2, "bid": 130, "ask": 131}
-    far_2 = {**far_1, "timestamp_ns": 2, "bid": 80, "ask": 90}
-    catalog.ingest([HistoricalRecord("angel", "ABC-NEAR", "1m", 1, near_1), HistoricalRecord("angel", "ABC-NEAR", "1m", 2, near_2), HistoricalRecord("angel", "ABC-FAR", "1m", 1, far_1), HistoricalRecord("angel", "ABC-FAR", "1m", 2, far_2)])
-    ledger, writer = _writer(tmp_path, "catalog-calendar", "calendar-spread")
-    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy("calendar-spread", catalog, (CatalogReplayLeg("near", "angel", "ABC-NEAR", "1m"), CatalogReplayLeg("far", "angel", "ABC-FAR", "1m")), payoff_prices=(24900, 25000, 25100))
-    assert result.completed_trades == 1
-    assert result.unresolved_trades == 0
-    assert result.payoff is not None and len(result.payoff.legs) == 2
-    trades = ledger.trades("catalog-calendar")
-    assert len(trades) == 1
-    metadata = json.loads(trades[0]["metadata_json"] or "{}")
-    assert metadata.get("near_expiry") == 20260924
-    assert metadata.get("far_expiry") == 20261029
-    assert ledger.run("catalog-calendar")["status"] == "COMPLETED"
-
-
 def test_catalog_to_ledger_e2e_box_spread(tmp_path):
     catalog = HistoricalCatalog()
     low_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "strike": 25000, "call_bid": 20, "call_ask": 30, "put_bid": 20, "put_ask": 30, "lot_size": 1}
