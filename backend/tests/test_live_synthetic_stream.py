@@ -32,17 +32,17 @@ def test_synthetic_subscription_rejects_invalid_instrument_class():
             [SyntheticSubscription(2, "1", "NIFTYFUT", "NIFTY", "OTHER")],
         )
     except ValueError as exc:
-        assert "STOCK, INDEX or COMMODITY" in str(exc)
+        assert "STOCK or INDEX" in str(exc)
     else:
         raise AssertionError("expected invalid instrument class rejection")
 
 
-def test_synthetic_subscription_accepts_commodity():
-    collector = LiveSyntheticOptionFutureRecorder(
-        ":memory:",
-        [SyntheticSubscription(5, "MCX1", "GOLD26OCTFUT", "GOLD", "COMMODITY")],
-    )
-    assert collector.subscriptions[0].instrument_class == "COMMODITY"
+def test_synthetic_subscription_rejects_commodity():
+    with pytest.raises(ValueError, match="STOCK or INDEX"):
+        LiveSyntheticOptionFutureRecorder(
+            ":memory:",
+            [SyntheticSubscription(5, "MCX1", "GOLD26OCTFUT", "GOLD", "COMMODITY")],
+        )
 
 
 def test_synthetic_subscription_deduplicates_exchange_token():
