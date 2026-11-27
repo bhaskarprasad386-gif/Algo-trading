@@ -70,7 +70,7 @@ def test_concurrent_same_underlying_ticks_are_serialized_to_single_rotation():
     from concurrent.futures import ThreadPoolExecutor
     lifecycle = StubLifecycle()
     controller = SharedIndexOptionRotationController(lifecycle=lifecycle,
-        instrument_rows=_rows, expiry_for=lambda _: "26NOV2026",
+        instrument_rows=_rows, expiry_for=lambda _: "03DEC2026",
         thresholds={"NIFTY":50}, cooldown_seconds=0)
     assert not controller.on_record(_spot("NIFTY", 22000))
     with ThreadPoolExecutor(max_workers=12) as pool:
