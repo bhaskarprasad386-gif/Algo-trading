@@ -30,15 +30,11 @@ test("dashboard no longer links to Custom Strategy", async () => {
   assert.equal(dashboard.includes("/strategies/custom-strategy"), false);
 });
 
-test("Box Spread removed sections and mounts while scanner/history remain", async () => {
-  const page = await read("app/strategies/box-spread/page.tsx");
-  assert.equal(page.includes("BoxSpreadShadowPanel"), false);
-  assert.equal(await exists("components/BoxSpreadShadowPanel.tsx"), false);
-  assert.equal(page.includes("Shadow Monitor"), false);
-  assert.equal(page.includes("System Health"), false);
-  assert.equal(page.includes("box-system-health"), false);
-  assert.equal(page.includes("StrategyWorkspace slug=\"box-spread\""), true);
-  assert.equal(page.includes("BoxSpreadPostMarketHistory"), true);
+test("Box Spread is fully removed from routes, navigation, and page push", async () => {
+  assert.equal(await exists("app/strategies/box-spread/page.tsx"), false);
+  const shell = await read("components/app-shell.tsx");
+  assert.equal(shell.includes("/strategies/box-spread"), false);
+  assert.equal(shell.includes('pathname.startsWith("/strategies/box-spread")'), false);
 });
 
 test("retired Synthetic, Calendar and Cash-Future scanner pages are deleted", async () => {
@@ -76,11 +72,7 @@ test("Cash-Future scanner is fully removed from the web route and navigation", a
 });
 
 
-test("Box Spread depth-shadow state updater remains explicitly typed", async () => {
-  const workspace = await read("components/strategy-workspace.tsx");
-  assert.ok(workspace.includes("const [boxDepthShadow, setBoxDepthShadow] = useState<Record<string, unknown> | null>(null);"), "Box Spread depth-shadow state must not be untyped");
-  assert.ok(workspace.includes("setBoxDepthShadow(current =>"), "depth-shadow state updates should use typed updater");
-});
+
 
 test("IV runtime REMOVE clears both NIFTY and BANKNIFTY live/chart state", async () => {
   const page = await read("app/strategies/iv-skew-flip/page.tsx");
