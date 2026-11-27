@@ -113,7 +113,7 @@ class MainActivity : AppCompatActivity() {
         btnLiveDataHealthRefresh.setOnClickListener { loadLiveDataHealth() }
         btnSaveDashboardLayout.setOnClickListener { saveDashboardLayout() }
         btnResetDashboardLayout.setOnClickListener { resetDashboardLayout() }
-        btnRunScanner.setOnClickListener { showCashFutureScannerDisabled() }
+        btnRunScanner.setOnClickListener { disableCashFutureScanner() }
         btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
         btnBoxSpread.setOnClickListener { startActivity(Intent(this, BoxSpreadActivity::class.java)) }
         
@@ -284,7 +284,7 @@ class MainActivity : AppCompatActivity() {
     }
     private fun disconnectAngelOne() = lifecycleScope.launch(Dispatchers.IO) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnecting…" }; try { ApiService.retrofitService.disconnectBroker("angel_one"); withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Angel One disconnected • Real Trading OFF" }; checkSafetyStatus() } catch (error: Exception) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnect failed • ${error.message ?: "API error"}"; if (!ApiService.hasRealOwnerAccessToken()) promptRealOwnerLogin() } } }
 
-    private fun showCashFutureScannerDisabled() {
+    private fun disableCashFutureScanner() {
         cbScannerAutoRefresh.isChecked = false
         cbScannerAutoRefresh.isEnabled = false
         etScannerRefreshSeconds.isEnabled = false
