@@ -100,7 +100,6 @@ print(json.dumps({"status": "ok"}))
             "BACKTEST_CONTRACT_DB": str(tmp_path / "contract.sqlite3"),
             "BACKTEST_RESULT_LEDGER_DB": str(tmp_path / "result.sqlite3"),
             "BACKTEST_CONTRACT_MASTER_AUTO_SYNC": "false",
-            "CASH_FUTURE_HISTORY_ENABLED": "false",
         }
     )
 
