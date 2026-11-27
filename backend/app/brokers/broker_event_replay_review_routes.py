@@ -23,7 +23,7 @@ from app.execution.broker_event_replay_review import (
     CONFIRMATION,
     review_operator_replay_eligibility,
 )
-from app.models import BoxSpreadRealOwnerState
+from app.models import RealTradingOwnerState
 from app.models.broker_replay_eligibility_audit import BrokerReplayEligibilityAuditRecord
 
 router = APIRouter(tags=["brokers"])
@@ -41,8 +41,8 @@ def review_requested_replay_eligibility(
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     """Explicitly review selected callback IDs; this endpoint does not replay."""
-    owner_state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    owner_state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"
     ).first()
     if owner_state is None or not owner_state.broker_name:
         raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
@@ -125,8 +125,8 @@ def get_replay_eligibility_audit(
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     """Read one audit receipt in the currently bound single broker account."""
-    owner_state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    owner_state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"
     ).first()
     if owner_state is None or not owner_state.broker_name:
         raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
