@@ -1646,12 +1646,35 @@ class CommonWebSocketManager:
             if self._recovery_thread is not None and self._recovery_thread.is_alive():
                 return
             self._recovery_stop.clear()
-            self._recovery_thread = Thread(
+            worker = Thread(
                 target=self._recovery_loop,
                 name="common-ws-recovery",
                 daemon=True,
             )
-            self._recovery_thread.start()
+            self._recovery_thread = worker
+            try:
+                worker.start()
+            except Exception as exc:
+                # Thread creation can fail under process/thread pressure. Do not
+                # retain an unstarted Thread as if a supervisor were alive: a
+                # later subscription/reconcile attempt must be able to retry.
+                if self._recovery_thread is worker:
+                    self._recovery_thread = None
+                self._recovery_stop.set()
+                self._recovery_backoff_errors += 1
+                self._recovery_backoff_last_error = (
+                    f"{type(exc).__name__}: recovery supervisor start failed: {exc}"
+                )[:240]
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type=type(exc).__name__,
+                    message=f"recovery supervisor start failed: {exc}",
+                    context={"event": "recovery_supervisor_worker_start"},
+                )
+                app_logger.warning(
+                    "Common feed recovery supervisor could not start; a later "
+                    "subscription/reconcile will retry: %s", exc,
+                )
 
     def _recovery_loop(self) -> None:
         # Subscription changes intentionally remain pending during a shared
