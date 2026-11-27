@@ -45,12 +45,43 @@ class SharedIndexOnlyWebSocketManager(CommonWebSocketManager):
             )
         return normalized
 
+    @staticmethod
+    def validate_descriptor(descriptor: InstrumentDescriptor) -> None:
+        underlying = str(getattr(descriptor, "underlying", "") or "").strip().upper()
+        kind = str(getattr(descriptor, "instrument_type", "") or "").strip().lower()
+        exchange = str(getattr(descriptor, "exchange", "") or "").strip().upper()
+        segment = str(getattr(descriptor, "segment", "") or "").strip().upper()
+        key_exchange = str(getattr(descriptor.key, "exchange", "") or "").strip().upper()
+        key_segment = str(getattr(descriptor.key, "segment", "") or "").strip().upper()
+        expected_exchange = "NSE" if kind == "index" else "NFO"
+        if underlying not in {"NIFTY", "BANKNIFTY"}:
+            raise PermissionError("production live universe is locked to NIFTY/BANKNIFTY")
+        if kind not in {"index", "option", "future"}:
+            raise PermissionError("production live feed accepts only index, option and future contracts")
+        if (exchange, segment, key_exchange, key_segment) != (
+            expected_exchange, expected_exchange, expected_exchange, expected_exchange
+        ):
+            raise PermissionError("production live feed rejects instruments outside NSE/NFO index contracts")
+        if kind == "index" and str(descriptor.symbol).strip().upper() != underlying:
+            raise PermissionError("spot descriptor symbol must match its locked underlying")
+        if kind == "option":
+            required_expiry_type = "WEEKLY" if underlying == "NIFTY" else "MONTHLY"
+            if str(descriptor.expiry_type or "").strip().upper() != required_expiry_type:
+                raise PermissionError(
+                    f"{underlying} options are restricted to {required_expiry_type} expiry"
+                )
+
     def register_normalized_callback(self, consumer: str, callback) -> None:
         self.validate_consumer(consumer)
         return super().register_normalized_callback(consumer, callback)
 
     def subscribe(self, consumer: str, keys, mode: int = 1):
         self.validate_consumer(consumer)
+        for key in keys:
+            descriptor = self.registry.get(key)
+            if descriptor is None:
+                raise KeyError(f"instrument is not registered: {key.value}")
+            self.validate_descriptor(descriptor)
         return super().subscribe(consumer, keys, mode)
 
     def unsubscribe(self, consumer: str, keys=None) -> None:
@@ -256,6 +287,10 @@ class CommonStrategyMarketFeed:
         validate_consumer = getattr(self.manager, "validate_consumer", None)
         if callable(validate_consumer):
             validate_consumer(self.consumer)
+        validate_descriptor = getattr(self.manager, "validate_descriptor", None)
+        if callable(validate_descriptor):
+            for descriptor in descriptors:
+                validate_descriptor(descriptor)
         # InstrumentKey is the broker-level identity. Multiple strategy
         # consumers may describe the same broker instrument with different
         # strategy metadata (for example an option subscription carrying its
