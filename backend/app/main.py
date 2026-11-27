@@ -68,7 +68,7 @@ BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.market_data.routes import router as market_data_router, configure_shoonya_snapshot, configure_shoonya_supervisor, configure_shared_index_runner_snapshot, configure_shared_index_runner_health_snapshot
-from app.scanner.routes import router as scanner_router, full_fno_router, configure_live_cash_future_snapshot
+from app.scanner.routes import router as scanner_router, configure_live_cash_future_snapshot
 from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop, configure_page_update_callback as configure_weekly_swing_page_push, nifty200_scan_status
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
@@ -821,6 +821,7 @@ RETIRED_SCANNER_API_PREFIXES = (
     "/api/v1/scanner/box-spread",
     "/api/v1/scanner/synthetic-cash-carry",
     "/api/v1/backtesting/cash-future",
+    "/api/v1/backtesting/full-fno",
     "/api/v1/backtesting/calendar-spread",
     "/api/v1/market-data/live-cash-future",
 )
@@ -867,7 +868,6 @@ app.include_router(instruments_router)
 app.include_router(market_data_router)
 app.include_router(provider_quote_parity_router)
 app.include_router(weekly_swing_scanner_router)
-app.include_router(full_fno_router)
 app.include_router(alert_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))
