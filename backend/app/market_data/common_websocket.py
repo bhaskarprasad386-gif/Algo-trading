@@ -3452,7 +3452,6 @@ class CommonWebSocketManager:
                 self._failure_recovery_generation_by_group.clear()
                 self._failure_recovery_pending_groups.clear()
                 self._failure_recovery_pending_transports.clear()
-                self._retired_transport_watch_pending.clear()
                 self._failure_recovery_pending_versions.clear()
         # The recovery supervisor may be waiting for _reconcile_lock. Release
         # that lock before joining it, otherwise every shutdown can burn the
@@ -3502,6 +3501,7 @@ class CommonWebSocketManager:
         # stopped the supervisor. If thread creation still fails, keep the
         # pending task and retirement diagnostics rather than releasing the fence.
         self._retry_pending_retired_transport_closes(allow_closed=True)
+        self._retry_pending_retired_transport_watchers()
         # Wait for callbacks admitted before closure; new OPEN/ERROR callbacks
         # are rejected after _closed is set. Retired CLOSED remains admissible.
         with self._transport_observer_dispatch_lock:
