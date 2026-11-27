@@ -113,7 +113,6 @@ install_iv_basket_immutability_guards(engine)
 instrument_master = InstrumentMaster()
 shared_index_market_data_runner = SharedIndexMarketDataRunner(instrument_master=instrument_master)
 box_shared_feed_manager = SharedIndexRunnerLocalFeedManager(shared_index_market_data_runner)
-box_shared_feed_manager.attach()
 configure_shared_index_runner_snapshot(shared_index_market_data_runner.snapshot)
 configure_shared_index_runner_health_snapshot(shared_index_market_data_runner.health_snapshot)
 shoonya_market_data_supervisor: ShoonyaMarketDataSupervisor | None = None
@@ -554,6 +553,7 @@ async def _shared_index_market_data_recovery_loop() -> None:
     retry_delay = 5.0
     max_retry_delay = 60.0
     try:
+        box_shared_feed_manager.attach()
         while True:
             # Do not redownload the Angel One master while the runner is
             # already active; only retry after a failed start.
