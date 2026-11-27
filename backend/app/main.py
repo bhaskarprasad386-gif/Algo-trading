@@ -826,6 +826,24 @@ event_loop_lag_monitor = EventLoopLagMonitor(interval_seconds=1.0)
 
 app = FastAPI(title=settings.app_name, version="0.1.0", debug=settings.debug, lifespan=lifespan)
 
+RETIRED_SCANNER_API_PREFIXES = (
+    "/api/v1/scanner/cash-future",
+    "/api/v1/scanner/calendar-spread",
+    "/api/v1/scanner/box-spread",
+    "/api/v1/scanner/synthetic-cash-carry",
+    "/api/v1/backtesting/cash-future",
+    "/api/v1/backtesting/calendar-spread",
+)
+
+@app.middleware("http")
+async def retired_scanner_api_guard(request: Request, call_next):
+    """Fail closed for legacy scanner endpoints that are no longer supported."""
+    path = request.url.path.rstrip("/")
+    if any(path == prefix or path.startswith(prefix + "/") for prefix in RETIRED_SCANNER_API_PREFIXES):
+        return JSONResponse(status_code=410, content={"detail": "This scanner has been retired"})
+    return await call_next(request)
+
+
 
 @app.middleware("http")
 async def database_checkout_owner_middleware(request: Request, call_next):
@@ -860,7 +878,6 @@ app.include_router(market_data_router)
 app.include_router(provider_quote_parity_router)
 app.include_router(weekly_swing_scanner_router)
 app.include_router(full_fno_router)
-app.include_router(auto_scanner_router)
 app.include_router(alert_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))
@@ -870,8 +887,6 @@ app.include_router(early_impulse_router)
 app.include_router(vpt_x_reversal_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(monthly_results_router)
-    app.include_router(cash_future_strategy_router)
-    app.include_router(calendar_spread_strategy_router)
 
 # Durable backtesting-download status is kept in its own SQLite file so API
 # requests never depend on an in-memory status object. The path can be
@@ -903,55 +918,8 @@ BROKER_SETTINGS_FILE = Path(__file__).resolve().parents[2] / "web" / "dashboard"
 
 @app.get("/dashboard", include_in_schema=False)
 def dashboard():
-    """Serve the web dashboard and Cash-Future scanner connector."""
-    html = DASHBOARD_FILE.read_text(encoding="utf-8")
-    connector = r'''
-<script>
-
-(async function connectCashFutureScanner(){
-  const api=window.location.origin;
-  const log=document.getElementById('terminal-logs');
-  const spread=document.getElementById('arb-spread');
-  const live=document.getElementById('live-price');
-  const liveStatus=document.getElementById('live-status');
-  const section=document.createElement('div');
-  section.className='card'; section.style.marginTop='15px'; section.style.borderLeftColor='#22c55e';
-  section.innerHTML='<h3>Cash–Future Opportunities</h3><div id="cf-summary" style="font-size:12px;color:#94a3b8">Scanning backend…</div><div style="overflow-x:auto;margin-top:10px"><table id="cf-table" style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th align="left">Symbol</th><th>Cash</th><th>Future</th><th>Gap</th><th>Margin</th><th>Net</th><th>ROI</th></tr></thead><tbody></tbody></table></div>';
-  const pnl=document.querySelector('.card[style*="border-left-color:#facc15"]');
-  const container=document.querySelector('.container');
-  if(!container){return;}
-  (pnl?.parentNode||container).insertBefore(section,pnl||null);
-  const summary=document.getElementById('cf-summary'),tbody=document.querySelector('#cf-table tbody');
-  if(!summary||!tbody){return;}
-  async function scan(){
-    try{
-      summary.textContent='Scanning backend Cash-Future opportunities…';
-      const r=await fetch(`${api}/api/v1/scanner/cash-future/live/fast?limit=500`,{cache:'no-store'});
-      if(!r.ok) throw new Error(`Scanner API ${r.status}`);
-      const p=await r.json(), rows=Array.isArray(p.data)?p.data:[];
-      tbody.innerHTML='';
-      rows.slice(0,20).forEach(x=>{
-        const tr=document.createElement('tr');
-        tr.innerHTML=`<td>${x.symbol??'-'}</td><td>${Number(x.cash_ltp??0).toFixed(2)}</td><td>${Number(x.future_ltp??0).toFixed(2)}</td><td>${Number(x.gap??0).toFixed(2)}</td><td>${Number(x.margin_required??0).toFixed(2)}</td><td>${Number(x.net_profit??0).toFixed(2)}</td><td>${Number(x.roi_pct??0).toFixed(2)}%</td>`;
-        tbody.appendChild(tr);
-      });
-      summary.textContent=`Backend connected • ${p.scanned_observations??0} scanned • ${p.opportunity_count??rows.length} executable opportunities`;
-      const best=rows[0];
-      if(best){
-        if(spread) spread.innerHTML=`Arbitrage: <strong>${best.symbol} • Gap ₹${Number(best.gap??0).toFixed(2)} • Net ₹${Number(best.net_profit??0).toFixed(2)}</strong>`;
-        if(live) live.textContent=Number(best.cash_ltp??0).toFixed(2);
-        if(liveStatus) liveStatus.textContent=`Cash price from Cash-Future scanner • ${best.symbol}`;
-      }
-      if(log){log.innerHTML+=`<br>[${new Date().toLocaleTimeString()}] Cash-Future scan: ${rows.length} executable.`; log.scrollTop=log.scrollHeight;}
-    }catch(e){summary.textContent=`Scanner unavailable: ${e.message}`;}
-  }
-  await scan(); setInterval(scan,30000);
-})();
-</script>
-'''
-    return HTMLResponse(content=html.replace("</body>", connector + "</body>"), media_type="text/html")
-
-
+    """Retired legacy dashboard; scanner pages are no longer served."""
+    raise HTTPException(status_code=404, detail="Dashboard page retired")
 
 @app.get("/dashboard/broker", include_in_schema=False)
 def broker_settings():
