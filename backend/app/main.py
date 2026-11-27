@@ -1360,7 +1360,6 @@ async def _live_synthetic_loop() -> None:
             today = datetime.now(IST).date()
             top15_liquid_stocks: set[str] = set()
             index_symbols: set[str] = set()
-            commodity_symbols: set[str] = set()
             for item in master.instruments:
                 segment = str(item.get("exch_seg", "")).strip().upper()
                 typ = str(item.get("instrumenttype", "")).strip().upper()
@@ -1385,15 +1384,12 @@ async def _live_synthetic_loop() -> None:
                     and name in NIFTY50_INDEX_SYMBOLS
                 ):
                     index_symbols.add(name)
-                elif typ == "FUTCOM" and segment == "MCX":
-                    commodity_symbols.add(name)
 
             stock_symbols = [symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED if symbol in top15_liquid_stocks]
             missing_future_symbols = [symbol for symbol in TOP15_LIQUID_STOCK_SYMBOLS_ORDERED if symbol not in top15_liquid_stocks]
             raw_index_symbols = sorted(index_symbols)
             index_symbols = list(filter_resolvable_index_symbols(master, raw_index_symbols))
             missing_index_underlyings = sorted(set(raw_index_symbols) - set(index_symbols))
-            commodity_symbols = sorted(commodity_symbols)
             if missing_index_underlyings:
                 app_logger.warning(
                     "Synthetic live index underlyings skipped because no concrete Angel token exists: {}",
