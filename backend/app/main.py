@@ -731,20 +731,11 @@ async def lifespan(app: FastAPI):
         _weekly_swing_refresh_task = asyncio.create_task(weekly_swing_daily_refresh_loop())
     if _iv_option_snapshot_task is None:
         _iv_option_snapshot_task = asyncio.create_task(_iv_option_snapshot_daily_loop())
+    # Cash Future, Calendar Spread, Box Spread and Synthetic Future are
+    # retired. Do not start their history collectors, scanners, runners or
+    # broker subscriptions even if legacy environment flags remain enabled.
     if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
-    if _collector_enabled() and _history_collector_task is None:
-        _history_collector_task = asyncio.create_task(_cash_future_history_loop())
-    if settings.LIVE_CASH_FUTURE_DATA_ENABLED and _live_cash_future_task is None:
-        _live_cash_future_task = asyncio.create_task(_live_cash_future_loop())
-    if settings.LIVE_CALENDAR_SPREAD_DATA_ENABLED and _live_calendar_spread_task is None:
-        _live_calendar_spread_task = asyncio.create_task(_live_calendar_spread_loop())
-    if not LIVE_SYNTHETIC_RUNNER_FORCE_DISABLED and settings.LIVE_SYNTHETIC_DATA_ENABLED and _live_synthetic_task is None:
-        _live_synthetic_task = asyncio.create_task(_live_synthetic_loop())
-    # Box Spread is temporarily excluded from the shared Angel One socket budget.
-    # Keep its routes/history intact, but do not create any Box-owned live subscriptions.
-    if not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED and settings.LIVE_BOX_SPREAD_DATA_ENABLED and _live_box_spread_task is None:
-        _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
     _dashboard_snapshot_task = asyncio.create_task(_dashboard_snapshot_publisher_loop())
     _event_loop_lag_task = asyncio.create_task(event_loop_lag_monitor.run())
     try:
@@ -867,21 +858,12 @@ app.include_router(arbitrage_router)
 app.include_router(instruments_router)
 app.include_router(market_data_router)
 app.include_router(provider_quote_parity_router)
-app.include_router(scanner_router)
 app.include_router(weekly_swing_scanner_router)
 app.include_router(full_fno_router)
 app.include_router(auto_scanner_router)
 app.include_router(alert_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))
-app.include_router(calendar_spread_scanner_router)
-app.include_router(live_synthetic_router)
-app.include_router(live_synthetic_trace_router)
-app.include_router(live_box_spread_router)
-app.include_router(box_spread_paper_router)
-app.include_router(box_spread_paper_private_ws_router)
-app.include_router(box_spread_paper_rule_router)
-app.include_router(live_box_spread_websocket_router)
 app.include_router(page_push_websocket_router)
 app.include_router(intelligence_router)
 app.include_router(early_impulse_router)
