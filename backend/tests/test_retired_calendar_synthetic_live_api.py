@@ -73,3 +73,42 @@ def test_generic_historical_replay_routes_remain_independent():
     assert "app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))" in main
     assert "app.include_router(create_download_status_router(backtest_status_store))" in main
     assert "app.include_router(create_universal_result_router(universal_result_service))" in main
+
+
+def test_retired_strategy_models_and_full_fno_backtest_are_not_registered_or_importable():
+    root = Path(__file__).parents[1]
+    models = (root / "app" / "models" / "__init__.py").read_text(encoding="utf-8")
+    init_db = (root / "app" / "core" / "init_db.py").read_text(encoding="utf-8")
+    migrations = (root / "app" / "core" / "schema_migrations.py").read_text(encoding="utf-8")
+
+    for retired in (
+        "CashFutureHistory", "LiveCashFutureAlertHistory", "LiveCashFutureScannerResult",
+        "LiveCalendarSpreadAlertHistory", "LiveCalendarSpreadScannerResult",
+        "LiveSyntheticAlertHistory", "LiveSyntheticPairHistory",
+        "LiveBoxSpreadAlertHistory", "LiveBoxSpreadSnapshot", "LiveBoxSpreadSnapshotKey",
+        "BacktestJob", "BacktestJobResultChunk",
+    ):
+        assert retired not in models
+    assert "cash_future" not in init_db.lower()
+    assert "backtest_jobs" not in migrations
+    assert "backtest_job_result_chunks" not in migrations
+    assert "live_synthetic_alert_history" not in migrations
+
+    for retired_path in (
+        "cash_future_history.py", "live_cash_future_alert_history.py",
+        "live_cash_future_scanner_result.py", "live_calendar_spread_alert_history.py",
+        "live_calendar_spread_scanner_result.py", "live_synthetic_alert_history.py",
+        "live_synthetic_pair_history.py", "synthetic_trace_opportunity.py",
+        "synthetic_trace_status_check.py", "live_box_spread_alert_history.py",
+        "live_box_spread_snapshot.py", "live_box_spread_snapshot_key.py",
+        "backtest_job.py", "backtest_job_result_chunk.py",
+    ):
+        assert not (root / "app" / "models" / retired_path).exists()
+
+    for retired_path in (
+        "scanner/backtest_jobs.py", "scanner/full_fno_backtest.py",
+        "scanner/synchronized_replay.py", "scanner/routes.py",
+        "backtesting/monthly_results_routes.py", "backtesting/routes.py",
+        "scanner/result_chunk_store.py",
+    ):
+        assert not (root / "app" / retired_path).exists()
