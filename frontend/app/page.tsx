@@ -14,7 +14,7 @@ export default function HomePage() {
   const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "degraded" | "error">("checking");
   const [apiDetail, setApiDetail] = useState("Waiting for health response");
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "error">("connecting");
-  const [snapshot, setSnapshot] = useState({ box: 0, opportunities: 0, timestamp: null as string | null });
+  const [snapshot, setSnapshot] = useState({ opportunities: 0, timestamp: null as string | null });
   const [indexLtps, setIndexLtps] = useState<Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null; status: string }>>({});
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [feedMarketSession, setFeedMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
@@ -592,7 +592,6 @@ export default function HomePage() {
   ];
   const scannerStatus = [
     { label: "Positive Net-Gap Signals (max 50)", value: snapshot.opportunities.toLocaleString("en-IN") },
-    { label: "Box Rows", value: snapshot.box.toLocaleString("en-IN") },
   ];
 
   return (
