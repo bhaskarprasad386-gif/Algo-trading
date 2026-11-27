@@ -25,118 +25,84 @@ def reset_dashboard_route_caches():
 
 
 
-def test_common_feed_health_reuses_bounded_runner_snapshot(monkeypatch):
+def test_common_feed_health_reports_only_shared_runner_owner(monkeypatch):
     from app.core.config import settings
 
     feed_reads = []
-    runner_reads = []
 
     def feed_snapshot():
         feed_reads.append(1)
         return {"snapshot_kind": "health-lite", "ticks_received": 42}
 
-    def runner_snapshot():
-        runner_reads.append(1)
-        return {"status": "RUNNING", "updates": 17}
-
     monkeypatch.setattr(
         "app.market_data.common_strategy_feed.shared_common_manager_snapshot",
         feed_snapshot,
     )
-    monkeypatch.setattr(routes, "_live_cash_future_runner_snapshot_provider", runner_snapshot)
     monkeypatch.setattr(settings, "LIVE_MARKET_DATA_PERSISTENCE_ENABLED", False)
 
     first = routes.get_common_feed_health()
     second = routes.get_common_feed_health()
 
     assert first["feed"]["snapshot_kind"] == "health-lite"
-    assert second["cash_future_runner"]["updates"] == 17
+    assert second["owner"] == "SharedIndexMarketDataRunner"
+    assert second["universe"] == ["NIFTY", "BANKNIFTY"]
+    assert "cash_future_runner" not in second
     assert len(feed_reads) == 1
-    assert len(runner_reads) == 1
-    assert second["_snapshot_cache"]["age_seconds"] >= 0
 
-def test_market_overview_returns_index_and_commodity_groups(monkeypatch):
-    class FakeMaster:
-        def get_instrument(self, symbol, exchange):
-            return {"token": f"{exchange}-{symbol}"}
 
-        def resolve_index_instrument(self, symbol, exchange):
-            return {"token": f"{exchange}-{symbol}"}
+def test_market_overview_uses_only_shared_runner_nifty_banknifty_quotes(monkeypatch):
+    import time
 
-    class FakeClient:
-        def quote_many(self, exchange, instruments):
-            return {
-                "data": {
-                    "fetched": [
-                        {
-                            "symbolToken": item["symboltoken"],
-                            "ltp": 100.0,
-                            "open": 99.0,
-                            "high": 105.0,
-                            "low": 95.0,
-                            "close": 98.0,
-                            "percentChange": 2.04,
-                            "tradeVolume": 1000,
-                            "opnInterest": 500,
-                            "depth": {"buy": [{"price": 99.9}], "sell": [{"price": 100.1}]},
-                        }
-                        for item in instruments
-                    ]
-                }
-            }
-
-    monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
-    monkeypatch.setattr("app.market_data.client.MarketDataClient", FakeClient)
+    now_ns = time.time_ns()
+    snapshot = {
+        "enabled": True,
+        "latest_spots": {
+            "NIFTY": {"price": 24000.0, "timestamp_ns": now_ns, "age_seconds": 0.1},
+            "BANKNIFTY": {"price": 52000.0, "timestamp_ns": now_ns, "age_seconds": 0.2},
+        },
+        "records": [
+            {
+                "underlying": "NIFTY", "instrument_type": "index", "ltp": 24000.0,
+                "close": 23800.0, "open": 23900.0, "high": 24100.0, "low": 23750.0,
+                "bid": 23999.5, "ask": 24000.5, "fresh": True, "feed_age_seconds": 0.1,
+            },
+            {
+                "underlying": "BANKNIFTY", "instrument_type": "index", "ltp": 52000.0,
+                "close": 51800.0, "open": 51900.0, "high": 52200.0, "low": 51700.0,
+                "bid": 51999.0, "ask": 52001.0, "fresh": True, "feed_age_seconds": 0.2,
+            },
+        ],
+    }
+    monkeypatch.setattr(routes, "_shared_index_runner_snapshot_provider", lambda: snapshot)
     monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
-    monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: True)
+    monkeypatch.setattr(
+        "app.market_data.client.MarketDataClient",
+        lambda: (_ for _ in ()).throw(AssertionError("overview must not call broker REST")),
+    )
 
     result = routes.get_market_overview()
 
     assert result["status"] == "success"
-    assert result["nse_market_session"] == "OPEN"
-    assert result["mcx_market_session"] == "OPEN"
-    assert {row["symbol"] for row in result["indices"]} >= {"NIFTY", "BANKNIFTY", "SENSEX"}
-    assert {row["symbol"] for row in result["commodities"]} >= {"GOLD", "SILVER", "CRUDEOIL", "NATURALGAS"}
-    assert all(row["status"] == "LIVE" for row in result["indices"] + result["commodities"])
+    assert result["mode"] == "shared-runner-only"
+    assert {row["symbol"] for row in result["indices"]} == {"NIFTY", "BANKNIFTY"}
+    assert result["commodities"] == []
+    assert result["mcx_market_session"] == "DISABLED"
+    assert all(row["status"] == "LIVE" for row in result["indices"])
+    assert result["indices"][0]["change_percent"] is not None
     assert result["errors"] == []
 
 
-def test_closed_market_overview_labels_historical_close_not_live_quote(monkeypatch):
-    class FakeMaster:
-        def get_instrument(self, symbol, exchange):
-            return {"token": f"{exchange}-{symbol}"}
-
-        def resolve_index_instrument(self, symbol, exchange):
-            return {"token": f"{exchange}-{symbol}"}
-
-    class FakeClient:
-        def quote_many(self, exchange, instruments):
-            raise AssertionError("closed market must not request a live quote")
-
-    class FakeHistoricalDataClient:
-        def __init__(self, client):
-            pass
-
-        def get_candles(self, **kwargs):
-            return {"data": [
-                ["2026-10-15", 118, 124, 117, 123, 1000],
-                ["2026-10-16", 123, 125, 119, 120, 900],
-            ]}
-
-    routes._CLOSED_OVERVIEW_CACHE.clear()
-    monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
-    monkeypatch.setattr("app.market_data.client.MarketDataClient", FakeClient)
-    monkeypatch.setattr("app.market_data.historical.HistoricalDataClient", FakeHistoricalDataClient)
+def test_market_overview_fails_closed_without_shared_runner_snapshot(monkeypatch):
+    monkeypatch.setattr(routes, "_shared_index_runner_snapshot_provider", None)
     monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: False)
-    monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: False)
-
     result = routes.get_market_overview()
 
-    assert result["market_session"] == "CLOSED"
-    assert result["indices"]
-    assert all(row["status"] == "CLOSED_LAST_CLOSE" for row in result["indices"])
-    assert all(row["ltp"] == 120.0 for row in result["indices"])
-    assert all(row["close"] == 123.0 for row in result["indices"])
+    assert result["status"] == "success"
+    assert result["mode"] == "shared-runner-only"
+    assert {row["symbol"] for row in result["indices"]} == {"NIFTY", "BANKNIFTY"}
+    assert all(row["status"] == "NO_DATA" for row in result["indices"])
+    assert result["commodities"] == []
+    assert result["errors"][0]["error"] == "runner_snapshot_unavailable"
 
 
 def test_live_data_health_reports_persisted_coverage(monkeypatch, tmp_path):
@@ -236,130 +202,6 @@ def test_live_data_health_does_not_use_fresh_mcx_tick_to_mask_stale_nse_nfo(monk
     assert runtime_feed["exchange_freshness"]["NSE"]["status"] == "STALE"
     assert runtime_feed["exchange_freshness"]["NFO"]["status"] == "STALE"
     assert runtime_feed["required_exchange_types"] == [1, 2]
-
-
-def test_market_overview_reuses_quote_batch_between_dashboard_polls(monkeypatch):
-    calls = []
-    resolutions = []
-
-    class FakeMaster:
-        def get_instrument(self, symbol, exchange):
-            resolutions.append((exchange, symbol))
-            return {"token": f"{exchange}-{symbol}"}
-
-        def resolve_index_instrument(self, symbol, exchange):
-            resolutions.append((exchange, symbol))
-            return {"token": f"{exchange}-{symbol}"}
-
-    class FakeClient:
-        def quote_many(self, exchange, instruments):
-            calls.append((exchange, tuple(item["symboltoken"] for item in instruments)))
-            return {"data": {"fetched": [
-                {"symbolToken": item["symboltoken"], "ltp": 100.0, "close": 99.0}
-                for item in instruments
-            ]}}
-
-    monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
-    monkeypatch.setattr("app.market_data.client.MarketDataClient", FakeClient)
-    monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
-    monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: True)
-
-    first = routes.get_market_overview()
-    assert len(calls) == 3
-    assert all(row["status"] == "LIVE" for row in first["indices"] + first["commodities"])
-
-    # Simulate the browser's next 5-second poll while forcing only the outer
-    # dashboard snapshot to refresh. The broker quote batch remains reusable.
-    routes.get_market_overview.snapshot_cache.clear()
-    second = routes.get_market_overview()
-
-    assert len(calls) == 3
-    assert len(resolutions) == 10
-    assert second["indices"][0]["quote_cache_age_seconds"] is not None
-    assert all(row["status"] == "LIVE" for row in second["indices"] + second["commodities"])
-
-
-def test_market_overview_uses_bounded_stale_quotes_after_broker_refresh_failure(monkeypatch):
-    import time
-
-    class FakeMaster:
-        def get_instrument(self, symbol, exchange):
-            return {"token": f"{exchange}-{symbol}"}
-
-        def resolve_index_instrument(self, symbol, exchange):
-            return {"token": f"{exchange}-{symbol}"}
-
-    class FakeClient:
-        def __init__(self):
-            self.fail = False
-
-        def quote_many(self, exchange, instruments):
-            if self.fail:
-                raise RuntimeError("broker rate limited")
-            return {"data": {"fetched": [
-                {"symbolToken": item["symboltoken"], "ltp": 100.0, "close": 99.0}
-                for item in instruments
-            ]}}
-
-    client = FakeClient()
-    monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
-    monkeypatch.setattr("app.market_data.client.MarketDataClient", lambda: client)
-    monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
-    monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: True)
-
-    first = routes.get_market_overview()
-    assert all(row["status"] == "LIVE" for row in first["indices"] + first["commodities"])
-
-    with routes._OVERVIEW_QUOTE_CACHE_LOCK:
-        for key, (refreshed_at, quotes) in tuple(routes._OVERVIEW_QUOTE_CACHE.items()):
-            routes._OVERVIEW_QUOTE_CACHE[key] = (
-                time.monotonic() - routes._OVERVIEW_QUOTE_CACHE_TTL_SECONDS - 1.0,
-                quotes,
-            )
-    routes.get_market_overview.snapshot_cache.clear()
-    client.fail = True
-
-    second = routes.get_market_overview()
-    assert all(row["status"] == "STALE" for row in second["indices"] + second["commodities"])
-    assert any("stale quote snapshot used" in item["error"] for item in second["errors"])
-    assert all(
-        row["quote_cache_age_seconds"] > routes._OVERVIEW_QUOTE_CACHE_TTL_SECONDS
-        for row in second["indices"] + second["commodities"]
-    )
-
-
-def test_market_overview_backs_off_repeated_quote_failures(monkeypatch):
-    calls = []
-
-    class FakeMaster:
-        def get_instrument(self, symbol, exchange):
-            return {"token": f"{exchange}-{symbol}"}
-
-        def resolve_index_instrument(self, symbol, exchange):
-            return {"token": f"{exchange}-{symbol}"}
-
-    class FailedClient:
-        def quote_many(self, exchange, instruments):
-            calls.append(exchange)
-            raise RuntimeError("provider unavailable")
-
-    monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
-    monkeypatch.setattr("app.market_data.client.MarketDataClient", FailedClient)
-    monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
-    monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: True)
-
-    first = routes.get_market_overview()
-    assert len(calls) == 3
-    assert all(row["status"] == "NO_QUOTE" for row in first["indices"] + first["commodities"])
-
-    routes.get_market_overview.snapshot_cache.clear()
-    second = routes.get_market_overview()
-
-    # Recent failures are negatively cached briefly so a 5-second browser poll
-    # cannot hammer a broker endpoint that is already unavailable/rate-limited.
-    assert len(calls) == 3
-    assert all(row["status"] == "NO_QUOTE" for row in second["indices"] + second["commodities"])
-
 
 
 def test_live_health_reuses_persisted_summary_without_staling_runtime_feed(monkeypatch):

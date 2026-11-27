@@ -2,7 +2,6 @@ from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataR
 from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.market_data.normalizer import AngelOneTickNormalizer
 from app.market_data.registry import InstrumentDescriptor
-from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 
 
 def descriptor(token="101", exchange="NSE", segment="EQ", instrument_type="equity"):
@@ -203,89 +202,6 @@ def test_depth_keeps_quote_missing_when_every_level_is_empty():
     assert record.bid is None
     assert record.ask is None
 
-
-
-def test_cash_future_quote_side_telemetry_counts_missing_sides_without_raw_frames():
-    runner = LiveCashFutureCommonRunner(
-        "unused.sqlite", instrument_master=object(), manager=object(), scanner=object()
-    )
-    record = AngelOneTickNormalizer().normalize(
-        descriptor(),
-        {
-            "token": "101",
-            "last_traded_price": 12345,
-            "best_5_buy_data": [{"price": 12300, "quantity": 4}],
-            "best_5_sell_data": [{"price": 0, "quantity": 0}],
-        },
-    )
-    runner._record_quote_side_quality(record, {"leg": "CASH"})
-    runner._record_quote_side_quality(record, {"leg": "FUTURE"})
-    stats = runner.snapshot()["quote_side_counts"]
-    assert stats == {
-        "cash_bid_missing": 0,
-        "cash_ask_missing": 1,
-        "future_bid_missing": 0,
-        "future_ask_missing": 1,
-    }
-    source_stats = runner.snapshot()["quote_side_source_counts"]
-    assert source_stats["cash_ask_source_missing"] == 1
-    assert source_stats["future_ask_source_missing"] == 1
-    assert source_stats["cash_bid_source_missing"] == 0
-    assert source_stats["cash_bid_normalization_missing"] == 0
-    assert not hasattr(runner, "_raw_payloads")
-
-
-def test_cash_future_quote_side_telemetry_identifies_normalization_gap():
-    runner = LiveCashFutureCommonRunner(
-        "unused.sqlite", instrument_master=object(), manager=object(), scanner=object()
-    )
-    record = AngelOneTickNormalizer().normalize(
-        descriptor(),
-        {
-            "token": "101",
-            "last_traded_price": 12345,
-            "best_5_buy_data": [{"price": 12500, "quantity": 4}],
-            "best_5_sell_data": [{"price": 12300, "quantity": 5}],
-        },
-    )
-    assert record.bid is None and record.ask is None  # crossed book is rejected
-    runner._record_quote_side_quality(record, {"leg": "CASH"})
-    stats = runner.snapshot()["quote_side_source_counts"]
-    assert stats["cash_bid_normalization_missing"] == 1
-    assert stats["cash_ask_normalization_missing"] == 1
-    assert stats["cash_bid_source_missing"] == 0
-    assert stats["cash_ask_source_missing"] == 0
-
-
-def test_cash_future_source_timestamp_requires_original_provider_timestamp():
-    has_timestamp = LiveCashFutureCommonRunner._has_provider_timestamp
-
-    assert has_timestamp({"exchange_timestamp": 1720000000123}) is True
-    assert has_timestamp({"exchange_timestamp_ns": 1720000000123000000}) is True
-    assert has_timestamp({"timestamp": "1720000000123"}) is True
-    assert has_timestamp({}) is False
-    assert has_timestamp({"exchange_timestamp": None, "timestamp": "invalid"}) is False
-    assert has_timestamp({"exchange_timestamp": float("nan")}) is False
-
-    runner = LiveCashFutureCommonRunner(
-        "unused.sqlite", instrument_master=object(), manager=object(), scanner=object()
-    )
-    meta = {"leg": "CASH", "underlying": "ABC", "contract_month": "CASH"}
-    record = AngelOneTickNormalizer().normalize(
-        descriptor(),
-        {"token": "101", "last_traded_price": 12345},
-    )
-    missing = runner._record_payload(record, meta)
-    assert missing["timestamp_ns"] > 0  # canonical fallback remains available
-    assert missing["source_timestamp_ns"] == 0  # but is not mislabeled as exchange time
-
-    raw_timestamp = 1720000000123
-    record_with_timestamp = AngelOneTickNormalizer().normalize(
-        descriptor(),
-        {"token": "101", "exchange_timestamp": raw_timestamp, "last_traded_price": 12345},
-    )
-    present = runner._record_payload(record_with_timestamp, meta)
-    assert present["source_timestamp_ns"] == raw_timestamp * 1_000_000
 
 
 

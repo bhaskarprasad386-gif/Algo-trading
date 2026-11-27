@@ -2,35 +2,24 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Bell, ChartNoAxesCombined, Home, Menu, Settings2, ShieldCheck, X } from "lucide-react";
+import { Activity, Bell, ChartNoAxesCombined, Home, Menu, Settings2, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { themeOptions, useTheme, type ThemeName } from "@/components/theme-provider";
 import { PagePushProvider } from "@/components/page-push-provider";
 
 const nav = [
   { href: "/", label: "Dashboard", icon: Home },
-  { href: "/scanner", label: "Cash Future", icon: Activity },
-  { href: "/strategies/calendar-spread", label: "Calendar Scanner", icon: Activity },
-  { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
   { href: "/strategies/early-impulse", label: "Early Impulse Pro", icon: Activity },
   { href: "/strategies/short-covering-long-unwinding", label: "Short Covering & Long Unwinding", icon: Activity },
   { href: "/strategies/vpt-x", label: "VPT-X Reversal Scanner", icon: Activity },
   { href: "/strategies/bi-directional-microstructure", label: "Bi-Directional System", icon: Activity },
   { href: "/strategies/iv-skew-flip", label: "IV Skew / IV Flip", icon: Activity },
-  { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
-  { href: "/strategies/credit-butterfly-condor/monthly", label: "Monthly Credit Butterfly / Condor", icon: Activity },
-  { href: "/strategies/box-spread-paper", label: "Box Paper Trading", icon: ShieldCheck },
   { href: "/custom-alert", label: "Custom Alert", icon: Bell },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const pageChannel = pathname === "/scanner" ? "cash-future"
-    : pathname.startsWith("/strategies/box-spread") ? "box-spread"
-    : pathname.startsWith("/strategies/calendar-spread") ? "calendar-spread"
-    : pathname.startsWith("/strategies/synthetic-arbitrage") ? "synthetic-arbitrage"
-    : pathname.startsWith("/strategies/iv-skew-flip") ? "iv-skew-flip"
-    : pathname.startsWith("/strategies/credit-butterfly-condor/monthly") ? "credit-butterfly-condor-monthly"
+  const pageChannel = pathname.startsWith("/strategies/iv-skew-flip") ? "iv-skew-flip"
     : null;
   const [mobileOpen, setMobileOpen] = useState(false);
   const { theme, setTheme } = useTheme();

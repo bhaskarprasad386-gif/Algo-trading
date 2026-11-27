@@ -109,75 +109,68 @@ def test_legacy_schema_upgrade_is_repeatable(migration_engine, monkeypatch):
 
 
 
-def test_created_legacy_tables_generate_primary_keys(migration_engine, monkeypatch):
-    """Dialect-specific generated IDs must work on both supported test engines."""
-    monkeypatch.setattr(schema_migrations, "engine", migration_engine)
-    _seed_minimal_legacy_schema(migration_engine)
 
-    schema_migrations.run_schema_migrations()
-
-    with migration_engine.begin() as connection:
-        generated_id = connection.execute(
-            text(
-                """
-                INSERT INTO backtest_jobs (
-                    job_id, symbol, contract_month, requested_days
-                ) VALUES (
-                    'migration-id-check', 'NIFTY', '2026-11', 1
-                ) RETURNING id
-                """
-            )
-        ).scalar_one()
-
-    assert isinstance(generated_id, int)
-    assert generated_id > 0
-
-
-
-def test_box_snapshot_expiry_backfill_preserves_only_known_classifications(
+def test_existing_legacy_backtest_jobs_records_are_preserved_without_migration(
     migration_engine, monkeypatch
 ):
-    """Legacy JSON classifications are copied; unknown/malformed rows stay NULL."""
+    """Retirement must leave existing job history untouched and never recreate it."""
     monkeypatch.setattr(schema_migrations, "engine", migration_engine)
     _seed_minimal_legacy_schema(migration_engine)
     with migration_engine.begin() as connection:
-        connection.execute(
-            text(
-                """
-                CREATE TABLE live_box_spread_snapshots (
-                    id INTEGER PRIMARY KEY,
-                    symbol VARCHAR(32),
-                    payload_json TEXT,
-                    observed_at TIMESTAMP
-                )
-                """
-            )
-        )
-        connection.execute(
-            text(
-                """
-                INSERT INTO live_box_spread_snapshots (id, symbol, payload_json)
-                VALUES
-                    (1, 'NIFTY', '{"expiry_type":"weekly"}'),
-                    (2, 'NIFTY', '{"expiry_type":"MONTHLY"}'),
-                    (3, 'NIFTY', '{"expiry_type":"UNKNOWN"}'),
-                    (4, 'NIFTY', 'not-json')
-                """
-            )
-        )
+        connection.execute(text(
+            "CREATE TABLE backtest_jobs (id INTEGER PRIMARY KEY, job_id TEXT NOT NULL, "
+            "status TEXT NOT NULL, legacy_payload TEXT NOT NULL)"
+        ))
+        connection.execute(text(
+            "INSERT INTO backtest_jobs (id, job_id, status, legacy_payload) "
+            "VALUES (7, 'legacy-job-7', 'complete', 'preserve-me')"
+        ))
+        before_columns = [item["name"] for item in inspect(connection).get_columns("backtest_jobs")]
 
     schema_migrations.run_schema_migrations()
 
     with migration_engine.connect() as connection:
+        after_columns = [item["name"] for item in inspect(connection).get_columns("backtest_jobs")]
+        row = connection.execute(
+            text("SELECT id, job_id, status, legacy_payload FROM backtest_jobs WHERE id=7")
+        ).one()
+    assert after_columns == before_columns
+    assert row == (7, "legacy-job-7", "complete", "preserve-me")
+
+
+def test_box_historical_snapshot_records_are_not_migrated_or_deleted(
+    migration_engine, monkeypatch
+):
+    """Box history remains byte-for-byte readable; runtime startup adds no Box schema."""
+    monkeypatch.setattr(schema_migrations, "engine", migration_engine)
+    _seed_minimal_legacy_schema(migration_engine)
+    original_rows = [
+        (1, "NIFTY", '{"expiry_type":"weekly"}'),
+        (2, "NIFTY", '{"expiry_type":"MONTHLY"}'),
+        (3, "NIFTY", '{"expiry_type":"UNKNOWN"}'),
+        (4, "NIFTY", "not-json"),
+    ]
+    with migration_engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE live_box_spread_snapshots ("
+            "id INTEGER PRIMARY KEY, symbol VARCHAR(32), payload_json TEXT, observed_at TIMESTAMP)"
+        ))
+        connection.execute(
+            text("INSERT INTO live_box_spread_snapshots (id, symbol, payload_json) "
+                 "VALUES (:id, :symbol, :payload)"),
+            [{"id": row[0], "symbol": row[1], "payload": row[2]} for row in original_rows],
+        )
+        before_columns = [item["name"] for item in inspect(connection).get_columns("live_box_spread_snapshots")]
+
+    schema_migrations.run_schema_migrations()
+
+    with migration_engine.connect() as connection:
+        after_columns = [item["name"] for item in inspect(connection).get_columns("live_box_spread_snapshots")]
         rows = connection.execute(
-            text(
-                "SELECT id, expiry_type FROM live_box_spread_snapshots ORDER BY id"
-            )
+            text("SELECT id, symbol, payload_json FROM live_box_spread_snapshots ORDER BY id")
         ).all()
-
-    assert rows == [(1, "WEEKLY"), (2, "MONTHLY"), (3, None), (4, None)]
-
-
+    assert after_columns == before_columns
+    assert rows == original_rows
 
 def test_order_fill_identity_index_prevents_duplicate_cash_mutations(
     migration_engine, monkeypatch

@@ -15,18 +15,3 @@ def test_batch12_external_intelligence_route_is_registered_and_paper_safe():
     assert 'https://m.rbi.org.in/home.aspx' in route
     assert 'https://dbie.rbihub.in/' in route
     assert 'live_orders' in route and '"OFF"' in route
-
-
-def test_batch12_analyze_hub_consumes_external_macro_source_without_fabrication():
-    ui = WEB.read_text(encoding="utf-8")
-    for marker in (
-        '/api/v1/intelligence/macro',
-        'rbiCurrent',
-        'rbiPrevious',
-        'rbiChange',
-        'rbiStatement',
-        'analyzeRbiHealth',
-        'SOURCE PENDING',
-        'No policy text fabricated',
-    ):
-        assert marker in ui

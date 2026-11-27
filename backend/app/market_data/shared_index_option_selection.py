@@ -90,8 +90,8 @@ class IndexOptionSelection:
 
 
 _LOCKED_UNIVERSE = {
-    "NIFTY": {"expiry_type": "WEEKLY", "radius": 6},
-    "BANKNIFTY": {"expiry_type": "MONTHLY", "radius": 5},
+    "NIFTY": {"expiry_type": "WEEKLY", "radius": 15},
+    "BANKNIFTY": {"expiry_type": "MONTHLY", "radius": 15},
 }
 
 

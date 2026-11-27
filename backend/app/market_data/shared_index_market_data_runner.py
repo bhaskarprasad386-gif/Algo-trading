@@ -17,7 +17,7 @@ from .shared_index_option_rotation_controller import SharedIndexOptionRotationCo
 from .shared_index_option_selection import select_locked_index_options
 from .shared_index_spot_resolver import resolve_locked_index_spot_descriptors
 from .shared_index_option_selection import _parse_expiry
-from .box_spread_expiry import classify_index_expiry_dates
+from .shared_index_expiry import classify_index_expiry_dates
 from .shared_index_derived_iv import SharedIndexDerivedIV
 
 
@@ -387,6 +387,15 @@ class SharedIndexMarketDataRunner:
                 self._check_option_expiry_rollover()
                 self._check_futures_rollover()
 
+    def instrument_rows_snapshot(self) -> tuple[dict, ...]:
+        """Return a read-only copy of the instrument master already loaded by this runner.
+
+        Consumers such as IV may use contract metadata from this snapshot, but
+        must not trigger a second broker/master download or create subscriptions.
+        """
+        with self._lock:
+            return tuple(dict(row) for row in self._rows)
+
     def start(self, instrument_rows: Iterable[dict] | None = None) -> dict:
         with self._lock:
             if self._running:
@@ -510,7 +519,7 @@ class SharedIndexMarketDataRunner:
             for symbol, record in spot_records.items()
         }
         feed_groups = state.get("feed_health_by_group", {})
-        expected = {"NIFTY": {"index": 1, "future": 1, "option": 26}, "BANKNIFTY": {"index": 1, "future": 1, "option": 22}}
+        expected = {"NIFTY": {"index": 1, "future": 1, "option": 62}, "BANKNIFTY": {"index": 1, "future": 1, "option": 62}}
         counts = {}
         for underlying, required in expected.items():
             counts[underlying] = {}
@@ -518,7 +527,7 @@ class SharedIndexMarketDataRunner:
                 group = feed_groups.get(underlying + ":" + kind, {})
                 counts[underlying][kind] = int(group.get("count", 0))
         universe_complete = counts == expected
-        all_records_fresh = int(state.get("instrument_count", 0)) == 52 and int(state.get("fresh_count", 0)) == 52
+        all_records_fresh = int(state.get("instrument_count", 0)) == 128 and int(state.get("fresh_count", 0)) == 128
         live_data_ready = running and bootstrap_done and universe_complete and all_records_fresh
         return {
             "runner": "shared-index-market-data",
@@ -625,15 +634,15 @@ class SharedIndexMarketDataRunner:
                 if side in {"CE", "PE"}:
                     per_underlying[underlying][side] += 1
         expected_by_underlying = {
-            "NIFTY": {"index": 1, "future": 1, "option": 26, "CE": 13, "PE": 13},
-            "BANKNIFTY": {"index": 1, "future": 1, "option": 22, "CE": 11, "PE": 11},
+            "NIFTY": {"index": 1, "future": 1, "option": 62, "CE": 31, "PE": 31},
+            "BANKNIFTY": {"index": 1, "future": 1, "option": 62, "CE": 31, "PE": 31},
         }
-        universe_complete = type_counts == {"index": 2, "future": 2, "option": 48}
+        universe_complete = type_counts == {"index": 2, "future": 2, "option": 124}
         universe_complete = universe_complete and all(
             per_underlying[underlying] == expected_by_underlying[underlying]
             for underlying in LOCKED
         )
-        all_records_fresh = len(enriched_records) == 52 and all(
+        all_records_fresh = len(enriched_records) == 128 and all(
             record.get("fresh") for record in enriched_records
         )
         live_data_ready = running and bootstrap_done and universe_complete and all_records_fresh
@@ -653,7 +662,7 @@ class SharedIndexMarketDataRunner:
             "latest_spots": latest_spots,
             "futures_expiries": dict(self._futures_expiries),
             "future_selection": "nearest listed non-expired NFO FUTIDX per underlying",
-            "option_universe": {"NIFTY": "weekly ATM +/- 6", "BANKNIFTY": "monthly ATM +/- 5"},
+            "option_universe": {"NIFTY": "weekly ATM +/- 15", "BANKNIFTY": "monthly ATM +/- 15"},
             "state": state,
             "records": enriched_records,
             "universe_coverage": {"counts": type_counts, "per_underlying": per_underlying, "complete": universe_complete},

@@ -1,30 +1,24 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Activity, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, Zap, LayoutDashboard } from "lucide-react";
+import { Activity, Bell, Clock3, Database, Gauge, Radio, TriangleAlert, TrendingDown, TrendingUp, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig, getDashboardWsUrl } from "@/lib/config";
 
-const markets = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
+const markets = ["NIFTY", "BANKNIFTY"];
 const strategies = [
-  { name: "Cash Future", detail: "Live Scanner • F&O •", href: "/scanner", icon: Radio },
-  { name: "Calendar Spread", detail: "Time spread • NIFTY •", href: "/strategies/calendar-spread", icon: Activity },
-  { name: "Synthetic Arbitrage", detail: "Cash-Synth • Arbitrage •", href: "/strategies/synthetic-arbitrage", icon: Zap },
-  { name: "Box Spread", detail: "Options • Box •", href: "/strategies/box-spread", icon: Gauge },
-  { name: "Strategy Scanner", detail: "Dedicated workspaces •", href: "/scanner", icon: Radio },
 ];
 
 export default function HomePage() {
   const [apiStatus, setApiStatus] = useState<"checking" | "connected" | "degraded" | "error">("checking");
   const [apiDetail, setApiDetail] = useState("Waiting for health response");
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "error">("connecting");
-  const [snapshot, setSnapshot] = useState({ calendar: 0, synthetic: 0, box: 0, opportunities: 0, timestamp: null as string | null, cashFutureObservedAt: null as string | null });
+  const [snapshot, setSnapshot] = useState({ opportunities: 0, timestamp: null as string | null });
   const [indexLtps, setIndexLtps] = useState<Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null; status: string }>>({});
   const [marketSession, setMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [feedMarketSession, setFeedMarketSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [feedHealthCheckedAt, setFeedHealthCheckedAt] = useState<string | null>(null);
-  const [mcxSession, setMcxSession] = useState<"OPEN" | "CLOSED" | "UNKNOWN">("UNKNOWN");
   const [marketCheckedAt, setMarketCheckedAt] = useState<string | null>(null);
   const [marketOverviewError, setMarketOverviewError] = useState(false);
   const [runtimeLastSuccessAt, setRuntimeLastSuccessAt] = useState<number | null>(null);
@@ -196,16 +190,9 @@ export default function HomePage() {
           lastSnapshotAt = Date.now();
           setWsStatus("connected");
           setLastDashboardMessageAt(lastSnapshotAt);
-          const observedAt = message?.scanner?.health?.last_observation_at;
-          const observedTime = observedAt == null ? NaN : new Date(observedAt).getTime();
-          const validObservedAt = Number.isFinite(observedTime) && observedTime <= Date.now() + 5_000 ? observedAt : null;
           setSnapshot({
-            calendar: Number(message?.integration?.calendar_spread?.count ?? 0),
-            synthetic: Number(message?.integration?.synthetic_arbitrage?.count ?? 0),
-            box: Number(message?.integration?.box_spread?.count ?? 0),
             opportunities: Number(message?.scanner?.opportunity_count ?? 0),
             timestamp: message?.timestamp ?? null,
-            cashFutureObservedAt: validObservedAt,
           });
         } catch {
           // Ignore malformed dashboard messages without losing the last valid snapshot.
@@ -252,8 +239,6 @@ export default function HomePage() {
         const next: Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null; status: string }> = {};
         const sessionValue = body?.nse_market_session ?? body?.market_session;
         const session = sessionValue === "OPEN" ? "OPEN" : sessionValue === "CLOSED" ? "CLOSED" : "UNKNOWN";
-        const mcxValue = body?.mcx_market_session;
-        const mcx = mcxValue === "OPEN" ? "OPEN" : mcxValue === "CLOSED" ? "CLOSED" : "UNKNOWN";
         for (const row of Array.isArray(body?.indices) ? body.indices : []) {
           if (row?.symbol) {
             const ltp = row?.ltp == null ? null : Number(row.ltp);
@@ -264,7 +249,6 @@ export default function HomePage() {
         }
         if (!cancelled) {
           setMarketSession(session);
-          setMcxSession(mcx);
           setMarketCheckedAt(new Date().toISOString());
           setMarketOverviewError(false);
           setIndexLtps(next);
@@ -273,9 +257,7 @@ export default function HomePage() {
         if (!cancelled) setMarketOverviewError(true);
         // Keep last values visible, but mark the source unavailable/stale.
       } finally {
-        // The backend refreshes broker quote batches on a 15-second budget.
-        // Keep this informational home-page poll aligned with that cadence;
-        // strategy workspaces retain their own live WebSocket updates.
+        // This endpoint reads only the Shared Runner's in-memory NIFTY/BANKNIFTY snapshot.
         if (!cancelled) timer = window.setTimeout(() => { void loadMarketOverview(); }, 15000);
       }
     };
@@ -361,21 +343,13 @@ export default function HomePage() {
         setRuntimeLastSuccessAt(sampleAt);
         const currentCounters = {
           commonTicks: Number(feed.ticks_received ?? 0),
-          cashPayloads: Number(runners.cash_future?.records_received ?? runners.cash_future?.payload_callbacks ?? runners.cash_future?.callbacks ?? 0),
-          cashUpdates: Number(runners.cash_future?.scanner_updates ?? runners.cash_future?.scanner_results ?? runners.cash_future?.observations ?? 0),
-          syntheticPayloads: Number(runners.synthetic_arbitrage?.records_received ?? runners.synthetic_arbitrage?.payload_callbacks ?? runners.synthetic_arbitrage?.callbacks ?? 0),
-          syntheticUpdates: Number(runners.synthetic_arbitrage?.scanner_updates ?? runners.synthetic_arbitrage?.scanner_results ?? runners.synthetic_arbitrage?.observations ?? 0),
-          boxPayloads: Number(runners.box_spread?.records_received ?? runners.box_spread?.payload_callbacks ?? runners.box_spread?.callbacks ?? 0),
-          boxUpdates: Number(runners.box_spread?.scanner_updates ?? runners.box_spread?.scanner_results ?? runners.box_spread?.observations ?? 0),
-          calendarPayloads: Number(runners.calendar_spread?.records_received ?? runners.calendar_spread?.payload_callbacks ?? runners.calendar_spread?.callbacks ?? 0),
-          calendarUpdates: Number(runners.calendar_spread?.scanner_updates ?? runners.calendar_spread?.scanner_results ?? runners.calendar_spread?.observations ?? 0),
         };
         const previousCounters = runnerCountersRef.current;
         const previousSampleAt = runnerCounterSampleAtRef.current;
         if (previousCounters && previousSampleAt != null && receivedAt > previousSampleAt) {
           const elapsedSeconds = (receivedAt - previousSampleAt) / 1000;
           const rate = (key: string) => { const current = currentCounters[key as keyof typeof currentCounters]; const previous = previousCounters[key]; return !Number.isFinite(current) || !Number.isFinite(previous) || current < previous ? Number.NaN : (current - previous) / elapsedSeconds; };
-          setRunnerTps({ commonTicks: rate("commonTicks"), cashPayloads: rate("cashPayloads"), syntheticPayloads: rate("syntheticPayloads"), boxPayloads: rate("boxPayloads"), calendarPayloads: rate("calendarPayloads") });
+          setRunnerTps({ commonTicks: rate("commonTicks") });
         }
         runnerCounterSampleAtRef.current = receivedAt;
         if (previousCounters) {
@@ -402,10 +376,7 @@ export default function HomePage() {
         }
         // Prefer server-observed timestamps over when this browser first noticed
         // a cumulative counter. This preserves the true stale age across page reloads.
-        const serverActivitySamples: Array<[string, unknown]> = [
-          ["cashPayloads", runners.cash_future?.last_payload_at_ns],
-          ["cashUpdates", runners.cash_future?.last_scanner_update_at_ns],
-        ];
+        const serverActivitySamples: Array<[string, unknown]> = [];
         const nowMs = Date.now();
         const validServerActivity = serverActivitySamples.flatMap(([key, raw]) => {
           const ns = Number(raw);
@@ -457,12 +428,7 @@ export default function HomePage() {
           consumers: Array.isArray(feed.consumers) ? feed.consumers : [],
           deliveryErrors: Number(feed.delivery_errors ?? 0),
           normalizerErrors: Number(feed.normalizer_errors ?? 0),
-          runners: {
-            cash_future: runnerDetail(runners.cash_future),
-            synthetic_arbitrage: runnerDetail(runners.synthetic_arbitrage),
-            box_spread: runnerDetail(runners.box_spread),
-            calendar_spread: runnerDetail(runners.calendar_spread),
-          },
+          runners: {},
         });
       } catch {
         // Keep last values for context; UI separately marks telemetry stale/unavailable.
@@ -555,14 +521,9 @@ export default function HomePage() {
   const dashboardStreamStale = wsStatus !== "connected" || dashboardMessageAge == null || dashboardMessageAge > 15;
   const commonSocketState = runtime.activeInstruments === 0 ? "NO SUBSCRIPTIONS" : runtime.requiredSocketGroupCount == null ? "UNKNOWN" : runtime.requiredSocketGroupCount === 0 ? "DISCONNECTED" : runtime.requiredSocketGroups.length === runtime.requiredSocketGroupCount && runtime.requiredSocketGroups.every((group) => runtime.connectedGroupNames.includes(group)) && runtime.socketGroups === runtime.requiredSocketGroupCount && runtime.disconnectedGroups.length === 0 ? "CONNECTED" : runtime.connectedGroups > 0 ? "DEGRADED" : "DISCONNECTED";
   const connectedRequiredGroupCount = runtime.requiredSocketGroups.filter((group) => runtime.connectedGroupNames.includes(group)).length;
-  const observationTime = snapshot.cashFutureObservedAt == null ? NaN : new Date(snapshot.cashFutureObservedAt).getTime();
-  // Future observation timestamps are unknown, not age-zero/fresh observations.
-  const observationAge = Number.isFinite(observationTime) && observationTime <= Date.now() ? (Date.now() - observationTime) / 1000 : null;
-  const observationAgeLabel = observationAge == null ? (snapshot.cashFutureObservedAt ? "Cash-Future observation timestamp unavailable" : "No Cash-Future observation time") : observationAge < 60 ? `Cash-Future observation ${Math.round(observationAge)}s ago` : `Cash-Future observation stale • ${Math.round(observationAge / 60)}m ago`;
   const marketDataAge = marketCheckedAt ? Math.max(0, (Date.now() - new Date(marketCheckedAt).getTime()) / 1000) : null;
   const feedHealthAge = feedHealthCheckedAt ? Math.max(0, (Date.now() - new Date(feedHealthCheckedAt).getTime()) / 1000) : null;
   const effectiveMarketSession = marketDataAge != null && marketDataAge <= 15 && marketSession !== "UNKNOWN" ? marketSession : feedHealthAge != null && feedHealthAge <= 10 ? feedMarketSession : "UNKNOWN";
-  const effectiveMcxSession = marketDataAge != null && marketDataAge <= 15 ? mcxSession : "UNKNOWN";
   const liveFeedAlerts = diagnosticErrors.filter((e) => {
     const eventTime = new Date(e.time).getTime();
     const id = String(e.id ?? "");
@@ -631,9 +592,6 @@ export default function HomePage() {
   ];
   const scannerStatus = [
     { label: "Positive Net-Gap Signals (max 50)", value: snapshot.opportunities.toLocaleString("en-IN") },
-    { label: "Calendar Rows", value: snapshot.calendar.toLocaleString("en-IN") },
-    { label: "Synthetic Rows", value: snapshot.synthetic.toLocaleString("en-IN") },
-    { label: "Box Rows", value: snapshot.box.toLocaleString("en-IN") },
   ];
 
   return (
@@ -643,12 +601,11 @@ export default function HomePage() {
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { label: "NSE EQUITY", value: effectiveMarketSession, detail: "09:15–15:30 IST", Icon: Activity },
-            { label: "MCX COMMODITIES", value: effectiveMcxSession, detail: "Session from market API", Icon: Activity },
             { label: "API SERVER", value: apiStatus === "connected" ? "ONLINE" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" ? "UNREACHABLE" : "CHECKING", detail: apiDetail, Icon: Database },
             { label: "COMMON WEBSOCKET", value: commonSocketState, detail: `${connectedRequiredGroupCount}/${runtime.requiredSocketGroupCount == null ? "?" : runtime.requiredSocketGroupCount} required groups connected • ${runtime.socketGroups} active sockets • cap ${runtime.maxSocketSessions}`, Icon: Radio },
           ].map((item) => {
             const Icon = item.Icon;
-            const positive = item.label === "API SERVER" ? apiStatus === "connected" : item.label === "COMMON WEBSOCKET" ? commonSocketState === "CONNECTED" : item.label === "NSE EQUITY" || item.label === "MCX COMMODITIES" ? item.value === "OPEN" : false;
+            const positive = item.label === "API SERVER" ? apiStatus === "connected" : item.label === "COMMON WEBSOCKET" ? commonSocketState === "CONNECTED" : item.label === "NSE EQUITY" ? item.value === "OPEN" : false;
             const warning = item.value === "CLOSED" || item.value === "UNKNOWN" || item.value === "DEGRADED" || item.value === "UNKNOWN" || item.value === "NO SUBSCRIPTIONS" || item.value === "CHECKING";
             return <Card key={item.label} className="flex min-h-[62px] items-center gap-2 rounded-lg border theme-border theme-surface-2 px-2.5 py-2">
               <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${positive ? "theme-success-bg theme-success" : warning ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger"}`}><Icon size={15} /></span>
@@ -661,14 +618,14 @@ export default function HomePage() {
           })}
         </div>
         <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1.5 rounded-lg border theme-border theme-surface-2 px-2.5 py-1.5">
-          <div className="text-[9px] leading-4 theme-subtle">Exchange session is schedule-based. API response time is not the same as exchange tick time. Cash-Future freshness uses its server observation timestamp; other scanner ages reflect browser-observed counter movement.</div>
+          <div className="text-[9px] leading-4 theme-subtle">Market Overview uses only the Shared Runner NIFTY/BANKNIFTY spot feed. Quote age is measured from the source tick.</div>
           <div className={`inline-flex shrink-0 items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-semibold ${feedLabel === "LIVE" ? "theme-success-bg theme-success" : feedLabel === "CLOSED" ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger"}`}><Radio size={12} /> {feedLabel === "LIVE" ? "COMMON NSE/NFO FEED LIVE" : feedLabel === "CLOSED" ? "COMMON FEED • MARKET CLOSED" : `COMMON NSE/NFO FEED ${feedLabel.toLowerCase()}`}</div>
         </div>
       </section>
 
       <section aria-label="Market overview">
         <div className="mb-1.5 flex items-center gap-1.5"><Activity size={13} className="theme-accent" /><h2 className="text-xs font-semibold">Market Overview</h2></div>
-        <div className="grid max-w-full grid-cols-2 gap-1.5 sm:grid-cols-3 xl:grid-cols-6">
+        <div className="grid max-w-full grid-cols-2 gap-1.5 sm:grid-cols-2 xl:grid-cols-2">
           {markets.map((symbol) => {
             const quote = indexLtps[symbol];
             const quoteAvailable = !marketOverviewError && marketDataAge != null && marketDataAge <= 15 && (effectiveMarketSession === "OPEN" ? quote?.status === "LIVE" : effectiveMarketSession === "CLOSED" ? quote?.status === "CLOSED_LAST_CLOSE" : false);

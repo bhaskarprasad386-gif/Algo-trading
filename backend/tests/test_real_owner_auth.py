@@ -12,13 +12,13 @@ TEST_PASSWORD = "a-dedicated-owner-password-123"
 
 
 def setup_owner(monkeypatch):
-    monkeypatch.setenv("BOX_SPREAD_REAL_OWNER_PASSWORD", TEST_PASSWORD)
+    monkeypatch.setenv("REAL_TRADING_OWNER_PASSWORD", TEST_PASSWORD)
     monkeypatch.setattr(auth.settings, "SECRET_KEY", TEST_SECRET)
     auth._attempts.clear()
 
 
 def test_owner_login_fails_closed_when_password_not_configured(monkeypatch):
-    monkeypatch.delenv("BOX_SPREAD_REAL_OWNER_PASSWORD", raising=False)
+    monkeypatch.delenv("REAL_TRADING_OWNER_PASSWORD", raising=False)
     monkeypatch.setattr(auth.settings, "SECRET_KEY", TEST_SECRET)
     with pytest.raises(HTTPException) as raised:
         auth.login_real_owner(auth.RealOwnerLogin(password="anything"))
@@ -26,7 +26,7 @@ def test_owner_login_fails_closed_when_password_not_configured(monkeypatch):
 
 
 def test_owner_login_rejects_weak_configured_password(monkeypatch):
-    monkeypatch.setenv("BOX_SPREAD_REAL_OWNER_PASSWORD", "too-short")
+    monkeypatch.setenv("REAL_TRADING_OWNER_PASSWORD", "too-short")
     monkeypatch.setattr(auth.settings, "SECRET_KEY", TEST_SECRET)
     with pytest.raises(HTTPException) as raised:
         auth.login_real_owner(auth.RealOwnerLogin(password="too-short"))
@@ -58,8 +58,8 @@ def test_owner_guard_rejects_missing_and_invalid_tokens(monkeypatch):
 
 
 @pytest.mark.parametrize("claims", [
-    {"sub": "box-spread-paper-owner", "scope": "box-spread-paper"},
-    {"sub": "another-user", "scope": "box-spread-real-owner"},
+    {"sub": "paper-trading-owner", "scope": "paper-trading"},
+    {"sub": "another-user", "scope": "real-trading-owner"},
 ])
 def test_owner_guard_rejects_other_subjects_and_scopes(monkeypatch, claims):
     setup_owner(monkeypatch)

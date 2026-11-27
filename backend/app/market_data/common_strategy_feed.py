@@ -1,7 +1,8 @@
-"""Strategy-facing adapter over the shared Angel One WebSocket manager.
+"""Shared Index Runner's sole adapter to the production Angel One WebSocket.
 
-Strategies register concrete instruments and consume canonical MarketDataRecord
-values. No strategy opens or owns a broker WebSocket directly.
+The runner owns the broker subscription lifecycle and publishes canonical
+MarketDataRecord values. Strategy code must consume runner state, not attach
+additional consumers to the production manager.
 """
 from __future__ import annotations
 
@@ -26,6 +27,101 @@ _SHARED_MANAGER: CommonWebSocketManager | None = None
 _SHARED_AUTH: AngelOneAuth | None = None
 
 
+class SharedIndexOnlyWebSocketManager(CommonWebSocketManager):
+    """Production broker manager accepts subscriptions only from the shared index runner."""
+
+    ALLOWED_CONSUMERS = frozenset({
+        "shared-index-market-data:spot",
+        "shared-index-market-data:options",
+        "shared-index-market-data:futures",
+    })
+
+    @classmethod
+    def validate_consumer(cls, consumer: str) -> str:
+        normalized = str(consumer or "").strip()
+        if normalized not in cls.ALLOWED_CONSUMERS:
+            raise PermissionError(
+                "the production Angel One WebSocket is owned exclusively by "
+                "SharedIndexMarketDataRunner (NIFTY/BANKNIFTY)"
+            )
+        return normalized
+
+    @staticmethod
+    def validate_descriptor(descriptor: InstrumentDescriptor) -> None:
+        underlying = str(getattr(descriptor, "underlying", "") or "").strip().upper()
+        kind = str(getattr(descriptor, "instrument_type", "") or "").strip().lower()
+        exchange = str(getattr(descriptor, "exchange", "") or "").strip().upper()
+        segment = str(getattr(descriptor, "segment", "") or "").strip().upper()
+        key_exchange = str(getattr(descriptor.key, "exchange", "") or "").strip().upper()
+        key_segment = str(getattr(descriptor.key, "segment", "") or "").strip().upper()
+        expected_exchange = "NSE" if kind == "index" else "NFO"
+        if underlying not in {"NIFTY", "BANKNIFTY"}:
+            raise PermissionError("production live universe is locked to NIFTY/BANKNIFTY")
+        if kind not in {"index", "option", "future"}:
+            raise PermissionError("production live feed accepts only index, option and future contracts")
+        if (exchange, segment, key_exchange, key_segment) != (
+            expected_exchange, expected_exchange, expected_exchange, expected_exchange
+        ):
+            raise PermissionError("production live feed rejects instruments outside NSE/NFO index contracts")
+        if kind == "index" and str(descriptor.symbol).strip().upper() != underlying:
+            raise PermissionError("spot descriptor symbol must match its locked underlying")
+        if kind == "option":
+            required_expiry_type = "WEEKLY" if underlying == "NIFTY" else "MONTHLY"
+            if str(descriptor.expiry_type or "").strip().upper() != required_expiry_type:
+                raise PermissionError(
+                    f"{underlying} options are restricted to {required_expiry_type} expiry"
+                )
+
+    def register_callback(self, consumer: str, callback) -> None:
+        self.validate_consumer(consumer)
+        return super().register_callback(consumer, callback)
+
+    def unregister_callback(self, consumer: str) -> None:
+        self.validate_consumer(consumer)
+        return super().unregister_callback(consumer)
+
+    def register_normalized_callback(self, consumer: str, callback) -> None:
+        self.validate_consumer(consumer)
+        return super().register_normalized_callback(consumer, callback)
+
+    def unregister_normalized_callback(self, consumer: str) -> None:
+        self.validate_consumer(consumer)
+        return super().unregister_normalized_callback(consumer)
+
+    def register_normalized_observer(self, consumer: str, callback) -> None:
+        self.validate_consumer(consumer)
+        return super().register_normalized_observer(consumer, callback)
+
+    def unregister_normalized_observer(self, consumer: str) -> None:
+        self.validate_consumer(consumer)
+        return super().unregister_normalized_observer(consumer)
+
+    def register_transport_observer(self, consumer: str, callback) -> None:
+        self.validate_consumer(consumer)
+        return super().register_transport_observer(consumer, callback)
+
+    def unregister_transport_observer(self, consumer: str) -> None:
+        self.validate_consumer(consumer)
+        return super().unregister_transport_observer(consumer)
+
+    def subscribe(self, consumer: str, keys, mode: int = 1):
+        self.validate_consumer(consumer)
+        for key in keys:
+            descriptor = self.registry.get(key)
+            if descriptor is None:
+                raise KeyError(f"instrument is not registered: {key.value}")
+            self.validate_descriptor(descriptor)
+        return super().subscribe(consumer, keys, mode)
+
+    def unsubscribe(self, consumer: str, keys=None) -> None:
+        self.validate_consumer(consumer)
+        return super().unsubscribe(consumer, keys)
+
+    def clear_consumer(self, consumer: str) -> None:
+        self.validate_consumer(consumer)
+        return super().clear_consumer(consumer)
+
+
 def shared_common_manager_snapshot() -> dict[str, Any] | None:
     """Return runtime state without creating the shared manager or persisting ticks."""
     with _SHARED_LOCK:
@@ -40,13 +136,13 @@ def shared_common_manager(
     auth: AngelOneAuth | None = None,
     socket_factory: Callable[[], Any] | None = None,
 ) -> CommonWebSocketManager:
-    """Return the process-wide common broker manager used by strategy consumers."""
+    """Return the process-wide manager reserved for SharedIndexMarketDataRunner."""
     global _SHARED_MANAGER, _SHARED_AUTH
     with _SHARED_LOCK:
         if _SHARED_MANAGER is None:
             _SHARED_AUTH = auth or AngelOneAuth()
             factory = socket_factory or (lambda: MarketDataWebSocket(auth=_SHARED_AUTH, auto_reconnect=False))
-            _SHARED_MANAGER = CommonWebSocketManager(
+            _SHARED_MANAGER = SharedIndexOnlyWebSocketManager(
                 socket_factory=factory,
                 # Keep the broker transport callback limited to bounded enqueue.
                 # Strategy normalization/cache fan-out runs on the shard worker,
@@ -217,6 +313,13 @@ class CommonStrategyMarketFeed:
             raise TypeError("callback must be callable")
         if len({descriptor.key for descriptor in descriptors}) != len(descriptors):
             raise ValueError("duplicate instruments in feed start")
+        validate_consumer = getattr(self.manager, "validate_consumer", None)
+        if callable(validate_consumer):
+            validate_consumer(self.consumer)
+        validate_descriptor = getattr(self.manager, "validate_descriptor", None)
+        if callable(validate_descriptor):
+            for descriptor in descriptors:
+                validate_descriptor(descriptor)
         # InstrumentKey is the broker-level identity. Multiple strategy
         # consumers may describe the same broker instrument with different
         # strategy metadata (for example an option subscription carrying its

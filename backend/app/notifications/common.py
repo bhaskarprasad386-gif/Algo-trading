@@ -98,18 +98,16 @@ def _valid_alert_rule(rule) -> bool:
     """Fail closed if persisted alert/risk configuration is malformed."""
     try:
         import math
-        strategy_metrics = {
-            "cash-future": {"gap", "gross_profit", "net_profit"},
-            "calendar-spread": {"gap", "gross_profit"},
-            "synthetic-future-cash-carry": {"gap", "gross_profit"},
-            "box-spread": {"gap", "gross_profit"},
-        }
         metric = str(getattr(rule, "metric", "gross_profit")).strip().lower()
         operator = str(getattr(rule, "operator", ">=")).strip()
         threshold = float(getattr(rule, "threshold", 0.0))
         strategy = str(getattr(rule, "strategy_id", "")).strip().lower()
+        # Alert rules are generic, persisted notification filters. Validate
+        # against the supported event-metadata contract rather than an empty
+        # per-strategy placeholder (which silently rejected every rule).
         return (
-            metric in strategy_metrics.get(strategy, set())
+            bool(strategy)
+            and metric in _ALERT_METADATA_KEYS
             and operator in {">=", ">", "<=", "<", "="}
             and math.isfinite(threshold)
             and math.isfinite(float(rule.min_gross_profit))
@@ -171,9 +169,11 @@ class AlertService:
         if not bool(getattr(user, "alerts_enabled", True)):
             return False
         key = (int(user.id), event.event_id)
-        cooldown_ns = int(max(0.0, float(settings.LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS)) * 1_000_000_000)
-        previous = self._last_sent.get(key, 0)
-        if event.timestamp_ns - previous < cooldown_ns:
+        cooldown_ns = int(max(
+            0.0, float(getattr(settings, "ALERT_NOTIFICATION_COOLDOWN_SECONDS", 0.0))
+        ) * 1_000_000_000)
+        previous = self._last_sent.get(key)
+        if previous is not None and event.timestamp_ns - previous < cooldown_ns:
             return False
         subject = f"Algo Trading Alert: {event.strategy_id} / {event.symbol}"
         sent = False

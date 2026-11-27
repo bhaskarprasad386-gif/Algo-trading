@@ -30,56 +30,40 @@ test("dashboard no longer links to Custom Strategy", async () => {
   assert.equal(dashboard.includes("/strategies/custom-strategy"), false);
 });
 
-test("Box Spread removed sections and mounts while scanner/history remain", async () => {
-  const page = await read("app/strategies/box-spread/page.tsx");
-  assert.equal(page.includes("BoxSpreadShadowPanel"), false);
-  assert.equal(await exists("components/BoxSpreadShadowPanel.tsx"), false);
-  assert.equal(page.includes("Shadow Monitor"), false);
-  assert.equal(page.includes("System Health"), false);
-  assert.equal(page.includes("box-system-health"), false);
-  assert.equal(page.includes("StrategyWorkspace slug=\"box-spread\""), true);
-  assert.equal(page.includes("BoxSpreadPostMarketHistory"), true);
+test("Box Spread is fully removed from routes, navigation, and page push", async () => {
+  assert.equal(await exists("app/strategies/box-spread/page.tsx"), false);
+  const shell = await read("components/app-shell.tsx");
+  assert.equal(shell.includes("/strategies/box-spread"), false);
+  assert.equal(shell.includes('pathname.startsWith("/strategies/box-spread")'), false);
 });
 
-test("Synthetic page no longer mounts trace panels but keeps scanner workspace", async () => {
-  const page = await read("app/strategies/synthetic-arbitrage/page.tsx");
-  assert.equal(page.includes("SyntheticTracePanel"), false);
-  assert.equal(await exists("components/synthetic-trace-panel.tsx"), false);
-  assert.equal(page.includes("StrategyWorkspace slug=\"synthetic-arbitrage\""), true);
+test("retired Synthetic, Calendar and Cash-Future scanner pages are deleted", async () => {
+  for (const path of [
+    "app/strategies/synthetic-arbitrage/page.tsx",
+    "app/strategies/calendar-spread/page.tsx",
+    "app/scanner/page.tsx",
+  ]) assert.equal(await exists(path), false, path + " must not be routable");
+  const shell = await read("components/app-shell.tsx");
+  for (const href of ["/scanner", "/strategies/synthetic-arbitrage", "/strategies/calendar-spread"]) {
+    assert.equal(shell.includes(href), false, href + " must not be navigable");
+  }
 });
 
-test("shared pair monitor and alert/diagnostic sections are excluded only on requested scanner pages", async () => {
-  const workspace = await read("components/strategy-workspace.tsx");
-  assert.equal(workspace.includes('!["scanner", "calendar-spread", "synthetic-arbitrage"].includes(slug)'), true);
-  assert.equal(workspace.includes('slug !== "box-spread" && ('), true);
-  assert.equal(workspace.includes('!["scanner", "calendar-spread", "synthetic-arbitrage"].includes(slug)'), true);
-  assert.equal(workspace.includes('!["calendar-spread", "synthetic-arbitrage"].includes(slug)'), true);
-  // These components remain shared for other workspaces (e.g. IV Skew/Flip).
-  assert.equal(workspace.includes("Strategy Alerts"), true);
-  assert.equal(workspace.includes("Scanner Safety Boundary"), true);
-  assert.equal(workspace.includes("Exchange Coverage Diagnostics"), false);
-  assert.equal(workspace.includes("Session Diagnostics"), false);
+test("retired scanner workspace implementation is deleted", async () => {
+  assert.equal(await exists("components/strategy-workspace.tsx"), false);
 });
 
 
-test("PR #712 Cash Future page removals are actually absent from rendered UI", async () => {
-  const page = await read("app/scanner/page.tsx");
-  for (const section of [
-    "Live Pair Monitor & Diagnostics",
-    "Scanner safety boundary",
-  ]) assert.equal(page.includes(section), false, section + " must not render on Cash Future scanner");
-  assert.equal(page.includes("Post-Market Pair History"), true, "saved pair history must remain on Cash Future page");
-  assert.equal(page.includes("filteredPairHistory.map"), true, "saved pair history rows must remain rendered");
-  // Keep the main Cash Future opportunity scanner mounted.
-  assert.equal(page.includes("filteredRows.map((row"), true);
+test("Cash-Future scanner is fully removed from the web route and navigation", async () => {
+  assert.equal(await exists("app/scanner/page.tsx"), false);
+  const shell = await read("components/app-shell.tsx");
+  assert.equal(shell.includes('href: "/scanner"'), false);
+  const dashboard = await read("app/page.tsx");
+  assert.equal(dashboard.includes('name: "Cash Future"'), false);
 });
 
 
-test("Box Spread depth-shadow state updater remains explicitly typed", async () => {
-  const workspace = await read("components/strategy-workspace.tsx");
-  assert.ok(workspace.includes("const [boxDepthShadow, setBoxDepthShadow] = useState<Record<string, unknown> | null>(null);"), "Box Spread depth-shadow state must not be untyped");
-  assert.ok(workspace.includes("setBoxDepthShadow(current =>"), "depth-shadow state updates should use typed updater");
-});
+
 
 test("IV runtime REMOVE clears both NIFTY and BANKNIFTY live/chart state", async () => {
   const page = await read("app/strategies/iv-skew-flip/page.tsx");

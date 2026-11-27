@@ -131,10 +131,13 @@ def test_runtime_publishes_spot_future_basis_as_context_only():
         pass
 
     runtime = IVSkewFlipRuntime(
-        instrument_master=Master(), spot_feed=SpotFeed(), future_feed=FutureFeed(),
+        instrument_master=Master(), spot_feed=SpotFeed(),
         clock_ns=lambda: stamp,
         clock_datetime=lambda: datetime(2026, 11, 2, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
     )
+    # Explicit fake context is injected only to unit-test the calculation;
+    # production IV runtime never constructs or accepts a futures transport.
+    runtime.future_feed = FutureFeed()
     runtime._future_contracts = (
         IndexFutureContract("NIFTY", "NIFTY-FRONT", "nifty-front", "NFO", date(2026, 11, 26)),
         IndexFutureContract("NIFTY", "NIFTY-NEXT", "nifty-next", "NFO", date(2026, 12, 31)),

@@ -331,7 +331,6 @@ def test_dual_index_start_subscribes_union_once_and_rolls_back_shared_feed(monke
         created.append(feed)
         return feed
 
-    monkeypatch.setattr(runtime_module, "download_iv_instruments", lambda master: rows)
     runtime = IVSkewFlipRuntime(
         instrument_master=Master(),
         spot_feed=FakeSpotFeed(),
@@ -345,7 +344,7 @@ def test_dual_index_start_subscribes_union_once_and_rolls_back_shared_feed(monke
     )
 
     with pytest.raises(RuntimeError, match="shared subscription failure"):
-        runtime.start()
+        runtime.start(instruments=rows)
 
     assert len(created) == 1
     assert created[0].received_symbols == ["AAA", "BBB", "CCC"]

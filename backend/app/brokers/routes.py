@@ -24,7 +24,7 @@ from app.execution.recovery_coordinator import review_account_recovery
 from app.execution.broker_snapshot_event_sync import sync_account_order_status_events
 from app.execution.broker_tradebook_fill_sync import sync_account_tradebook_fills
 from app.execution.broker_event_review import review_deferred_broker_events
-from app.models import BoxSpreadRealOwnerState
+from app.models import RealTradingOwnerState
 from app.brokers.broker_event_replay_review_routes import router as replay_eligibility_router
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
@@ -50,7 +50,7 @@ class RealTradingEnableRequest(BaseModel):
 
 @router.post("/owner-auth/login")
 def owner_login(payload: RealOwnerLogin, request: Request):
-    """Issue a short-lived token for the separately configured Box Spread owner."""
+    """Issue a short-lived token for the separately configured real-trading owner."""
     return login_real_owner(payload, request)
 
 
@@ -97,11 +97,11 @@ def sync_broker_order_status_events(
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     """Persist immutable order-status evidence from one complete current-day broker snapshot."""
-    owner_state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    owner_state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"  # Legacy durable owner key retained for existing account bindings
     ).first()
     if owner_state is None or not owner_state.broker_name:
-        raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
+        raise HTTPException(status_code=409, detail="No authenticated real-trading broker account is bound")
 
     broker = str(owner_state.broker_name).strip().lower()
     adapter = broker_sessions.get(user_id, broker)
@@ -126,7 +126,7 @@ def sync_broker_order_status_events(
     if not matches_authenticated_account(owner_state, broker, account_id):
         raise HTTPException(
             status_code=409,
-            detail="Active broker session does not match the durably bound Box Spread account",
+            detail="Active broker session does not match the durably bound real-trading account",
         )
     try:
         return sync_account_order_status_events(
@@ -148,12 +148,12 @@ def sync_broker_tradebook_fills(
     db: Session = Depends(get_db),
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
-    """Atomically ingest real tradebook fills for the one authenticated Box Spread account."""
-    owner_state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    """Atomically ingest real tradebook fills for the one authenticated real-trading account."""
+    owner_state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"
     ).first()
     if owner_state is None or not owner_state.broker_name:
-        raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
+        raise HTTPException(status_code=409, detail="No authenticated real-trading broker account is bound")
 
     broker = str(owner_state.broker_name).strip().lower()
     adapter = broker_sessions.get(user_id, broker)
@@ -186,7 +186,7 @@ def sync_broker_tradebook_fills(
     if not matches_authenticated_account(owner_state, broker, account_id):
         raise HTTPException(
             status_code=409,
-            detail="Active broker session does not match the durably bound Box Spread account",
+            detail="Active broker session does not match the durably bound real-trading account",
         )
     try:
         return sync_account_tradebook_fills(
@@ -207,11 +207,11 @@ def review_broker_callback_events(
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     """Read-only visibility into persisted callbacks whose fill evidence is unresolved."""
-    owner_state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    owner_state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"
     ).first()
     if owner_state is None or not owner_state.broker_name:
-        raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
+        raise HTTPException(status_code=409, detail="No authenticated real-trading broker account is bound")
 
     broker = str(owner_state.broker_name).strip().lower()
     adapter = broker_sessions.get(user_id, broker)
@@ -250,7 +250,7 @@ def review_broker_callback_events(
     if not matches_authenticated_account(owner_state, broker, account_id):
         raise HTTPException(
             status_code=409,
-            detail="Active broker session does not match the durably bound Box Spread account",
+            detail="Active broker session does not match the durably bound real-trading account",
         )
     try:
         return review_deferred_broker_events(
@@ -271,11 +271,11 @@ def review_execution_recovery(
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     """Read-only review of pending execution intents against the active broker session."""
-    owner_state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    owner_state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"
     ).first()
     if owner_state is None or not owner_state.broker_name:
-        raise HTTPException(status_code=409, detail="No authenticated Box Spread broker account is bound")
+        raise HTTPException(status_code=409, detail="No authenticated real-trading broker account is bound")
 
     broker = str(owner_state.broker_name).strip().lower()
     adapter = broker_sessions.get(user_id, broker)
@@ -302,7 +302,7 @@ def review_execution_recovery(
     if not matches_authenticated_account(owner_state, broker, account_id):
         raise HTTPException(
             status_code=409,
-            detail="Active broker session does not match the durably bound Box Spread account",
+            detail="Active broker session does not match the durably bound real-trading account",
         )
     try:
         return review_account_recovery(
@@ -320,8 +320,8 @@ def review_execution_recovery(
 @router.get("/safety")
 def safety_status(db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
     # Report the durable owner flags, not process-local memory that resets on restart.
-    state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"
     ).first()
     if state is None:
         return {"real_trading_enabled": False, "kill_switch": True, "enabled_at": None}
@@ -353,7 +353,7 @@ def disable_real_trading(db: Session = Depends(get_db), user_id: int = Depends(r
         state = disable_owner_trading(db)
     except Exception as exc:
         db.rollback()
-        app_logger.error("Durable Box Spread disable failed: %s", exc)
+        app_logger.error("Durable real-trading disable failed: %s", exc)
         raise HTTPException(status_code=503, detail="Trading is disabled locally but durable kill-switch state could not be confirmed") from exc
     return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Real trading disabled and kill switch persisted."}
 
@@ -366,7 +366,7 @@ def emergency_kill_switch(db: Session = Depends(get_db), user_id: int = Depends(
         state = disable_owner_trading(db)
     except Exception as exc:
         db.rollback()
-        app_logger.error("Durable Box Spread kill-switch update failed: %s", exc)
+        app_logger.error("Durable real-trading kill-switch update failed: %s", exc)
         raise HTTPException(status_code=503, detail="Kill switch is engaged locally but durable state could not be confirmed") from exc
     return {"real_trading_enabled": state.real_trading_enabled, "kill_switch": state.kill_switch, "message": "Emergency kill switch engaged and persisted."}
 
@@ -393,15 +393,15 @@ def connect(payload: ConnectRequest, db: Session = Depends(get_db), user_id: int
     except Exception as exc:
         adapter.disconnect()
         db.rollback()
-        app_logger.error("Durable Box Spread account binding failed: %s", exc)
-        raise HTTPException(status_code=503, detail="Durable Box Spread account ownership is unavailable") from exc
+        app_logger.error("Durable real-trading account binding failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Durable real-trading account ownership is unavailable") from exc
     try:
         set_owner_connection_state(db, True)
     except Exception as exc:
         adapter.disconnect()
         db.rollback()
-        app_logger.error("Durable Box Spread connection state update failed: %s", exc)
-        raise HTTPException(status_code=503, detail="Durable Box Spread connection state is unavailable") from exc
+        app_logger.error("Durable real-trading connection state update failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Durable real-trading connection state is unavailable") from exc
     logout_error = broker_sessions.replace_and_disconnect_previous(user_id, broker, adapter)
     if logout_error is not None:
         app_logger.error("Previous %s provider logout failed during reconnect: %s", broker, type(logout_error).__name__)
@@ -415,8 +415,8 @@ def status(broker: str, db: Session = Depends(get_db), user_id: int = Depends(re
     key = (user_id, broker.strip().lower())
     adapter = broker_sessions.get(*key)
     item = broker_connections.get(user_id, key[1])
-    owner_state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    owner_state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"
     ).first()
     # The durable row is authoritative; missing ownership must remain fail-closed.
     return {
@@ -449,7 +449,7 @@ def disconnect(broker: str, db: Session = Depends(get_db), user_id: int = Depend
         set_owner_connection_state(db, False)
     except Exception as exc:
         db.rollback()
-        app_logger.error("Durable Box Spread disconnect state update failed: %s", exc)
+        app_logger.error("Durable real-trading disconnect state update failed: %s", exc)
         raise HTTPException(
             status_code=503,
             detail="Broker session was removed locally and trading remains disarmed, but durable connection state could not be confirmed",

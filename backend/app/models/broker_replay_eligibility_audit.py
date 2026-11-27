@@ -24,7 +24,7 @@ class BrokerReplayEligibilityAuditRecord(Base):
     eligible: Mapped[bool] = mapped_column(nullable=False, default=False)
     reviewed_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
     valid_until_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    operator_scope: Mapped[str] = mapped_column(String(64), nullable=False, default="box-spread-real-owner")
+    operator_scope: Mapped[str] = mapped_column(String(64), nullable=False, default="real-trading-owner")
 
 
 def _install_replay_eligibility_audit_guards(target, connection, **_kw) -> None:

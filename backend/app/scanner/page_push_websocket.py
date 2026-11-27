@@ -1,9 +1,8 @@
 """Durable, multi-worker browser-facing scanner page WebSocket.
 
-Only public scanner read models belong on this channel. Private account data
-uses the authenticated Box Paper channel. One DB journal tailer per worker
-fans out to local sockets; browser commands are limited to subscription and
-resynchronization in this transport.
+Only public scanner read models belong on this channel. One DB journal tailer
+per worker fans out to local sockets; browser commands are limited to
+subscription and resynchronization in this transport.
 """
 from __future__ import annotations
 
@@ -24,13 +23,7 @@ from app.core.database import engine
 
 router = APIRouter(tags=["page-push"])
 PAGE_CHANNELS = frozenset({
-    "cash-future",
-    "box-spread",
-    "calendar-spread",
-    "synthetic-arbitrage",
     "iv-skew-flip",
-    "credit-butterfly-condor-weekly",
-    "credit-butterfly-condor-monthly",
     "weekly-swing",
 })
 QUEUE_SIZE = 32

@@ -2,7 +2,6 @@ import math
 
 import pytest
 
-from app.backtesting.arbitrage_backtester import FutureQuote, LiquidityPolicy, OptionQuote
 from app.backtesting.events import EventReplayConfig, EventType, MarketEvent
 from app.backtesting.execution import DepthLevel, ExecutionConfig, ExecutionSide, OrderType, SimFill, SimOrder
 from app.backtesting.order_lifecycle import OrderLifecycle, OrderStatus, stop_triggered
@@ -112,8 +111,3 @@ def test_609_stop_trigger_rejects_nan_market_price():
         stop_triggered(order, math.nan)
 
 
-def test_610_arbitrage_rejects_zero_ask_as_non_executable():
-    quote = OptionQuote(1, "SBIN", 202610, 100.0, 1.0, 0.0, 1.0, 1.0)
-    with pytest.raises(ValueError):
-        from app.backtesting.arbitrage_backtester import BoxSpreadBacktester
-        BoxSpreadBacktester.evaluate(quote, OptionQuote(1, "SBIN", 202610, 110.0, 1.0, 1.0, 1.0, 1.0))

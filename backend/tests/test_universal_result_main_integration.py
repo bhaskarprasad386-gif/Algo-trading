@@ -18,6 +18,9 @@ from fastapi.testclient import TestClient
 from app import main
 from app.backtesting.result_ledger import BacktestEvent
 
+# Retired strategy feeds must not be recreated by application startup.
+assert not hasattr(main, "box_isolated_feed_manager")
+assert main.shared_index_market_data_runner is not None
 
 run_id = "main-integration"
 main.universal_result_ledger.create_run(
@@ -97,7 +100,6 @@ print(json.dumps({"status": "ok"}))
             "BACKTEST_CONTRACT_DB": str(tmp_path / "contract.sqlite3"),
             "BACKTEST_RESULT_LEDGER_DB": str(tmp_path / "result.sqlite3"),
             "BACKTEST_CONTRACT_MASTER_AUTO_SYNC": "false",
-            "CASH_FUTURE_HISTORY_ENABLED": "false",
         }
     )
 

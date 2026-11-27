@@ -121,7 +121,7 @@ def test_future_rollover_rotates_to_new_listed_expiry_and_updates_state():
     runner.stop()
 
 
-def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
+def test_live_runner_bootstraps_spot_and_124_options_after_first_spot_tick():
     rows = _rows()
     manager = RunnerManager()
     runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=manager)
@@ -139,7 +139,7 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
         instrument_type=InstrumentType.INDEX, timestamp_ns=__import__("time").time_ns(),
         ltp=48000.0, underlying="BANKNIFTY",
     ))
-    assert len(manager.registry.active_keys()) == 52
+    assert len(manager.registry.active_keys()) == 128
     assert runner.snapshot()["lifecycle"]["options_active"] is True
     assert runner.snapshot()["lifecycle"]["futures_active"] is True
     assert runner.snapshot()["futures_expiries"] == {"NIFTY": "2026-11-26", "BANKNIFTY": "2026-12-24"}
@@ -147,8 +147,8 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
                          if manager.registry.get(key).instrument_type == "option"]
     nifty_strikes = sorted({d.strike for d in option_descriptors if d.underlying == "NIFTY"})
     bank_strikes = sorted({d.strike for d in option_descriptors if d.underlying == "BANKNIFTY"})
-    assert len(nifty_strikes) == 13 and nifty_strikes[6] == 22000
-    assert len(bank_strikes) == 11 and bank_strikes[5] == 48000
+    assert len(nifty_strikes) == 31 and nifty_strikes[15] == 22000
+    assert len(bank_strikes) == 31 and bank_strikes[15] == 48000
     assert runner.snapshot()["state"]["fresh_count"] == 2
     assert runner.snapshot()["live_data_ready"] is False
     futures_consumer = runner.lifecycle.FUTURES_CONSUMER
@@ -176,17 +176,17 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
             lot_size=descriptor.lot_size,
         ))
     snap = runner.snapshot()
-    assert snap["state"]["instrument_count"] == 52
+    assert snap["state"]["instrument_count"] == 128
     assert snap["live_data_ready"] is True
-    assert len(snap["records"]) == 52
+    assert len(snap["records"]) == 128
     assert all(row["feed_age_seconds"] >= 0 and row["fresh"] for row in snap["records"])
     assert snap["universe_coverage"]["complete"] is True
-    assert snap["universe_coverage"]["counts"] == {"index": 2, "future": 2, "option": 48}
+    assert snap["universe_coverage"]["counts"] == {"index": 2, "future": 2, "option": 124}
     assert snap["universe_coverage"]["per_underlying"]["NIFTY"] == {
-        "index": 1, "future": 1, "option": 26, "CE": 13, "PE": 13,
+        "index": 1, "future": 1, "option": 62, "CE": 31, "PE": 31,
     }
     assert snap["universe_coverage"]["per_underlying"]["BANKNIFTY"] == {
-        "index": 1, "future": 1, "option": 22, "CE": 11, "PE": 11,
+        "index": 1, "future": 1, "option": 62, "CE": 31, "PE": 31,
     }
     assert snap["all_records_fresh"] is True
     # A same-sized or partial state must not pass readiness if its contract
@@ -205,7 +205,7 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
     assert all(row["oi"] == 8888 and row["volume"] == 1000 for row in futures_rows)
     assert {row["expiry"] for row in futures_rows} == {"2026-11-26", "2026-12-24"}
     option_rows = [row for row in snap["records"] if row["instrument_type"] == "option"]
-    assert len(option_rows) == 48
+    assert len(option_rows) == 124
     assert all(row["volume"] == 1000 and row["oi"] == 500 for row in option_rows)
     assert all("volume_delta_1s" in row and "oi_delta_1s" in row for row in option_rows)
     assert snap["derived_iv_model"]["volume_source"] == "broker_day_volume"
@@ -523,7 +523,7 @@ def test_stale_option_bootstrap_cannot_subscribe_after_runner_restart(monkeypatc
     set_spots()
     assert runner._bootstrap_options() is True
     active_new_epoch = set(runner.lifecycle._option_keys)
-    assert len(active_new_epoch) == 48
+    assert len(active_new_epoch) == 124
 
     release_old.set()
     old_thread.join(timeout=3)
@@ -552,7 +552,7 @@ def test_concurrent_nifty_bank_option_rotations_are_serialized_and_atomic(monkey
         instrument=InstrumentKey("NSE", "NSE", "99002"), symbol="BANKNIFTY",
         instrument_type=InstrumentType.INDEX, timestamp_ns=time.time_ns(), ltp=48000.0,
         underlying="BANKNIFTY"))
-    assert len(runner.lifecycle._option_keys) == 48
+    assert len(runner.lifecycle._option_keys) == 124
 
     original_select = rotation_module.select_locked_index_options
     first_entered, release_first, second_entered = Event(), Event(), Event()
@@ -582,11 +582,11 @@ def test_concurrent_nifty_bank_option_rotations_are_serialized_and_atomic(monkey
     assert first_done.is_set() and second_done.is_set()
     active = tuple(runner.lifecycle._option_keys)
     descriptors = [manager.registry.get(key) for key in active]
-    assert len(active) == 48
-    assert len({descriptor.key for descriptor in descriptors}) == 48
+    assert len(active) == 124
+    assert len({descriptor.key for descriptor in descriptors}) == 124
     assert {descriptor.underlying for descriptor in descriptors} == {"NIFTY", "BANKNIFTY"}
-    assert len([d for d in descriptors if d.underlying == "NIFTY"]) == 26
-    assert len([d for d in descriptors if d.underlying == "BANKNIFTY"]) == 22
+    assert len([d for d in descriptors if d.underlying == "NIFTY"]) == 62
+    assert len([d for d in descriptors if d.underlying == "BANKNIFTY"]) == 62
     assert set(manager.registry.active_keys()) == set(runner.lifecycle.active_keys())
     runner.stop()
 

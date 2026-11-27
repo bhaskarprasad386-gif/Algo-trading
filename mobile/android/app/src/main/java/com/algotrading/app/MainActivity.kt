@@ -22,15 +22,7 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
-    private lateinit var tvScannerResult: TextView
     private lateinit var tvAlertCenter: TextView
-    private lateinit var tvScannerAutoRefreshStatus: TextView
-    private lateinit var tvScannerNextRefresh: TextView
-    private lateinit var btnRunScanner: Button
-    private lateinit var btnFullFnoBacktest: Button
-    private lateinit var btnBoxSpread: Button
-    private lateinit var cbScannerAutoRefresh: CheckBox
-    private lateinit var etScannerRefreshSeconds: EditText
     private lateinit var etBrokerApiKey: EditText
     private lateinit var etBrokerClientCode: EditText
     private lateinit var etBrokerPassword: EditText
@@ -48,12 +40,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnResultsJournal: Button
     private lateinit var tvMarketFeedStatus: TextView
     private lateinit var tvIndexOverview: TextView
-    private lateinit var tvCommodityOverview: TextView
     private lateinit var btnMarketOverviewRefresh: Button
     private lateinit var tvLiveDataQuality: TextView
     private lateinit var btnLiveDataHealthRefresh: Button
     private lateinit var cbShowMarket: CheckBox
-    private lateinit var cbShowScanner: CheckBox
     private lateinit var cbShowAlerts: CheckBox
     private lateinit var cbShowStrategy: CheckBox
     private lateinit var cbShowResults: CheckBox
@@ -81,16 +71,8 @@ class MainActivity : AppCompatActivity() {
         btnQuickStrategies = findViewById(R.id.btnQuickStrategies)
         btnQuickResults = findViewById(R.id.btnQuickResults)
         btnQuickExpansion = findViewById(R.id.btnQuickExpansion)
-        tvScannerResult = findViewById(R.id.tvScannerResult)
         tvAlertCenter = findViewById(R.id.tvAlertCenter)
         cbShowAlerts = findViewById(R.id.cbShowAlerts)
-        tvScannerAutoRefreshStatus = findViewById(R.id.tvScannerAutoRefreshStatus)
-        tvScannerNextRefresh = findViewById(R.id.tvScannerNextRefresh)
-        btnRunScanner = findViewById(R.id.btnRunScanner)
-        btnFullFnoBacktest = findViewById(R.id.btnFullFnoBacktest)
-        btnBoxSpread = findViewById(R.id.btnBoxSpread)
-        cbScannerAutoRefresh = findViewById(R.id.cbScannerAutoRefresh)
-        etScannerRefreshSeconds = findViewById(R.id.etScannerRefreshSeconds)
         etBrokerApiKey = findViewById(R.id.etBrokerApiKey)
         etBrokerClientCode = findViewById(R.id.etBrokerClientCode)
         etBrokerPassword = findViewById(R.id.etBrokerPassword)
@@ -105,7 +87,8 @@ class MainActivity : AppCompatActivity() {
         btnKillSwitch = findViewById(R.id.btnKillSwitch)
         btnAppUpdate = findViewById(R.id.btnAppUpdate)
         btnStrategies = findViewById(R.id.btnStrategies)
-        disableCashFutureScanner(); checkServerStatus(); checkBrokerStatus(); checkSafetyStatus(); loadMarketOverview()
+        btnResultsJournal = findViewById(R.id.btnResultsJournal)
+        checkServerStatus(); checkBrokerStatus(); checkSafetyStatus(); loadMarketOverview()
         btnAppUpdate.setOnClickListener { startActivity(Intent(this, UpdateActivity::class.java)) }
         btnStrategies.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
         btnResultsJournal.setOnClickListener { startActivity(Intent(this, ResultsJournalActivity::class.java)) }
@@ -113,15 +96,12 @@ class MainActivity : AppCompatActivity() {
         btnLiveDataHealthRefresh.setOnClickListener { loadLiveDataHealth() }
         btnSaveDashboardLayout.setOnClickListener { saveDashboardLayout() }
         btnResetDashboardLayout.setOnClickListener { resetDashboardLayout() }
-        btnRunScanner.setOnClickListener { disableCashFutureScanner() }
-        btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
-        btnBoxSpread.setOnClickListener { startActivity(Intent(this, BoxSpreadActivity::class.java)) }
         
         btnConnectBroker.setOnClickListener { connectAngelOne() }; btnDisconnectBroker.setOnClickListener { disconnectAngelOne() }
         btnEnableRealTrading.setOnClickListener { confirmEnableRealTrading() }; btnDisableRealTrading.setOnClickListener { disableRealTrading() }; btnKillSwitch.setOnClickListener { triggerKillSwitch() }
         
         btnQuickMarket.setOnClickListener { mainScroll.smoothScrollTo(0, 0); loadMarketOverview() }
-        btnQuickScanner.setOnClickListener { mainScroll.post { mainScroll.smoothScrollTo(0, btnRunScanner.top) } }
+        btnQuickScanner.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
         btnQuickStrategies.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
         btnQuickResults.setOnClickListener { startActivity(Intent(this, ResultsJournalActivity::class.java)) }
         btnQuickExpansion.setOnClickListener { mainScroll.post { mainScroll.smoothScrollTo(0, findViewById<View>(R.id.phase13Expansion).top) } }
@@ -133,7 +113,6 @@ class MainActivity : AppCompatActivity() {
     private fun loadDashboardLayout() {
         val p = dashboardPreferences()
         cbShowMarket.isChecked = p.getBoolean("market", true)
-        cbShowScanner.isChecked = p.getBoolean("scanner", true)
         cbShowAlerts.isChecked = p.getBoolean("alerts", true)
         cbShowStrategy.isChecked = p.getBoolean("strategy", true)
         cbShowResults.isChecked = p.getBoolean("results", true)
@@ -144,7 +123,6 @@ class MainActivity : AppCompatActivity() {
         dashboardPreferences().edit()
             .putBoolean("saved", true)
             .putBoolean("market", cbShowMarket.isChecked)
-            .putBoolean("scanner", cbShowScanner.isChecked)
             .putBoolean("alerts", cbShowAlerts.isChecked)
             .putBoolean("strategy", cbShowStrategy.isChecked)
             .putBoolean("results", cbShowResults.isChecked)
@@ -154,7 +132,7 @@ class MainActivity : AppCompatActivity() {
     }
     private fun resetDashboardLayout() {
         dashboardPreferences().edit().clear().apply()
-        cbShowMarket.isChecked = true; cbShowScanner.isChecked = true; cbShowAlerts.isChecked = true; cbShowStrategy.isChecked = true; cbShowResults.isChecked = true
+        cbShowMarket.isChecked = true; cbShowAlerts.isChecked = true; cbShowStrategy.isChecked = true; cbShowResults.isChecked = true
         tvDashboardLayoutStatus.text = "Layout: DEFAULT • saved on this device"
         applyDashboardVisibility()
     }
@@ -166,15 +144,8 @@ class MainActivity : AppCompatActivity() {
         tvLiveDataQuality.visibility = if (cbShowMarket.isChecked) visible else hidden
         btnLiveDataHealthRefresh.visibility = if (cbShowMarket.isChecked) visible else hidden
         tvIndexOverview.visibility = if (cbShowMarket.isChecked) visible else hidden
-        tvCommodityOverview.visibility = if (cbShowMarket.isChecked) visible else hidden
-        btnRunScanner.visibility = if (cbShowScanner.isChecked) visible else hidden
         tvAlertCenter.visibility = if (cbShowAlerts.isChecked) visible else hidden
-        tvScannerResult.visibility = if (cbShowScanner.isChecked) visible else hidden
-        cbScannerAutoRefresh.visibility = if (cbShowScanner.isChecked) visible else hidden
-        etScannerRefreshSeconds.visibility = if (cbShowScanner.isChecked) visible else hidden
         btnStrategies.visibility = if (cbShowStrategy.isChecked) visible else hidden
-        btnFullFnoBacktest.visibility = if (cbShowStrategy.isChecked) visible else hidden
-        btnBoxSpread.visibility = if (cbShowStrategy.isChecked) visible else hidden
         btnResultsJournal.visibility = if (cbShowResults.isChecked) visible else hidden
     }
     private fun loadMarketOverview() = lifecycleScope.launch(Dispatchers.IO) {
@@ -192,15 +163,13 @@ class MainActivity : AppCompatActivity() {
                 return "${row.exchange}:${row.symbol}  LTP ₹$ltp  CHG $chg  H/L $hl  B/A $ba  ${row.status}"
             }
             withContext(Dispatchers.Main) {
-                tvMarketFeedStatus.text = if (response.errors.isEmpty()) "Live feed: ONLINE • Angel One • Orders: OFF" else "Live feed: PARTIAL • ${response.errors.size} quote errors • Orders: OFF"
-                tvIndexOverview.text = "NSE / BSE INDEX DATA\n" + if (response.indices.isEmpty()) "No live index quote available." else response.indices.joinToString("\n") { fmt(it) }
-                tvCommodityOverview.text = "COMMODITY DATA\n" + if (response.commodities.isEmpty()) "No live commodity quote available." else response.commodities.joinToString("\n") { fmt(it) }
+                tvMarketFeedStatus.text = if (response.errors.isEmpty()) "Shared Runner: ONLINE • NIFTY / BANKNIFTY • Orders: OFF" else "Shared Runner: PARTIAL • ${response.errors.size} feed errors • Orders: OFF"
+                tvIndexOverview.text = "NIFTY / BANKNIFTY LIVE DATA\n" + if (response.indices.isEmpty()) "No live index quote available." else response.indices.joinToString("\n") { fmt(it) }
             }
         } catch (error: Exception) {
             withContext(Dispatchers.Main) {
                 tvMarketFeedStatus.text = "Live feed: ERROR • Orders: OFF"
-                tvIndexOverview.text = "NSE / BSE INDEX DATA\nMarket quote unavailable: " + (error.message ?: "API error")
-                tvCommodityOverview.text = "COMMODITY DATA\nMarket quote unavailable."
+                tvIndexOverview.text = "NIFTY / BANKNIFTY LIVE DATA\nMarket quote unavailable: " + (error.message ?: "API error")
             }
         } finally {
             withContext(Dispatchers.Main) { btnMarketOverviewRefresh.isEnabled = true }
@@ -233,12 +202,12 @@ class MainActivity : AppCompatActivity() {
         if (ownerLoginPromptShown || ApiService.hasRealOwnerAccessToken() || isFinishing) return
         ownerLoginPromptShown = true
         val passwordInput = EditText(this).apply {
-            hint = "Box Spread owner password"
+            hint = "Real trading owner password"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
         AlertDialog.Builder(this)
-            .setTitle("Box Spread Owner Login")
-            .setMessage("Enter the dedicated real-owner password. This is separate from your broker password.")
+            .setTitle("Real Trading Owner Login")
+            .setMessage("Enter the dedicated real-trading owner password. This is separate from your broker password.")
             .setView(passwordInput)
             .setNegativeButton("LATER") { _, _ -> ownerLoginPromptShown = false }
             .setPositiveButton("LOGIN") { _, _ ->
@@ -283,17 +252,5 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) { withContext(Dispatchers.Main) { btnConnectBroker.isEnabled = false; btnDisconnectBroker.isEnabled = false; tvBrokerStatus.text = "Broker Status: Connecting to Angel One…" }; try { val response = ApiService.retrofitService.connectBroker(BrokerConnectRequest(api_key = apiKey, client_code = clientCode, password = password, totp_secret = totpSecret)); withContext(Dispatchers.Main) { tvBrokerStatus.text = if (response.connected) "Broker Status: Angel One CONNECTED • Real Trading OFF" else "Broker Status: Connection failed • Real Trading OFF"; etBrokerApiKey.text.clear(); etBrokerPassword.text.clear(); etBrokerTotpSecret.text.clear() }; checkSafetyStatus() } catch (error: Exception) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Connection failed • ${error.message ?: "API error"} • Real Trading OFF"; if (!ApiService.hasRealOwnerAccessToken()) promptRealOwnerLogin() } } finally { withContext(Dispatchers.Main) { btnConnectBroker.isEnabled = true; btnDisconnectBroker.isEnabled = true } } }
     }
     private fun disconnectAngelOne() = lifecycleScope.launch(Dispatchers.IO) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnecting…" }; try { ApiService.retrofitService.disconnectBroker("angel_one"); withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Angel One disconnected • Real Trading OFF" }; checkSafetyStatus() } catch (error: Exception) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnect failed • ${error.message ?: "API error"}"; if (!ApiService.hasRealOwnerAccessToken()) promptRealOwnerLogin() } } }
-
-    private fun disableCashFutureScanner() {
-        cbScannerAutoRefresh.isChecked = false
-        cbScannerAutoRefresh.isEnabled = false
-        etScannerRefreshSeconds.isEnabled = false
-        btnRunScanner.isEnabled = false
-        btnRunScanner.text = "CASH-FUTURE SCANNER DISABLED"
-        tvScannerAutoRefreshStatus.text = "Auto Refresh: DISABLED"
-        tvScannerNextRefresh.text = "Next Refresh: DISABLED"
-        tvScannerResult.text = "Cash-Future live scanning is disabled. No scanner API request will be sent."
-        tvAlertCenter.text = "Cash-Future scanner alerts are disabled."
-    }
 
 }

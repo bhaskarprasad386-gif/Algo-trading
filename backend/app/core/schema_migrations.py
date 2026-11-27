@@ -1,5 +1,3 @@
-import json
-
 from sqlalchemy import inspect, text
 
 from app.core.database import engine
@@ -27,15 +25,6 @@ def _run_schema_migrations(connection) -> None:
     connection.commit()
     if "users" not in tables:
         return
-
-    if "box_spread_paper_trades" in tables:
-        paper_columns = {column["name"] for column in inspector.get_columns("box_spread_paper_trades")}
-        connection.commit()
-        with connection.begin():
-            if "entry_spot_price" not in paper_columns:
-                connection.execute(text("ALTER TABLE box_spread_paper_trades ADD COLUMN entry_spot_price NUMERIC(18, 4)"))
-            if "alert_edge" not in paper_columns:
-                connection.execute(text("ALTER TABLE box_spread_paper_trades ADD COLUMN alert_edge NUMERIC(18, 6)"))
 
     columns = {column["name"] for column in inspector.get_columns("users")}
     connection.commit()
@@ -113,8 +102,6 @@ def _run_schema_migrations(connection) -> None:
             account_columns = {column["name"] for column in inspect(connection).get_columns("trading_accounts")}
             if "realized_pnl" not in account_columns:
                 connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN realized_pnl FLOAT DEFAULT 0.0"))
-            if "box_spread_auto_lots" not in account_columns:
-                connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN box_spread_auto_lots INTEGER DEFAULT 1"))
             if "initial_virtual_balance" not in account_columns:
                 connection.execute(text("ALTER TABLE trading_accounts ADD COLUMN initial_virtual_balance FLOAT DEFAULT 10000000.0"))
                 connection.execute(text(f"""
@@ -157,47 +144,6 @@ def _run_schema_migrations(connection) -> None:
                 if name not in position_columns:
                     connection.execute(text(f"ALTER TABLE positions ADD COLUMN {name} {definition}"))
 
-        if "backtest_jobs" not in account_tables:
-            connection.execute(text(f"""
-                CREATE TABLE backtest_jobs (
-                    id {generated_id_type} PRIMARY KEY,
-                    job_id VARCHAR(64) NOT NULL UNIQUE,
-                    status VARCHAR(16) NOT NULL DEFAULT 'queued',
-                    symbol VARCHAR(128) NOT NULL,
-                    contract_month VARCHAR(64) NOT NULL,
-                    requested_days INTEGER NOT NULL,
-                    progress_pct FLOAT NOT NULL DEFAULT 0.0,
-                    symbols_processed INTEGER NOT NULL DEFAULT 0,
-                    symbols_total INTEGER NOT NULL DEFAULT 0,
-                    message TEXT,
-                    result_json TEXT,
-                    config_json TEXT,
-                    created_at {datetime_type},
-                    updated_at {datetime_type}
-                )
-            """))
-            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_status ON backtest_jobs (status)"))
-            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_job_id ON backtest_jobs (job_id)"))
-            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_symbol ON backtest_jobs (symbol)"))
-        else:
-            job_columns = {column["name"] for column in inspect(connection).get_columns("backtest_jobs")}
-            if "config_json" not in job_columns:
-                connection.execute(text("ALTER TABLE backtest_jobs ADD COLUMN config_json TEXT"))
-
-        if "backtest_job_result_chunks" not in account_tables:
-            connection.execute(text(f"""
-                CREATE TABLE backtest_job_result_chunks (
-                    id {generated_id_type} PRIMARY KEY,
-                    job_id VARCHAR(64) NOT NULL,
-                    sequence INTEGER NOT NULL,
-                    symbol VARCHAR(128) NOT NULL,
-                    result_json TEXT NOT NULL,
-                    created_at {datetime_type}
-                )
-            """))
-        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_backtest_job_result_chunk ON backtest_job_result_chunks (job_id, sequence)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_job_result_chunks_job ON backtest_job_result_chunks (job_id, sequence)"))
-
         if "password_reset_tokens" not in account_tables:
             connection.execute(text(f"""
                 CREATE TABLE password_reset_tokens (
@@ -215,88 +161,6 @@ def _run_schema_migrations(connection) -> None:
 
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_mobile_number ON users (mobile_number)"))
-        live_box_tables = set(inspect(connection).get_table_names())
-        if "live_box_spread_snapshots" in live_box_tables:
-            snapshot_columns = {
-                column["name"]
-                for column in inspect(connection).get_columns("live_box_spread_snapshots")
-            }
-            if "expiry_type" not in snapshot_columns:
-                connection.execute(text(
-                    "ALTER TABLE live_box_spread_snapshots ADD COLUMN expiry_type VARCHAR(8)"
-                ))
-            connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_box_snapshot_symbol_expiry_time "
-                "ON live_box_spread_snapshots (symbol, expiry_type, observed_at)"
-            ))
-
-            # Backfill only classifications already persisted in JSON. This startup
-            # migration deliberately does not guess from an instrument master that
-            # is initialized later; unclassified legacy rows remain NULL and are
-            # resolved by the API's compatibility path.
-            last_id = 0
-            while True:
-                batch = connection.execute(text(
-                    "SELECT id, payload_json FROM live_box_spread_snapshots "
-                    "WHERE id > :last_id AND expiry_type IS NULL "
-                    "ORDER BY id LIMIT 500"
-                ), {"last_id": last_id}).fetchall()
-                if not batch:
-                    break
-                updates = []
-                for snapshot_id, payload_json in batch:
-                    last_id = snapshot_id
-                    try:
-                        payload = json.loads(payload_json or "{}")
-                    except (TypeError, ValueError):
-                        continue
-                    kind = str(payload.get("expiry_type") or "").strip().upper()
-                    if kind in {"WEEKLY", "MONTHLY"}:
-                        updates.append({"snapshot_id": snapshot_id, "kind": kind})
-                if updates:
-                    connection.execute(text(
-                        "UPDATE live_box_spread_snapshots SET expiry_type = :kind "
-                        "WHERE id = :snapshot_id AND expiry_type IS NULL"
-                    ), updates)
-        if "live_box_spread_alert_history" in live_box_tables:
-            box_alert_columns = {column["name"] for column in inspect(connection).get_columns("live_box_spread_alert_history")}
-            for name in (
-                "low_call_bid_qty", "low_call_ask_qty", "low_put_bid_qty", "low_put_ask_qty",
-                "high_call_bid_qty", "high_call_ask_qty", "high_put_bid_qty", "high_put_ask_qty",
-            ):
-                if name not in box_alert_columns:
-                    connection.execute(text(f"ALTER TABLE live_box_spread_alert_history ADD COLUMN {name} INTEGER"))
-            if "expiry_type" not in box_alert_columns:
-                connection.execute(text("ALTER TABLE live_box_spread_alert_history ADD COLUMN expiry_type VARCHAR(8)"))
-            for name, definition in {
-                "depth_edge_per_unit": "FLOAT",
-                "max_executable_lots": "INTEGER",
-                "tradability_status": "VARCHAR(16)",
-            }.items():
-                if name not in box_alert_columns:
-                    connection.execute(text(f"ALTER TABLE live_box_spread_alert_history ADD COLUMN {name} {definition}"))
-        if "live_cash_future_alert_history" in account_tables:
-            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_cf_alert_identity ON live_cash_future_alert_history (symbol, contract_month, timestamp_ns, event)"))
-        if "live_synthetic_alert_history" not in account_tables:
-            connection.execute(text(f"""
-                CREATE TABLE live_synthetic_alert_history (
-                    id {generated_id_type} PRIMARY KEY,
-                    observed_at {datetime_type} NOT NULL,
-                    timestamp_ns BIGINT NOT NULL,
-                    symbol VARCHAR(128) NOT NULL,
-                    instrument_class VARCHAR(16) NOT NULL,
-                    expiry INTEGER NOT NULL,
-                    strike FLOAT NOT NULL,
-                    direction VARCHAR(8) NOT NULL,
-                    executable_edge FLOAT NOT NULL,
-                    edge_per_lot FLOAT NOT NULL,
-                    gross_pnl FLOAT NOT NULL,
-                    lot_size INTEGER NOT NULL
-                )
-            """))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_live_syn_alert_observed_at ON live_synthetic_alert_history (observed_at)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_live_syn_alert_symbol ON live_synthetic_alert_history (symbol, observed_at)"))
-        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_syn_alert_identity ON live_synthetic_alert_history (symbol, expiry, timestamp_ns, strike, direction)"))
         # Durable IV observations are isolated from all other scanner histories.
         # Source-time uniqueness makes retries idempotent across sampler restarts.
         # PostgreSQL needs SERIAL for generated integer primary keys; SQLite

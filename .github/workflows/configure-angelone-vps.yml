@@ -43,8 +43,6 @@ jobs:
               'ENVIRONMENT=production' \
               'DEBUG=False' \
               'DATABASE_URL=sqlite:///./algo_trading.db' \
-              'CASH_FUTURE_HISTORY_ENABLED=false' \
-              'CASH_FUTURE_HISTORY_INTERVAL_SECONDS=60' \
               "ANGEL_API_KEY=$ANGEL_API_KEY" \
               "ANGEL_CLIENT_ID=$ANGEL_CLIENT_ID" \
               "ANGEL_PASSWORD=$ANGEL_PASSWORD" \

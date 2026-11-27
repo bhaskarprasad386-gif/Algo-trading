@@ -14,12 +14,3 @@ def test_android_update_metadata_contract():
     assert "apk_url" in payload
     assert "sha256" in payload
     assert isinstance(payload["mandatory"], bool)
-
-
-def test_android_strategy_registry_contract():
-    with TestClient(app) as client:
-        response = client.get("/api/v1/app/strategies")
-    assert response.status_code == 200
-    strategies = response.json()["strategies"]
-    assert strategies
-    assert all({"id", "name", "version", "enabled", "screen"} <= set(item) for item in strategies)

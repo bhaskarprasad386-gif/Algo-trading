@@ -56,13 +56,13 @@ def test_runner_health_snapshot_is_lightweight_and_reports_ready_universe() -> N
     }
 
     groups = {}
-    for underlying, option_count in (("NIFTY", 26), ("BANKNIFTY", 22)):
+    for underlying, option_count in (("NIFTY", 62), ("BANKNIFTY", 62)):
         for kind, count in (("index", 1), ("future", 1), ("option", option_count)):
             groups[underlying + ":" + kind] = {"count": count, "fresh_count": count, "stale_count": 0, "max_age_seconds": 0.1}
 
     class FakeState:
         def snapshot(self):
-            return {"instrument_count": 52, "fresh_count": 52, "feed_health_by_group": groups}
+            return {"instrument_count": 128, "fresh_count": 128, "feed_health_by_group": groups}
 
     class FakeLifecycle:
         def snapshot(self):
@@ -77,6 +77,19 @@ def test_runner_health_snapshot_is_lightweight_and_reports_ready_universe() -> N
     assert snapshot["live_data_ready"] is True
     assert snapshot["universe_coverage"]["complete"] is True
     assert snapshot["latest_spots"]["NIFTY"]["price"] == 26000.0
-    assert snapshot["feed_health_by_group"]["BANKNIFTY:option"]["count"] == 22
+    assert snapshot["feed_health_by_group"]["BANKNIFTY:option"]["count"] == 62
     assert "records" not in snapshot
     assert "option_flow_aggregates" not in snapshot
+
+def test_runner_instrument_rows_snapshot_is_copy_only_and_does_not_trigger_download() -> None:
+    runner = object.__new__(SharedIndexMarketDataRunner)
+    runner._lock = RLock()
+    runner._rows = ({"symbol": "NIFTY", "token": "99926000"},)
+
+    snapshot = runner.instrument_rows_snapshot()
+    assert snapshot == ({"symbol": "NIFTY", "token": "99926000"},)
+    assert snapshot[0] is not runner._rows[0]
+
+    snapshot[0]["symbol"] = "MUTATED"
+    assert runner._rows[0]["symbol"] == "NIFTY"
+
