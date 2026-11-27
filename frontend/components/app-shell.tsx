@@ -14,14 +14,12 @@ const nav = [
   { href: "/strategies/vpt-x", label: "VPT-X Reversal Scanner", icon: Activity },
   { href: "/strategies/bi-directional-microstructure", label: "Bi-Directional System", icon: Activity },
   { href: "/strategies/iv-skew-flip", label: "IV Skew / IV Flip", icon: Activity },
-  { href: "/strategies/credit-butterfly-condor/monthly", label: "Monthly Credit Butterfly / Condor", icon: Activity },
   { href: "/custom-alert", label: "Custom Alert", icon: Bell },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const pageChannel = pathname.startsWith("/strategies/iv-skew-flip") ? "iv-skew-flip"
-    : pathname.startsWith("/strategies/credit-butterfly-condor/monthly") ? "credit-butterfly-condor-monthly"
     : null;
   const [mobileOpen, setMobileOpen] = useState(false);
   const { theme, setTheme } = useTheme();
