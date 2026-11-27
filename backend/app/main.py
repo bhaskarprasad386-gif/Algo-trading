@@ -2512,8 +2512,8 @@ def market_data_runtime_health():
         "runners": {
             "cash_future": None if cash_runner is None else cash_runner.snapshot(),
             "calendar_spread": None if calendar_runner is None else calendar_runner.snapshot(),
-            "synthetic_arbitrage": None if synthetic_runner is None else synthetic_runner.snapshot(),
-            "box_spread": None if box_runner is None else box_runner.snapshot(),
+            "synthetic_arbitrage": None if synthetic_runner is None else synthetic_runner.health_snapshot(),
+            "box_spread": None if box_runner is None else box_runner.health_snapshot(),
         },
         "scanner": {
             "strategy": "calendar-spread",
