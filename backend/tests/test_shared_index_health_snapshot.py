@@ -93,3 +93,54 @@ def test_runner_instrument_rows_snapshot_is_copy_only_and_does_not_trigger_downl
     snapshot[0]["symbol"] = "MUTATED"
     assert runner._rows[0]["symbol"] == "NIFTY"
 
+
+def test_runner_health_separates_core_feed_from_quiet_option_quote_freshness() -> None:
+    runner = object.__new__(SharedIndexMarketDataRunner)
+    runner._lock = RLock()
+    runner._running = True
+    runner._started_at = "2026-11-27T09:00:00+05:30"
+    runner._start_error = None
+    runner._bootstrap_options_done = True
+    runner._master_refresh_error = None
+    runner._master_last_refresh_at = "2026-11-27T09:00:00+05:30"
+    runner._master_refresh_inflight = False
+    runner._master_refresh_interval_seconds = 3600
+    runner._spot_records = {
+        "NIFTY": SimpleNamespace(ltp=26000.0, timestamp_ns=time_ns()),
+        "BANKNIFTY": SimpleNamespace(ltp=59000.0, timestamp_ns=time_ns()),
+    }
+
+    groups = {}
+    for underlying in ("NIFTY", "BANKNIFTY"):
+        for kind, count, fresh in (
+            ("index", 1, 1), ("future", 1, 1), ("option", 62, 56),
+        ):
+            groups[underlying + ":" + kind] = {
+                "count": count, "fresh_count": fresh,
+                "stale_count": count - fresh, "max_age_seconds": 8.0,
+            }
+
+    class FakeState:
+        def snapshot(self):
+            return {
+                "instrument_count": 128, "fresh_count": 116,
+                "feed_health_by_group": groups,
+            }
+
+    class FakeLifecycle:
+        def snapshot(self):
+            return {"shared_websocket": {"socket_health_by_group": {"3:0": {"connected": True}}}}
+
+    runner.state = FakeState()
+    runner.lifecycle = FakeLifecycle()
+
+    snapshot = runner.health_snapshot()
+
+    assert snapshot["universe_coverage"]["complete"] is True
+    assert snapshot["core_market_data_ready"] is True
+    assert snapshot["option_quote_coverage"] == {
+        "fresh": 112, "total": 124, "stale": 12, "complete": False,
+    }
+    assert snapshot["live_data_ready"] is False
+    assert snapshot["readiness_reason"] == "OPTION_QUOTES_PARTIAL"
+

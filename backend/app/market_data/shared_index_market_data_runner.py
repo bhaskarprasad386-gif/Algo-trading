@@ -527,8 +527,23 @@ class SharedIndexMarketDataRunner:
                 group = feed_groups.get(underlying + ":" + kind, {})
                 counts[underlying][kind] = int(group.get("count", 0))
         universe_complete = counts == expected
+        groups = feed_groups
+        # Core market availability is independent from every option contract
+        # receiving a tick inside the same short freshness window. Quiet OTM
+        # contracts can legitimately have an older last trade/quote while the
+        # spot and futures feeds remain live. Keep strict all-contract freshness
+        # as a separate signal; never use it as a substitute for per-leg checks.
+        core_fresh = all(
+            int(groups.get(f"{underlying}:{kind}", {}).get("fresh_count", 0)) >= 1
+            and int(groups.get(f"{underlying}:{kind}", {}).get("count", 0)) >= 1
+            for underlying in ("NIFTY", "BANKNIFTY")
+            for kind in ("index", "future")
+        )
+        option_total = sum(int(groups.get(f"{underlying}:option", {}).get("count", 0)) for underlying in ("NIFTY", "BANKNIFTY"))
+        option_fresh = sum(int(groups.get(f"{underlying}:option", {}).get("fresh_count", 0)) for underlying in ("NIFTY", "BANKNIFTY"))
         all_records_fresh = int(state.get("instrument_count", 0)) == 128 and int(state.get("fresh_count", 0)) == 128
-        live_data_ready = running and bootstrap_done and universe_complete and all_records_fresh
+        core_market_data_ready = running and bootstrap_done and universe_complete and core_fresh
+        live_data_ready = core_market_data_ready and all_records_fresh
         return {
             "runner": "shared-index-market-data",
             "enabled": running,
@@ -541,7 +556,19 @@ class SharedIndexMarketDataRunner:
             "feed_health_by_group": feed_groups,
             "universe_coverage": {"counts": counts, "complete": universe_complete},
             "all_records_fresh": all_records_fresh,
+            "core_market_data_ready": core_market_data_ready,
+            "option_quote_coverage": {
+                "fresh": option_fresh,
+                "total": option_total,
+                "stale": max(0, option_total - option_fresh),
+                "complete": option_total > 0 and option_fresh == option_total,
+            },
             "live_data_ready": live_data_ready,
+            "readiness_reason": (
+                "READY" if live_data_ready else
+                "CORE_FEED_NOT_READY" if not core_market_data_ready else
+                "OPTION_QUOTES_PARTIAL"
+            ),
             "master_refresh": {
                 "last_success_at": master_last_refresh_at,
                 "last_error": master_refresh_error,
