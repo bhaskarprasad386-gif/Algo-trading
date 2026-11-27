@@ -27,7 +27,6 @@ _OVERVIEW_QUOTE_FAILURES: dict[tuple[str, tuple[str, ...]], tuple[float, str]] =
 _OVERVIEW_INSTRUMENT_CACHE: dict[tuple[str, str, str], tuple[float, str]] = {}
 _OVERVIEW_INSTRUMENT_CACHE_LOCK = Lock()
 _OVERVIEW_INSTRUMENT_CACHE_TTL_SECONDS = 900.0
-_live_cash_future_runner_snapshot_provider = None
 _shared_index_runner_snapshot_provider = None
 _shared_index_runner_health_provider = None
 
@@ -35,12 +34,6 @@ _shared_index_runner_health_provider = None
 _LIVE_PERSISTED_SUMMARY_CACHE = BoundedPersistedSummaryCache(
     ttl_seconds=60.0, max_stale_seconds=300.0, max_entries=4
 )
-
-
-def configure_live_cash_future_runner_snapshot(provider) -> None:
-    """Configure the process-local Cash-Future common runner snapshot provider."""
-    global _live_cash_future_runner_snapshot_provider
-    _live_cash_future_runner_snapshot_provider = provider
 
 
 def configure_shared_index_runner_snapshot(provider) -> None:
