@@ -82,3 +82,19 @@ Implement this as a separate reviewed deployment change, not as an incidental sc
 ## 7. Safety decision
 
 The post-merge GitHub VPS Deploy workflow attempted an SSH session and failed after authentication; the remote execution outcome remains unknown. No separate read-only VPS reconciliation was completed, and no manual deployment/restart, frontend hosting change, Cloudflare/DNS change, or Vercel removal was performed by this audit. Do not retry the deployment blindly. Keep Vercel and the existing Android Render URL unchanged until the VPS state is reconciled and a complete replacement path is verified.
+
+
+## 8. Durable deployment job runner implementation (PR #635)
+
+A new manual-only workflow and remote runner have been added on a separate Batch 0 branch:
+
+- `.github/workflows/vps-durable-deploy-job.yml` submits a unique GitHub run ID and immutable 40-character target commit SHA.
+- `.github/workflows/vps-deploy-job-status.yml` queries an existing job ID without creating another deployment; optional log-tail output is explicitly opt-in because operational logs may contain sensitive details.
+- `deploy/vps-deploy-job-runner.sh` persists a per-job status record and log under `/var/lib/algo-trading-deploy/jobs/<run_id>/`, launches a detached systemd transient worker, and uses a host-level `flock` to prevent concurrent remote deploys.
+- Submission is idempotent: if the same job ID already has a durable status record, a second submission is blocked and the existing status is returned.
+- The workflow polls the same job ID after SSH disconnects. It never resubmits just because the initial SSH response was lost. A stale RUNNING state with an inactive systemd unit is reported as `UNKNOWN_REQUIRES_INSPECTION`.
+- The worker checks the current checkout is clean, fetches main, verifies the target commit is present and a fast-forward descendant, and deploys exactly that SHA. `bootstrap-vps.sh` now respects `DEPLOY_TARGET_SHA` and does not fetch/merge a moving main branch during this supervised path.
+- Market-hours restart deferral remains enabled by default; bypass requires the explicit manual `force_restart` input.
+- A shell-syntax CI workflow validates the runner and bootstrap scripts.
+
+**Not yet verified on the VPS:** no remote job was submitted, no systemd transient unit was created, no deployment was performed, and no service restart occurred. The first production use must be a reviewed manual dispatch after a separate read-only reconciliation of the previously timed-out run. This runner does not implement full frontend/Cloudflare cutover or automatic application/database rollback.
