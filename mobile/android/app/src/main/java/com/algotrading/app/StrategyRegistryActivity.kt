@@ -16,6 +16,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class StrategyRegistryActivity : AppCompatActivity() {
+    private lateinit var statusView: TextView
+    private lateinit var listView: LinearLayout
     private val refreshHandler = Handler(Looper.getMainLooper())
     private val refreshRunnable = object : Runnable {
         override fun run() {
@@ -43,17 +45,16 @@ class StrategyRegistryActivity : AppCompatActivity() {
             setPadding(24, 24, 24, 24)
         }
         val title = TextView(this).apply { text = "STRATEGIES"; textSize = 24f }
-        val status = TextView(this).apply {
+        statusView = TextView(this).apply {
             text = "Loading backend registry..."
             textSize = 13f
             setPadding(0, 8, 0, 16)
         }
-        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        listView = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(title)
-        root.addView(status)
-        root.addView(list)
+        root.addView(statusView)
+        root.addView(listView)
         setContentView(root)
-        refreshRegistry()
     }
 
     private fun refreshRegistry() {
@@ -61,25 +62,23 @@ class StrategyRegistryActivity : AppCompatActivity() {
             try {
                 val items = ApiService.retrofitService.appStrategies().strategies.filter { it.enabled }
                 withContext(Dispatchers.Main) {
-                    val root = (window.decorView.findViewById<LinearLayout>(android.R.id.content)?.getChildAt(0) as? LinearLayout)
-                    val statusView = root?.getChildAt(1) as? TextView
-                    val listView = root?.getChildAt(2) as? LinearLayout
-                    statusView?.text = "Backend registry • ${items.size} enabled strategies • refresh 30s"
-                    listView?.removeAllViews()
+                    statusView.text = "Backend registry • ${items.size} enabled strategies • refresh 30s"
+                    listView.removeAllViews()
                     items.forEach { item ->
                         val button = Button(this@StrategyRegistryActivity).apply {
-                            text = item.name + " • v" + item.version + " • " + item.data_mode + " • " + item.execution_mode + " • ORDERS " + if (item.live_orders) "ON" else "OFF"
+                            text = item.name + " • v" + item.version + " • " + item.data_mode +
+                                " • " + item.execution_mode + " • ORDERS " +
+                                (if (item.live_orders) "ON" else "OFF") + " • " +
+                                item.capabilities.joinToString(",")
                             layoutParams = ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
                         }
                         button.setOnClickListener { openStrategy(item) }
-                        listView?.addView(button)
+                        listView.addView(button)
                     }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    val root = (window.decorView.findViewById<LinearLayout>(android.R.id.content)?.getChildAt(0) as? LinearLayout)
-                    (root?.getChildAt(1) as? TextView)?.text =
-                        "Strategy registry unavailable • " + (e.message ?: "network error")
+                    statusView.text = "Strategy registry unavailable • " + (e.message ?: "network error")
                 }
             }
         }
