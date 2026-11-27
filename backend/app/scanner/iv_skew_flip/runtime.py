@@ -32,6 +32,31 @@ from .instruments import download_iv_instruments
 from .sampler import IVOneSecondSampler
 from .spot_feed import IVSpotFeedAdapter
 from .shared_runner_feed import IVSharedRunnerOptionFeedAdapter, IVSharedRunnerSpotFeedAdapter
+
+
+class _DisabledIVFutureContextFeed:
+    """Explicitly disable IV-owned futures transport in shared-runner mode.
+
+    Index-futures basis is context-only and currently has no active contracts.
+    Keeping a CommonStrategyMarketFeed here would silently create a second
+    subscription owner when IV is constructed, even though start() is unused.
+    """
+
+    def start(self, _contracts):
+        raise RuntimeError("IV index-futures context feed is disabled; use SharedIndexMarketDataRunner")
+
+    def snapshot(self, **_kwargs):
+        return {
+            "status": "DISABLED_BY_SCOPE",
+            "source": "shared-index-market-data",
+            "consumer": "iv-skew-flip-index-futures",
+            "contract_count": 0,
+            "contracts": [],
+            "owns_subscriptions": False,
+        }
+
+    def stop(self) -> None:
+        return None
 from .alerts import AlertCooldownStore, IVEarlyEntryAlertEngine
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from .universe import resolve_option_universe
@@ -116,11 +141,14 @@ class IVSkewFlipRuntime:
                 clock_ns=clock_ns,
                 persist_last_price=True if feed_manager is not None else None,
             )
-        self.future_feed = future_feed or IVIndexFutureFeedAdapter(
-            feed=CommonStrategyMarketFeed(
-                "iv-skew-flip-index-futures", manager=feed_manager, mode=3,
-            ) if feed_manager is not None else None,
-            clock_ns=clock_ns,
+        self.future_feed = future_feed or (
+            _DisabledIVFutureContextFeed()
+            if shared_runner is not None else IVIndexFutureFeedAdapter(
+                feed=CommonStrategyMarketFeed(
+                    "iv-skew-flip-index-futures", manager=feed_manager, mode=3,
+                ) if feed_manager is not None else None,
+                clock_ns=clock_ns,
+            )
         )
         self._future_contracts: tuple[Any, ...] = ()
         self._basis_histories: dict[str, BasisHistory] = {}
