@@ -1,4 +1,4 @@
-"""Durable Box Spread real-owner account binding."""
+"""Durable real-trading real-owner account binding."""
 from __future__ import annotations
 
 import hashlib
@@ -61,7 +61,7 @@ def claim_authenticated_account(db: Session, broker_name: str, client_code: str)
     elif not hmac.compare_digest(state.account_fingerprint or "", fingerprint):
         raise HTTPException(
             status_code=409,
-            detail="A different broker account is already bound to the Box Spread real owner; manual ownership recovery is required",
+            detail="A different broker account is already bound to the real-trading real owner; manual ownership recovery is required",
         )
     else:
         state.broker_name = normalized_broker
@@ -86,11 +86,11 @@ def claim_authenticated_account(db: Session, broker_name: str, client_code: str)
         ):
             raise HTTPException(
                 status_code=409,
-                detail="A different broker account won the Box Spread ownership claim; manual ownership recovery is required",
+                detail="A different broker account won the real-trading ownership claim; manual ownership recovery is required",
             ) from exc
         raise HTTPException(
             status_code=503,
-            detail="Concurrent Box Spread account ownership claim could not be safely resolved; retry after checking the persisted owner",
+            detail="Concurrent real-trading account ownership claim could not be safely resolved; retry after checking the persisted owner",
         ) from exc
     except Exception:
         db.rollback()
@@ -108,7 +108,7 @@ def set_owner_connection_state(db: Session, connected: bool) -> RealTradingOwner
         .first()
     )
     if state is None or not state.account_fingerprint:
-        raise HTTPException(status_code=503, detail="Durable Box Spread account ownership is unavailable")
+        raise HTTPException(status_code=503, detail="Durable real-trading account ownership is unavailable")
     state.connected = bool(connected)
     state.real_trading_enabled = False
     state.kill_switch = True
@@ -123,7 +123,7 @@ def set_owner_connection_state(db: Session, connected: bool) -> RealTradingOwner
 
 
 def disable_owner_trading(db: Session) -> RealTradingOwnerState:
-    """Durably engage the Box Spread kill switch without changing connection state."""
+    """Durably engage the real-trading kill switch without changing connection state."""
     state = (
         db.query(RealTradingOwnerState)
         .filter(RealTradingOwnerState.owner_key == OWNER_KEY)
@@ -131,7 +131,7 @@ def disable_owner_trading(db: Session) -> RealTradingOwnerState:
         .first()
     )
     if state is None or not state.account_fingerprint:
-        raise HTTPException(status_code=503, detail="Durable Box Spread account ownership is unavailable")
+        raise HTTPException(status_code=503, detail="Durable real-trading account ownership is unavailable")
     state.real_trading_enabled = False
     state.kill_switch = True
     try:
