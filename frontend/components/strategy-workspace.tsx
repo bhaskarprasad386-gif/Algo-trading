@@ -943,8 +943,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           setIndexHandoffState(handoff);
           // Polling refreshes saved/runtime status only; it must not overwrite an in-progress user draft.
           if (!indexSelectionDraftInitialized.current) {
-            setIndexSelectionDraft(symbols.filter((symbol: string) => !weeklyOnly.includes(symbol)));
-            setWeeklyOnlyDraft(weeklyOnly);
+            setIndexSelectionDraft(symbols);
+            setWeeklyOnlyDraft([]);
             indexSelectionDraftInitialized.current = true;
           }
           setIndexSelectionError(null);
@@ -984,8 +984,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       const savedWeeklyOnly = Array.isArray(body?.weekly_only_symbols) ? body.weekly_only_symbols.filter((item: unknown): item is string => typeof item === "string") : weeklyOnly;
       setSavedIndexSymbols(saved);
       setSavedWeeklyOnlySymbols(savedWeeklyOnly);
-      setIndexSelectionDraft(saved.filter((symbol: string) => !savedWeeklyOnly.includes(symbol)));
-      setWeeklyOnlyDraft(savedWeeklyOnly);
+      setIndexSelectionDraft(saved);
+      setWeeklyOnlyDraft([]);
       indexSelectionDraftInitialized.current = true;
       const handoff = typeof body?.switch?.state === "string" ? body.switch.state : "SAVED";
       setIndexHandoffState(handoff);
