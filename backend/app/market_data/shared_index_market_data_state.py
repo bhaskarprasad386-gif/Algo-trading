@@ -10,7 +10,7 @@ from .shared_cache import put_market_data_record, get_shared_market_data_cache
 
 
 class SharedIndexMarketDataState:
-    MAX_INSTRUMENTS = 52  # 48 options + 2 spot + 2 index futures
+    MAX_INSTRUMENTS = 128  # 124 options (31 CE/PE strikes per index) + 2 spot + 2 index futures
     MAX_OI_HISTORY = 128
     MAX_VOLUME_HISTORY = 128
     MAX_TICK_HISTORY = 512
