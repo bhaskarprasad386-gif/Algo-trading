@@ -94,11 +94,20 @@ export default function HomePage() {
           cache: "no-store",
           signal: AbortSignal.timeout(2500),
         });
-        if (!liveResponse.ok) throw new Error("liveness HTTP " + liveResponse.status);
-        const liveBody = await liveResponse.json();
-        if (liveBody?.status !== "ok") throw new Error("invalid liveness response");
+        // Any HTTP response proves the API HTTP process answered. Non-2xx
+        // means the liveness check is degraded, not that the server is offline.
         processReachable = true;
         noteApiReachable();
+        if (!liveResponse.ok) {
+          setApiStatus("degraded");
+          setApiDetail("API HTTP process responded; liveness probe returned HTTP " + liveResponse.status);
+        } else {
+          const liveBody = await liveResponse.json();
+          if (liveBody?.status !== "ok") {
+            setApiStatus("degraded");
+            setApiDetail("API HTTP process responded; liveness response was invalid");
+          }
+        }
       } catch (error) {
         healthFailureCountRef.current += 1;
         if (!cancelled) {
@@ -276,8 +285,8 @@ export default function HomePage() {
     const loadMarketOverview = async () => {
       try {
         const response = await fetch(appConfig.apiBaseUrl.replace(/\/$/, "") + "/api/v1/market-data/overview", { cache: "no-store", signal: AbortSignal.timeout(4500) });
-        if (!response.ok) throw new Error("market overview");
         noteApiReachable();
+        if (!response.ok) throw new Error("market overview");
         const body = await response.json();
         const next: Record<string, { ltp: number | null; previousClose: number | null; changePercent: number | null; status: string }> = {};
         const sessionValue = body?.nse_market_session ?? body?.market_session;
@@ -320,8 +329,8 @@ export default function HomePage() {
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
         const response = await fetch(`${base}/api/v1/market-data/live-health`, { cache: "no-store", signal: AbortSignal.timeout(4500) });
-        if (!response.ok) throw new Error("feed health");
         noteApiReachable();
+        if (!response.ok) throw new Error("feed health");
         const body = await response.json();
         if (cancelled) return;
         // The dashboard's feed badge represents live runtime ticks, not persisted history.
@@ -378,8 +387,8 @@ export default function HomePage() {
       try {
         const base = appConfig.apiBaseUrl.replace(/\/$/, "");
         const response = await fetch(base + "/api/v1/market-data/runtime/health", { cache: "no-store", signal: AbortSignal.timeout(5000) });
-        if (!response.ok) throw new Error("runtime health");
         noteApiReachable();
+        if (!response.ok) throw new Error("runtime health");
         const body = await response.json();
         if (cancelled) return;
         if (!body || typeof body !== "object" || !body.common_feed || typeof body.common_feed !== "object" || !Array.isArray(body.common_feed.connected_groups) || !Array.isArray(body.common_feed.required_socket_groups) || !Number.isFinite(Number(body.common_feed.required_socket_group_count)) || !Number.isFinite(Number(body.common_feed.active_instruments))) throw new Error("runtime health schema incomplete");
@@ -560,8 +569,8 @@ export default function HomePage() {
           cache: "no-store",
           signal: AbortSignal.timeout(3000),
         });
-        if (!response.ok) throw new Error("shared runner health unavailable");
         noteApiReachable();
+        if (!response.ok) throw new Error("shared runner health unavailable");
         const body = await response.json();
         if (!cancelled && body && typeof body === "object") {
           setSharedRunner(body);
