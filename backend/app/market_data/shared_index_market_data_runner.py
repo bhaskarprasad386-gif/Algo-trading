@@ -29,13 +29,30 @@ EXPECTED_FEED_GROUPS = {
 }
 
 
-def _lifecycle_universe_complete(lifecycle: dict[str, Any]) -> bool:
-    """Use subscription ownership for structural coverage, not received ticks."""
-    return bool(
+def _lifecycle_universe_complete(
+    lifecycle: dict[str, Any], feed_groups: dict[str, dict] | None = None,
+) -> bool:
+    """Require complete subscription ownership and complete observed contract composition."""
+    subscriptions_complete = bool(
         lifecycle.get("spot_active") is True and int(lifecycle.get("spot_instruments", 0)) == 2
         and lifecycle.get("futures_active") is True and int(lifecycle.get("futures_instruments", 0)) == 2
         and lifecycle.get("options_active") is True and int(lifecycle.get("options_instruments", 0)) == 124
     )
+    if not subscriptions_complete or feed_groups is None:
+        return subscriptions_complete
+    for underlying in LOCKED:
+        if int(feed_groups.get(f"{underlying}:index", {}).get("count", 0)) != 1:
+            return False
+        if int(feed_groups.get(f"{underlying}:future", {}).get("count", 0)) != 1:
+            return False
+        options = feed_groups.get(f"{underlying}:option", {})
+        if (
+            int(options.get("count", 0)) != 62
+            or int(options.get("ce_count", 0)) != 31
+            or int(options.get("pe_count", 0)) != 31
+        ):
+            return False
+    return True
 
 
 def _readiness_from_groups(*, running: bool, bootstrap_done: bool,
@@ -577,7 +594,7 @@ class SharedIndexMarketDataRunner:
             for kind in ("index", "future", "option"):
                 group = feed_groups.get(underlying + ":" + kind, {})
                 counts[underlying][kind] = int(group.get("count", 0))
-        universe_complete = _lifecycle_universe_complete(lifecycle)
+        universe_complete = _lifecycle_universe_complete(lifecycle, feed_groups)
         all_records_fresh = int(state.get("instrument_count", 0)) == 128 and int(state.get("fresh_count", 0)) == 128
         readiness = _readiness_from_groups(
             running=running, bootstrap_done=bootstrap_done,
