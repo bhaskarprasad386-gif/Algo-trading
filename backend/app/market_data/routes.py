@@ -20,6 +20,8 @@ router = APIRouter(
 
 _CLOSED_OVERVIEW_CACHE: dict[str, dict] = {}
 _CLOSED_OVERVIEW_CACHE_LOCK = Lock()
+_OVERVIEW_HISTORICAL_CACHE: dict[tuple[str, str, str], tuple[float, float | None, float | None]] = {}
+_OVERVIEW_HISTORICAL_CACHE_LOCK = Lock()
 _OVERVIEW_QUOTE_CACHE: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, dict]]] = {}
 _OVERVIEW_QUOTE_CACHE_LOCK = Lock()
 _OVERVIEW_QUOTE_CACHE_TTL_SECONDS = 15.0
@@ -295,6 +297,7 @@ def get_historical(
 ):
     """Get historical candle data."""
     from app.market_data.client import MarketDataClient
+    from app.market_data.historical import HistoricalDataClient
 
     try:
         app_logger.info(f"Historical request: {exchange} {symboltoken} {interval}")
@@ -398,7 +401,7 @@ def get_live_data_health():
     common = shared_common_manager_snapshot()
     # NSE cash (Angel exchange type 1) and NFO derivatives (type 2) are
     # the critical feeds for the cash-future and synthetic scanners. Do not
-    # let a fresh BFO/MCX tick mask stale or absent NSE/NFO observations.
+    # let a fresh BFO tick mask stale or absent NSE/NFO observations.
     now_ns = int(now.timestamp() * 1_000_000_000)
     timestamps_by_exchange = (
         common.get("latest_tick_timestamp_ns_by_exchange_type", {}) if common else {}
