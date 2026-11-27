@@ -660,7 +660,7 @@ class SharedIndexMarketDataRunner:
             "all_records_fresh": all_records_fresh,
             "master_refresh": master_refresh,
             "option_flow_aggregates": aggregates,
-            "derived_iv_model": {"status": "DISABLED", "reason": "LOCAL_IV_CALCULATION_DISABLED", "iv_fields": "NULL"},
+            "derived_iv_model": {"status": "DISABLED", "reason": "LOCAL_IV_CALCULATION_DISABLED", "iv_fields": "NULL", "volume_source": "broker_day_volume", "oi_source": "broker_open_interest"},
             "lifecycle": lifecycle,
             "rotation": rotation,
             "live_data_ready": live_data_ready,
