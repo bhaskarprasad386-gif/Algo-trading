@@ -50,4 +50,4 @@ def test_only_shared_index_runner_is_admitted_to_production_websocket():
     assert "SharedIndexMarketDataRunner (NIFTY/BANKNIFTY)" in feed_source
     assert "ShoonyaMarketDataSupervisor(" not in source
     assert "SHOONYA_MARKET_DATA_ENABLED and shoonya_market_data_supervisor" not in source
-    assert "shoonya_market_data_supervisor = None" in source
+    assert "shoonya_market_data_supervisor" not in source
