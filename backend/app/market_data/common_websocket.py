@@ -3016,6 +3016,11 @@ class CommonWebSocketManager:
                 self._failure_recovery_generation_by_group.clear()
                 self._failure_recovery_pending_groups.clear()
                 self._failure_recovery_pending_versions.clear()
+        # The recovery supervisor may be waiting for _reconcile_lock. Release
+        # that lock before joining it, otherwise every shutdown can burn the
+        # full join timeout while the thread is unable to observe _closed.
+        if recovery_thread is not None and recovery_thread is not current_thread():
+            recovery_thread.join(timeout=1.0)
         # Do not hold either manager lock while waiting for consumer callbacks:
         # a callback may legitimately request subscription changes during shutdown.
         for group, (generation, adapter) in callback_adapters:
@@ -3049,8 +3054,6 @@ class CommonWebSocketManager:
                 reason="manager_shutdown",
                 timeout=2.0,
             )
-        if recovery_thread is not None and recovery_thread is not current_thread():
-            recovery_thread.join(timeout=1.0)
         # Wait for callbacks admitted before closure; new OPEN/ERROR callbacks
         # are rejected after _closed is set. Retired CLOSED remains admissible.
         with self._transport_observer_dispatch_lock:
