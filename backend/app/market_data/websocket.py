@@ -767,22 +767,12 @@ class MarketDataWebSocket:
                     )
                 if transport_thread is not None and transport_thread is not current_thread():
                     transport_thread.join(timeout=1.0)
-                if transport_thread is not None and transport_thread.is_alive():
-                    # Failed handshakes use this retry path directly (they do not
-                    # necessarily pass through MarketDataWebSocket.close()). Apply
-                    # the same low-level abort fallback here so a stuck poll does
-                    # not strand the retry loop with a live transport thread.
-                    wsapp = getattr(sdk_socket, "wsapp", None) if sdk_socket is not None else None
-                    low_level_socket = getattr(wsapp, "sock", None) if wsapp is not None else None
-                    abort = getattr(low_level_socket, "abort", None)
-                    if callable(abort):
-                        try:
-                            abort()
-                        except Exception as abort_exc:
-                            app_logger.error(
-                                f"Angel WebSocket handshake-failure transport abort failed: {abort_exc}"
-                            )
-                        transport_thread.join(timeout=6.0)
+                # _close_sdk_connection_bounded() already captured the low-level
+                # descriptor before SDK teardown and applied abort -> shutdown.
+                # Do not re-read wsapp.sock here: SmartAPI may have cleared it,
+                # making a second abort ineffective and obscuring the real
+                # transport-retirement result. If the tracked thread remains
+                # alive, quarantine this attempt below and never overlap sockets.
                 if transport_thread is not None and transport_thread.is_alive():
                     with self._lock:
                         self._transport_close_timed_out = True
