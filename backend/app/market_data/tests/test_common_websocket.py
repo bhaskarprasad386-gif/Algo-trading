@@ -2697,3 +2697,99 @@ def test_raw_callback_latency_metrics_preserve_shared_callable_deduplication():
         assert metrics["duration_total_ns"] >= metrics["duration_max_ns"] >= 0
     finally:
         manager.close()
+
+
+def test_connect_worker_start_failure_releases_generation_admission(monkeypatch):
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    group = SocketGroup(1, 0)
+    socket = FakeSocket()
+    generation = 7
+    with manager._lock:
+        manager._sockets[group] = socket
+        manager._socket_tokens[group] = {(1, "101")}
+        manager._socket_generation[group] = generation
+        manager._socket_generation_counter[group] = generation
+
+    original_thread = common_websocket_module.Thread
+
+    class BrokenThread:
+        def __init__(self, *args, **kwargs):
+            self.name = kwargs.get("name", "broken-thread")
+
+        def start(self):
+            raise RuntimeError("thread quota exhausted")
+
+    monkeypatch.setattr(common_websocket_module, "Thread", BrokenThread)
+    try:
+        try:
+            manager._start_socket_connect(
+                socket=socket,
+                group=group,
+                pairs={(1, "101")},
+                subscriptions={1: ["101"]},
+                generation=generation,
+            )
+        except RuntimeError as exc:
+            assert "connect worker" in str(exc)
+            assert "thread quota exhausted" in str(exc)
+        else:
+            raise AssertionError("connect worker start failure must propagate")
+    finally:
+        monkeypatch.setattr(common_websocket_module, "Thread", original_thread)
+
+    with manager._lock:
+        assert manager._connect_pending_generation.get(group) is None
+        assert manager._connect_started_generation.get(group) is None
+        assert (group, generation) not in manager._connect_retirement_claims
+        assert manager._sockets[group] is socket
+        assert manager._last_connect_failure["error_type"] == "RuntimeError"
+        assert "thread quota exhausted" in manager._last_connect_failure["error"]
+    manager.close()
+
+
+def test_socket_operation_worker_start_failure_releases_inflight_reservation(monkeypatch):
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    group = SocketGroup(1, 0)
+    socket = FakeSocket()
+    called = []
+    original_thread = common_websocket_module.Thread
+
+    class BrokenThread:
+        def __init__(self, *args, **kwargs):
+            self.name = kwargs.get("name", "broken-thread")
+
+        def start(self):
+            raise RuntimeError("thread quota exhausted")
+
+    monkeypatch.setattr(common_websocket_module, "Thread", BrokenThread)
+    try:
+        try:
+            manager._run_socket_operation_bounded(
+                socket=socket,
+                group=group,
+                operation=lambda: called.append("sent"),
+                operation_name="subscribe",
+            )
+        except RuntimeError as exc:
+            assert "subscribe worker" in str(exc)
+            assert "thread quota exhausted" in str(exc)
+        else:
+            raise AssertionError("operation worker start failure must propagate")
+    finally:
+        monkeypatch.setattr(common_websocket_module, "Thread", original_thread)
+
+    assert called == [], "the broker operation must not run without its worker"
+    assert manager._socket_operation_workers == {}
+    assert manager._socket_operation_events == {}
+    assert manager._socket_operation_worker_failures == 1
+
+    # The failed spawn must not poison the shard's next operation admission.
+    manager._run_socket_operation_bounded(
+        socket=socket,
+        group=group,
+        operation=lambda: called.append("retry"),
+        operation_name="subscribe",
+    )
+    assert called == ["retry"]
+    assert manager._socket_operation_workers == {}
+    manager.close()
