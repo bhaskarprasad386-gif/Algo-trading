@@ -160,6 +160,10 @@ class CommonWebSocketManager:
         # A callback worker can outlive its bounded stop wait when a consumer
         # callback blocks. Retain only lifecycle metadata until that worker exits.
         self._retired_callback_workers: dict[str, dict[str, Any]] = {}
+        # Failed callback-retirement worker/watcher starts remain queued for the
+        # shared recovery supervisor; never lose ownership on Thread.start failure.
+        self._callback_retirement_start_pending: dict[str, dict[str, Any]] = {}
+        self._callback_retirement_watch_pending: dict[str, dict[str, Any]] = {}
         self._resolve_exchange_type = exchange_type_resolver or self._default_exchange_type
         self._sockets: dict[SocketGroup, Any] = {}
         self._socket_tokens: dict[SocketGroup, set[tuple[int, str]]] = {}
@@ -282,10 +286,16 @@ class CommonWebSocketManager:
         # scheduled. If the callback recovery worker cannot start, the periodic
         # supervisor can retire these transports instead of orphaning them.
         self._failure_recovery_pending_transports: dict[SocketGroup, dict[str, Any]] = {}
+        # Integrity faults are handed off to the shared supervisor so SDK
+        # transport callbacks never perform recovery work on their own thread.
+        self._callback_integrity_fault_pending: dict[SocketGroup, tuple[Any, int]] = {}
         self._failure_recovery_admission_rejections = 0
         # Retired transports remain visible until their close worker actually exits.
         # Store metadata only; never retain broker frames or authentication payloads.
         self._retired_transports: dict[str, dict[str, Any]] = {}
+        # If the bounded close worker itself cannot start, retain its exact task
+        # and keep the retired-session admission fence until a worker is started.
+        self._retired_transport_close_pending: dict[str, dict[str, Any]] = {}
         # Watchers are required to release retired-session admission after the
         # close worker exits. Retain watcher targets when thread creation fails.
         self._retired_transport_watch_pending: dict[str, dict[str, Any]] = {}
@@ -1769,6 +1779,26 @@ class CommonWebSocketManager:
                     "subscription/reconcile will retry: %s", exc,
                 )
 
+    def _process_pending_callback_integrity_faults(self) -> None:
+        with self._lock:
+            pending = list(self._callback_integrity_fault_pending.items())
+            for group, _ in pending:
+                self._callback_integrity_fault_pending.pop(group, None)
+        for group, (socket, generation) in pending:
+            try:
+                self._schedule_socket_failure_recovery(
+                    group, socket, generation, "callback_dispatch_integrity_fault"
+                )
+            except Exception as exc:
+                with self._lock:
+                    current = self._sockets.get(group) is socket and self._socket_generation.get(group) == generation
+                    if current:
+                        self._callback_integrity_fault_pending[group] = (socket, generation)
+                runtime_diagnostics.record(
+                    component="Common Market Feed", error_type=type(exc).__name__,
+                    message=str(exc), context={"event": "callback_integrity_fault_handoff", "group": f"{group.mode}:{group.shard}"},
+                )
+
     def _recovery_loop(self) -> None:
         # Subscription changes intentionally remain pending during a shared
         # broker cooldown. Reconcile once when that cooldown expires so the
@@ -1778,18 +1808,36 @@ class CommonWebSocketManager:
         cooldown_was_active = False
         retry_delay = max(0.1, float(self._recovery_interval_seconds))
         retry_delay_cap = max(retry_delay, float(self._recovery_backoff_max_seconds))
-        while not self._recovery_stop.wait(retry_delay):
+        while True:
+            # Integrity-fault handoffs originate on the SDK callback thread and
+            # should be serviced promptly, without waiting for the normal
+            # five-second polling interval. Keep the ordinary idle cadence.
+            with self._lock:
+                has_urgent_integrity_fault = bool(self._callback_integrity_fault_pending)
+            wait_for = min(retry_delay, 0.1) if has_urgent_integrity_fault else retry_delay
+            if self._recovery_stop.wait(wait_for):
+                return
             with self._lock:
                 if self._closed:
                     return
                 has_intent = bool(self.registry.subscriptions())
                 has_pending_failure_transports = bool(self._failure_recovery_pending_transports)
                 has_pending_retirement_watchers = bool(self._retired_transport_watch_pending)
-            if not has_intent and not has_pending_failure_transports and not has_pending_retirement_watchers:
+                has_pending_retirement_closes = bool(self._retired_transport_close_pending)
+                has_pending_callback_retirements = bool(self._callback_retirement_start_pending)
+                has_pending_callback_watchers = bool(self._callback_retirement_watch_pending)
+                has_pending_integrity_faults = bool(self._callback_integrity_fault_pending)
+            if not (has_intent or has_pending_failure_transports or has_pending_retirement_watchers
+                    or has_pending_retirement_closes or has_pending_callback_retirements or has_pending_callback_watchers
+                    or has_pending_integrity_faults):
                 retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 continue
             try:
+                self._process_pending_callback_integrity_faults()
+                self._retry_pending_retired_transport_closes()
                 self._retry_pending_retired_transport_watchers()
+                self._retry_pending_callback_retirements()
+                self._retry_pending_callback_retirement_watchers()
                 self._retry_pending_failure_transport_closes()
                 # Before/after the regular session, tick silence is expected;
                 # don't churn otherwise-connected sockets every 30 seconds.
@@ -1798,10 +1846,16 @@ class CommonWebSocketManager:
                     if _is_regular_trading_window()
                     else -1.0
                 )
-                self.recover_disconnected(
-                    min_age_seconds=0.0,
-                    silent_age_seconds=silent_timeout,
-                )
+                # A queued lifecycle handoff can exist in isolated/manual
+                # manager states without any registry subscriptions. Retry its
+                # exact pending task above, but do not let the periodic socket
+                # sweep interpret those intentionally installed test/transition
+                # sockets as obsolete desired state and retire their adapters.
+                if has_intent or has_pending_failure_transports:
+                    self.recover_disconnected(
+                        min_age_seconds=0.0,
+                        silent_age_seconds=silent_timeout,
+                    )
                 cooldown_remaining = self._broker_cooldown_remaining()
                 with self._lock:
                     pending_failures_to_ack = dict(self._failure_recovery_pending_versions)
@@ -2023,6 +2077,60 @@ class CommonWebSocketManager:
     def _unsubscribe_pairs(cls, socket: Any, mode: int, pairs: set[tuple[int, str]]) -> None:
         socket.unsubscribe_groups(cls._by_exchange(pairs))
 
+    def _callback_retirement_key(self, group: SocketGroup, generation: int) -> str:
+        return f"{group.mode}:{group.shard}:{generation}"
+
+    def _schedule_callback_adapter_retirement(
+        self, adapter: AngelShardCallbackAdapter, group: SocketGroup, generation: int
+    ) -> None:
+        """Start bounded adapter retirement or retain it for supervisor retry."""
+        key = self._callback_retirement_key(group, generation)
+        worker = Thread(
+            target=lambda: self._stop_retired_callback_adapter(adapter, group, generation),
+            name=f"angel-callback-retire-{group.mode}-{group.shard}-{generation}",
+            daemon=True,
+        )
+        try:
+            worker.start()
+        except Exception as exc:
+            with self._lock:
+                self._callback_retirement_start_pending[key] = {
+                    "adapter": adapter, "group": group, "generation": generation, "starting": False,
+                }
+            runtime_diagnostics.record(
+                component="Common Market Feed", error_type=type(exc).__name__,
+                message=f"callback retirement worker start failed: {exc}",
+                context={"event": "callback_retirement_worker_start", "group": f"{group.mode}:{group.shard}", "generation": generation},
+            )
+            app_logger.warning(
+                "Common feed callback retirement worker could not start; supervisor will retry group=%s generation=%s: %s",
+                f"{group.mode}:{group.shard}", generation, exc,
+            )
+            self._ensure_recovery_supervisor()
+
+    def _retry_pending_callback_retirements(self) -> None:
+        """Retry callback stop workers whose initial Thread.start() was rejected."""
+        with self._lock:
+            pending = [
+                (key, dict(record))
+                for key, record in self._callback_retirement_start_pending.items()
+                if not record.get("starting")
+            ]
+            for key, _ in pending:
+                current = self._callback_retirement_start_pending.get(key)
+                if current is not None:
+                    current["starting"] = True
+        for key, record in pending:
+            self._schedule_callback_adapter_retirement(
+                record["adapter"], record["group"], record["generation"]
+            )
+            # _schedule... queues again on failure. On success, remove only
+            # the original pending marker; a newer retry record is preserved.
+            with self._lock:
+                current = self._callback_retirement_start_pending.get(key)
+                if current is not None and current.get("starting"):
+                    self._callback_retirement_start_pending.pop(key, None)
+
     def _install_callback_adapter(self, group: SocketGroup, generation: int) -> None:
         """Create one worker/queue for the exact socket generation when opted in."""
         if not self._async_callback_dispatch:
@@ -2038,12 +2146,10 @@ class CommonWebSocketManager:
                 self._callback_adapters[group] = (generation, adapter)
                 retire = False
         if retire:
-            Thread(target=lambda: adapter.stop(timeout=1.0, drain=False),
-                   name=f"angel-callback-retire-{group.mode}-{group.shard}", daemon=True).start()
+            self._schedule_callback_adapter_retirement(adapter, group, generation)
         elif previous is not None:
             old_generation, old_adapter = previous
-            Thread(target=lambda: self._stop_retired_callback_adapter(old_adapter, group, old_generation),
-                   name=f"angel-callback-replace-{group.mode}-{group.shard}-{old_generation}", daemon=True).start()
+            self._schedule_callback_adapter_retirement(old_adapter, group, old_generation)
 
     def _retire_callback_adapter_locked(self, group: SocketGroup) -> None:
         """Remove an adapter while holding the manager lock; never join its worker here."""
@@ -2056,21 +2162,72 @@ class CommonWebSocketManager:
             key = f"{group.mode}:{group.shard}"
             self._callback_dispatch_retired_faults[key] = {
                 **adapter_state,
-                # Adapter increments its private fence when failing closed;
-                # diagnostics identify the socket generation that faulted.
                 "generation": generation,
             }
             while len(self._callback_dispatch_retired_faults) > 12:
                 self._callback_dispatch_retired_faults.pop(next(iter(self._callback_dispatch_retired_faults)))
-        Thread(target=lambda: self._stop_retired_callback_adapter(adapter, group, generation),
-               name=f"angel-callback-retire-{group.mode}-{group.shard}-{generation}", daemon=True).start()
+        self._schedule_callback_adapter_retirement(adapter, group, generation)
 
-    def _stop_retired_callback_adapter(self, adapter: AngelShardCallbackAdapter, group: SocketGroup, generation: int) -> None:
+    def _start_callback_worker_watcher(
+        self, worker: Thread, key: str, group: SocketGroup, generation: int
+    ) -> None:
+        def _watch_worker() -> None:
+            worker.join()
+            with self._lock:
+                self._retired_callback_workers.pop(key, None)
+                self._callback_retirement_watch_pending.pop(key, None)
+
+        watcher = Thread(
+            target=_watch_worker,
+            name=f"angel-callback-retire-watch-{group.mode}-{group.shard}-{generation}",
+            daemon=True,
+        )
+        try:
+            watcher.start()
+        except Exception as exc:
+            with self._lock:
+                self._callback_retirement_watch_pending[key] = {
+                    "worker": worker, "group": group, "generation": generation, "starting": False,
+                }
+            runtime_diagnostics.record(
+                component="Common Market Feed", error_type=type(exc).__name__,
+                message=f"callback retirement watcher start failed: {exc}",
+                context={"event": "callback_retirement_watcher_start", "group": f"{group.mode}:{group.shard}", "generation": generation},
+            )
+            app_logger.warning(
+                "Common feed callback retirement watcher could not start; supervisor will retry group=%s generation=%s: %s",
+                f"{group.mode}:{group.shard}", generation, exc,
+            )
+            self._ensure_recovery_supervisor()
+            return
+        with self._lock:
+            self._callback_retirement_watch_pending.pop(key, None)
+
+    def _retry_pending_callback_retirement_watchers(self) -> None:
+        """Retry watcher starts without dropping the retired-worker record."""
+        with self._lock:
+            pending = [
+                (key, dict(record))
+                for key, record in self._callback_retirement_watch_pending.items()
+                if not record.get("starting")
+            ]
+            for key, _ in pending:
+                current = self._callback_retirement_watch_pending.get(key)
+                if current is not None:
+                    current["starting"] = True
+        for key, record in pending:
+            self._start_callback_worker_watcher(
+                record["worker"], key, record["group"], record["generation"]
+            )
+
+    def _stop_retired_callback_adapter(
+        self, adapter: AngelShardCallbackAdapter, group: SocketGroup, generation: int
+    ) -> None:
         try:
             adapter.stop(timeout=1.0, drain=False)
         except TimeoutError:
             worker = getattr(adapter, "_thread", None)
-            key = f"{group.mode}:{group.shard}:{generation}"
+            key = self._callback_retirement_key(group, generation)
             with self._lock:
                 self._retired_callback_workers[key] = {
                     "group": f"{group.mode}:{group.shard}",
@@ -2085,15 +2242,7 @@ class CommonWebSocketManager:
                 f"{group.mode}:{group.shard}", generation,
             )
             if isinstance(worker, Thread) and worker.is_alive():
-                def _watch_worker() -> None:
-                    worker.join()
-                    with self._lock:
-                        self._retired_callback_workers.pop(key, None)
-                Thread(
-                    target=_watch_worker,
-                    name=f"angel-callback-retire-watch-{group.mode}-{group.shard}-{generation}",
-                    daemon=True,
-                ).start()
+                self._start_callback_worker_watcher(worker, key, group, generation)
             else:
                 with self._lock:
                     self._retired_callback_workers.pop(key, None)
@@ -2119,9 +2268,13 @@ class CommonWebSocketManager:
             ),),
         )
         if not accepted and adapter.snapshot().get("integrity_fault"):
-            Thread(target=lambda: self._handle_socket_failure(
-                group, socket, generation, "callback_dispatch_integrity_fault"
-            ), name=f"angel-callback-fault-{group.mode}-{group.shard}-{generation}", daemon=True).start()
+            # Keep the SDK callback bounded: hand off integrity-fault recovery to
+            # the manager-owned supervisor instead of spawning an unmanaged worker.
+            with self._lock:
+                if (not self._closed and self._sockets.get(group) is socket
+                        and self._socket_generation.get(group) == generation):
+                    self._callback_integrity_fault_pending[group] = (socket, generation)
+            self._ensure_recovery_supervisor()
 
     def _is_current_data_generation(self, group: SocketGroup, generation: int | None) -> bool:
         """Fence deferred work from a socket generation that has since retired."""
@@ -2622,6 +2775,67 @@ class CommonWebSocketManager:
                 f"{group.mode}:{group.shard}", exc,
             )
 
+    def _start_retired_transport_close(self, key: str, record: dict[str, Any]) -> bool:
+        """Start one bounded close worker; retain the retirement fence on spawn failure."""
+        try:
+            worker = self._close_socket_bounded(
+                record["socket"], timeout=record["timeout"],
+                group=record["group"], generation=record["generation"],
+                reason=record["reason"],
+            )
+        except Exception as exc:
+            with self._lock:
+                pending = self._retired_transport_close_pending.get(key)
+                if pending is not None:
+                    pending["starting"] = False
+                    retired = self._retired_transports.get(key)
+                    if retired is not None:
+                        retired["close_worker_alive"] = False
+                        retired["close_start_pending"] = True
+                        retired["last_observed_at"] = time.time()
+            runtime_diagnostics.record(
+                component="Common Market Feed", error_type=type(exc).__name__,
+                message=f"retired socket close worker start failed: {exc}",
+                context={"event": "retired_transport_close_start", "group": f"{record['group'].mode}:{record['group'].shard}", "generation": record["generation"]},
+            )
+            app_logger.warning(
+                "Common feed close worker could not start; retired socket remains fenced group=%s generation=%s: %s",
+                f"{record['group'].mode}:{record['group'].shard}", record["generation"], exc,
+            )
+            return False
+
+        with self._lock:
+            self._retired_transport_close_pending.pop(key, None)
+            retired = self._retired_transports.get(key)
+            if retired is not None:
+                retired["close_start_pending"] = False
+                retired["close_worker_alive"] = bool(worker.is_alive())
+                retired["last_observed_at"] = time.time()
+        record["worker"] = worker
+        self._watch_retired_transport(
+            worker, group=record["group"], generation=record["generation"],
+            reason=record["reason"], on_finished=record["finish_once"],
+            retirement_key=key,
+        )
+        return True
+
+    def _retry_pending_retired_transport_closes(self, *, allow_closed: bool = False) -> None:
+        """Retry close-worker creation without ever closing a socket on this thread."""
+        with self._lock:
+            if self._closed and not allow_closed:
+                return
+            pending_items = [
+                (key, dict(record))
+                for key, record in self._retired_transport_close_pending.items()
+                if not record.get("starting")
+            ]
+            for key, _ in pending_items:
+                current = self._retired_transport_close_pending.get(key)
+                if current is not None:
+                    current["starting"] = True
+        for key, record in pending_items:
+            self._start_retired_transport_close(key, record)
+
     def _close_socket_tracked(
         self,
         socket: Any,
@@ -2649,19 +2863,7 @@ class CommonWebSocketManager:
                 "close_worker_alive": True,
                 "last_observed_at": time.time(),
             }
-        try:
-            worker = self._close_socket_bounded(
-                socket, timeout=timeout, group=group, generation=generation, reason=reason
-            )
-        except Exception:
-            with self._lock:
-                self._retired_transports.pop(key, None)
-                if connect_identity is not None:
-                    self._connect_retirement_claims.discard(connect_identity)
-            raise
-        # Bounded close may finish between the caller's first liveness check
-        # and watcher registration. Own completion in this helper and guard it
-        # exactly once so fast-close and watcher paths cannot double-reconcile.
+        # Own completion exactly once across initial start and supervisor retries.
         completion_lock = Lock()
         completion_claimed = False
 
@@ -2680,14 +2882,20 @@ class CommonWebSocketManager:
                         f"{group.mode}:{group.shard}", reason, exc,
                     )
 
-        # Always use the watcher, even for an already-finished close. It
-        # invokes completion on its own thread, avoiding reentrant reconcile
-        # when this helper is called from inside _reconcile().
-        self._watch_retired_transport(
-            worker, group=group, generation=generation, reason=reason,
-            on_finished=_finish_once, retirement_key=key,
-        )
-        return worker
+        record = {
+            "socket": socket, "group": group, "generation": generation,
+            "reason": reason, "timeout": timeout, "finish_once": _finish_once,
+            "starting": True,
+        }
+        with self._lock:
+            self._retired_transport_close_pending[key] = record
+        if not self._start_retired_transport_close(key, record):
+            # Return an inert handle for compatibility with callers that ignore
+            # the worker; the supervisor owns the retained task and retry.
+            return Thread(name="common-ws-close-pending")
+        # The watcher is installed by _start_retired_transport_close.
+        # Preserve the actual worker reference for legacy callers that inspect it.
+        return record.get("worker") or Thread(name="common-ws-close-scheduled")
 
     @staticmethod
     def _close_socket_bounded(
@@ -2736,8 +2944,16 @@ class CommonWebSocketManager:
                     if not isinstance(health, dict) or health.get("transport_thread_alive") is not True:
                         break
         worker = Thread(target=_close, name="common-ws-close", daemon=True)
+        # Only start failure is retryable. Once start succeeds, never queue a
+        # duplicate close merely because the bounded join itself is interrupted.
         worker.start()
-        worker.join(timeout=max(0.1, float(timeout)))
+        try:
+            worker.join(timeout=max(0.1, float(timeout)))
+        except Exception as exc:
+            app_logger.warning(
+                "Common feed close worker join failed; watcher retains retirement fence "
+                f"group={f'{group.mode}:{group.shard}' if group is not None else 'unknown'}: {exc}"
+            )
         if worker.is_alive():
             app_logger.error(
                 "Common feed socket close timed out "
@@ -3230,11 +3446,15 @@ class CommonWebSocketManager:
                 ),
                 "failure_recovery_admission_rejections": self._failure_recovery_admission_rejections,
                 "retired_transport_count": len(self._retired_transports),
+                "retired_transport_close_start_pending_count": len(self._retired_transport_close_pending),
+                "callback_integrity_fault_pending_count": len(self._callback_integrity_fault_pending),
                 "retired_transports": [dict(item) for item in self._retired_transports.values()],
                 "retired_transport_groups": sorted({
                     str(item.get("group")) for item in self._retired_transports.values()
                 }),
                 "retired_callback_worker_count": len(self._retired_callback_workers),
+                "callback_retirement_start_pending_count": len(self._callback_retirement_start_pending),
+                "callback_retirement_watch_pending_count": len(self._callback_retirement_watch_pending),
                 "retired_callback_workers": [dict(item) for item in self._retired_callback_workers.values()],
                 "socket_operation_worker_count": len(self._socket_operation_workers),
                 "socket_operation_workers": [dict(item) for item in self._socket_operation_workers.values()],
@@ -3266,6 +3486,8 @@ class CommonWebSocketManager:
                 self._recovery_thread = None
                 socket_items = list(self._sockets.items())
                 callback_adapters = list(self._callback_adapters.items())
+                pending_callback_retirements = list(self._callback_retirement_start_pending.values())
+                self._callback_retirement_start_pending.clear()
                 self._callback_adapters.clear()
                 self._sockets.clear()
                 self._socket_tokens.clear()
@@ -3279,7 +3501,6 @@ class CommonWebSocketManager:
                 self._failure_recovery_generation_by_group.clear()
                 self._failure_recovery_pending_groups.clear()
                 self._failure_recovery_pending_transports.clear()
-                self._retired_transport_watch_pending.clear()
                 self._failure_recovery_pending_versions.clear()
         # The recovery supervisor may be waiting for _reconcile_lock. Release
         # that lock before joining it, otherwise every shutdown can burn the
@@ -3290,6 +3511,12 @@ class CommonWebSocketManager:
         # a callback may legitimately request subscription changes during shutdown.
         for group, (generation, adapter) in callback_adapters:
             self._stop_retired_callback_adapter(adapter, group, generation)
+        # A failed worker start may have left adapters outside the active map.
+        # Shutdown gets one final bounded stop attempt after the supervisor exits.
+        for record in pending_callback_retirements:
+            self._stop_retired_callback_adapter(
+                record["adapter"], record["group"], record["generation"]
+            )
         # Wait briefly for in-flight SDK subscription mutations before closing
         # their sockets. Avoid racing close() against subscribe/unsubscribe calls.
         shutdown_operation_wait_seconds = 1.0
@@ -3319,6 +3546,11 @@ class CommonWebSocketManager:
                 reason="manager_shutdown",
                 timeout=2.0,
             )
+        # One final bounded worker-start retry is allowed after shutdown has
+        # stopped the supervisor. If thread creation still fails, keep the
+        # pending task and retirement diagnostics rather than releasing the fence.
+        self._retry_pending_retired_transport_closes(allow_closed=True)
+        self._retry_pending_retired_transport_watchers()
         # Wait for callbacks admitted before closure; new OPEN/ERROR callbacks
         # are rejected after _closed is set. Retired CLOSED remains admissible.
         with self._transport_observer_dispatch_lock:

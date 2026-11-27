@@ -2921,3 +2921,61 @@ def test_retired_transport_watcher_start_failure_is_retried(monkeypatch):
     finally:
         monkeypatch.setattr(common_websocket_module, "Thread", original_thread)
         manager.close()
+
+
+def test_retired_socket_close_worker_start_failure_keeps_fence_and_retries(monkeypatch):
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    group = SocketGroup(1, 0)
+    socket = FakeSocket()
+    generation = 23
+    finished = Event()
+    original_thread = common_websocket_module.Thread
+    with manager._lock:
+        manager._connect_pending_generation[group] = generation
+
+    class BrokenCloseWorker:
+        def __init__(self, *args, **kwargs):
+            self.name = kwargs.get("name", "broken-close")
+
+        def start(self):
+            raise RuntimeError("thread quota exhausted")
+
+    def selective_thread(*args, **kwargs):
+        if str(kwargs.get("name", "")).startswith("common-ws-close"):
+            return BrokenCloseWorker(*args, **kwargs)
+        return original_thread(*args, **kwargs)
+
+    try:
+        monkeypatch.setattr(common_websocket_module, "Thread", selective_thread)
+        manager._close_socket_tracked(
+            socket,
+            group=group,
+            generation=generation,
+            reason="close_worker_spawn_failure",
+            on_finished=finished.set,
+            timeout=0.1,
+        )
+
+        with manager._lock:
+            identity = (group, generation)
+            assert identity in manager._connect_retirement_claims
+            assert len(manager._retired_transports) == 1
+            assert len(manager._retired_transport_close_pending) == 1
+            assert manager._retired_transports[next(iter(manager._retired_transports))][
+                "close_start_pending"
+            ] is True
+        assert socket.closed is False
+        assert finished.is_set() is False
+
+        # Restore worker creation and exercise the same supervisor retry path.
+        monkeypatch.setattr(common_websocket_module, "Thread", original_thread)
+        manager._retry_pending_retired_transport_closes()
+        assert finished.wait(timeout=1.0)
+        with manager._lock:
+            assert manager._retired_transport_close_pending == {}
+            assert manager._retired_transports == {}
+        assert socket.closed is True
+        assert finished.is_set() is True
+    finally:
+        monkeypatch.setattr(common_websocket_module, "Thread", original_thread)
+        manager.close()
