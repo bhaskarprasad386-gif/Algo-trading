@@ -348,7 +348,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible {
 
  <section class="grid hero-grid">
   <div class="card" data-widget-id="market" data-widget="market">
-   <div class="card-head"><div><h2>Market Overview</h2><div class="sub">NSE • BSE • MCX • backend/config driven</div></div><span class="view" onclick="loadMarketOverview()">Refresh</span></div>
+   <div class="card-head"><div><h2>Market Overview</h2><div class="sub">NSE • BSE • backend/config driven</div></div><span class="view" onclick="loadMarketOverview()">Refresh</span></div>
    <div class="market-tabs"><button class="tab active" data-market-tab="indices" onclick="setMarketTab('indices')">Indices</button><button class="tab" data-market-tab="commodities" onclick="setMarketTab('commodities')">Commodities</button><button class="tab" data-market-tab="fo" onclick="setMarketTab('fo')">F&amp;O Universe</button></div>
    <div class="market-cards" id="homeMarketTiles">
     <div class="market-tile"><div class="sym">NIFTY 50</div><div class="ltp">—</div><div class="chg">Waiting for live quote</div></div>
@@ -356,8 +356,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible {
     <div class="market-tile"><div class="sym">FINNIFTY</div><div class="ltp">—</div><div class="chg">Waiting for live quote</div></div>
     <div class="market-tile"><div class="sym">MIDCPNIFTY</div><div class="ltp">—</div><div class="chg">Waiting for live quote</div></div>
    </div>
-   <div class="table-wrap" style="margin-top:10px;display:none" id="marketDetailTable"><table><thead><tr><th>Exchange</th><th>Symbol</th><th>LTP</th><th>Change</th><th>Bid</th><th>Ask</th><th>Volume</th><th>OI</th><th>Status</th></tr></thead><tbody id="indexRows"></tbody></table></div><div class="table-wrap" style="margin-top:10px;display:none" id="commodityDetailTable"><table><thead><tr><th>Exchange</th><th>Symbol</th><th>LTP</th><th>Change</th><th>Bid</th><th>Ask</th><th>Volume</th><th>OI</th><th>Status</th></tr></thead><tbody id="commodityRows"></tbody></table></div><div class="table-wrap" style="margin-top:10px;display:none" id="foDetailTable"><table><thead><tr><th>Rank</th><th>Symbol</th><th>Contract</th><th>Cash Ask</th><th>Future Bid</th><th>Gap %</th><th>Net %</th><th>Status</th></tr></thead><tbody id="foRows"></tbody></table></div>
-   <div id="marketStatusStrip"><span class="market-status-item">● <b>NSE</b> Open</span><span class="market-status-item">● <b>BSE</b> Open</span><span class="market-status-item">● <b>MCX</b> Open</span><span class="market-status-time">09:15 - 15:30</span></div><div class="sub" style="margin-top:7px" id="marketFeedStatus">Feed: CHECKING</div>
+   <div class="table-wrap" style="margin-top:10px;display:none" id="marketDetailTable"><table><thead><tr><th>Exchange</th><th>Symbol</th><th>LTP</th><th>Change</th><th>Bid</th><th>Ask</th><th>Volume</th><th>OI</th><th>Status</th></tr></thead><tbody id="indexRows"></tbody></table></div><div class="table-wrap" style="margin-top:10px;display:none" id="foDetailTable"><table><thead><tr><th>Rank</th><th>Symbol</th><th>Contract</th><th>Cash Ask</th><th>Future Bid</th><th>Gap %</th><th>Net %</th><th>Status</th></tr></thead><tbody id="foRows"></tbody></table></div>
+   <div id="marketStatusStrip"><span class="market-status-item">● <b>NSE</b> Open</span><span class="market-status-item">● <b>BSE</b> Open</span><span class="market-status-time">09:15 - 15:30</span></div><div class="sub" style="margin-top:7px" id="marketFeedStatus">Feed: CHECKING</div>
   </div>
   <div class="card">
    <div class="card-head"><div><h2>Quick Stats</h2><div class="sub">Current system snapshot</div></div><span class="view">LIVE</span></div>
