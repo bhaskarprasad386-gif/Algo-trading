@@ -69,6 +69,33 @@ def test_iv_scanner_reads_shared_runner_without_owning_broker_subscriptions():
     assert "MarketDataWebSocket(" not in main
 
 
+def test_retired_strategy_configuration_is_not_exposed():
+    root = Path(__file__).parents[1]
+    config = (root / "app" / "core" / "config.py").read_text(encoding="utf-8")
+    env_example = (root.parent / ".env.example").read_text(encoding="utf-8")
+
+    retired_settings = (
+        "CASH_FUTURE_HISTORY_ENABLED", "CASH_FUTURE_HISTORY_SYMBOLS",
+        "CASH_FUTURE_HISTORY_INTERVAL_SECONDS", "LIVE_CASH_FUTURE_DATA_ENABLED",
+        "LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED", "LIVE_CALENDAR_SPREAD_DATA_ENABLED",
+        "LIVE_CALENDAR_SPREAD_MIN_GAP_POINTS", "LIVE_CALENDAR_SPREAD_MIN_GROSS_PROFIT",
+        "LIVE_CALENDAR_SPREAD_CAPITAL", "LIVE_CALENDAR_SPREAD_RESULT_RETENTION_DAYS",
+        "LIVE_SYNTHETIC_DATA_ENABLED", "LIVE_SYNTHETIC_MIN_ARBITRAGE_POINTS",
+        "LIVE_SYNTHETIC_CARRY_RATE", "LIVE_SYNTHETIC_FEES_PER_UNIT",
+        "LIVE_SYNTHETIC_RESULT_RETENTION_DAYS", "LIVE_BOX_SPREAD_DATA_ENABLED",
+        "LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED", "LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT",
+        "LIVE_CASH_FUTURE_SYMBOLS", "LIVE_CASH_FUTURE_PAIR_TOLERANCE_SECONDS",
+        "LIVE_CASH_FUTURE_MAX_QUOTE_AGE_SECONDS", "LIVE_CASH_FUTURE_ALERT_COOLDOWN_SECONDS",
+        "LIVE_CASH_FUTURE_COST_BPS", "LIVE_CASH_FUTURE_SLIPPAGE_BPS",
+    )
+    for setting in retired_settings:
+        assert setting not in config
+        assert setting not in env_example
+
+    # Shared market-data persistence remains available for non-retired data services.
+    assert "LIVE_MARKET_DATA_PERSISTENCE_ENABLED" in config
+
+
 def test_generic_historical_replay_routes_remain_independent():
     root = Path(__file__).parents[1]
     main = (root / "app" / "main.py").read_text(encoding="utf-8")
