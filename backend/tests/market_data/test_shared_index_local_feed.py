@@ -121,3 +121,22 @@ def test_local_fanout_does_not_buffer_ticks_without_box_consumers():
         assert manager.snapshot()["queue_dropped"] == 0
     finally:
         manager.close()
+
+
+def test_local_fanout_can_reattach_after_application_lifespan_shutdown():
+    runner = FakeSharedRunner()
+    manager = SharedIndexRunnerLocalFeedManager(runner)
+    descriptor, record = _spot()
+    received = Event()
+
+    manager.attach()
+    manager.close()
+    manager.attach()
+    feed = CommonStrategyMarketFeed("box-after-restart", manager=manager)
+    try:
+        feed.start((descriptor,), lambda _item: received.set())
+        runner.publish(record)
+        assert received.wait(1.0)
+    finally:
+        feed.stop()
+        manager.close()
