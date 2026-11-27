@@ -1,5 +1,6 @@
 from threading import Event
 from time import time_ns
+from types import SimpleNamespace
 
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
@@ -9,10 +10,10 @@ from app.market_data.shared_index_local_feed import SharedIndexRunnerLocalFeedMa
 
 class FakeSharedRunner:
     def __init__(self):
-        self.records = {}
+        self.state = SimpleNamespace(_publish=lambda _record: None)
 
-    def latest(self, key):
-        return self.records.get(key)
+    def publish(self, record):
+        self.state._publish(record)
 
     def snapshot(self):
         return {"enabled": True, "source": "fake-shared-runner"}
@@ -40,7 +41,8 @@ def _spot():
 
 def test_local_feed_delivers_shared_runner_records_without_broker_manager():
     runner = FakeSharedRunner()
-    manager = SharedIndexRunnerLocalFeedManager(runner, poll_seconds=0.005)
+    manager = SharedIndexRunnerLocalFeedManager(runner)
+    manager.attach()
     descriptor, record = _spot()
     received = Event()
     observed = []
@@ -48,7 +50,7 @@ def test_local_feed_delivers_shared_runner_records_without_broker_manager():
     feed = CommonStrategyMarketFeed("box-underlyings", manager=manager)
     try:
         feed.start((descriptor,), lambda item: (observed.append(item), received.set()))
-        runner.records[descriptor.key.value] = record
+        runner.publish(record)
 
         assert received.wait(1.0)
         assert observed == [record]
@@ -63,7 +65,8 @@ def test_local_feed_delivers_shared_runner_records_without_broker_manager():
 
 def test_local_feed_deduplicates_ticks_and_clears_only_requested_consumer():
     runner = FakeSharedRunner()
-    manager = SharedIndexRunnerLocalFeedManager(runner, poll_seconds=0.005)
+    manager = SharedIndexRunnerLocalFeedManager(runner)
+    manager.attach()
     descriptor, record = _spot()
     first = Event()
     second = Event()
@@ -81,7 +84,7 @@ def test_local_feed_deduplicates_ticks_and_clears_only_requested_consumer():
                 update_received.set()
 
         two.start((descriptor,), receive_two)
-        runner.records[descriptor.key.value] = record
+        runner.publish(record)
 
         assert first.wait(1.0)
         assert second.wait(1.0)
@@ -89,14 +92,14 @@ def test_local_feed_deduplicates_ticks_and_clears_only_requested_consumer():
 
         one.stop()
         observed.clear()
-        runner.records[descriptor.key.value] = MarketDataRecord(
+        runner.publish(MarketDataRecord(
             instrument=descriptor.key,
             symbol="NIFTY",
             instrument_type=InstrumentType.INDEX,
             timestamp_ns=record.timestamp_ns + 1,
             ltp=24001.0,
             underlying="NIFTY",
-        )
+        ))
         assert update_received.wait(1.0)
         assert len(observed) == 1
         assert observed[0][0] == "two"
