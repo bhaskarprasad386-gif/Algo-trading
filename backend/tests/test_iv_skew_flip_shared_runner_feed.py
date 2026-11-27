@@ -132,7 +132,11 @@ def test_shared_runner_option_adapter_reads_only_the_requested_bank_monthly_wind
     assert len(quotes) == 6
     assert {quote.underlying for quote in quotes} == {"BANKNIFTY"}
     assert {quote.expiry for quote in quotes} == {"2026-11-26"}
-    assert adapter.snapshot()["status"] == "LIVE"
+    quote_health = adapter.snapshot()
+    assert quote_health["status"] == "LIVE"
+    assert quote_health["two_sided_quote_contracts"] == 6
+    assert quote_health["fresh_without_two_sided_quote"] == 0
+    assert quote_health["quote_quality_status"] == "TWO_SIDED_QUOTES_AVAILABLE"
 
     adapter.stop()
     assert runner.stop_calls == 0

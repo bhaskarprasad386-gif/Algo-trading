@@ -249,14 +249,27 @@ class SharedIndexMarketDataState:
             group_key = f"{underlying}:{instrument_type}"
             group = feed_health_by_group.setdefault(
                 group_key,
-                {"underlying": underlying, "instrument_type": instrument_type, "count": 0, "fresh_count": 0, "stale_count": 0, "max_age_seconds": 0.0},
+                {
+                    "underlying": underlying, "instrument_type": instrument_type,
+                    "count": 0, "fresh_count": 0, "stale_count": 0,
+                    "max_age_seconds": 0.0,
+                    "ce_count": 0, "pe_count": 0,
+                    "ce_fresh_count": 0, "pe_fresh_count": 0,
+                },
             )
             group["count"] += 1
             group["max_age_seconds"] = max(group["max_age_seconds"], age_seconds)
-            if -1_000_000_000 <= age_ns <= self.max_age_ns:
+            is_fresh = -1_000_000_000 <= age_ns <= self.max_age_ns
+            if is_fresh:
                 group["fresh_count"] += 1
             else:
                 group["stale_count"] += 1
+            if instrument_type == "option":
+                option_side = str(data.get("option_type") or "").strip().upper()
+                if option_side in {"CE", "PE"}:
+                    group[f"{option_side.lower()}_count"] += 1
+                    if is_fresh:
+                        group[f"{option_side.lower()}_fresh_count"] += 1
         return {
             "instrument_count": len(latest),
             "fresh_count": fresh,

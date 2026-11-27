@@ -2587,8 +2587,7 @@ class CommonWebSocketManager:
                 "snapshot_kind": "health-lite",
                 "details_omitted": [
                     "subscription_roster", "raw_frames_by_instrument",
-                    "socket_token_set_mismatches", "consumer_callback_metrics",
-                    "retired_worker_details",
+                    "socket_token_set_mismatches", "retired_worker_details",
                 ],
                 "subscriptions": len(subscriptions),
                 "active_instruments": len(subscriptions),
@@ -2826,6 +2825,10 @@ class CommonWebSocketManager:
             return {
                 "subscriptions": len(self.registry.subscriptions()),
                 "subscription_roster": subscription_roster,
+                "consumer_callback_metrics": {
+                    owner: {kind: dict(metrics) for kind, metrics in kinds.items()}
+                    for owner, kinds in self._consumer_callback_metrics.items()
+                },
                 "raw_frames_by_instrument": dict(sorted(self._raw_frames_by_instrument.items())),
                 "active_instruments": len(self.registry.active_keys()),
                 "socket_groups": len(sockets),

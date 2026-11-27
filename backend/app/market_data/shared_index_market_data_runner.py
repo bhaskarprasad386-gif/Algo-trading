@@ -23,6 +23,74 @@ from .shared_index_derived_iv import SharedIndexDerivedIV
 
 IST = ZoneInfo("Asia/Kolkata")
 LOCKED = ("NIFTY", "BANKNIFTY")
+EXPECTED_FEED_GROUPS = {
+    "NIFTY": {"index": 1, "future": 1, "option": 62},
+    "BANKNIFTY": {"index": 1, "future": 1, "option": 62},
+}
+
+
+def _lifecycle_universe_complete(lifecycle: dict[str, Any]) -> bool:
+    """Confirm subscription ownership without requiring every illiquid option to tick."""
+    return bool(
+        lifecycle.get("spot_active") is True and int(lifecycle.get("spot_instruments", 0)) == 2
+        and lifecycle.get("futures_active") is True and int(lifecycle.get("futures_instruments", 0)) == 2
+        and lifecycle.get("options_active") is True and int(lifecycle.get("options_instruments", 0)) == 124
+    )
+
+
+def _observed_universe_complete(feed_groups: dict[str, dict]) -> bool:
+    """Report whether the observed state contains the full expected contract composition."""
+    for underlying in LOCKED:
+        if int(feed_groups.get(f"{underlying}:index", {}).get("count", 0)) != 1:
+            return False
+        if int(feed_groups.get(f"{underlying}:future", {}).get("count", 0)) != 1:
+            return False
+        options = feed_groups.get(f"{underlying}:option", {})
+        if (
+            int(options.get("count", 0)) != 62
+            or int(options.get("ce_count", 0)) != 31
+            or int(options.get("pe_count", 0)) != 31
+        ):
+            return False
+    return True
+
+
+def _readiness_from_groups(*, running: bool, bootstrap_done: bool,
+                           universe_complete: bool, feed_groups: dict[str, dict]) -> dict[str, Any]:
+    """Separate core-feed liveness from freshness of every option contract.
+
+    Illiquid options may age without declaring the transport dead. At least one
+    fresh CE and PE per underlying proves both sides are active. IV and execution
+    adapters must still validate every selected contract independently.
+    """
+    core_groups = ("NIFTY:index", "BANKNIFTY:index", "NIFTY:future", "BANKNIFTY:future")
+    core_fresh = all(
+        int(feed_groups.get(key, {}).get("count", 0)) == 1
+        and int(feed_groups.get(key, {}).get("fresh_count", 0)) == 1
+        for key in core_groups
+    )
+    option_sides = {}
+    for underlying in LOCKED:
+        group = feed_groups.get(f"{underlying}:option", {})
+        option_sides[underlying] = {
+            "CE": {"fresh": int(group.get("ce_fresh_count", 0)), "total": int(group.get("ce_count", 0))},
+            "PE": {"fresh": int(group.get("pe_fresh_count", 0)), "total": int(group.get("pe_count", 0))},
+        }
+    # Require at least half of each CE/PE side to be fresh. This tolerates
+    # illiquid wings while preventing a single live contract from declaring a
+    # mostly stale option universe ready.
+    option_activity = all(
+        side["total"] > 0 and side["fresh"] >= (side["total"] + 1) // 2
+        for sides in option_sides.values() for side in sides.values()
+    )
+    ready = bool(running and bootstrap_done and universe_complete and core_fresh and option_activity)
+    return {
+        "live_data_ready": ready,
+        "core_market_data_fresh": core_fresh,
+        "option_activity_fresh": option_activity,
+        "option_side_freshness": option_sides,
+        "readiness_policy": "CORE_SPOT_FUTURE_HARD_FRESHNESS_PLUS_50_PERCENT_FRESHNESS_PER_OPTION_SIDE",
+    }
 
 
 def _expiry_candidates(rows: Iterable[dict], underlying: str) -> list[date]:
@@ -519,16 +587,28 @@ class SharedIndexMarketDataRunner:
             for symbol, record in spot_records.items()
         }
         feed_groups = state.get("feed_health_by_group", {})
-        expected = {"NIFTY": {"index": 1, "future": 1, "option": 62}, "BANKNIFTY": {"index": 1, "future": 1, "option": 62}}
+        expected = EXPECTED_FEED_GROUPS
         counts = {}
         for underlying, required in expected.items():
             counts[underlying] = {}
             for kind in ("index", "future", "option"):
                 group = feed_groups.get(underlying + ":" + kind, {})
                 counts[underlying][kind] = int(group.get("count", 0))
-        universe_complete = counts == expected
+        lifecycle_fields_present = any(
+            key in lifecycle for key in (
+                "spot_active", "spot_instruments", "futures_active",
+                "futures_instruments", "options_active", "options_instruments",
+            )
+        )
+        universe_complete = _observed_universe_complete(feed_groups) and (
+            not lifecycle_fields_present or _lifecycle_universe_complete(lifecycle)
+        )
         all_records_fresh = int(state.get("instrument_count", 0)) == 128 and int(state.get("fresh_count", 0)) == 128
-        live_data_ready = running and bootstrap_done and universe_complete and all_records_fresh
+        readiness = _readiness_from_groups(
+            running=running, bootstrap_done=bootstrap_done,
+            universe_complete=universe_complete, feed_groups=feed_groups,
+        )
+        live_data_ready = readiness["live_data_ready"]
         return {
             "runner": "shared-index-market-data",
             "enabled": running,
@@ -539,9 +619,10 @@ class SharedIndexMarketDataRunner:
             "lifecycle": lifecycle,
             "latest_spots": latest_spots,
             "feed_health_by_group": feed_groups,
-            "universe_coverage": {"counts": counts, "complete": universe_complete},
+            "universe_coverage": {"counts": counts, "complete": _observed_universe_complete(feed_groups)},
             "all_records_fresh": all_records_fresh,
             "live_data_ready": live_data_ready,
+            "readiness": readiness,
             "master_refresh": {
                 "last_success_at": master_last_refresh_at,
                 "last_error": master_refresh_error,
@@ -637,15 +718,21 @@ class SharedIndexMarketDataRunner:
             "NIFTY": {"index": 1, "future": 1, "option": 62, "CE": 31, "PE": 31},
             "BANKNIFTY": {"index": 1, "future": 1, "option": 62, "CE": 31, "PE": 31},
         }
-        universe_complete = type_counts == {"index": 2, "future": 2, "option": 124}
-        universe_complete = universe_complete and all(
+        observed_universe_complete = type_counts == {"index": 2, "future": 2, "option": 124}
+        observed_universe_complete = observed_universe_complete and all(
             per_underlying[underlying] == expected_by_underlying[underlying]
             for underlying in LOCKED
         )
+        universe_complete = observed_universe_complete and _lifecycle_universe_complete(lifecycle)
+        feed_groups = state.get("feed_health_by_group", {})
         all_records_fresh = len(enriched_records) == 128 and all(
             record.get("fresh") for record in enriched_records
         )
-        live_data_ready = running and bootstrap_done and universe_complete and all_records_fresh
+        readiness = _readiness_from_groups(
+            running=running, bootstrap_done=bootstrap_done,
+            universe_complete=universe_complete, feed_groups=feed_groups,
+        )
+        live_data_ready = readiness["live_data_ready"]
         master_refresh = {
             "inflight": self._master_refresh_inflight,
             "last_success_at": self._master_last_refresh_at,
@@ -665,8 +752,12 @@ class SharedIndexMarketDataRunner:
             "option_universe": {"NIFTY": "weekly ATM +/- 15", "BANKNIFTY": "monthly ATM +/- 15"},
             "state": state,
             "records": enriched_records,
-            "universe_coverage": {"counts": type_counts, "per_underlying": per_underlying, "complete": universe_complete},
+            "universe_coverage": {
+                "counts": type_counts, "per_underlying": per_underlying,
+                "complete": universe_complete, "observed_records_complete": observed_universe_complete,
+            },
             "all_records_fresh": all_records_fresh,
+            "readiness": readiness,
             "master_refresh": master_refresh,
             "option_flow_aggregates": aggregates,
             "derived_iv_model": {"status": "DISABLED", "reason": "LOCAL_IV_CALCULATION_DISABLED", "iv_fields": "NULL", "volume_source": "broker_day_volume", "oi_source": "broker_open_interest"},

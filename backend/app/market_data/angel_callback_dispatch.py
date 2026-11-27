@@ -53,6 +53,7 @@ class AngelShardCallbackAdapter:
         self._callback_attempts = self._callback_successes = 0
         self._max_queue_depth = 0
         self._queue_wait_total_ns = self._queue_wait_max_ns = 0
+        self._payload_copy_duration_total_ns = self._payload_copy_duration_max_ns = 0
         self._callback_duration_total_ns = self._callback_duration_max_ns = 0
         self._slow_callbacks = 0
         self._callback_kind_metrics: dict[str, dict[str, int]] = {}
@@ -110,19 +111,27 @@ class AngelShardCallbackAdapter:
                 return False
         # Detach SDK payloads before they cross the thread boundary while
         # preserving the payload shape expected by existing consumers.
+        copy_started_ns = monotonic_ns()
         try:
             detached = tuple(
                 CallbackInvocation(item.callback, deepcopy(item.payload), item.callback_kind)
                 for item in invocations
             )
         except Exception as exc:
+            copy_duration_ns = max(0, monotonic_ns() - copy_started_ns)
             with self._lock:
+                self._payload_copy_duration_total_ns += copy_duration_ns
+                self._payload_copy_duration_max_ns = max(self._payload_copy_duration_max_ns, copy_duration_ns)
                 if not self._closed and generation == self._generation:
                     self._copy_errors += 1
                     self._fail_closed_locked(
                         f"payload_copy: {type(exc).__name__}: {exc}"
                     )
             return False
+        copy_duration_ns = max(0, monotonic_ns() - copy_started_ns)
+        with self._lock:
+            self._payload_copy_duration_total_ns += copy_duration_ns
+            self._payload_copy_duration_max_ns = max(self._payload_copy_duration_max_ns, copy_duration_ns)
         batch = ShardCallbackBatch(generation, detached, monotonic_ns())
         if not batch.invocations:
             return True
@@ -307,6 +316,8 @@ class AngelShardCallbackAdapter:
                 "queue_high_watermark": self._max_queue_depth,
                 "queue_wait_total_ns": self._queue_wait_total_ns,
                 "queue_wait_max_ns": self._queue_wait_max_ns,
+                "payload_copy_duration_total_ns": self._payload_copy_duration_total_ns,
+                "payload_copy_duration_max_ns": self._payload_copy_duration_max_ns,
                 "accepted_batches": self._accepted,
                 "processed_batches": self._processed,
                 "stale_batches": self._stale,

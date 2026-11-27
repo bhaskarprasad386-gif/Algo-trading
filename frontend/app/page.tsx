@@ -34,6 +34,8 @@ export default function HomePage() {
   const runnerCountersRef = useRef<Record<string, number> | null>(null);
   const runnerCounterSampleAtRef = useRef<number | null>(null);
   const [runnerTps, setRunnerTps] = useState<Record<string, number>>({});
+  const sharedRunnerTickSampleRef = useRef<{ accepted: number; sampledAt: number } | null>(null);
+  const [sharedRunnerTickActivity, setSharedRunnerTickActivity] = useState<{ total: number; delta: number | null; perSecond: number | null }>({ total: 0, delta: null, perSecond: null });
   const [runtimeServerTimestamp, setRuntimeServerTimestamp] = useState<string | null>(null);
   const [runtimeServerTimestampReceivedAt, setRuntimeServerTimestampReceivedAt] = useState<number | null>(null);
   const [runnerLastActivity, setRunnerLastActivity] = useState<Record<string, number>>({});
@@ -516,8 +518,22 @@ export default function HomePage() {
         if (!response.ok) throw new Error("shared runner health unavailable");
         const body = await response.json();
         if (!cancelled && body && typeof body === "object") {
+          const sampledAt = Date.now();
+          const accepted = Number(body?.state?.accepted_ticks ?? 0);
+          const previous = sharedRunnerTickSampleRef.current;
+          if (Number.isFinite(accepted) && accepted >= 0) {
+            const elapsed = previous && sampledAt > previous.sampledAt
+              ? (sampledAt - previous.sampledAt) / 1000 : null;
+            const delta = previous && accepted >= previous.accepted ? accepted - previous.accepted : null;
+            setSharedRunnerTickActivity({
+              total: accepted,
+              delta,
+              perSecond: delta != null && elapsed != null && elapsed > 0 ? delta / elapsed : null,
+            });
+            sharedRunnerTickSampleRef.current = { accepted, sampledAt };
+          }
           setSharedRunner(body);
-          setSharedRunnerLastSuccessAt(Date.now());
+          setSharedRunnerLastSuccessAt(sampledAt);
           setSharedRunnerFetchFailed(false);
         }
       } catch {
@@ -596,6 +612,11 @@ export default function HomePage() {
   const sharedRunnerUnavailable = !sharedRunner || sharedRunner.state === "UNAVAILABLE" || sharedRunner.state === "NOT_INITIALIZED";
   const sharedRunnerSampleAge = sharedRunnerLastSuccessAt == null ? null : Math.max(0, (Date.now() - sharedRunnerLastSuccessAt) / 1000);
   const sharedRunnerSampleUnavailable = sharedRunnerFetchFailed && sharedRunnerSampleAge != null;
+  const sharedRunnerTickDeltaLabel = sharedRunnerTickActivity.delta == null
+    ? "Waiting for next sample"
+    : "+" + sharedRunnerTickActivity.delta.toLocaleString("en-IN") + " since last sample";
+  const sharedRunnerTickRateLabel = sharedRunnerTickActivity.perSecond == null
+    ? "—" : sharedRunnerTickActivity.perSecond.toFixed(1) + " ticks/s";
   const sharedRunnerStatus = sharedRunnerSampleUnavailable ? "LAST KNOWN • HEALTH FETCH FAILED" : !sharedRunner ? "CHECKING" : sharedRunner.state === "UNAVAILABLE" ? "UNAVAILABLE" : sharedRunner.state === "NOT_INITIALIZED" ? "NOT INITIALIZED" : !sharedRunnerEnabled ? "STOPPED" : sharedRunnerReady ? "LIVE DATA READY" : sharedRunner.initial_option_bootstrap_done ? (effectiveMarketSession === "CLOSED" ? "RUNNING • MARKET CLOSED" : "RUNNING • FEED NOT READY") : "RUNNING • BOOTSTRAPPING";
   const sharedFeedGroups = sharedRunner?.feed_health_by_group ?? {};
   const getRecordFeed = (underlying: string, kind: string) => {
@@ -694,7 +715,7 @@ export default function HomePage() {
             <div className="text-right text-[10px] theme-subtle">Auto-refresh • API sample: {runtimeServerTimestamp ? new Date(runtimeServerTimestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata" }) : "unavailable"}</div>
           </div>
 
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
             <Card className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
               <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">API SERVER</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (apiStatus === "connected" ? "theme-success-bg theme-success" : apiStatus === "error" ? "theme-danger-bg theme-danger" : "theme-warning-bg theme-warning")}>{apiStatus === "connected" ? "ONLINE" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" ? "UNREACHABLE" : "CHECKING"}</span></div>
               <div className="mt-2 break-words text-[11px] theme-muted">{apiDetail}</div>
@@ -703,6 +724,15 @@ export default function HomePage() {
               <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">SHARED INDEX RUNNER</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (sharedRunnerReady ? "theme-success-bg theme-success" : sharedRunnerEnabled || sharedRunnerUnavailable || sharedRunnerFetchFailed ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{sharedRunnerStatus}</span></div>
               <div className="mt-2 break-words text-[11px] theme-muted">{sharedRunner?.runner || "shared-index-market-data"} • {sharedRunner?.initial_option_bootstrap_done ? "Option bootstrap complete" : "Option bootstrap pending"}</div>
               <div className="mt-1 text-[9px] theme-subtle">Last health sample: {sharedRunnerSampleAge == null ? "Not received" : sharedRunnerSampleAge.toFixed(1) + "s ago"}{sharedRunner?.last_error ? " • Start error: " + String(sharedRunner.last_error).slice(0, 140) : ""}</div>
+            </Card>
+            <Card className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
+              <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">LIVE TICK ACTIVITY</div><span className="rounded-full px-2 py-1 text-[9px] font-extrabold theme-success-bg theme-success">RUNNER COUNTER</span></div>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <div><div className="text-[9px] theme-subtle">Accepted total</div><div className="mt-0.5 text-base font-extrabold tabular-nums">{sharedRunnerTickActivity.total.toLocaleString("en-IN")}</div></div>
+                <div><div className="text-[9px] theme-subtle">New ticks</div><div className="mt-0.5 text-base font-extrabold tabular-nums theme-success">{sharedRunnerTickDeltaLabel}</div></div>
+                <div><div className="text-[9px] theme-subtle">Average rate</div><div className="mt-0.5 text-base font-extrabold tabular-nums">{sharedRunnerTickRateLabel}</div></div>
+              </div>
+              <div className="mt-1 text-[9px] theme-subtle">Accepted normalized runner ticks • sampled every 15s • not raw broker frames</div>
             </Card>
           </div>
 
