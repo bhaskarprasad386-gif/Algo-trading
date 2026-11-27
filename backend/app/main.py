@@ -687,7 +687,6 @@ async def lifespan(app: FastAPI):
                 _event_loop_lag_task,
                 _history_collector_task,
                 _contract_master_sync_task,
-                _live_cash_future_task,
                 _live_calendar_spread_task,
                 _live_synthetic_task,
                 _live_box_spread_task,
