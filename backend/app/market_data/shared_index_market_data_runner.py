@@ -653,7 +653,7 @@ class SharedIndexMarketDataRunner:
             "latest_spots": latest_spots,
             "futures_expiries": dict(self._futures_expiries),
             "future_selection": "nearest listed non-expired NFO FUTIDX per underlying",
-            "option_universe": {"NIFTY": "weekly ATM +/- 6", "BANKNIFTY": "monthly ATM +/- 5"},
+            "option_universe": {"NIFTY": "weekly ATM +/- 15", "BANKNIFTY": "monthly ATM +/- 15"},
             "state": state,
             "records": enriched_records,
             "universe_coverage": {"counts": type_counts, "per_underlying": per_underlying, "complete": universe_complete},
