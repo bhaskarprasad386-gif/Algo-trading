@@ -4,6 +4,7 @@ from pathlib import Path
 def test_retired_historical_routes_are_not_mounted_or_advertised():
     source = Path(__file__).parents[1].joinpath("app", "main.py").read_text(encoding="utf-8")
     assert "app.include_router(scanner_router)" not in source
+    assert "app.include_router(auto_scanner_router)" not in source
     assert "app.include_router(monthly_results_router)" not in source
     assert "app.include_router(cash_future_strategy_router)" not in source
     assert "app.include_router(calendar_spread_strategy_router)" not in source
