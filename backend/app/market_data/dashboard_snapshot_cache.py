@@ -42,12 +42,13 @@ class BoundedSnapshotCache:
             "refresh_errors": self._refresh_errors,
         }
 
-    def _copy_with_metadata(self, *, stale: bool) -> Any:
-        now = monotonic()
-        value = deepcopy(self._value)
-        if isinstance(value, dict):
-            value["_snapshot_cache"] = self._metadata(now=now, stale=stale)
-        return value
+    @staticmethod
+    def _copy_with_metadata(value: Any, metadata: dict[str, Any]) -> Any:
+        """Copy a captured immutable-by-convention value after releasing _lock."""
+        snapshot = deepcopy(value)
+        if isinstance(snapshot, dict):
+            snapshot["_snapshot_cache"] = metadata
+        return snapshot
 
     def _refresh(self, factory: Callable[[], Any]) -> Any:
         try:
@@ -114,7 +115,15 @@ class BoundedSnapshotCache:
         with self._lock:
             age = None if self._refreshed_at is None else max(0.0, now - self._refreshed_at)
             if age is not None and age <= self.ttl_seconds:
-                return self._copy_with_metadata(stale=False)
+                value = self._value
+                metadata = self._metadata(now=now, stale=False)
+                # _value is replaced, never mutated, by _refresh. Capture its
+                # reference and metadata under lock, then perform the expensive
+                # recursive copy after releasing the lock.
+                pass
+            else:
+                value = None
+                metadata = None
 
             has_usable_stale = (
                 self._value is not None
@@ -128,10 +137,20 @@ class BoundedSnapshotCache:
                     except Exception:
                         # Stale-while-refresh is explicitly best effort.
                         pass
-                return self._copy_with_metadata(stale=True)
+                value = self._value
+                metadata = self._metadata(now=now, stale=True)
+            else:
+                value = None
+                metadata = None
 
-            if not self._refreshing:
+            if has_usable_stale:
+                # Keep the lock only for cache state and single-flight control.
+                pass
+            elif not self._refreshing:
                 self._start_refresh_locked(factory)
+
+        if value is not None:
+            return self._copy_with_metadata(value, metadata)
 
         # Cold and hard-expired refreshes run off-request in one worker. A
         # slow shard scan/provider call can no longer pin a request thread
@@ -140,10 +159,18 @@ class BoundedSnapshotCache:
         with self._lock:
             age = None if self._refreshed_at is None else max(0.0, monotonic() - self._refreshed_at)
             if self._value is not None and age is not None and age <= self.max_stale_seconds:
-                return self._copy_with_metadata(stale=age > self.ttl_seconds)
-            if finished and self._last_refresh_error is not None:
+                value = self._value
+                metadata = self._metadata(
+                    now=monotonic(), stale=age > self.ttl_seconds
+                )
+            else:
+                value = None
+                metadata = None
+            if value is None and finished and self._last_refresh_error is not None:
                 raise self._last_refresh_error
-            raise TimeoutError("dashboard snapshot refresh did not finish within its bound")
+            if value is None:
+                raise TimeoutError("dashboard snapshot refresh did not finish within its bound")
+        return self._copy_with_metadata(value, metadata)
 
 
 def cached_snapshot(*, ttl_seconds: float, max_stale_seconds: float):
