@@ -408,7 +408,7 @@ class LiveBoxSpreadRunner:
         exchange_by_type = {2: "NFO", 4: "BFO"}
         descriptors = []
         for item in subscriptions:
-            # Selector output is normally SyntheticSubscription, while tests and
+            # Selector output is normally BoxSpreadSubscription, while tests and
             # compatible callers may already provide canonical descriptors.
             if hasattr(item, "key") and hasattr(item, "exchange") and hasattr(item, "instrument_type"):
                 descriptors.append(item)
@@ -417,7 +417,7 @@ class LiveBoxSpreadRunner:
                 exchange_type = int(item.exchange_type)
             except (AttributeError, TypeError, ValueError) as exc:
                 raise TypeError(
-                    "Box Spread depth contracts must be SyntheticSubscription or InstrumentDescriptor"
+                    "Box Spread depth contracts must be BoxSpreadSubscription or InstrumentDescriptor"
                 ) from exc
             exchange = exchange_by_type.get(exchange_type)
             if exchange is None:
