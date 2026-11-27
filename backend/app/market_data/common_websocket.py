@@ -883,33 +883,43 @@ class CommonWebSocketManager:
                     with self._lock:
                         if self._retired_transports:
                             continue
+                    with self._lock:
+                        if self._closed:
+                            return
                     socket = self._create_socket()
                     subscriptions = self._group_subscriptions(pairs)
                     with self._lock:
-                        generation = self._socket_generation_counter.get(group, 0) + 1
-                        self._socket_generation_counter[group] = generation
-                        self._socket_generation[group] = generation
-                        # A new socket generation must prove its own exchange
-                        # freshness; never inherit a previous generation's tick.
-                        for freshness_key in [
-                            key for key in self._latest_tick_timestamp_ns_by_group_exchange
-                            if key[0] == group
-                        ]:
-                            self._latest_tick_timestamp_ns_by_group_exchange.pop(freshness_key, None)
-                        # Register the socket before broker I/O. Angel's
-                        # SmartWebSocketV2.connect() is asynchronous and may
-                        # invoke on_open/on_data before connect() returns.
-                        # Keeping the registry authoritative during that
-                        # window prevents the recovery supervisor and callbacks
-                        # from observing a false zero-socket state.
-                        self._sockets[group] = socket
-                        self._socket_tokens[group] = set(pairs)
-                        now = time.monotonic()
-                        self._socket_created_at[group] = now
-                        self._last_raw_frame_at_by_group[group] = now
-                        self._last_successful_route_at.pop(group, None)
-                        self._last_data_at[group] = now
-                        self._last_successful_delivery_at[group] = None
+                        if self._closed:
+                            shutdown_race = True
+                            generation = None
+                        else:
+                            shutdown_race = False
+                            generation = self._socket_generation_counter.get(group, 0) + 1
+                            self._socket_generation_counter[group] = generation
+                            self._socket_generation[group] = generation
+                            # A new socket generation must prove its own exchange
+                            # freshness; never inherit a previous generation's tick.
+                            for freshness_key in [
+                                key for key in self._latest_tick_timestamp_ns_by_group_exchange
+                                if key[0] == group
+                            ]:
+                                self._latest_tick_timestamp_ns_by_group_exchange.pop(freshness_key, None)
+                            # Register before broker I/O so early SDK callbacks see
+                            # an authoritative generation in the manager registry.
+                            self._sockets[group] = socket
+                            self._socket_tokens[group] = set(pairs)
+                            now = time.monotonic()
+                            self._socket_created_at[group] = now
+                            self._last_raw_frame_at_by_group[group] = now
+                            self._last_successful_route_at.pop(group, None)
+                            self._last_data_at[group] = now
+                            self._last_successful_delivery_at[group] = None
+                    if shutdown_race:
+                        self._close_socket_tracked(
+                            socket, group=group, generation=None,
+                            reason="manager_shutdown_race", timeout=2.0,
+                        )
+                        return
                     self._install_callback_adapter(group, generation)
                     try:
                         self._start_socket_connect(
@@ -1792,6 +1802,12 @@ class CommonWebSocketManager:
                 reason="stale_recovery",
                 on_finished=lambda retired_group=stale_group: self._reconcile_after_retirement(retired_group),
             )
+        # Shutdown may publish its fence while this recovery pass is retiring
+        # stale transports. Retirement is still required, but a recovery pass
+        # must not attempt desired-state reconciliation after admission closes.
+        with self._lock:
+            if self._closed:
+                return len(stale)
         try:
             self._reconcile()
         except Exception:
@@ -2345,6 +2361,9 @@ class CommonWebSocketManager:
         """Resume desired-state reconciliation after a retired close completes."""
         try:
             with self._reconcile_lock:
+                with self._lock:
+                    if self._closed:
+                        return
                 self._reconcile()
         except Exception as exc:
             app_logger.warning(
@@ -2980,12 +2999,15 @@ class CommonWebSocketManager:
             }
 
     def close(self) -> None:
+        # Publish the shutdown fence before waiting for reconciliation. A
+        # recovery pass may currently be inside broker I/O while holding the
+        # reconcile lock; setting _closed first prevents its next socket from
+        # being admitted once that operation returns.
         self._recovery_stop.set()
-        # Serialize shutdown with reconciliation/recovery so a late pass cannot
-        # publish fresh sockets after shutdown clears the active sessions.
+        with self._lock:
+            self._closed = True
         with self._reconcile_lock:
             with self._lock:
-                self._closed = True
                 recovery_thread = self._recovery_thread
                 self._recovery_thread = None
                 socket_items = list(self._sockets.items())
@@ -3003,6 +3025,11 @@ class CommonWebSocketManager:
                 self._failure_recovery_generation_by_group.clear()
                 self._failure_recovery_pending_groups.clear()
                 self._failure_recovery_pending_versions.clear()
+        # The recovery supervisor may be waiting for _reconcile_lock. Release
+        # that lock before joining it, otherwise every shutdown can burn the
+        # full join timeout while the thread is unable to observe _closed.
+        if recovery_thread is not None and recovery_thread is not current_thread():
+            recovery_thread.join(timeout=1.0)
         # Do not hold either manager lock while waiting for consumer callbacks:
         # a callback may legitimately request subscription changes during shutdown.
         for group, (generation, adapter) in callback_adapters:
@@ -3036,8 +3063,6 @@ class CommonWebSocketManager:
                 reason="manager_shutdown",
                 timeout=2.0,
             )
-        if recovery_thread is not None and recovery_thread is not current_thread():
-            recovery_thread.join(timeout=1.0)
         # Wait for callbacks admitted before closure; new OPEN/ERROR callbacks
         # are rejected after _closed is set. Retired CLOSED remains admissible.
         with self._transport_observer_dispatch_lock:

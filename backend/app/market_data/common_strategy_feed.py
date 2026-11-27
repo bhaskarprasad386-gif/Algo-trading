@@ -25,6 +25,7 @@ _EXCHANGE_SEGMENTS = {
 _SHARED_LOCK = Lock()
 _SHARED_MANAGER: CommonWebSocketManager | None = None
 _SHARED_AUTH: AngelOneAuth | None = None
+_SHARED_MANAGER_CLOSING = False
 
 
 class SharedIndexOnlyWebSocketManager(CommonWebSocketManager):
@@ -139,6 +140,8 @@ def shared_common_manager(
     """Return the process-wide manager reserved for SharedIndexMarketDataRunner."""
     global _SHARED_MANAGER, _SHARED_AUTH
     with _SHARED_LOCK:
+        if _SHARED_MANAGER_CLOSING:
+            raise RuntimeError("shared market-data manager is shutting down")
         if _SHARED_MANAGER is None:
             _SHARED_AUTH = auth or AngelOneAuth()
             factory = socket_factory or (lambda: MarketDataWebSocket(auth=_SHARED_AUTH, auto_reconnect=False))
@@ -150,6 +153,39 @@ def shared_common_manager(
                 async_callback_dispatch=True,
             )
         return _SHARED_MANAGER
+
+
+def close_shared_common_manager() -> None:
+    """Close the process-owned manager after every feed consumer has stopped.
+
+    The closing fence is published under the singleton lock, but manager.close()
+    runs outside that lock because transport callbacks and retirement workers
+    may still need manager-local synchronization while they drain.
+    """
+    global _SHARED_MANAGER, _SHARED_AUTH, _SHARED_MANAGER_CLOSING
+    with _SHARED_LOCK:
+        if _SHARED_MANAGER_CLOSING:
+            return
+        manager = _SHARED_MANAGER
+        if manager is None:
+            _SHARED_AUTH = None
+            return
+        _SHARED_MANAGER_CLOSING = True
+    try:
+        manager.close()
+    except Exception:
+        # Keep the failed manager reachable for diagnostics/retry. Clearing it
+        # here could allow a second broker manager while retired transports
+        # from the first one are still alive.
+        with _SHARED_LOCK:
+            _SHARED_MANAGER_CLOSING = False
+        raise
+    else:
+        with _SHARED_LOCK:
+            if _SHARED_MANAGER is manager:
+                _SHARED_MANAGER = None
+                _SHARED_AUTH = None
+            _SHARED_MANAGER_CLOSING = False
 
 
 def _record_from_snapshot(descriptor: InstrumentDescriptor, snapshot: dict[str, Any]) -> MarketDataRecord | None:
@@ -378,4 +414,4 @@ class CommonStrategyMarketFeed:
         self.stop()
 
 
-__all__ = ["CommonStrategyMarketFeed", "replay_cached_snapshots", "shared_common_manager"]
+__all__ = ["CommonStrategyMarketFeed", "replay_cached_snapshots", "shared_common_manager", "close_shared_common_manager"]
