@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.real_trading_owner_state import RealTradingOwnerState
 
-OWNER_KEY = "box-spread-real-owner"
+OWNER_KEY = "box-spread-real-owner"  # Legacy persisted key retained to reuse the existing safety row.
 
 
 def account_fingerprint(broker_name: str, client_code: str) -> str:
