@@ -12,13 +12,13 @@ class PendingShoonyaOAuth:
     owner_id: int
     client_id: str
     redirect_uri: str | None
-    uid: str
-    account_id: str
+    uid: str | None
+    account_id: str | None
     issued_at: float
 
 
 class ShoonyaOAuthFlowStore:
-    """Bounded, expiring, single-use owner flow correlation for Shoonya OAuth."""
+    """Bounded, expiring, single-use browser flow correlation for Shoonya OAuth."""
 
     def __init__(
         self,
@@ -57,17 +57,17 @@ class ShoonyaOAuthFlowStore:
         owner_id: int,
         client_id: str,
         redirect_uri: str | None = None,
-        uid: str,
-        account_id: str,
+        uid: str | None = None,
+        account_id: str | None = None,
     ) -> str:
         if isinstance(owner_id, bool) or not isinstance(owner_id, int) or owner_id < 0:
             raise ValueError("Shoonya OAuth owner ID is invalid")
         client_id = str(client_id or "").strip()
-        uid = str(uid or "").strip()
-        account_id = str(account_id or "").strip()
+        uid = str(uid or "").strip() or None
+        account_id = str(account_id or "").strip() or None
         redirect_uri = self._redirect(redirect_uri) if redirect_uri else None
-        if not all((client_id, uid, account_id)):
-            raise ValueError("Shoonya client ID, UID and account ID are required")
+        if not client_id:
+            raise ValueError("Shoonya client ID is required")
         flow_id = str(self._token_factory(32) or "").strip()
         if not flow_id:
             raise RuntimeError("Unable to create Shoonya OAuth flow ID")

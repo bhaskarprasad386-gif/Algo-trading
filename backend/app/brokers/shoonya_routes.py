@@ -5,23 +5,21 @@ from typing import Any
 from time import monotonic
 
 import requests
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from app.brokers.connections import broker_connections
-from app.brokers.real_owner_auth import require_real_owner_access
-from app.brokers.real_owner_state import claim_authenticated_account, set_owner_connection_state
-from app.brokers.safety import trading_safety
 from app.brokers.session_store import broker_sessions
 from app.brokers.shoonya import ShoonyaAdapter, ShoonyaHistoryUnavailable
 from app.brokers.shoonya_auth import ShoonyaAuthenticationError, ShoonyaOAuthAuthenticator
 from app.brokers.shoonya_oauth_state import ShoonyaOAuthFlowStore
 from app.core.config import settings
-from app.core.database import get_db
 from app.core.logger import app_logger
 
 router = APIRouter()
+
+# Reserved process-local namespace distinct from Box Spread real-owner ID (0).
+SHOONYA_SESSION_OWNER_ID = 2_147_483_647
 
 
 def _disconnect_adapter_best_effort(adapter: ShoonyaAdapter) -> None:
@@ -42,8 +40,6 @@ def _disconnect_client_best_effort(client: ShoonyaRESTClient) -> None:
 
 class ShoonyaAuthUrlRequest(BaseModel):
     client_id: str = Field(default="", max_length=200)
-    uid: str = Field(min_length=1, max_length=100)
-    account_id: str = Field(min_length=1, max_length=100)
 
 
 class ShoonyaVerifyRequest(BaseModel):
@@ -140,17 +136,14 @@ shoonya_oauth_flows = ShoonyaOAuthFlowStore()
 @router.post("/shoonya/auth-url")
 def shoonya_auth_url(
     payload: ShoonyaAuthUrlRequest,
-    user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     client_id = str(settings.SHOONYA_OAUTH_CLIENT_ID or "").strip()
     if not client_id:
         raise HTTPException(status_code=503, detail="Shoonya OAuth client ID is not configured on the server")
     try:
         flow_id = shoonya_oauth_flows.create(
-            owner_id=user_id,
+            owner_id=SHOONYA_SESSION_OWNER_ID,
             client_id=client_id,
-            uid=payload.uid,
-            account_id=payload.account_id,
         )
         url = ShoonyaOAuthAuthenticator.build_authorization_url(client_id=client_id)
     except (ValueError, RuntimeError) as exc:
@@ -165,11 +158,23 @@ def shoonya_auth_url(
     }
 
 
+@router.get("/shoonya/status")
+def shoonya_status() -> dict:
+    """Expose only connection state; never disclose account identity or credentials."""
+    adapter = broker_sessions.get(SHOONYA_SESSION_OWNER_ID, "shoonya")
+    item = broker_connections.get(SHOONYA_SESSION_OWNER_ID, "shoonya")
+    connected = adapter is not None and item is not None and item.connected
+    return {
+        "broker": "shoonya",
+        "connected": connected,
+        "real_trading": False,
+        "kill_switch": True,
+    }
+
+
 @router.post("/shoonya/verify")
 def shoonya_verify(
     payload: ShoonyaVerifyRequest,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     client_id = str(settings.SHOONYA_OAUTH_CLIENT_ID or "").strip()
     secret_code = str(settings.SHOONYA_OAUTH_SECRET_CODE or "")
@@ -177,7 +182,7 @@ def shoonya_verify(
         raise HTTPException(status_code=503, detail="Shoonya OAuth client ID and secret code are not configured")
     try:
         pending = shoonya_oauth_flows.consume(
-            owner_id=user_id,
+            owner_id=SHOONYA_SESSION_OWNER_ID,
             flow_id=payload.flow_id,
             client_id=client_id,
         )
@@ -186,13 +191,12 @@ def shoonya_verify(
 
     # Reserve ordering before network work: later reconnect attempts supersede
     # earlier ones even if their OAuth exchange completes last.
-    replacement_generation = broker_sessions.reserve_replacement(user_id, "shoonya")
-    # Re-authentication must disarm any prior process-local safety state first.
-    trading_safety.disable(user_id)
+    owner_id = SHOONYA_SESSION_OWNER_ID
+    replacement_generation = broker_sessions.reserve_replacement(owner_id, "shoonya")
     client: ShoonyaRESTClient | None = None
     adapter: ShoonyaAdapter | None = None
     session_installed = False
-    previous_connection_item = broker_connections.get(user_id, "shoonya")
+    previous_connection_item = broker_connections.get(owner_id, "shoonya")
     connection_item: list = []
     try:
         authenticator = ShoonyaOAuthAuthenticator()
@@ -227,7 +231,7 @@ def shoonya_verify(
         adapter.connect(uid=authenticated.uid, account_id=authenticated.account_id)
 
         installed, previous = broker_sessions.replace_if_reserved(
-            user_id, "shoonya", adapter, replacement_generation
+            owner_id, "shoonya", adapter, replacement_generation
         )
         session_installed = installed
         if not installed:
@@ -240,27 +244,21 @@ def shoonya_verify(
                     "Previous shoonya provider logout failed during reconnect: %s",
                     type(logout_error).__name__,
                 )
-        def commit_owner_and_connection_metadata() -> None:
-            # Keep durable account-owner writes inside the session-current lock:
-            # a superseded OAuth attempt must not claim ownership or mark the
-            # shared owner connected before it is rejected.
-            claim_authenticated_account(db, "shoonya", authenticated.account_id)
-            set_owner_connection_state(db, True)
+        def commit_connection_metadata() -> None:
             connection_item.append(
-                broker_connections.connect(user_id, "shoonya", payload.display_name)
+                broker_connections.connect(owner_id, "shoonya", payload.display_name)
             )
 
         metadata_committed = broker_sessions.commit_if_current(
-            user_id,
+            owner_id,
             "shoonya",
             adapter,
-            commit_owner_and_connection_metadata,
+            commit_connection_metadata,
             generation=replacement_generation,
         )
         if not metadata_committed:
             raise HTTPException(status_code=409, detail="Shoonya session was superseded by a newer reconnect")
         item = connection_item[0]
-        trading_safety.disable(user_id)
         return {
             "connected": item.connected,
             "broker": "shoonya",
@@ -272,11 +270,11 @@ def shoonya_verify(
         }
     except HTTPException:
         if adapter is not None:
-            removed = broker_sessions.remove_if_adapter_current(user_id, "shoonya", adapter)
+            removed = broker_sessions.remove_if_adapter_current(owner_id, "shoonya", adapter)
             if removed:
                 metadata_item = connection_item[0] if connection_item else previous_connection_item
                 if metadata_item is not None:
-                    broker_connections.disconnect_if_current(user_id, "shoonya", metadata_item)
+                    broker_connections.disconnect_if_current(owner_id, "shoonya", metadata_item)
                 _disconnect_adapter_best_effort(adapter)
             elif not session_installed:
                 # This adapter never entered the registry (the reservation was
@@ -284,15 +282,14 @@ def shoonya_verify(
                 _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             _disconnect_client_best_effort(client)
-        db.rollback()
         raise
     except (ShoonyaAuthenticationError, ShoonyaHistoryUnavailable, ValueError) as exc:
         if adapter is not None:
-            removed = broker_sessions.remove_if_adapter_current(user_id, "shoonya", adapter)
+            removed = broker_sessions.remove_if_adapter_current(owner_id, "shoonya", adapter)
             if removed:
                 metadata_item = connection_item[0] if connection_item else previous_connection_item
                 if metadata_item is not None:
-                    broker_connections.disconnect_if_current(user_id, "shoonya", metadata_item)
+                    broker_connections.disconnect_if_current(owner_id, "shoonya", metadata_item)
                 _disconnect_adapter_best_effort(adapter)
             elif not session_installed:
                 # This adapter never entered the registry (the reservation was
@@ -300,15 +297,14 @@ def shoonya_verify(
                 _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             _disconnect_client_best_effort(client)
-        db.rollback()
         raise HTTPException(status_code=401, detail="Shoonya authentication or account verification failed") from exc
     except Exception as exc:
         if adapter is not None:
-            removed = broker_sessions.remove_if_adapter_current(user_id, "shoonya", adapter)
+            removed = broker_sessions.remove_if_adapter_current(owner_id, "shoonya", adapter)
             if removed:
                 metadata_item = connection_item[0] if connection_item else previous_connection_item
                 if metadata_item is not None:
-                    broker_connections.disconnect_if_current(user_id, "shoonya", metadata_item)
+                    broker_connections.disconnect_if_current(owner_id, "shoonya", metadata_item)
                 _disconnect_adapter_best_effort(adapter)
             elif not session_installed:
                 # This adapter never entered the registry (the reservation was
@@ -316,6 +312,5 @@ def shoonya_verify(
                 _disconnect_adapter_best_effort(adapter)
         elif client is not None:
             _disconnect_client_best_effort(client)
-        db.rollback()
-        app_logger.error("Shoonya durable account binding failed: %s", type(exc).__name__)
-        raise HTTPException(status_code=503, detail="Shoonya account could not be safely bound to the Box Spread owner") from exc
+        app_logger.error("Shoonya connection setup failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Shoonya connection could not be established") from exc
