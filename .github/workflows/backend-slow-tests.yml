@@ -39,11 +39,7 @@ jobs:
           PYTHONPATH: backend
           DATABASE_URL: "sqlite:///:memory:"
           IV_TEST_POSTGRES_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/iv_basket_test"
-          LIVE_CASH_FUTURE_DATA_ENABLED: "false"
-          LIVE_CALENDAR_SPREAD_DATA_ENABLED: "false"
-          LIVE_SYNTHETIC_DATA_ENABLED: "false"
           LIVE_MARKET_DATA_PERSISTENCE_ENABLED: "false"
-          LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED: "false"
           BACKTESTING_ENABLED: "true"
         run: |
           python -m pytest backend/tests -q --tb=short -r fE \
