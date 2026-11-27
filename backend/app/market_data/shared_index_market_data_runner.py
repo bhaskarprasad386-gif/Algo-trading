@@ -387,6 +387,15 @@ class SharedIndexMarketDataRunner:
                 self._check_option_expiry_rollover()
                 self._check_futures_rollover()
 
+    def instrument_rows_snapshot(self) -> tuple[dict, ...]:
+        """Return a read-only copy of the instrument master already loaded by this runner.
+
+        Consumers such as IV may use contract metadata from this snapshot, but
+        must not trigger a second broker/master download or create subscriptions.
+        """
+        with self._lock:
+            return tuple(dict(row) for row in self._rows)
+
     def start(self, instrument_rows: Iterable[dict] | None = None) -> dict:
         with self._lock:
             if self._running:
