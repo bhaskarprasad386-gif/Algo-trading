@@ -3,7 +3,7 @@ import asyncio
 from datetime import datetime, timezone
 import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from app.scanner.page_push_websocket import configure_snapshot_provider, publish_page_update
+from app.scanner.page_push_websocket import publish_page_update
 
 router = APIRouter(tags=["box-spread"])
 _subscribers = set()
@@ -243,4 +243,3 @@ def _page_snapshot():
 
 # The shared page gateway reads this getter on subscribe/resync. It does not
 # start a runner or broker feed and uses the same quote validation as this WS.
-configure_snapshot_provider("box-spread", _page_snapshot)
