@@ -2877,3 +2877,47 @@ def test_failure_recovery_worker_start_failure_is_retried_by_supervisor(monkeypa
     finally:
         monkeypatch.setattr(common_websocket_module, "Thread", original_thread)
         manager.close()
+
+
+def test_retired_transport_watcher_start_failure_is_retried(monkeypatch):
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    socket = FakeSocket()
+    group = SocketGroup(1, 0)
+    finished = Event()
+    original_thread = common_websocket_module.Thread
+    try:
+        class BrokenWatcher:
+            def start(self):
+                raise RuntimeError("thread quota exhausted")
+
+        def selective_thread(*args, **kwargs):
+            if str(kwargs.get("name", "")).startswith("common-ws-retire-watch-"):
+                return BrokenWatcher()
+            return original_thread(*args, **kwargs)
+
+        monkeypatch.setattr(common_websocket_module, "Thread", selective_thread)
+        manager._close_socket_tracked(
+            socket,
+            group=group,
+            generation=17,
+            reason="watcher_spawn_failure",
+            on_finished=finished.set,
+            timeout=0.2,
+        )
+
+        with manager._lock:
+            assert len(manager._retired_transports) == 1
+            assert len(manager._retired_transport_watch_pending) == 1
+        assert finished.is_set() is False
+
+        # The close worker can finish, but its retired-session fence is not
+        # released until a watcher is successfully started and observes exit.
+        monkeypatch.setattr(common_websocket_module, "Thread", original_thread)
+        manager._retry_pending_retired_transport_watchers()
+        assert finished.wait(timeout=1.0)
+        with manager._lock:
+            assert manager._retired_transports == {}
+            assert manager._retired_transport_watch_pending == {}
+    finally:
+        monkeypatch.setattr(common_websocket_module, "Thread", original_thread)
+        manager.close()
