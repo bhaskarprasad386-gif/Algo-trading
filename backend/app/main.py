@@ -1038,29 +1038,6 @@ def _signal_live_runner_shutdown() -> None:
 MARKET_CLOSE = time(15, 30)
 
 
-def _collector_enabled() -> bool:
-    return settings.CASH_FUTURE_HISTORY_ENABLED
-
-
-def _collector_symbols() -> list[str]:
-    configured = [item.strip().upper() for item in settings.CASH_FUTURE_HISTORY_SYMBOLS.split(",") if item.strip()]
-    if configured:
-        return configured
-    try:
-        return discover_cash_future_symbols(limit=50)
-    except Exception as exc:
-        app_logger.warning(f"Cash-Future dynamic symbol discovery failed: {exc}")
-        return []
-
-
-def _collector_interval() -> int:
-    return max(15, settings.CASH_FUTURE_HISTORY_INTERVAL_SECONDS)
-
-
-def _market_is_open(now: datetime) -> bool:
-    return now.weekday() < 5 and MARKET_OPEN <= now.time() <= MARKET_CLOSE
-
-
 def _stop_live_runner_nonblocking(runner, *, name: str) -> None:
     """Request runner shutdown without blocking the asyncio event loop.
 
