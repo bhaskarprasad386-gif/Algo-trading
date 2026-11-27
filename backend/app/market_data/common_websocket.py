@@ -1808,7 +1808,15 @@ class CommonWebSocketManager:
         cooldown_was_active = False
         retry_delay = max(0.1, float(self._recovery_interval_seconds))
         retry_delay_cap = max(retry_delay, float(self._recovery_backoff_max_seconds))
-        while not self._recovery_stop.wait(retry_delay):
+        while True:
+            # Integrity-fault handoffs originate on the SDK callback thread and
+            # should be serviced promptly, without waiting for the normal
+            # five-second polling interval. Keep the ordinary idle cadence.
+            with self._lock:
+                has_urgent_integrity_fault = bool(self._callback_integrity_fault_pending)
+            wait_for = min(retry_delay, 0.1) if has_urgent_integrity_fault else retry_delay
+            if self._recovery_stop.wait(wait_for):
+                return
             with self._lock:
                 if self._closed:
                     return
