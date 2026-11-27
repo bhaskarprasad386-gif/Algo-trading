@@ -49,6 +49,7 @@ class LiveSyntheticUnderlyingFeed:
         commodity_symbols: frozenset[str] = frozenset(),
         consumer: str = "synthetic-underlyings",
         refresh_instrument_master: bool = True,
+        manager: Any | None = None,
     ) -> None:
         if not symbols:
             raise ValueError("at least one underlying symbol is required")
@@ -72,6 +73,7 @@ class LiveSyntheticUnderlyingFeed:
         self.index_symbols = frozenset(
             str(symbol).strip().upper() for symbol in index_symbols if str(symbol).strip()
         )
+        self.manager = manager
         self.stop_event = Event()
         self._feed: CommonStrategyMarketFeed | None = None
         # The shared registry may keep another consumer's canonical display
@@ -228,6 +230,7 @@ class LiveSyntheticUnderlyingFeed:
         self._feed = CommonStrategyMarketFeed(
             self.consumer,
             auth=self.auth,
+            manager=self.manager,
         )
         active_tokens: dict[str, str] = {}
         try:
