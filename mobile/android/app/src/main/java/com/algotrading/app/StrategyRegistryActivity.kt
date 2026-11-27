@@ -1,7 +1,6 @@
 package com.algotrading.app
 
 import android.app.AlertDialog
-import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -60,7 +59,8 @@ class StrategyRegistryActivity : AppCompatActivity() {
     private fun refreshRegistry() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val items = ApiService.retrofitService.appStrategies().strategies.filter { it.enabled }
+                val items = ApiService.retrofitService.appStrategies().strategies
+                    .filter { it.enabled && it.screen !in setOf("box_spread", "full_fno") }
                 withContext(Dispatchers.Main) {
                     statusView.text = "Backend registry • ${items.size} enabled strategies • refresh 30s"
                     listView.removeAllViews()
@@ -85,14 +85,10 @@ class StrategyRegistryActivity : AppCompatActivity() {
     }
 
     private fun openStrategy(item: StrategyRegistryItem) {
-        when (item.screen) {
-            "box_spread" -> startActivity(Intent(this, BoxSpreadActivity::class.java))
-            "full_fno" -> startActivity(Intent(this, FullFnoBacktestActivity::class.java))
-            else -> AlertDialog.Builder(this)
-                .setTitle(item.name)
-                .setMessage("This workspace is not available in this app build.")
-                .setPositiveButton("OK", null)
-                .show()
-        }
+        AlertDialog.Builder(this)
+            .setTitle(item.name)
+            .setMessage("This workspace is not available in this app build.")
+            .setPositiveButton("OK", null)
+            .show()
     }
 }
