@@ -1,8 +1,8 @@
 """Pure, isolated analytics for the IV Skew / IV Flip / Gamma Blast scanner.
 
 This module intentionally has no broker, order-routing, Box Spread, or Synthetic
-Runner dependencies. IV is derived from option marks because the canonical
-Angel One market-data record carries LTP/depth/OI, not an exchange IV field.
+Runner dependencies. Local IV derivation is disabled. IV Skew/Flip signals fail closed unless a
+separate broker-native IV source is explicitly wired into the engine.
 """
 from __future__ import annotations
 
@@ -195,7 +195,7 @@ def evaluate_skew(
         if call_iv is not None and put_iv is not None:
             spreads.append((call_iv - put_iv) * 100.0)
     if len(spreads) < 2:
-        return Signal("IV_SKEW", None, None, None, "WAITING", "at least two matched CE/PE IV pairs are required")
+        return Signal("IV_SKEW", None, None, None, "WAITING", "local IV calculation is disabled; broker-native IV is not wired into this signal engine")
     value = sum(spreads) / len(spreads)
     direction = "BULLISH" if value >= config.bullish_skew_threshold else "BEARISH" if value <= config.bearish_skew_threshold else None
     return Signal("IV_SKEW", direction, round(value, 4), config.bullish_skew_threshold if direction == "BULLISH" else config.bearish_skew_threshold if direction == "BEARISH" else None, "SIGNAL" if direction else "NEUTRAL", f"mean matched CE-IV minus PE-IV across {len(spreads)} strike pairs")
@@ -228,7 +228,7 @@ def evaluate_flip(
     call_iv = _iv(pair["CE"], spot, years, config)
     put_iv = _iv(pair["PE"], spot, years, config)
     if call_iv is None or put_iv is None:
-        return Signal("IV_FLIP", None, None, None, "WAITING", "ATM IV could not be solved from valid option marks")
+        return Signal("IV_FLIP", None, None, None, "WAITING", "local IV calculation is disabled; broker-native IV is not wired into this signal engine")
     diff = (call_iv - put_iv) * 100.0
     gap = config.min_flip_gap_iv_points
     crossed_up = previous_atm_diff is not None and previous_atm_diff <= -gap and diff >= gap
