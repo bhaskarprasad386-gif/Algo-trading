@@ -55,7 +55,7 @@ class _DisabledIVMarketDataTransport:
 
 
 class _DisabledIVFutureContextFeed:
-    """Explicitly disable IV-owned futures transport in shared-runner mode.
+    """Explicitly disable the IV-owned futures context feed in every mode.
 
     Index-futures basis is context-only and currently has no active contracts.
     Keeping a CommonStrategyMarketFeed here would silently create a second
