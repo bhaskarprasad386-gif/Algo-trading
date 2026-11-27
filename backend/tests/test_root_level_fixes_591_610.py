@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from app.backtesting.arbitrage_backtester import FutureQuote, LiquidityPolicy, OptionQuote
+from app.backtesting.arbitrage_backtester import OptionQuote
 from app.backtesting.events import EventReplayConfig, EventType, MarketEvent
 from app.backtesting.execution import DepthLevel, ExecutionConfig, ExecutionSide, OrderType, SimFill, SimOrder
 from app.backtesting.order_lifecycle import OrderLifecycle, OrderStatus, stop_triggered
