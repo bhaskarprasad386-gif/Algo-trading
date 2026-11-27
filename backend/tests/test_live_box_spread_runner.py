@@ -974,3 +974,16 @@ def test_spot_page_callback_is_blocked_after_publisher_ownership_transfers():
 
 
     assert calls == [("new", ("SENSEX", 80000, 2))]
+
+def test_runtime_health_snapshot_avoids_box_depth_record_materialization():
+    runner = LiveBoxSpreadRunner(
+        object(), [BoxSpreadLiveTarget("NIFTY", "INDEX")],
+        allowed_stock_symbols=set(), future_master=object(), auth=object(),
+    )
+    runner.snapshot = lambda: (_ for _ in ()).throw(AssertionError("full snapshot called"))
+    health = runner.health_snapshot()
+    assert health["running"] is True
+    assert health["targets"] == 1
+    assert health["depth_shadow"]["record_count"] == 0
+    assert "records" not in health["depth_shadow"]
+    assert "underlying_feed" not in health
