@@ -60,7 +60,7 @@ def test_phase7_mfe_mae_and_phase8_walk_forward_are_reproducible():
     assert apply_stress(100.0, scenario) < 100.0
 
 
-def test_phase9_uses_one_normalized_contract_for_bse_stock_and_mcx_commodity():
+def test_phase9_discovery_accepts_nfo_bfo_and_rejects_retired_mcx():
     rows = [
         {
             "token": "B1",
@@ -93,7 +93,7 @@ def test_phase9_uses_one_normalized_contract_for_bse_stock_and_mcx_commodity():
     result = MultiVenueInstrumentDiscovery.discover(rows)
     assert {(x.venue, x.instrument_class) for x in result} == {
         ("BSE", "STOCK"),
-        ("MCX", "COMMODITY"),
         ("NSE", "INDEX"),
     }
-    assert len(result) == 3
+    assert len(result) == 2
+    assert all(x.segment in {"NFO", "BFO"} for x in result)
