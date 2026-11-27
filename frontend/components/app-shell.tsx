@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Bell, ChartNoAxesCombined, Home, Menu, Settings2, ShieldCheck, X } from "lucide-react";
+import { Activity, Bell, ChartNoAxesCombined, Home, Menu, Settings2, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { themeOptions, useTheme, type ThemeName } from "@/components/theme-provider";
 import { PagePushProvider } from "@/components/page-push-provider";
@@ -19,7 +19,6 @@ const nav = [
   { href: "/strategies/iv-skew-flip", label: "IV Skew / IV Flip", icon: Activity },
   { href: "/strategies/box-spread", label: "Box Scanner", icon: Activity },
   { href: "/strategies/credit-butterfly-condor/monthly", label: "Monthly Credit Butterfly / Condor", icon: Activity },
-  { href: "/strategies/box-spread-paper", label: "Box Paper Trading", icon: ShieldCheck },
   { href: "/custom-alert", label: "Custom Alert", icon: Bell },
 ];
 
