@@ -47,7 +47,7 @@ def test_common_feed_health_reports_only_shared_runner_owner(monkeypatch):
     assert second["owner"] == "SharedIndexMarketDataRunner"
     assert second["universe"] == ["NIFTY", "BANKNIFTY"]
     assert "cash_future_runner" not in second
-    assert len(feed_reads) == 2
+    assert len(feed_reads) == 1
 
 
 def test_market_overview_uses_only_shared_runner_nifty_banknifty_quotes(monkeypatch):
