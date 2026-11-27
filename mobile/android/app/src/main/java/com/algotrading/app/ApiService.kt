@@ -74,7 +74,6 @@ interface ApiInterface {
     @GET("/api/v1/app/update") suspend fun appUpdate(): AppUpdateInfo
     @GET("/api/v1/app/strategies") suspend fun appStrategies(): StrategyRegistryResponse
     @GET("/api/v1/app/strategies/{strategy_id}/workspace") suspend fun strategyWorkspace(@retrofit2.http.Path("strategy_id") strategyId: String): StrategyWorkspaceResponse
-    @GET("/api/v1/scanner/box-spread/live") suspend fun boxSpreadLive(@Query("limit") limit: Int = 50): Map<String, Any?>
     @POST("/api/v1/brokers/owner-auth/login") suspend fun loginRealOwner(@Body request: RealOwnerLoginRequest): RealOwnerLoginResponse
     @GET("/api/v1/brokers/connections") suspend fun brokerConnections(): BrokerConnectionsResponse
     @POST("/api/v1/brokers/connect") suspend fun connectBroker(@Body request: BrokerConnectRequest): BrokerConnectResponse
