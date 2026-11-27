@@ -74,7 +74,7 @@ def test_iv_scanner_reads_shared_runner_without_owning_broker_subscriptions():
 def test_retired_strategy_configuration_is_not_exposed():
     root = Path(__file__).parents[1]
     config = (root / "app" / "core" / "config.py").read_text(encoding="utf-8")
-    env_example = (root.parent / ".env.example").read_text(encoding="utf-8")
+    env_example = (root / ".env.example").read_text(encoding="utf-8")
 
     retired_settings = (
         "CASH_FUTURE_HISTORY_ENABLED", "CASH_FUTURE_HISTORY_SYMBOLS",
@@ -93,6 +93,12 @@ def test_retired_strategy_configuration_is_not_exposed():
     for setting in retired_settings:
         assert setting not in config
         assert setting not in env_example
+
+    workflows = root.parent / ".github" / "workflows"
+    for workflow in workflows.glob("*.yml"):
+        source = workflow.read_text(encoding="utf-8")
+        for setting in retired_settings:
+            assert setting not in source, f"{workflow.name} still references {setting}"
 
     # Shared market-data persistence remains available for non-retired data services.
     assert "LIVE_MARKET_DATA_PERSISTENCE_ENABLED" in config
