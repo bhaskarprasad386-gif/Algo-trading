@@ -1635,13 +1635,16 @@ async def _live_box_spread_loop() -> None:
                 if not name:
                     continue
                 # Live Box Spread is intentionally index-only; stock contracts are not subscribed.
-                if typ == "OPTIDX" and name in INDEX_EDGE_THRESHOLDS and name in OPTION_STRATEGY_INDEX_SYMBOLS and name not in BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS:
+                if typ == "OPTIDX" and name in {"NIFTY", "BANKNIFTY"}:
                     expected_segment = "BFO" if name in BSE_BOX_INDEX_SYMBOLS else "NFO"
                     if segment == expected_segment:
                         index_symbols.add(name)
 
-            selected_symbols = _get_box_spread_index_selection()
-            weekly_only_symbols = _get_box_spread_weekly_only_symbols()
+            # Production market-data universe is intentionally locked to the
+            # two indices owned by SharedIndexMarketDataRunner. UI selections
+            # cannot expand broker subscriptions beyond this boundary.
+            selected_symbols = frozenset(_get_box_spread_index_selection()) & {"NIFTY", "BANKNIFTY"}
+            weekly_only_symbols = frozenset(_get_box_spread_weekly_only_symbols()) & {"NIFTY", "BANKNIFTY"}
             targets, expiry_types = _box_spread_targets_from_master(master, selected_symbols, weekly_only_symbols)
             set_live_box_expiry_types(expiry_types)
             set_live_box_websocket_expiry_types(expiry_types)
