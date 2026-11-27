@@ -707,7 +707,6 @@ def market_data_runtime_health():
         "runners": {
             "shared_index_market_data": runner_snapshot,
         },
-        "retired_strategies": {"box_spread": {"status": "RETIRED"}},
         "live_orders": "OFF",
     }
 
