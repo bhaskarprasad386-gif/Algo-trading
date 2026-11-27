@@ -83,3 +83,25 @@ def test_shared_runner_owner_cannot_subscribe_outside_locked_index_universe():
 
     assert manager.registry.get(descriptor.key) is None
     assert manager.registry.subscriptions() == ()
+
+
+
+def test_non_runner_cannot_register_or_unregister_callback_routes():
+    manager = SharedIndexOnlyWebSocketManager(socket_factory=lambda: object())
+    blocked = (
+        manager.register_callback,
+        manager.unregister_callback,
+        manager.register_normalized_callback,
+        manager.unregister_normalized_callback,
+        manager.register_normalized_observer,
+        manager.unregister_normalized_observer,
+        manager.register_transport_observer,
+        manager.unregister_transport_observer,
+    )
+    for operation in blocked:
+        with pytest.raises(PermissionError, match="exclusively"):
+            operation("cash-future-live", lambda *_args, **_kwargs: None)
+    assert manager._callbacks == {}
+    assert manager._record_callbacks == {}
+    assert manager._record_observers == {}
+    assert manager._transport_observers == {}
