@@ -99,7 +99,7 @@ jobs:
           --ignore-glob='backend/tests/test_dashboard_batch10_historical_replay.py'
           --ignore-glob='backend/tests/test_durable_replay_resume_equivalence.py'
           --ignore-glob='backend/tests/test_high_resolution_conflicting_replay.py'
-          --ignore-glob='backend/tests/test_historical_backtest_sync*.py'
+         
           --ignore-glob='backend/tests/test_historical_catalog_replay.py'
           --ignore-glob='backend/tests/test_incremental_backtest*.py'
           --ignore-glob='backend/tests/test_persisted_symbol_replay.py'
