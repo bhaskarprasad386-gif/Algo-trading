@@ -445,6 +445,8 @@ def test_runner_rejects_retired_commodity_targets():
             allowed_stock_symbols=frozenset(),
             instrument_master=_master(),
         )
+
+
 def test_runner_exposes_supervisor_stop_event_alias():
     runner = LiveSyntheticRunner(
         ":memory:",
