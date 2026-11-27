@@ -80,7 +80,7 @@ mkdir -p "$BACKEND_DIR/data"
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Recover validated Box Spread and IV instrument-master artifacts from GitHub Actions
+Description=Recover validated IV and shared index instrument-master artifacts from GitHub Actions
 Wants=network-online.target
 After=network-online.target
 
@@ -103,7 +103,7 @@ EOF
 
 cat > "$TIMER_FILE" <<'EOF'
 [Unit]
-Description=Daily validated Box Spread and IV instrument-master recovery after GitHub cache refresh
+Description=Daily validated IV and shared index instrument-master recovery after GitHub cache refresh
 
 [Timer]
 # 00:45 UTC = 06:15 IST; both scheduled GitHub cache workflows run by 00:05 UTC.
