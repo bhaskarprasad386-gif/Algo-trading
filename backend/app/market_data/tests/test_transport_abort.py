@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import websocket
 
+from app.market_data import websocket as websocket_module
 from app.market_data.websocket import MarketDataWebSocket, _close_sdk_connection_bounded
 
 
