@@ -139,7 +139,12 @@ def test_runner_health_ready_when_illiquid_options_are_stale_but_both_sides_are_
 
     class FakeLifecycle:
         def snapshot(self):
-            return {"shared_websocket": {"socket_health_by_group": {"3:0": {"connected": True}}}}
+            return {
+                "spot_active": True, "spot_instruments": 2,
+                "futures_active": True, "futures_instruments": 2,
+                "options_active": True, "options_instruments": 124,
+                "shared_websocket": {"socket_health_by_group": {"3:0": {"connected": True}}},
+            }
 
     runner.state = FakeState()
     runner.lifecycle = FakeLifecycle()
