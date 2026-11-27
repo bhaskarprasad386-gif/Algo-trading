@@ -41,7 +41,7 @@ def _spot_descriptors():
 
 def _options(shift=0):
     descriptors = []
-    for underlying, base, count in (("NIFTY", 22000, 13), ("BANKNIFTY", 48000, 11)):
+    for underlying, base, count in (("NIFTY", 22000, 31), ("BANKNIFTY", 48000, 31)):
         for n in range(count):
             strike = base + n * 50 + shift
             for opt in ("CE", "PE"):
@@ -107,7 +107,7 @@ def test_options_rotation_adds_before_removing_and_keeps_spot_owner():
     old_option_keys = set(lifecycle._option_keys)
     lifecycle.rotate_options(_options(shift=25))
     assert manager.active[lifecycle.SPOT_CONSUMER] == spot_before
-    assert len(manager.active[lifecycle.OPTIONS_CONSUMER]) == 48
+    assert len(manager.active[lifecycle.OPTIONS_CONSUMER]) == 124
     assert all(manager.registry.get(key) is None for key in old_option_keys)
     assert len(manager.active[lifecycle.SPOT_CONSUMER]) == 2
     lifecycle.stop_options()
@@ -123,7 +123,7 @@ def test_invalid_locked_option_count_rejected_before_mutation():
     try:
         lifecycle.start_options(bad)
     except ValueError as exc:
-        assert "NIFTY must contain exactly 26 options" in str(exc)
+        assert "NIFTY must contain exactly 62 options" in str(exc)
     else:
         raise AssertionError("invalid option universe must be rejected")
     assert not manager.registry.subscriptions()
