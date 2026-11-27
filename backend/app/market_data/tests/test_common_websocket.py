@@ -2795,3 +2795,30 @@ def test_socket_operation_worker_start_failure_releases_inflight_reservation(mon
     assert called == ["retry"]
     assert manager._socket_operation_workers == {}
     manager.close()
+
+
+def test_recovery_supervisor_worker_start_failure_releases_retry_slot(monkeypatch):
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    original_thread = common_websocket_module.Thread
+
+    class BrokenThread:
+        def __init__(self, *args, **kwargs):
+            self.name = kwargs.get("name", "broken-recovery")
+
+        def start(self):
+            raise RuntimeError("thread quota exhausted")
+
+    monkeypatch.setattr(common_websocket_module, "Thread", BrokenThread)
+    manager._ensure_recovery_supervisor()
+
+    assert manager._recovery_thread is None
+    assert manager._recovery_stop.is_set()
+    assert manager._recovery_backoff_errors == 1
+    assert "recovery supervisor start failed" in manager._recovery_backoff_last_error
+
+    # Once thread capacity returns, the same manager can start its supervisor.
+    monkeypatch.setattr(common_websocket_module, "Thread", original_thread)
+    manager._ensure_recovery_supervisor()
+    assert manager._recovery_thread is not None
+    assert manager._recovery_thread.is_alive()
+    manager.close()
