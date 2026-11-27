@@ -335,7 +335,7 @@ def test_page_resync_preserves_other_subscribed_channel_events():
 
 def test_page_push_dispatcher_marks_queue_overflow_for_snapshot(monkeypatch):
     async def scenario():
-        page = "cash-future"
+        page = "iv-skew-flip"
         queue = asyncio.Queue(maxsize=1)
         queue.put_nowait({"page": page, "event": "PATCH", "sequence": 1})
         latest_reads = []
@@ -490,7 +490,7 @@ def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch)
         # Add one more so restoring the consumed frame plus retained queue
         # exceeds this test queue size.
         queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 2})
-        next_waiter = await push._restart_event_waiter(queue, waiter, "cash-future")
+        next_waiter = await push._restart_event_waiter(queue, waiter, "iv-skew-flip")
         # Cancel the restarted consumer before inspecting the recovery queue so
         # it cannot race the test and steal one of the snapshot markers.
         next_waiter.cancel()
