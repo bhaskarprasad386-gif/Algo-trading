@@ -9,7 +9,7 @@ def test_android_scanner_auto_refresh_is_disabled_without_scheduled_work():
     assert "disableCashFutureScanner();" in body
     assert "cbScannerAutoRefresh.isEnabled = false" in body
     assert "etScannerRefreshSeconds.isEnabled = false" in body
-    assert "scannerRefreshRunnable = Runnable { }" in body
-    assert "scannerRefreshHandler.postDelayed(scannerRefreshRunnable" not in body
+    assert "scannerRefreshHandler.postDelayed" not in body
+    assert "scannerRefreshRunnable" not in body
     assert "private fun runCashFutureScanner" not in body
     assert "override fun onDestroy()" in body
