@@ -26,7 +26,7 @@ def test_box_spread_has_no_production_runtime_or_feed_owner():
     ):
         assert retired_runtime_symbol not in source
     assert '"id": "box-spread"' not in source
-    assert '"box_spread": {"status": "RETIRED"}' in source
+    assert "box_spread" not in source
 
 
 def test_box_spread_and_retired_scanners_have_no_public_channels_or_alerts():
