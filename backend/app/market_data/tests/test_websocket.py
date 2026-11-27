@@ -870,3 +870,37 @@ def test_sdk_transport_worker_start_failure_clears_unstarted_reference(monkeypat
         raise AssertionError("transport thread startup failure must propagate")
 
     assert sdk_socket._transport_thread is None
+
+
+def test_initial_subscribe_worker_start_failure_fails_closed(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+
+    class BrokenThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("thread quota exhausted")
+
+    monkeypatch.setattr(websocket_module, "Thread", BrokenThread)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    failures = []
+
+    # Build the SDK socket before replacing the worker constructor so the
+    # test isolates only the initial-subscribe worker admission path.
+    monkeypatch.setattr(websocket_module, "Thread", __import__("threading").Thread)
+    socket = client._build_socket()
+    client.websocket = socket
+    client.exchange_type = 1
+    client.tokens = ["101"]
+    client.on_failure = failures.append
+    monkeypatch.setattr(websocket_module, "Thread", BrokenThread)
+    # Keep this test scoped to subscribe-worker admission; close-worker
+    # startup failure has its own regression test in test_transport_abort.py.
+    monkeypatch.setattr(websocket_module, "_close_sdk_connection_bounded", lambda *args, **kwargs: True)
+
+    client._subscribe_initial_bounded(socket)
+
+    assert client.health["initial_subscribe_success"] is False
+    assert client.health["subscription_response_state"] == "SEND_FAILED"
+    assert failures and "thread quota exhausted" in failures[0]
