@@ -23,9 +23,9 @@ def test_box_runner_uses_resolved_expiry_when_target_has_none(monkeypatch):
         def atm(self, symbol, now_ns, **kwargs): return 100.0
 
     monkeypatch.setattr(mod, "select_box_contracts", select)
-    monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"ABC": (100.0, 110.0)})
-    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
-    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", lambda *a, **k: type("F", (), {"run_forever":lambda self: None, "stop":lambda self: None})())
+    monkeypatch.setattr(mod, "box_spread_strikes_from_master", lambda *a, **k: {"ABC": (100.0, 110.0)})
+    monkeypatch.setattr(mod, "BoxSpreadAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "BoxSpreadUnderlyingFeed", lambda *a, **k: type("F", (), {"run_forever":lambda self: None, "stop":lambda self: None})())
     runner = mod.LiveBoxSpreadRunner(
         object(),
         [mod.BoxSpreadLiveTarget("ABC", "STOCK")],
@@ -76,9 +76,9 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
         )
         return BoxContractSelection((descriptor,), "26NOV2026", 100.0)
 
-    monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"READY": (100.0, 110.0), "WAITING": (100.0, 110.0)})
-    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
-    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "box_spread_strikes_from_master", lambda *a, **k: {"READY": (100.0, 110.0), "WAITING": (100.0, 110.0)})
+    monkeypatch.setattr(mod, "BoxSpreadAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "BoxSpreadUnderlyingFeed", Feed)
     monkeypatch.setattr(mod, "select_box_contracts", select)
     monkeypatch.setattr(mod, "LiveBoxSpreadPipeline", lambda *a, **k: type("P", (), {"observe": lambda self, payload: None, "set_publish_enabled": lambda self, enabled: None})())
     class Recorder:
@@ -88,7 +88,7 @@ def test_box_runner_does_not_gate_ready_underlyings_on_missing_atm(monkeypatch):
             runner.stop_event.set()
         def stop(self): pass
         def snapshot(self): return {"running": True}
-    monkeypatch.setattr(mod, "LiveSyntheticOptionFutureRecorder", Recorder)
+    monkeypatch.setattr(mod, "BoxSpreadOptionFutureRecorder", Recorder)
 
     class Shadow:
         def __init__(self, *, enabled, consumer=None):
@@ -168,9 +168,9 @@ def test_nifty_weekly_option_expiry_seeds_atm_tracker_without_future_expiry(monk
         selected_expiries.append(kwargs.get("expiry"))
         raise RuntimeError("stop-after-selection")
 
-    monkeypatch.setattr(mod, "concrete_strikes_from_master", concrete)
-    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
-    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "box_spread_strikes_from_master", concrete)
+    monkeypatch.setattr(mod, "BoxSpreadAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "BoxSpreadUnderlyingFeed", Feed)
     monkeypatch.setattr(mod, "select_box_contracts", stop_after_selection)
     runner = mod.LiveBoxSpreadRunner(
         object(),
@@ -218,9 +218,9 @@ def test_sensex_weekly_expiry_uses_bfo_option_master_without_future_contracts(mo
         selected.append((kwargs.get("expiry"), kwargs.get("underlying")))
         raise RuntimeError("stop-after-selection")
 
-    monkeypatch.setattr(mod, "concrete_strikes_from_master", concrete)
-    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
-    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "box_spread_strikes_from_master", concrete)
+    monkeypatch.setattr(mod, "BoxSpreadAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "BoxSpreadUnderlyingFeed", Feed)
     monkeypatch.setattr(mod, "select_box_contracts", stop_after_selection)
     runner = mod.LiveBoxSpreadRunner(
         object(),
@@ -285,9 +285,9 @@ def test_box_runner_unions_atm_strikes_across_weekly_and_monthly_targets(monkeyp
         selected.append(kwargs["expiry"])
         raise RuntimeError("stop-after-selection")
 
-    monkeypatch.setattr(mod, "concrete_strikes_from_master", concrete)
-    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
-    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "box_spread_strikes_from_master", concrete)
+    monkeypatch.setattr(mod, "BoxSpreadAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "BoxSpreadUnderlyingFeed", Feed)
     monkeypatch.setattr(mod, "select_box_contracts", stop_after_selection)
     runner = mod.LiveBoxSpreadRunner(
         object(),
@@ -369,9 +369,9 @@ def test_box_runner_starts_and_stops_only_separate_depth_consumer_when_enabled(m
             return {"status": "INCOMPLETE", "reason": "MISSING_LEG"}
 
     monkeypatch.setattr(mod, "BoxLiveDepthShadowFeed", Shadow)
-    monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"NIFTY": (25000.0,)})
-    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
-    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "box_spread_strikes_from_master", lambda *a, **k: {"NIFTY": (25000.0,)})
+    monkeypatch.setattr(mod, "BoxSpreadAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "BoxSpreadUnderlyingFeed", Feed)
     monkeypatch.setattr(mod, "select_box_contracts", lambda *a, **k: BoxContractSelection((descriptor,), "06NOV2026", 25000.0))
     monkeypatch.setattr(mod, "LiveBoxSpreadPipeline", lambda *a, **k: type("P", (), {"observe": lambda self, payload: (), "set_publish_enabled": lambda self, enabled: None})())
 
@@ -382,7 +382,7 @@ def test_box_runner_starts_and_stops_only_separate_depth_consumer_when_enabled(m
         def stop(self): pass
         def snapshot(self): return {"running": True}
 
-    monkeypatch.setattr(mod, "LiveSyntheticOptionFutureRecorder", Recorder)
+    monkeypatch.setattr(mod, "BoxSpreadOptionFutureRecorder", Recorder)
     monkeypatch.setattr(mod, "sleep", lambda _seconds: None)
     # Runner lifecycle test must not download the public instrument master.
     monkeypatch.setattr(mod, "download_box_spread_instruments", lambda _master: [])
@@ -887,9 +887,9 @@ def test_weekly_only_without_weekly_expiry_never_calls_selector_or_falls_back_to
         selector_calls.append(kwargs)
         raise AssertionError("weekly-only mode must not infer a monthly expiry")
 
-    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
-    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
-    monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"NIFTY": ()})
+    monkeypatch.setattr(mod, "BoxSpreadAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "BoxSpreadUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "box_spread_strikes_from_master", lambda *a, **k: {"NIFTY": ()})
     monkeypatch.setattr(mod, "select_box_contracts", selector)
 
     runner = mod.LiveBoxSpreadRunner(
@@ -1003,9 +1003,9 @@ def test_banknifty_missing_monthly_expiry_never_falls_back_to_future_expiry(monk
             pass
 
     selector_calls = []
-    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
-    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
-    monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"BANKNIFTY": ()})
+    monkeypatch.setattr(mod, "BoxSpreadAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "BoxSpreadUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "box_spread_strikes_from_master", lambda *a, **k: {"BANKNIFTY": ()})
     monkeypatch.setattr(mod, "select_box_contracts", lambda *a, **k: selector_calls.append(k))
     runner = mod.LiveBoxSpreadRunner(
         object(),
