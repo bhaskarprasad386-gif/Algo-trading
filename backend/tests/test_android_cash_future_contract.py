@@ -6,36 +6,27 @@ API_SERVICE = ANDROID_ROOT / "app" / "src" / "main" / "java" / "com" / "algotrad
 MAIN_ACTIVITY = ANDROID_ROOT / "app" / "src" / "main" / "java" / "com" / "algotrading" / "app" / "MainActivity.kt"
 
 
-def test_android_cash_future_api_contract_matches_backend():
-    body = API_SERVICE.read_text(encoding="utf-8")
-    assert 'GET("/api/v1/scanner/cash-future/live/fast")' in body
-    assert "val symbol: String" in body
-    assert "val contract_month: String" in body
-    assert "val cash_ask: Double?" in body
-    assert "val future_bid: Double?" in body
-    assert "val gap: Double" in body
-    assert "val net_gap: Double" in body
-    assert "val net_profit: Double?" in body
-    assert "val lifecycle: String" in body
-    assert "val rank_score: Double" in body
+def test_android_cash_future_live_api_clients_are_removed():
+    api = API_SERVICE.read_text(encoding="utf-8")
+    activity = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    assert 'GET("/api/v1/scanner/cash-future/live/fast")' not in api
+    assert 'GET("/api/v1/scanner/cash-future/live/auto")' not in api
+    assert "liveCashFutureScan(" not in activity
+    assert "cashFutureScan()" not in api
 
 
-def test_android_cash_future_screen_is_wired_to_scanner():
+def test_android_cash_future_screen_is_explicitly_disabled_without_network_calls():
     body = MAIN_ACTIVITY.read_text(encoding="utf-8")
     assert 'btnRunScanner = findViewById(R.id.btnRunScanner)' in body
-    assert 'btnRunScanner.setOnClickListener { runCashFutureScanner() }' in body
-    assert 'liveCashFutureScan(maxAgeSeconds = 5.0, limit = 50)' in body
-    assert 'btnRunScanner.isEnabled = false' in body
-    assert 'btnRunScanner.text = "SCANNING LIVE..."' in body
-    assert 'btnRunScanner.isEnabled = true' in body
-    assert 'response.data.size' in body
-    assert 'response.data.size' in body
-    assert 'response.data.count { it.gap > 0.0 && it.net_gap > 0.0 }' in body
-    assert 'response.data.count { it.lifecycle == "EXPIRED" }' in body
+    assert 'disableCashFutureScanner();' in body
+    assert 'btnRunScanner.text = "CASH-FUTURE SCANNER DISABLED"' in body
+    assert 'tvScannerAutoRefreshStatus.text = "Auto Refresh: DISABLED"' in body
+    assert 'tvScannerNextRefresh.text = "Next Refresh: DISABLED"' in body
+    assert "No scanner API request will be sent." in body
+    assert "runCashFutureScanner" not in body
 
 
-def test_android_cash_future_screen_shows_error_reasons():
+def test_android_cash_future_disabled_screen_retains_non_network_notice():
     body = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    assert "item.lifecycle" in body
-    assert "item.alert_event" in body
-    assert "item.stable_observations" in body
+    assert "Cash-Future scanner alerts are disabled." in body
+    assert "btnQuickScanner.setOnClickListener" in body
