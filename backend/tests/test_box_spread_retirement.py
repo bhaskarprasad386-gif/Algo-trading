@@ -48,6 +48,24 @@ def test_box_spread_has_no_production_runtime_or_feed_owner():
     assert "BOX_SPREAD" not in systemd
     assert "box_spread_pending" not in systemd
 
+    recovery = (REPO / "backend" / "scripts" / "recover_latest_master_artifacts.py").read_text(encoding="utf-8")
+    assert "box_spread" not in recovery
+    assert "ARTIFACT_NAME = \"iv-instrument-master-validated\"" in recovery
+    assert "InstrumentMaster._write_disk_snapshot(rows" in recovery
+
+    for workflow_path in (
+        ".github/workflows/targeted-common-feed-tests.yml",
+        ".github/workflows/offmarket-runtime-verification.yml",
+        ".github/workflows/vps-health-probe.yml",
+        ".github/workflows/vps-deploy.yml",
+        ".github/workflows/vps-read-only-diagnostic.yml",
+        ".github/workflows/vps-readonly-diagnostic.yml",
+    ):
+        workflow = (REPO / workflow_path).read_text(encoding="utf-8")
+        assert "box-spread" not in workflow.lower()
+        assert "box_spread" not in workflow.lower()
+        assert "BOX_SPREAD" not in workflow
+
 
 def test_box_spread_and_retired_scanners_have_no_public_channels_or_alerts():
     shell = (REPO / "frontend" / "components" / "app-shell.tsx").read_text(encoding="utf-8")
