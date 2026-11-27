@@ -38,8 +38,10 @@ def test_shared_manager_is_not_released_while_transport_retirement_is_unresolved
     assert manager.close_calls == 1
     assert shared_feed._SHARED_MANAGER is manager
     assert shared_feed._SHARED_MANAGER_CLOSING is False
-    # The singleton getter must not create a second broker manager.
-    assert shared_feed.shared_common_manager() is manager
+    # The getter must neither reuse the closed manager nor create a second one.
+    with pytest.raises(RuntimeError, match="not fully retired"):
+        shared_feed.shared_common_manager()
+    assert shared_feed._SHARED_MANAGER is manager
 
 
 def test_shared_manager_is_released_after_all_retired_transports_are_gone(monkeypatch):
