@@ -54,6 +54,7 @@ def _close_sdk_connection_bounded(socket: Any, *, phase: str, timeout_seconds: f
     # clear wsapp.sock while its run_forever reader is still blocked.
     wsapp = getattr(socket, "wsapp", None)
     low_level_socket = getattr(wsapp, "sock", None) if wsapp is not None else None
+    transport_thread = getattr(socket, "_transport_thread", None)
 
     def _close() -> None:
         try:
@@ -64,7 +65,8 @@ def _close_sdk_connection_bounded(socket: Any, *, phase: str, timeout_seconds: f
     worker = Thread(target=_close, name=f"angel-ws-sdk-close-{phase}", daemon=True)
     worker.start()
     worker.join(timeout=max(0.01, float(timeout_seconds)))
-    needs_abort = worker.is_alive() or "exception" in failure
+    transport_alive = bool(transport_thread and transport_thread.is_alive())
+    needs_abort = worker.is_alive() or transport_alive or "exception" in failure
     if needs_abort:
         abort = getattr(low_level_socket, "abort", None)
         if callable(abort):
@@ -72,13 +74,18 @@ def _close_sdk_connection_bounded(socket: Any, *, phase: str, timeout_seconds: f
                 abort()
             except Exception as exc:
                 app_logger.warning(f"Angel WebSocket low-level abort failed phase={phase}: {exc}")
+        wait_seconds = max(0.01, float(timeout_seconds))
         if worker.is_alive():
-            worker.join(timeout=max(0.01, float(timeout_seconds)))
+            worker.join(timeout=wait_seconds)
+        if transport_thread is not None and transport_thread is not current_thread() and transport_thread.is_alive():
+            transport_thread.join(timeout=wait_seconds)
         # websocket-client abort() is conditional on its connected flag. During
         # close-handshake teardown it can be a no-op while recv_frame() remains
         # blocked. Escalate through WebSocket.shutdown(), which shuts down the
-        # retained underlying descriptor and wakes the reader.
-        if worker.is_alive():
+        # retained underlying descriptor and wakes the reader. The transport
+        # thread is the authoritative reader-liveness signal even when the SDK
+        # close worker returned successfully.
+        if worker.is_alive() or (transport_thread is not None and transport_thread.is_alive()):
             shutdown = getattr(low_level_socket, "shutdown", None)
             if callable(shutdown):
                 try:
@@ -87,7 +94,10 @@ def _close_sdk_connection_bounded(socket: Any, *, phase: str, timeout_seconds: f
                     app_logger.warning(
                         f"Angel WebSocket low-level shutdown failed phase={phase}: {exc}"
                     )
-                worker.join(timeout=max(0.01, float(timeout_seconds)))
+                if worker.is_alive():
+                    worker.join(timeout=wait_seconds)
+                if transport_thread is not None and transport_thread is not current_thread():
+                    transport_thread.join(timeout=wait_seconds)
     if "exception" in failure:
         app_logger.warning(
             f"Angel WebSocket SDK close failed phase={phase}: {failure['exception']}"
@@ -97,7 +107,13 @@ def _close_sdk_connection_bounded(socket: Any, *, phase: str, timeout_seconds: f
             f"Angel WebSocket SDK close worker still alive after bounded abort phase={phase}"
         )
         _log_transport_thread_stack(worker, phase=f"sdk-close-{phase}")
-    return not worker.is_alive()
+    transport_still_alive = bool(transport_thread and transport_thread.is_alive())
+    if transport_still_alive:
+        app_logger.error(
+            f"Angel WebSocket transport thread still alive after bounded close phase={phase}"
+        )
+        _log_transport_thread_stack(transport_thread, phase=f"transport-close-{phase}")
+    return not worker.is_alive() and not transport_still_alive
 
 
 def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
