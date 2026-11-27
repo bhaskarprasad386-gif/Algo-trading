@@ -173,7 +173,14 @@ def close_shared_common_manager() -> None:
         _SHARED_MANAGER_CLOSING = True
     try:
         manager.close()
-    finally:
+    except Exception:
+        # Keep the failed manager reachable for diagnostics/retry. Clearing it
+        # here could allow a second broker manager while retired transports
+        # from the first one are still alive.
+        with _SHARED_LOCK:
+            _SHARED_MANAGER_CLOSING = False
+        raise
+    else:
         with _SHARED_LOCK:
             if _SHARED_MANAGER is manager:
                 _SHARED_MANAGER = None
