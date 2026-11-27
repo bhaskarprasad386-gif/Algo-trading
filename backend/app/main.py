@@ -131,18 +131,11 @@ _provider_readiness_observer_lock = threading.Lock()
 _provider_readiness_observer_manager_id: int | None = None
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
 _iv_skew_flip_runtime_lock = threading.RLock()
-live_cash_future_scanner = LiveCashFutureScanner()
-configure_live_cash_future_snapshot(live_cash_future_scanner.snapshot)
+# Retired scanner objects are deliberately not instantiated at application startup.
+live_cash_future_scanner = None
 live_cash_future_runner: LiveCashFutureCommonRunner | None = None
-configure_live_cash_future_runner_snapshot(
-    lambda: None if live_cash_future_runner is None else live_cash_future_runner.snapshot()
-)
-live_calendar_spread_scanner = LiveCalendarSpreadScanner(
-    minimum_gap_points=settings.LIVE_CALENDAR_SPREAD_MIN_GAP_POINTS,
-    minimum_gross_profit=settings.LIVE_CALENDAR_SPREAD_MIN_GROSS_PROFIT,
-)
-configure_calendar_spread_scanner(live_calendar_spread_scanner)
-configure_calendar_spread_feed_snapshot(lambda: None if live_calendar_spread_runner is None else live_calendar_spread_runner.snapshot())
+live_calendar_spread_scanner = None
+live_calendar_spread_runner: LiveCalendarSpreadOneSecondCollector | None = None
 live_synthetic_latest_results: tuple = ()
 live_synthetic_runner: LiveSyntheticRunner | None = None
 _live_synthetic_universe_selection = "INDEX"
@@ -833,6 +826,7 @@ RETIRED_SCANNER_API_PREFIXES = (
     "/api/v1/scanner/synthetic-cash-carry",
     "/api/v1/backtesting/cash-future",
     "/api/v1/backtesting/calendar-spread",
+    "/api/v1/market-data/live-cash-future",
 )
 
 @app.middleware("http")
@@ -940,16 +934,10 @@ def _build_dashboard_snapshot_payload() -> dict:
     to build snapshots. This keeps the legacy dashboard wire shape stable
     without doing hidden calculation/aggregation for stopped runners.
     """
-    cash_future_enabled = bool(settings.LIVE_CASH_FUTURE_DATA_ENABLED)
-    calendar_enabled = bool(settings.LIVE_CALENDAR_SPREAD_DATA_ENABLED)
-    synthetic_enabled = bool(
-        not LIVE_SYNTHETIC_RUNNER_FORCE_DISABLED
-        and settings.LIVE_SYNTHETIC_DATA_ENABLED
-    )
-    box_enabled = bool(
-        not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED
-        and settings.LIVE_BOX_SPREAD_DATA_ENABLED
-    )
+    cash_future_enabled = False
+    calendar_enabled = False
+    synthetic_enabled = False
+    box_enabled = False
     snapshot = (
         live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=50)
         if cash_future_enabled else []
