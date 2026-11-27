@@ -111,7 +111,6 @@ jobs:
           python -m py_compile backend/tests/test_instrument_master_concurrency.py
           python -m py_compile backend/app/instruments/manager.py
           python -m py_compile backend/app/market_data/instruments.py
-          python -m py_compile backend/app/scanner/iv_skew_flip/instruments.py
           bash -n backend/scripts/diagnose_angelone_tls_path.sh
           bash -n backend/scripts/install_master_recovery_timer.sh
       - name: Run instrument-master regression suite
@@ -119,4 +118,4 @@ jobs:
           python -m pytest -q --tb=short \
             backend/tests/test_master_transport.py \
             backend/tests/test_instrument_master_concurrency.py \
-            backend/tests/market_data/test_shared_index_expiry.py \
+            backend/tests/market_data/test_shared_index_expiry.py
