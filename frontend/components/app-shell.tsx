@@ -9,7 +9,6 @@ import { PagePushProvider } from "@/components/page-push-provider";
 
 const nav = [
   { href: "/", label: "Dashboard", icon: Home },
-  { href: "/scanner", label: "Cash Future", icon: Activity },
   { href: "/strategies/calendar-spread", label: "Calendar Scanner", icon: Activity },
   { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
   { href: "/strategies/early-impulse", label: "Early Impulse Pro", icon: Activity },
