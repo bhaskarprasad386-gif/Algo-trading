@@ -335,7 +335,6 @@ def test_market_overview_backs_off_repeated_quote_failures(monkeypatch):
     monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
     monkeypatch.setattr("app.market_data.client.MarketDataClient", FailedClient)
     monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
-    monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: True)
 
     first = routes.get_market_overview()
     assert len(calls) == 2
