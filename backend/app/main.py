@@ -1146,7 +1146,7 @@ async def _live_box_spread_loop() -> None:
                     consumer_namespace=f"box-stage-{uuid.uuid4().hex[:12]}",
                     publish_enabled=False,
                     publication_gate=runner.publication_gate,
-                    shared_feed_manager=box_isolated_feed_manager,
+                    shared_feed_manager=box_shared_feed_manager,
                 )
 
             def set_active_runner(active_runner):
