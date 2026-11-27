@@ -114,6 +114,9 @@ def test_adapter_detaches_mutable_payload_before_worker_delivery():
     adapter.start()
     adapter.stop(timeout=2.0, drain=True)
     assert seen[0]["depth"]["bids"][0]["price"] == 100
+    copy_metrics = adapter.snapshot()
+    assert copy_metrics["payload_copy_duration_total_ns"] > 0
+    assert copy_metrics["payload_copy_duration_max_ns"] > 0
 
 
 
