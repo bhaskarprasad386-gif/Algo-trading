@@ -1,8 +1,4 @@
-"""Strategy-specific multi-leg payoff construction using real entry quotes.
-
-This module only constructs payoff legs from observed executable bid/ask quotes.
-It never invents a fill, expiry, strike, or higher-resolution price.
-"""
+"""Box Spread payoff construction using observed executable entry quotes."""
 
 from __future__ import annotations
 
@@ -44,8 +40,10 @@ def build_box_payoff(event: Mapping[str, Any], *, direction: str = "LONG") -> St
     high_strike = float(high["strike"])
     if not math.isfinite(low_strike) or not math.isfinite(high_strike) or not low_strike < high_strike:
         raise ValueError("box strikes must be finite and low strike must be below high strike")
-    _validate_quote_prices(low["call_bid"], low["call_ask"], low["put_bid"], low["put_ask"],
-                           high["call_bid"], high["call_ask"], high["put_bid"], high["put_ask"])
+    _validate_quote_prices(
+        low["call_bid"], low["call_ask"], low["put_bid"], low["put_ask"],
+        high["call_bid"], high["call_ask"], high["put_bid"], high["put_ask"],
+    )
     qty = _validate_quantity(low.get("lot_size", 1))
     if direction == "LONG":
         legs = (
@@ -70,123 +68,11 @@ def build_box_payoff(event: Mapping[str, Any], *, direction: str = "LONG") -> St
     })
 
 
-def build_synthetic_cash_carry_payoff(
-    event: Mapping[str, Any], *, direction: str = "LONG", carry_factor: float = 1.0
-) -> StrategyPayoff:
-    option = event["option"]
-    future = event["future"]
-    if option["underlying"] != future["underlying"] or option["expiry"] != future["expiry"]:
-        raise ValueError("synthetic legs must share underlying and expiry")
-    if option["timestamp_ns"] != future["timestamp_ns"]:
-        raise ValueError("synthetic legs must share timestamp")
-    carry_factor = float(carry_factor)
-    if not math.isfinite(carry_factor) or carry_factor <= 0:
-        raise ValueError("carry_factor must be finite and positive")
-    _validate_quote_prices(option["call_bid"], option["call_ask"], option["put_bid"], option["put_ask"],
-                           future["bid"], future["ask"])
-    strike = float(option["strike"])
-    if not math.isfinite(strike):
-        raise ValueError("option strike must be finite")
-    qty = _validate_quantity(future.get("lot_size", 1))
-    if direction == "LONG":
-        legs = (
-            PayoffLeg("CALL", "BUY", strike, float(option["call_ask"]), qty),
-            PayoffLeg("PUT", "SELL", strike, float(option["put_bid"]), qty),
-            PayoffLeg("FUTURE", "SELL", None, float(future["bid"]), qty),
-        )
-    elif direction == "SHORT":
-        legs = (
-            PayoffLeg("CALL", "SELL", strike, float(option["call_bid"]), qty),
-            PayoffLeg("PUT", "BUY", strike, float(option["put_ask"]), qty),
-            PayoffLeg("FUTURE", "BUY", None, float(future["ask"]), qty),
-        )
-    else:
-        raise ValueError("direction must be LONG or SHORT")
-    return StrategyPayoff("synthetic-cash-carry", legs, {
-        "underlying": option["underlying"], "expiry": option["expiry"],
-        "strike": strike, "quote_timestamp_ns": option["timestamp_ns"],
-        "direction": direction, "carry_factor": carry_factor,
-    })
-
-
-def build_cash_future_payoff(event: Mapping[str, Any], *, direction: str = "LONG_CASH_SHORT_FUTURE") -> StrategyPayoff:
-    quote = event["cash_future"]
-    _validate_quote_prices(quote["spot_bid"], quote["spot_ask"], quote["future_bid"], quote["future_ask"])
-    if quote["spot_ask"] < quote["spot_bid"] or quote["future_ask"] < quote["future_bid"]:
-        raise ValueError("invalid cash/future quote")
-    qty = _validate_quantity(quote.get("lot_size", 1))
-    if direction == "LONG_CASH_SHORT_FUTURE":
-        legs = (
-            PayoffLeg("SPOT", "BUY", None, float(quote["spot_ask"]), qty),
-            PayoffLeg("FUTURE", "SELL", None, float(quote["future_bid"]), qty),
-        )
-    elif direction == "SHORT_CASH_LONG_FUTURE":
-        legs = (
-            PayoffLeg("SPOT", "SELL", None, float(quote["spot_bid"]), qty),
-            PayoffLeg("FUTURE", "BUY", None, float(quote["future_ask"]), qty),
-        )
-    else:
-        raise ValueError("unsupported cash-future direction")
-    return StrategyPayoff("cash-future", legs, {
-        "underlying": quote["underlying"], "expiry": quote["expiry"],
-        "quote_timestamp_ns": quote["timestamp_ns"], "direction": direction,
-        "carry_factor": float(quote.get("carry_factor", 1.0)),
-    })
-
-
-def build_calendar_payoff(event: Mapping[str, Any], *, direction: str = "LONG_NEAR_SHORT_FAR") -> StrategyPayoff:
-    near = event["near"]
-    far = event["far"]
-    if near["underlying"] != far["underlying"]:
-        raise ValueError("calendar legs must share underlying")
-    if near["expiry"] >= far["expiry"]:
-        raise ValueError("near expiry must be earlier than far expiry")
-    if near["timestamp_ns"] != far["timestamp_ns"]:
-        raise ValueError("calendar legs must share timestamp")
-    if near.get("strike") != far.get("strike") or near.get("option_type") != far.get("option_type"):
-        raise ValueError("calendar legs must share strike and option type")
-    _validate_quote_prices(near["bid"], near["ask"], far["bid"], far["ask"])
-    qty = _validate_quantity(near.get("lot_size", 1))
-    kind = str(near.get("option_type") or "FUTURE").upper()
-    if kind not in {"CALL", "PUT", "FUTURE"}:
-        raise ValueError("unsupported calendar option type")
-    strike = None if kind == "FUTURE" else float(near["strike"])
-    if strike is not None and not math.isfinite(strike):
-        raise ValueError("calendar strike must be finite")
-    if direction == "LONG_NEAR_SHORT_FAR":
-        legs = (
-            PayoffLeg(kind, "BUY", strike, float(near["ask"]), qty),
-            PayoffLeg(kind, "SELL", strike, float(far["bid"]), qty),
-        )
-    elif direction == "SHORT_NEAR_LONG_FAR":
-        legs = (
-            PayoffLeg(kind, "SELL", strike, float(near["bid"]), qty),
-            PayoffLeg(kind, "BUY", strike, float(far["ask"]), qty),
-        )
-    else:
-        raise ValueError("unsupported calendar direction")
-    return StrategyPayoff("calendar-spread", legs, {
-        "underlying": near["underlying"], "near_expiry": near["expiry"],
-        "far_expiry": far["expiry"], "strike": strike,
-        "option_type": near.get("option_type"), "quote_timestamp_ns": near["timestamp_ns"],
-        "direction": direction,
-    })
-
-
 def build_strategy_payoff(strategy_id: str, event: Mapping[str, Any], *, direction: str | None = None) -> StrategyPayoff:
-    """Build payoff legs from the strategy's actual entry quote payload."""
-    if strategy_id == "box-spread":
-        return build_box_payoff(event, direction=direction or "LONG")
-    if strategy_id == "synthetic-cash-carry":
-        return build_synthetic_cash_carry_payoff(event, direction=direction or "LONG")
-    if strategy_id == "cash-future":
-        return build_cash_future_payoff(event, direction=direction or "LONG_CASH_SHORT_FUTURE")
-    if strategy_id == "calendar-spread":
-        return build_calendar_payoff(event, direction=direction or "LONG_NEAR_SHORT_FAR")
-    raise ValueError(f"unsupported arbitrage strategy: {strategy_id}")
+    """Build payoff legs from the retained Box Spread entry quote payload."""
+    if strategy_id != "box-spread":
+        raise ValueError(f"unsupported arbitrage strategy: {strategy_id}")
+    return build_box_payoff(event, direction=direction or "LONG")
 
 
-__all__ = [
-    "StrategyPayoff", "build_box_payoff", "build_synthetic_cash_carry_payoff",
-    "build_cash_future_payoff", "build_strategy_payoff",
-]
+__all__ = ["StrategyPayoff", "build_box_payoff", "build_strategy_payoff"]
