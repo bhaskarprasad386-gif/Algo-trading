@@ -222,7 +222,13 @@ def _get_box_spread_weekly_only_symbols():
                 return ()
             payload = _read_box_spread_selection_payload(saved.symbols_json)
             weekly = _normalize_box_spread_index_symbols(payload["weekly_only_symbols"]) if payload.get("weekly_only_symbols") else ()
-            return tuple(symbol for symbol in weekly if symbol == "NIFTY")
+            selected = tuple(
+                symbol for symbol in payload["symbols"]
+                if str(symbol or "").strip().upper() in BOX_SPREAD_LIVE_INDEX_UNIVERSE
+            )
+            # Match the shared runner's locked expiry policy: NIFTY weekly,
+            # BANKNIFTY monthly. Never subscribe a second NIFTY monthly chain.
+            return ("NIFTY",) if "NIFTY" in selected else ()
     except Exception as exc:
         app_logger.exception("Box Spread expiry selection read failed; refusing to broaden the live subscription universe")
         raise RuntimeError("Box Spread expiry selection is unavailable; live subscriptions are paused until it can be read") from exc
@@ -230,7 +236,10 @@ def _get_box_spread_weekly_only_symbols():
 
 def _save_box_spread_index_selection(symbols, weekly_only_symbols=()):
     normalized = _normalize_box_spread_index_symbols(symbols)
-    weekly = tuple(sorted({str(item or "").strip().upper() for item in weekly_only_symbols if str(item or "").strip()}))
+    requested_weekly = {str(item or "").strip().upper() for item in weekly_only_symbols if str(item or "").strip()}
+    # NIFTY weekly is the only supported NIFTY chain in the shared feed;
+    # BANKNIFTY remains on its monthly contract family.
+    weekly = tuple(sorted(requested_weekly | ({"NIFTY"} if "NIFTY" in normalized else set())))
     unsupported_weekly = sorted(set(weekly) - {"NIFTY"})
     if unsupported_weekly:
         raise ValueError(f"weekly-only mode is supported only for NIFTY: {', '.join(unsupported_weekly)}")
@@ -256,6 +265,8 @@ def _box_spread_targets_from_master(master, symbols, weekly_only_symbols=()):
         if symbol not in BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
     )
     weekly_only = set(weekly_only_symbols or ())
+    if "NIFTY" in selected:
+        weekly_only.add("NIFTY")
     if weekly_only - {"NIFTY"} or weekly_only - set(selected):
         raise ValueError("weekly-only mode is valid only for selected NIFTY")
     today = datetime.now(IST).date()
