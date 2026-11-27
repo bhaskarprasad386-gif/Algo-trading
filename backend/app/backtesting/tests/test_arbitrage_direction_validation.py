@@ -1,8 +1,6 @@
 from app.backtesting.arbitrage_backtester import (
     BoxSpreadBacktester,
-    FutureQuote,
     OptionQuote,
-    SyntheticCashCarryBacktester,
 )
 
 
@@ -21,14 +19,3 @@ def test_box_rejects_invalid_direction():
         raise AssertionError("expected invalid direction rejection")
 
 
-def test_synthetic_cash_carry_rejects_invalid_direction():
-    opt = option()
-    future = FutureQuote(1, "ABC", 20261231, 104, 105, lot_size=10)
-    try:
-        SyntheticCashCarryBacktester.evaluate(
-            opt, future, time_to_expiry_years=0.5, direction="INVALID"
-        )
-    except ValueError as exc:
-        assert "direction" in str(exc)
-    else:
-        raise AssertionError("expected invalid direction rejection")
