@@ -6,7 +6,6 @@ import os
 from fastapi import APIRouter, HTTPException
 
 from .backtest_ledger import BacktestTradeLedger
-from .download_status_api import download_status_payload
 from .historical_download_status import HistoricalDownloadStatusStore
 
 
