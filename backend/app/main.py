@@ -54,7 +54,6 @@ from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_rout
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
 from app.scanner.iv_skew_flip.alerts import AlertCooldownStore
 from app.scanner.iv_skew_flip.angelone_option_snapshot import capture_angelone_option_snapshot
-from app.scanner.iv_skew_flip.instruments import download_iv_instruments
 from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
 from app.scanner.iv_skew_flip.validation import SignalEvent, load_persisted_forward_outcomes, summarize_forward_outcomes, summarize_walk_forward_by_date
 from app.models.iv_signal_event import IVSignalEvent
@@ -179,11 +178,13 @@ async def _iv_scanner_recovery_loop() -> None:
             if state and state.get("status") == "RUNNING":
                 retry_delay = 5.0
                 continue
-            # Only the blocking HTTP/cache preparation runs in a worker. Runtime/feed
-            # creation stays on the event-loop thread, so cancellation cannot leave
-            # a worker that creates a socket after application shutdown.
-            iv_instruments = await run_blocking_daemon(download_iv_instruments, instrument_master, thread_name="iv-instrument-master-fetch")
-            snapshot = _start_iv_skew_flip_runtime(iv_instruments=iv_instruments)
+            # IV waits for the shared runner to publish its single instrument
+            # master + live option universe; it never downloads a second master.
+            runner_health = shared_index_market_data_runner.health_snapshot()
+            if not runner_health.get("enabled") or not runner_health.get("initial_option_bootstrap_done"):
+                retry_delay = 5.0
+                continue
+            snapshot = _start_iv_skew_flip_runtime()
             if snapshot.get("status") == "RUNNING":
                 app_logger.info("IV Scanner recovered successfully after startup retry")
             retry_delay = 5.0
@@ -713,7 +714,7 @@ def _save_iv_scanner_enabled(enabled: bool) -> bool:
     return bool(enabled)
 
 
-def _start_iv_skew_flip_runtime(*, iv_instruments=None):
+def _start_iv_skew_flip_runtime():
     global iv_skew_flip_runtime
     runner_health = shared_index_market_data_runner.health_snapshot()
     if not runner_health.get("enabled") or not runner_health.get("initial_option_bootstrap_done"):
@@ -734,12 +735,11 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
             # A fully stopped runtime may remain registered after an interrupted
             # transition. Clear it before constructing the next isolated runtime.
             iv_skew_flip_runtime = None
-        # Install the IV-owned instrument snapshot before validating basket tokens.
-        # Previously validation ran before runtime.start() downloaded that snapshot,
-        # so a valid basket could be marked unavailable against an empty/stale master.
-        # This downloader owns the IV instrument snapshot independently.
-        if iv_instruments is None:
-            iv_instruments = download_iv_instruments(instrument_master)
+        # IV uses only the instrument rows already loaded by Shared Runner.
+        # It cannot start an independent instrument-master preparation path.
+        runner_health = shared_index_market_data_runner.health_snapshot()
+        if not runner_health.get("enabled") or not runner_health.get("initial_option_bootstrap_done"):
+            raise RuntimeError("SHARED_RUNNER_NOT_READY: IV requires the published shared option universe")
         # Heavyweight pressure is a separately controlled, optional signal family.
         # Keep it OFF here: IV's shared-runner attachment must not add NSE cash
         # subscriptions or expand the locked spot/options/futures token universe.
@@ -764,7 +764,7 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
             lambda snapshot: publish_page_update("iv-skew-flip", "PATCH", {"runtime": snapshot})
         )
         try:
-            snapshot = runtime.start(instruments=iv_instruments)
+            snapshot = runtime.start()
         except Exception:
             # Keep ownership if rollback could not release a partially
             # registered shared-feed consumer; OFF can retry cleanup.
