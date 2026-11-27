@@ -47,8 +47,9 @@ class SharedIndexRunnerLocalFeedManager:
 
     def on_record(self, record: Any) -> bool:
         """Non-blocking producer hook; invoked only by Shared Runner state."""
+        key = getattr(getattr(record, "instrument", None), "value", "")
         with self._lock:
-            if self._closed or not self._attached:
+            if self._closed or not self._attached or key not in self._owners:
                 return False
         try:
             self._queue.put_nowait(record)
