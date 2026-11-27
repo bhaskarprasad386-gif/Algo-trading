@@ -49,7 +49,6 @@ from app.scanner.early_impulse_shoonya_observer import early_impulse_observer
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.market_data.routes import router as market_data_router, configure_shared_index_runner_snapshot, configure_shared_index_runner_health_snapshot
-from app.scanner.routes import full_fno_router
 from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop, configure_page_update_callback as configure_weekly_swing_page_push, nifty200_scan_status
 
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
@@ -366,7 +365,6 @@ app.include_router(instruments_router)
 app.include_router(market_data_router)
 app.include_router(provider_quote_parity_router)
 app.include_router(weekly_swing_scanner_router)
-app.include_router(full_fno_router)
 app.include_router(alert_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))
@@ -606,17 +604,7 @@ def app_update():
     return payload
 
 
-STRATEGY_WORKSPACES = [
-    {
-        "id": "full-fno", "name": "Full F&O Backtest", "version": "1", "enabled": True,
-        "screen": "full_fno", "data_mode": "ACCUMULATED LIVE",
-        "execution_mode": "BACKTEST ONLY", "live_orders": False,
-        "capabilities": ["HISTORICAL", "BACKDATE", "BACKTEST", "REPLAY", "RESULTS"],
-        "live_route": None,
-        "workspace_route": "/api/v1/backtesting/full-fno/start"
-    },
-]
-
+STRATEGY_WORKSPACES = []
 
 @app.get("/api/v1/app/strategies")
 def app_strategies():
