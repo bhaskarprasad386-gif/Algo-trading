@@ -173,6 +173,25 @@ def close_shared_common_manager() -> None:
         _SHARED_MANAGER_CLOSING = True
     try:
         manager.close()
+        # close() is deliberately bounded and may return while a socket-close
+        # worker or its watcher is still alive. Do not release the process-wide
+        # singleton in that state: a later shared_common_manager() call could
+        # otherwise create a second broker session beside the unretired one.
+        retirement = manager.snapshot()
+        unresolved = {
+            "retired_transport_count": int(retirement.get("retired_transport_count", 0) or 0),
+            "retired_transport_close_start_pending_count": int(
+                retirement.get("retired_transport_close_start_pending_count", 0) or 0
+            ),
+            "retired_transport_watch_pending_count": int(
+                retirement.get("retired_transport_watch_pending_count", 0) or 0
+            ),
+        }
+        if any(unresolved.values()):
+            raise RuntimeError(
+                "shared market-data manager shutdown is incomplete; "
+                f"retired transport state remains: {unresolved}"
+            )
     except Exception:
         # Keep the failed manager reachable for diagnostics/retry. Clearing it
         # here could allow a second broker manager while retired transports
