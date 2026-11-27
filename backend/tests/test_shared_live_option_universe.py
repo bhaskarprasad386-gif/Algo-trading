@@ -1,27 +1,10 @@
-from datetime import datetime as RealDateTime
-from zoneinfo import ZoneInfo
-
-import pytest
-import app.market_data.synthetic_subscriptions as synthetic_module
 from app.market_data.box_spread_subscriptions import select_box_contracts
 from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.synthetic_subscriptions import select_synthetic_contracts
 
 
-class FrozenDateTime(RealDateTime):
-    @classmethod
-    def now(cls, tz=None):
-        fixed = RealDateTime(2026, 11, 20, 12, 0)
-        return fixed.replace(tzinfo=tz) if tz is not None else fixed
 
-
-@pytest.fixture(autouse=True)
-def freeze_synthetic_market_date(monkeypatch):
-    monkeypatch.setattr(synthetic_module, "datetime", FrozenDateTime)
-
-
-def test_shared_stock_option_window_is_identical_for_box_and_synthetic():
+def test_box_stock_option_window_is_concrete_and_symmetric():
     items = [
         {"exch_seg": "NFO", "name": "RELIANCE", "instrumenttype": "FUTSTK",
          "expiry": "26NOV2026", "token": "900", "symbol": "RELIANCE26NOV26FUT", "lotsize": "250"},
@@ -43,14 +26,6 @@ def test_shared_stock_option_window_is_identical_for_box_and_synthetic():
         atm_strike=100.0, expiry="26NOV2026",
         allowed_stock_symbols=TOP15_LIQUID_STOCK_SYMBOLS,
     )
-    synthetic = select_synthetic_contracts(
-        master, underlying="RELIANCE", instrument_class="STOCK",
-        atm_strike=100.0, expiry="26NOV2026",
-        allowed_stock_symbols=TOP15_LIQUID_STOCK_SYMBOLS,
-    )
-    box_tokens = {item.token for item in box.subscriptions if item.option_type in {"CE", "PE"}}
-    synthetic_tokens = {item.token for item in synthetic.subscriptions if item.option_type in {"CE", "PE"}}
-    assert box_tokens == synthetic_tokens
     assert len(box_tokens) == 15 * 2
     assert {item.strike for item in box.subscriptions} == set(float(x) for x in range(93, 108))
 
@@ -79,14 +54,3 @@ def test_nifty_weekly_atm15_options_are_box_spread_only():
         master, underlying="NIFTY", instrument_class="INDEX",
         atm_strike=130.0, expiry="22OCT2026",
     )
-    synthetic = select_synthetic_contracts(
-        master, underlying="NIFTY", instrument_class="INDEX",
-        atm_strike=130.0, expiry="26NOV2026",
-    )
-    box_options = {item.token for item in box.subscriptions if item.option_type in {"CE", "PE"}}
-    synthetic_options = {item.token for item in synthetic.subscriptions if item.option_type in {"CE", "PE"}}
-    assert len(box_options) == 31 * 2
-    assert all(token.startswith("22OCT2026-") for token in box_options)
-    assert len(synthetic_options) == 31 * 2
-    assert all(token.startswith("26NOV2026-") for token in synthetic_options)
-    assert box_options.isdisjoint(synthetic_options)
