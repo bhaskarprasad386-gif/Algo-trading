@@ -8,16 +8,25 @@ REPO = ROOT.parent
 def test_box_spread_has_no_production_runtime_or_feed_owner():
     source = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
 
-    assert "LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = True" in source
-    assert "CommonWebSocketManager(" not in source
-    assert "MarketDataWebSocket(" not in source
-    assert "asyncio.create_task(_live_box_spread_loop())" not in source
-    assert 'app.include_router(live_box_spread_router)' not in source
-    assert 'app.include_router(live_box_spread_websocket_router)' not in source
-    assert '@app.get("/api/v1/scanner/box-spread/index-selection")' not in source
-    assert '@app.post("/api/v1/scanner/box-spread/index-selection")' not in source
-    assert '"box_spread": {"status": "DISABLED", "feed": "NONE", "runner": "NONE"}' in source
-    assert '"box_spread": {"count":' not in source
+    for retired_runtime_symbol in (
+        "LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED",
+        "CommonWebSocketManager",
+        "MarketDataWebSocket",
+        "LiveBoxSpreadRunner",
+        "BoxSpreadRunnerSupervisor",
+        "box_isolated_feed_manager",
+        "live_box_spread_runner",
+        "_live_box_spread_loop",
+        "configure_live_box_spread",
+        "live_box_spread_router",
+        "live_box_spread_websocket_router",
+        "BoxSpreadIndexSelection",
+        "download_box_spread_instruments",
+        "evaluate_butterfly_condor_snapshot",
+    ):
+        assert retired_runtime_symbol not in source
+    assert '"id": "box-spread"' not in source
+    assert '"box_spread": {"status": "RETIRED"}' in source
 
 
 def test_box_spread_and_retired_scanners_have_no_public_channels_or_alerts():
@@ -35,3 +44,10 @@ def test_box_spread_and_retired_scanners_have_no_public_channels_or_alerts():
         assert f'"{retired}"' not in channel_block
     assert "STRATEGIES = set()" in alerts
     assert 'history_models = {}' in alerts
+
+    android_main = (REPO / "mobile" / "android" / "app" / "src" / "main" / "java" / "com" / "algotrading" / "app" / "MainActivity.kt").read_text(encoding="utf-8")
+    android_manifest = (REPO / "mobile" / "android" / "app" / "src" / "main" / "AndroidManifest.xml").read_text(encoding="utf-8")
+    assert "BoxSpreadActivity" not in android_main
+    assert "btnBoxSpread" not in android_main
+    assert "BoxSpreadActivity" not in android_manifest
+    assert not (REPO / "mobile" / "android" / "app" / "src" / "main" / "java" / "com" / "algotrading" / "app" / "BoxSpreadActivity.kt").exists()
