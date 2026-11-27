@@ -23,11 +23,8 @@ from sqlalchemy.exc import IntegrityError
 from app.core.database import engine
 
 router = APIRouter(tags=["page-push"])
+# Only retained scanner pages may allocate durable page-push channels.
 PAGE_CHANNELS = frozenset({
-    "cash-future",
-    "box-spread",
-    "calendar-spread",
-    "synthetic-arbitrage",
     "iv-skew-flip",
     "credit-butterfly-condor-weekly",
     "credit-butterfly-condor-monthly",
