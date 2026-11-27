@@ -6,7 +6,7 @@ from app.scanner import page_push_websocket as push
 
 def test_page_channels_cover_all_scanner_pages():
     expected = {
-        "cash-future", "box-spread", "calendar-spread",
+        "weekly-swing", "iv-skew-flip", "calendar-spread",
         "synthetic-arbitrage", "iv-skew-flip",
         "credit-butterfly-condor-weekly",
         "credit-butterfly-condor-monthly", "weekly-swing",
