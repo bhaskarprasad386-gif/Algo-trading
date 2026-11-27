@@ -49,6 +49,38 @@ def test_index_deselection_is_allowed_after_all_paper_legs_are_flat(monkeypatch)
 
 
 
+def test_legacy_saved_selection_is_clamped_to_nifty_and_banknifty(monkeypatch):
+    from types import SimpleNamespace
+
+    class Session:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def get(self, *_args):
+            return SimpleNamespace(
+                symbols_json='["NIFTY", "BANKNIFTY", "SENSEX", "MIDCPNIFTY"]'
+            )
+
+    monkeypatch.setattr(main, "SessionLocal", lambda: Session())
+    assert main._get_box_spread_index_selection() == ("BANKNIFTY", "NIFTY")
+
+
+def test_legacy_selection_with_no_locked_indices_falls_back_only_to_locked_defaults(monkeypatch):
+    from types import SimpleNamespace
+
+    class Session:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def get(self, *_args):
+            return SimpleNamespace(symbols_json='["SENSEX", "BANKEX"]')
+
+    monkeypatch.setattr(main, "SessionLocal", lambda: Session())
+    assert main._get_box_spread_index_selection() == ("NIFTY", "BANKNIFTY")
+
+
 def test_saved_index_selection_read_failure_does_not_fall_back_to_all_or_default(monkeypatch):
     class BrokenSession:
         def __enter__(self):
