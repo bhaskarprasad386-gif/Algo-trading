@@ -71,7 +71,7 @@ class SharedIndexMarketDataState:
                 self._latest_by_token[token] = record
             underlying = str(getattr(record, "underlying", "") or "").strip().upper()
             kind = str(getattr(getattr(record, "instrument_type", None), "value", "") or "").lower()
-            if underlying and kind:
+            if underlying and kind == "index":
                 self._latest_by_underlying_type[(underlying, kind)] = record
             cutoff = ts - 5_000_000_000
             if record.oi is not None:
