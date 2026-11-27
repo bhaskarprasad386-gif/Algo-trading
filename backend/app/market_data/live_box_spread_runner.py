@@ -21,11 +21,17 @@ from app.scanner.box_spread_live_depth_shadow import BoxLiveDepthShadowFeed
 from app.scanner.box_spread_depth_shadow_diagnostics import BoxDepthShadowDiagnostics
 from app.core.logger import app_logger
 
-BSE_INDEX_SYMBOLS = frozenset()
-BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS = frozenset()
-WEEKLY_EXPIRY_PRIORITY_SYMBOLS = frozenset({"NIFTY"})
-LOCKED_BOX_INDEX_SYMBOLS = frozenset({"NIFTY", "BANKNIFTY"})
-INDEX_EDGE_THRESHOLDS = {"NIFTY": 5.0, "BANKNIFTY": 10.0}
+BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
+BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS = frozenset({"MIDCPNIFTY"})
+WEEKLY_EXPIRY_PRIORITY_SYMBOLS = frozenset({"NIFTY", "SENSEX"})
+INDEX_EDGE_THRESHOLDS = {
+    "NIFTY": 5.0,
+    "FINNIFTY": 5.0,
+    "MIDCPNIFTY": 10.0,
+    "BANKNIFTY": 10.0,
+    "SENSEX": 10.0,
+    "BANKEX": 10.0,
+}
 
 def _depth_edge_below_minimum(depth_edge: float, minimum_edge: float) -> bool:
     """Apply the configured per-index floor to the final four-leg depth VWAP edge."""
@@ -97,12 +103,6 @@ class LiveBoxSpreadRunner:
     def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,on_spot_price=None,policy=None,consumer_namespace="box",publish_enabled=True,publication_gate=None,shared_feed_manager=None):
         self.data_db=data_db
         self.targets=tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper())))
-        if any(
-            target.instrument_class.strip().upper() != "INDEX"
-            or target.underlying.strip().upper() not in LOCKED_BOX_INDEX_SYMBOLS
-            for target in self.targets
-        ):
-            raise ValueError("live Box Spread runner is locked to NIFTY and BANKNIFTY index contracts")
         self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
         self.consumer_namespace = str(consumer_namespace or "box").strip()
         if not self.consumer_namespace or any(not (char.isalnum() or char in "-_:") for char in self.consumer_namespace):
@@ -451,9 +451,44 @@ class LiveBoxSpreadRunner:
         strikes = {}
         selected_expiries = {}
         for target in self.targets:
-            # The application supplies the exact expiry owned by Shared Runner.
-            # Never infer a second expiry family or substitute a futures expiry.
             wanted = target.expiry
+            if wanted is None and target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS and not getattr(target, "weekly_only", False):
+                expected_segment = "BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO"
+                option_expiries = []
+                for item in self.master.instruments:
+                    if str(item.get("exch_seg", "")).upper() != expected_segment or str(item.get("name", "")).strip().upper() != target.underlying:
+                        continue
+                    if str(item.get("instrumenttype", "")).upper() not in {"OPTIDX", "OPTSTK"}:
+                        continue
+                    text = str(item.get("expiry", "")).strip().upper()
+                    for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d"):
+                        try:
+                            value = datetime.strptime(text, fmt).date()
+                            if value >= today:
+                                option_expiries.append((value, text))
+                            break
+                        except ValueError:
+                            continue
+                if option_expiries:
+                    wanted = min(option_expiries)[1]
+            if wanted is None and target.underlying.strip().upper() not in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
+                future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
+                expiries = []
+                for item in self.master.instruments:
+                    expected_segment = "BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO"
+                    if str(item.get("exch_seg","")).upper() != expected_segment or str(item.get("name","")).strip().upper() != target.underlying:
+                        continue
+                    if str(item.get("instrumenttype","")).upper() != future_type:
+                        continue
+                    text = str(item.get("expiry","")).strip().upper()
+                    for fmt in ("%d%b%Y","%d%b%y","%Y-%m-%d"):
+                        try:
+                            value = datetime.strptime(text, fmt).date()
+                            if value >= today: expiries.append((value, text))
+                            break
+                        except ValueError:
+                            continue
+                if expiries: wanted = min(expiries)[1]
             if wanted:
                 symbol_key = target.underlying.strip().upper()
                 selected_expiries.setdefault(symbol_key, [])
@@ -512,14 +547,33 @@ class LiveBoxSpreadRunner:
                     # Reuse the same valid expiry used to seed the ATM tracker.
                     # Letting the selector infer expiry independently can pick an
                     # expired option chain from the instrument master.
-                    wanted = target.expiry or next(
-                        iter(selected_expiries.get(target.underlying.strip().upper(), ())),
-                        None,
-                    )
-                    if wanted is None:
+                    wanted = target.expiry or next(iter(selected_expiries.get(target.underlying.strip().upper(), ())), None)
+                    if wanted is None and target.underlying.strip().upper() not in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
+                        future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
+                        expiries = []
+                        for item in self.master.instruments:
+                            expected_segment = "BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO"
+                            if str(item.get("exch_seg","")).upper() != expected_segment or str(item.get("name","")).strip().upper() != target.underlying:
+                                continue
+                            if str(item.get("instrumenttype","")).upper() != future_type:
+                                continue
+                            text = str(item.get("expiry","")).strip().upper()
+                            for fmt in ("%d%b%Y","%d%b%y","%Y-%m-%d"):
+                                try:
+                                    value = datetime.strptime(text, fmt).date()
+                                    if value >= datetime.now().date(): expiries.append((value, text))
+                                    break
+                                except ValueError:
+                                    continue
+                        if expiries:
+                            wanted = min(expiries)[1]
+                    # Weekly-only targets must fail closed when the instrument
+                    # master has no classified weekly expiry. Passing expiry=None
+                    # to the selector would let it infer a monthly contract.
+                    if getattr(target, "weekly_only", False) and wanted is None:
                         unavailable_symbols.append({
                             "symbol": target.underlying,
-                            "reason": "LOCKED_EXPIRY_UNAVAILABLE",
+                            "reason": "WEEKLY_EXPIRY_UNAVAILABLE",
                         })
                         continue
                     try:
