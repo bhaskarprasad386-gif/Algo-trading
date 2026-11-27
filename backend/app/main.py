@@ -73,9 +73,9 @@ from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_rout
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
 from app.scanner.live_calendar_spread_scanner import LiveCalendarSpreadScanner
-from app.scanner.calendar_spread_routes import router as calendar_spread_scanner_router, configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot, live as calendar_spread_live_page, pairs as calendar_spread_pairs_page, pair_diagnostics as calendar_spread_diagnostics_page, feed_diagnostics as calendar_spread_feed_page
-from app.scanner.live_synthetic_routes import router as live_synthetic_router, configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs, live as synthetic_live_page, pairs as synthetic_pairs_page, diagnostics as synthetic_diagnostics_page
-from app.scanner.live_synthetic_trace_routes import router as live_synthetic_trace_router, list_trace_opportunities as get_synthetic_trace_opportunities
+from app.scanner.calendar_spread_routes import configure as configure_calendar_spread_scanner, configure_feed_snapshot as configure_calendar_spread_feed_snapshot
+from app.scanner.live_synthetic_routes import configure as configure_live_synthetic, configure_diagnostics as configure_live_synthetic_diagnostics, configure_pairs as configure_live_synthetic_pairs
+
 from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_shared_snapshot as configure_live_box_spread_shared_snapshot, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, index_spot_snapshot as get_live_box_index_spot_snapshot, set_expiry_types as set_live_box_expiry_types, butterfly_condor_shadow as get_box_shadow_snapshot, edge_timing_analysis as get_box_edge_timing_analysis
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
 from app.scanner.iv_skew_flip.alerts import AlertCooldownStore
@@ -535,46 +535,7 @@ def _scanner_page_push_runtime_health(runner_name, runner):
         return {"common_feed": {"status": "UNAVAILABLE"}, "runners": {runner_name: None}}
 
 
-def _calendar_spread_page_push_snapshot():
-    runner = live_calendar_spread_runner
-    return {
-        "live": calendar_spread_live_page(limit=200),
-        "pairs": calendar_spread_pairs_page(limit=500),
-        "pair_diagnostics": calendar_spread_diagnostics_page(limit=500),
-        "feed_diagnostics": calendar_spread_feed_page(),
-        "history_revision": None if live_calendar_spread_scanner is None else live_calendar_spread_scanner.history_revision,
-        "runtime_health": _scanner_page_push_runtime_health("calendar_spread", runner),
-    }
-
-
-def _synthetic_page_push_snapshot():
-    runner = live_synthetic_runner
-    return {
-        "live": synthetic_live_page(limit=200, max_age_seconds=5.0),
-        "pairs": synthetic_pairs_page(limit=500),
-        "diagnostics": synthetic_diagnostics_page(),
-        "universe": dict(_live_synthetic_universe_status),
-        "runner": None if runner is None else runner.snapshot(),
-        "runtime_health": _scanner_page_push_runtime_health("synthetic", runner),
-    }
-
-
 configure_page_push_snapshot("cash-future", _cash_future_page_push_snapshot)
-configure_page_push_snapshot("calendar-spread", _calendar_spread_page_push_snapshot)
-def _synthetic_page_push_recovery_snapshot():
-    # Durable trace rows are loaded only for subscribe/reconnect recovery, not
-    # on each market-data push.
-    payload = _synthetic_page_push_snapshot()
-    try:
-        payload["trace_opportunities"] = get_synthetic_trace_opportunities(500).get("data", [])
-    except Exception:
-        # Preserve browser-local traces if the database cannot supply the
-        # authoritative reconnect list; an empty list would look like deletion.
-        payload.pop("trace_opportunities", None)
-    return payload
-
-
-configure_page_push_snapshot("synthetic-arbitrage", _synthetic_page_push_recovery_snapshot)
 configure_paper_private_ws_snapshot(build_paper_private_snapshot)
 configure_paper_market_ws_snapshot(build_paper_market_snapshot)
 
@@ -874,9 +835,6 @@ app.include_router(auto_scanner_router)
 app.include_router(alert_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))
-app.include_router(calendar_spread_scanner_router)
-app.include_router(live_synthetic_router)
-app.include_router(live_synthetic_trace_router)
 app.include_router(live_box_spread_router)
 app.include_router(box_spread_paper_router)
 app.include_router(box_spread_paper_private_ws_router)
@@ -2379,50 +2337,6 @@ def set_box_spread_index_selection(payload: BoxSpreadIndexSelectionRequest):
     # concurrent UI saves cannot persist a selection that was never staged.
     with BOX_SPREAD_INDEX_SELECTION_LOCK:
         return _set_box_spread_index_selection_locked(payload)
-
-
-@app.get("/api/v1/scanner/synthetic-cash-carry/universe")
-def get_synthetic_universe():
-    return {
-        "status": "success",
-        "selection": _live_synthetic_universe_selection,
-        "options": ["INDEX", *sorted(NIFTY50_INDEX_SYMBOLS)],
-        "meaning": {
-            "INDEX": "All supported index underlyings only; no stock options/futures subscribed",
-        },
-        "top15_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
-        "availability": dict(_live_synthetic_universe_status),
-    }
-
-
-@app.post("/api/v1/scanner/synthetic-cash-carry/universe")
-def set_synthetic_universe(payload: SyntheticUniverseSelection):
-    global _live_synthetic_universe_selection
-    selection = str(payload.selection or "").strip().upper()
-    allowed = {"INDEX", *NIFTY50_INDEX_SYMBOLS}
-    if selection not in allowed:
-        raise HTTPException(status_code=422, detail={"message": "Unsupported synthetic scanner universe", "allowed": sorted(allowed)})
-    if selection == _live_synthetic_universe_selection:
-        return {
-            "status": "success",
-            "selection": selection,
-            "restart_requested": False,
-            "top15_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
-            "availability": dict(_live_synthetic_universe_status),
-        }
-    _live_synthetic_universe_selection = selection
-    runner = live_synthetic_runner
-    restart_requested = runner is not None and not runner.stop_event.is_set()
-    if restart_requested:
-        _live_synthetic_universe_restart_requested.set()
-        runner.stop()
-    return {
-        "status": "success",
-        "selection": selection,
-        "restart_requested": restart_requested,
-        "top15_stock_symbols": list(TOP15_LIQUID_STOCK_SYMBOLS_ORDERED),
-        "availability": dict(_live_synthetic_universe_status),
-    }
 
 
 def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
