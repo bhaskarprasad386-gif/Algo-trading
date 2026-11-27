@@ -68,7 +68,7 @@ BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot, configure_shoonya_snapshot, configure_shoonya_supervisor, configure_shared_index_runner_snapshot, configure_shared_index_runner_health_snapshot
-from app.scanner.routes import router as scanner_router, full_fno_router, configure_live_cash_future_snapshot
+from app.scanner.routes import full_fno_router
 from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop, configure_page_update_callback as configure_weekly_swing_page_push, nifty200_scan_status
 from app.scanner.auto_routes import router as auto_scanner_router, discover_cash_future_symbols
 from app.scanner.live_cash_future_scanner import LiveCashFutureScanner
@@ -100,13 +100,9 @@ from app.scanner.cash_future_collector import CashFutureHistoryCollector
 from app.brokers.routes import router as brokers_router
 from app.brokers.session_store import broker_sessions
 from app.backtesting.download_status_routes import create_download_status_router
-from app.backtesting.cash_future_download_routes import CashFutureDownloadManager, create_cash_future_download_router
 from app.backtesting.historical_download_status import HistoricalDownloadStatusStore
 from app.backtesting.contract_master import ContractMasterCatalog
 from app.backtesting.contract_master_sync import DailyContractMasterSync
-from app.backtesting.monthly_results_routes import router as monthly_results_router
-from app.backtesting.cash_future_strategy_routes import router as cash_future_strategy_router
-from app.backtesting.calendar_spread_strategy_routes import router as calendar_spread_strategy_router
 from app.backtesting.universal_factory import create_universal_ledger
 from app.backtesting.universal_result_routes import create_universal_result_router
 from app.backtesting.universal_result_service import UniversalResultService
@@ -828,7 +824,6 @@ app.include_router(arbitrage_router)
 app.include_router(instruments_router)
 app.include_router(market_data_router)
 app.include_router(provider_quote_parity_router)
-app.include_router(scanner_router)
 app.include_router(weekly_swing_scanner_router)
 app.include_router(full_fno_router)
 app.include_router(auto_scanner_router)
@@ -845,10 +840,7 @@ app.include_router(intelligence_router)
 app.include_router(early_impulse_router)
 app.include_router(vpt_x_reversal_router)
 if settings.BACKTESTING_ENABLED:
-    app.include_router(monthly_results_router)
-    app.include_router(cash_future_strategy_router)
-    app.include_router(calendar_spread_strategy_router)
-
+    
 # Durable backtesting-download status is kept in its own SQLite file so API
 # requests never depend on an in-memory status object. The path can be
 # overridden for deployments through the BACKTEST_STATUS_DB environment var.
@@ -860,14 +852,6 @@ if settings.BACKTESTING_ENABLED:
     BACKTEST_STATUS_DB.parent.mkdir(parents=True, exist_ok=True)
     backtest_status_store = HistoricalDownloadStatusStore(str(BACKTEST_STATUS_DB))
     app.include_router(create_download_status_router(backtest_status_store))
-
-    # Historical download/backtesting storage is opt-in and unavailable by default.
-    backtest_download_manager = CashFutureDownloadManager(
-        data_db=settings.BACKTEST_DATA_DB,
-        contract_db=settings.BACKTEST_CONTRACT_DB,
-        status_store=backtest_status_store,
-    )
-    app.include_router(create_cash_future_download_router(backtest_download_manager))
 
     universal_result_ledger = create_universal_ledger(settings.BACKTEST_RESULT_LEDGER_DB)
     universal_result_service = UniversalResultService(universal_result_ledger)
@@ -2096,36 +2080,12 @@ def app_update():
 
 STRATEGY_WORKSPACES = [
     {
-        "id": "cash-future", "name": "Cash–Future", "version": "1", "enabled": True,
-        "screen": "cash_future_scanner", "data_mode": "LIVE 1s",
-        "execution_mode": "SCANNER ONLY", "live_orders": False,
-        "capabilities": ["LIVE DATA", "SCANNER", "HISTORICAL", "BACKDATE", "BACKTEST", "REPLAY", "RESULTS"],
-        "live_route": "/api/v1/scanner/cash-future/live/fast",
-        "workspace_route": "/api/v1/backtesting/cash-future/strategy-run"
-    },
-    {
-        "id": "calendar-spread", "name": "Calendar Spread", "version": "1", "enabled": True,
-        "screen": "calendar_spread", "data_mode": "LIVE 1s",
-        "execution_mode": "SCANNER ONLY", "live_orders": False,
-        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "RESULTS"],
-        "live_route": "/api/v1/scanner/calendar-spread/live",
-        "workspace_route": "/api/v1/backtesting/calendar-spread"
-    },
-    {
-        "id": "synthetic-future-cash-carry", "name": "Synthetic Future / Cash Carry", "version": "1", "enabled": True,
-        "screen": "synthetic_cash_carry", "data_mode": "LIVE",
-        "execution_mode": "SCANNER ONLY", "live_orders": False,
-        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "RESULTS"],
-        "live_route": "/api/v1/scanner/synthetic-cash-carry/live",
-        "workspace_route": "/api/v1/backtesting/cash-future/strategy-run"
-    },
-    {
         "id": "box-spread", "name": "Box Spread", "version": "1", "enabled": True,
         "screen": "box_spread", "data_mode": "LIVE",
         "execution_mode": "SCANNER ONLY", "live_orders": False,
         "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "RESULTS"],
         "live_route": "/api/v1/scanner/box-spread/live",
-        "workspace_route": "/api/v1/backtesting/cash-future/strategy-run"
+        "workspace_route": "/api/v1/scanner/box-spread/live"
     },
     {
         "id": "full-fno", "name": "Full F&O Backtest", "version": "1", "enabled": True,
