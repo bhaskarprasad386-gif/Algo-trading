@@ -15,6 +15,27 @@ def _record(token, ts=None):
 
 
 def test_state_accepts_fresh_ticks_and_reports_freshness():
+
+def test_indexed_raw_accessors_return_only_requested_latest_records():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    nifty = MarketDataRecord(
+        instrument=InstrumentKey("NSE", "NSE", "spot-nifty"), symbol="NIFTY",
+        instrument_type=InstrumentType.INDEX, timestamp_ns=now,
+        ltp=25000.0, underlying="NIFTY",
+    )
+    bank = MarketDataRecord(
+        instrument=InstrumentKey("NSE", "NSE", "spot-bank"), symbol="BANKNIFTY",
+        instrument_type=InstrumentType.INDEX, timestamp_ns=now,
+        ltp=58000.0, underlying="BANKNIFTY",
+    )
+    assert state.on_record(nifty) and state.on_record(bank)
+    assert [row["token"] for row in state.latest_records_for_tokens(("spot-bank",))] == ["spot-bank"]
+    assert [row["underlying"] for row in state.latest_records_for_instruments("index", ("NIFTY",))] == ["NIFTY"]
+    assert state.retain_instruments((nifty.instrument,)) == 1
+    assert state.latest_records_for_tokens(("spot-bank",)) == ()
+    assert state.latest_records_for_instruments("index", ("BANKNIFTY",)) == ()
+
     state = SharedIndexMarketDataState(max_age_seconds=5)
     assert state.on_record(_record("spot1"))
     snap = state.snapshot()
