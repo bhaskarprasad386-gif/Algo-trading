@@ -1846,10 +1846,16 @@ class CommonWebSocketManager:
                     if _is_regular_trading_window()
                     else -1.0
                 )
-                self.recover_disconnected(
-                    min_age_seconds=0.0,
-                    silent_age_seconds=silent_timeout,
-                )
+                # A queued lifecycle handoff can exist in isolated/manual
+                # manager states without any registry subscriptions. Retry its
+                # exact pending task above, but do not let the periodic socket
+                # sweep interpret those intentionally installed test/transition
+                # sockets as obsolete desired state and retire their adapters.
+                if has_intent or has_pending_failure_transports:
+                    self.recover_disconnected(
+                        min_age_seconds=0.0,
+                        silent_age_seconds=silent_timeout,
+                    )
                 cooldown_remaining = self._broker_cooldown_remaining()
                 with self._lock:
                     pending_failures_to_ack = dict(self._failure_recovery_pending_versions)
