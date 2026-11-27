@@ -9,9 +9,6 @@ import { PagePushProvider } from "@/components/page-push-provider";
 
 const nav = [
   { href: "/", label: "Dashboard", icon: Home },
-  { href: "/scanner", label: "Cash Future", icon: Activity },
-  { href: "/strategies/calendar-spread", label: "Calendar Scanner", icon: Activity },
-  { href: "/strategies/synthetic-arbitrage", label: "Synthetic Scanner", icon: Activity },
   { href: "/strategies/early-impulse", label: "Early Impulse Pro", icon: Activity },
   { href: "/strategies/short-covering-long-unwinding", label: "Short Covering & Long Unwinding", icon: Activity },
   { href: "/strategies/vpt-x", label: "VPT-X Reversal Scanner", icon: Activity },
@@ -25,10 +22,7 @@ const nav = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const pageChannel = pathname === "/scanner" ? "cash-future"
-    : pathname.startsWith("/strategies/box-spread") ? "box-spread"
-    : pathname.startsWith("/strategies/calendar-spread") ? "calendar-spread"
-    : pathname.startsWith("/strategies/synthetic-arbitrage") ? "synthetic-arbitrage"
+  const pageChannel = pathname.startsWith("/strategies/box-spread") ? "box-spread"
     : pathname.startsWith("/strategies/iv-skew-flip") ? "iv-skew-flip"
     : pathname.startsWith("/strategies/credit-butterfly-condor/monthly") ? "credit-butterfly-condor-monthly"
     : null;
