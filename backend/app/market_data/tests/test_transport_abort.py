@@ -234,3 +234,44 @@ def test_close_uses_shutdown_when_abort_is_noop_and_sdk_clears_wsapp_socket():
     assert not transport.is_alive()
     assert client.health["transport_close_timed_out"] is False
 
+
+
+def test_sdk_close_falls_back_to_shutdown_when_abort_is_noop_and_sdk_clears_socket():
+    release_transport = Event()
+    release_close_worker = Event()
+
+    class NoopAbortLowLevelSocket:
+        def __init__(self):
+            self.abort_called = False
+            self.shutdown_called = False
+
+        def abort(self):
+            self.abort_called = True
+            # Models websocket-client's connected=False abort no-op.
+
+        def shutdown(self):
+            self.shutdown_called = True
+            release_transport.set()
+            release_close_worker.set()
+
+    low_level = NoopAbortLowLevelSocket()
+    wsapp = SimpleNamespace(sock=low_level)
+
+    def hung_close_connection():
+        wsapp.sock = None
+        release_close_worker.wait(timeout=5.0)
+
+    sdk_socket = SimpleNamespace(wsapp=wsapp, close_connection=hung_close_connection)
+    transport = Thread(target=lambda: release_transport.wait(timeout=5.0), daemon=True)
+    transport.start()
+
+    closed = _close_sdk_connection_bounded(
+        sdk_socket, phase="test-noop-abort", timeout_seconds=0.05
+    )
+    transport.join(timeout=1.0)
+    release_close_worker.set()
+
+    assert closed is True
+    assert low_level.abort_called is True
+    assert low_level.shutdown_called is True
+    assert not transport.is_alive()
