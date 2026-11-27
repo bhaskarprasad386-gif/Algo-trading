@@ -6,6 +6,7 @@ from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalReco
 from app.backtesting.historical_catalog_replay import CatalogReplayLeg, HistoricalCatalogEventReplay
 from app.backtesting.result_ledger import BacktestResultLedger
 import json
+import pytest
 
 
 def _writer(tmp_path, run_id, strategy_id):
@@ -126,16 +127,27 @@ def test_catalog_to_ledger_e2e_box_spread(tmp_path):
     assert ledger.run("catalog-box")["status"] == "COMPLETED"
 
 
-def test_catalog_e2e_missing_exit_never_creates_trade_or_pnl(tmp_path):
+def test_retired_cash_future_catalog_e2e_is_rejected_without_trade_or_pnl(tmp_path):
     catalog = HistoricalCatalog()
-    catalog.ingest([HistoricalRecord("angel", "ABC-SPOT", "1m", 1, {"timestamp_ns": 1, "underlying": "ABC", "spot_bid": 99, "spot_ask": 100, "future_bid": 110, "future_ask": 111, "expiry": 20260924})])
+    catalog.ingest([
+        HistoricalRecord("angel", "ABC-SPOT", "1m", 1, {
+            "timestamp_ns": 1, "underlying": "ABC", "spot_bid": 99,
+            "spot_ask": 100, "future_bid": 110, "future_ask": 111,
+            "expiry": 20260924,
+        })
+    ])
     ledger, writer = _writer(tmp_path, "catalog-unresolved", "cash-future")
-    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy("cash-future", catalog, (CatalogReplayLeg("cash_future", "angel", "ABC-SPOT", "1m"),), payoff_prices=(90, 100, 120))
-    assert result.completed_trades == 0
-    assert result.unresolved_trades == 1
-    assert result.realized_pnl == 0
+
+    with pytest.raises(ValueError, match="unsupported arbitrage strategy: cash-future"):
+        HistoricalArbitrageBacktestService(writer).run_catalog_strategy(
+            "cash-future", catalog,
+            (CatalogReplayLeg("cash_future", "angel", "ABC-SPOT", "1m"),),
+            payoff_prices=(90, 100, 120),
+        )
+
     assert ledger.trades("catalog-unresolved") == []
-    assert ledger.run("catalog-unresolved")["status"] == "COMPLETED"
+    assert ledger.events("catalog-unresolved") == []
+    assert ledger.run("catalog-unresolved")["status"] == "CREATED"
 
 
 def test_live_one_second_box_records_replay_only_on_exact_shared_timestamp():
