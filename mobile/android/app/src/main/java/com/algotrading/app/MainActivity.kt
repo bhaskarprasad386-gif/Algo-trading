@@ -42,7 +42,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnResultsJournal: Button
     private lateinit var tvMarketFeedStatus: TextView
     private lateinit var tvIndexOverview: TextView
-    private lateinit var tvCommodityOverview: TextView
     private lateinit var btnMarketOverviewRefresh: Button
     private lateinit var tvLiveDataQuality: TextView
     private lateinit var btnLiveDataHealthRefresh: Button
@@ -151,7 +150,6 @@ class MainActivity : AppCompatActivity() {
         tvLiveDataQuality.visibility = if (cbShowMarket.isChecked) visible else hidden
         btnLiveDataHealthRefresh.visibility = if (cbShowMarket.isChecked) visible else hidden
         tvIndexOverview.visibility = if (cbShowMarket.isChecked) visible else hidden
-        tvCommodityOverview.visibility = if (cbShowMarket.isChecked) visible else hidden
         tvAlertCenter.visibility = if (cbShowAlerts.isChecked) visible else hidden
         btnStrategies.visibility = if (cbShowStrategy.isChecked) visible else hidden
         btnFullFnoBacktest.visibility = if (cbShowStrategy.isChecked) visible else hidden
@@ -173,15 +171,13 @@ class MainActivity : AppCompatActivity() {
                 return "${row.exchange}:${row.symbol}  LTP ₹$ltp  CHG $chg  H/L $hl  B/A $ba  ${row.status}"
             }
             withContext(Dispatchers.Main) {
-                tvMarketFeedStatus.text = if (response.errors.isEmpty()) "Live feed: ONLINE • Angel One • Orders: OFF" else "Live feed: PARTIAL • ${response.errors.size} quote errors • Orders: OFF"
-                tvIndexOverview.text = "NSE / BSE INDEX DATA\n" + if (response.indices.isEmpty()) "No live index quote available." else response.indices.joinToString("\n") { fmt(it) }
-                tvCommodityOverview.text = "COMMODITY DATA\n" + if (response.commodities.isEmpty()) "No live commodity quote available." else response.commodities.joinToString("\n") { fmt(it) }
+                tvMarketFeedStatus.text = if (response.errors.isEmpty()) "Shared Runner: ONLINE • NIFTY / BANKNIFTY • Orders: OFF" else "Shared Runner: PARTIAL • ${response.errors.size} feed errors • Orders: OFF"
+                tvIndexOverview.text = "NIFTY / BANKNIFTY LIVE DATA\n" + if (response.indices.isEmpty()) "No live index quote available." else response.indices.joinToString("\n") { fmt(it) }
             }
         } catch (error: Exception) {
             withContext(Dispatchers.Main) {
                 tvMarketFeedStatus.text = "Live feed: ERROR • Orders: OFF"
-                tvIndexOverview.text = "NSE / BSE INDEX DATA\nMarket quote unavailable: " + (error.message ?: "API error")
-                tvCommodityOverview.text = "COMMODITY DATA\nMarket quote unavailable."
+                tvIndexOverview.text = "NIFTY / BANKNIFTY LIVE DATA\nMarket quote unavailable: " + (error.message ?: "API error")
             }
         } finally {
             withContext(Dispatchers.Main) { btnMarketOverviewRefresh.isEnabled = true }
