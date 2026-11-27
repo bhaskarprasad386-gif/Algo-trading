@@ -1802,6 +1802,12 @@ class CommonWebSocketManager:
                 reason="stale_recovery",
                 on_finished=lambda retired_group=stale_group: self._reconcile_after_retirement(retired_group),
             )
+        # Shutdown may publish its fence while this recovery pass is retiring
+        # stale transports. Retirement is still required, but a recovery pass
+        # must not attempt desired-state reconciliation after admission closes.
+        with self._lock:
+            if self._closed:
+                return len(stale)
         try:
             self._reconcile()
         except Exception:
@@ -2355,6 +2361,9 @@ class CommonWebSocketManager:
         """Resume desired-state reconciliation after a retired close completes."""
         try:
             with self._reconcile_lock:
+                with self._lock:
+                    if self._closed:
+                        return
                 self._reconcile()
         except Exception as exc:
             app_logger.warning(
