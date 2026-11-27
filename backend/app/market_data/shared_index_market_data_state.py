@@ -111,6 +111,12 @@ class SharedIndexMarketDataState:
             return removed
 
 
+    def is_instrument_allowed(self, key) -> bool:
+        """Return whether the active Shared Runner subscription owns this key."""
+        value = str(getattr(key, "value", "") or "")
+        with self._lock:
+            return self._allowed_keys is not None and value in self._allowed_keys
+
     def retain_instruments(self, keys) -> int:
         """Drop cached runner records for contracts no longer subscribed."""
         allowed = {key.value for key in keys}
