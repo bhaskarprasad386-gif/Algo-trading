@@ -3205,6 +3205,7 @@ class CommonWebSocketManager:
                 self._failure_recovery_groups.clear()
                 self._failure_recovery_generation_by_group.clear()
                 self._failure_recovery_pending_groups.clear()
+                self._failure_recovery_pending_transports.clear()
                 self._failure_recovery_pending_versions.clear()
         # The recovery supervisor may be waiting for _reconcile_lock. Release
         # that lock before joining it, otherwise every shutdown can burn the
