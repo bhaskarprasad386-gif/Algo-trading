@@ -17,6 +17,12 @@ from fastapi.testclient import TestClient
 
 from app import main
 from app.backtesting.result_ledger import BacktestEvent
+from app.market_data.common_websocket import CommonWebSocketManager
+
+# Box must own a distinct broker manager; it must not register through the
+# Shared Runner's NIFTY/BANKNIFTY-only common manager.
+assert isinstance(main.box_isolated_feed_manager, CommonWebSocketManager)
+assert main.box_isolated_feed_manager is not main.shared_index_market_data_runner.lifecycle._spot_feed.manager
 
 
 run_id = "main-integration"
