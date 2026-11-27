@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from threading import Event, Lock
 from time import time_ns
-from typing import Callable
+from typing import Any, Callable
 
 from app.algo.auth import AngelOneAuth
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
