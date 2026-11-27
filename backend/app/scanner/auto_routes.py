@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.instruments import InstrumentMaster
 from app.models.cash_future_history import CashFutureHistory
 from app.models.live_cash_future_scanner_result import LiveCashFutureScannerResult
 from app.models.live_cash_future_alert_history import LiveCashFutureAlertHistory
