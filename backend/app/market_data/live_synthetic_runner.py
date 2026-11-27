@@ -974,6 +974,55 @@ class LiveSyntheticRunner:
             pending_pipelines.clear()
             self._running = False
 
+    def health_snapshot(self) -> dict:
+        """Return bounded counters for the periodic runtime-health endpoint.
+
+        Deliberately excludes scanner bucket pruning, ATM symbol diagnostics,
+        full subscription rosters, and nested feed/recorder snapshots.
+        """
+        recorder = self._recorder
+        scanner = self._scanner
+        if recorder is None:
+            recorder_health = {}
+        else:
+            with recorder._lock:
+                recorder_health = {
+                    "running": not recorder.stop_event.is_set(),
+                    "subscriptions": len(recorder.subscriptions),
+                    "records_received": recorder._records_received,
+                    "observations_emitted": recorder._observations_emitted,
+                    "missing_executable_quote": recorder._missing_executable_quote,
+                    "out_of_order_records": recorder._out_of_order_records,
+                    "stale_buffer_discards": recorder._stale_buffer_discards,
+                    "future_buffer_discards": recorder._future_buffer_discards,
+                }
+        scanner_health = {}
+        if scanner is not None:
+            with scanner._diagnostics_lock:
+                scanner_health = dict(scanner._diagnostics)
+        subscriptions = tuple(self._subscription_diagnostics.values())
+        subscribed = sum(1 for item in subscriptions if item.get("status") == "SUBSCRIBED")
+        return {
+            "running": self._running and not self._stop_requested.is_set(),
+            "phase": "STOPPED" if self._stop_requested.is_set() else (
+                "SCANNING" if scanner is not None and recorder_health.get("running") else
+                "INITIALIZING" if scanner is None else "WAITING_FOR_OBSERVATIONS"
+            ),
+            "targets": len(self.targets),
+            "scanner_initialized": scanner is not None,
+            "records_received": recorder_health.get("records_received", 0),
+            "scanner_updates": recorder_health.get("observations_emitted", 0),
+            "observations": recorder_health.get("observations_emitted", 0),
+            "payload_callbacks": recorder_health.get("records_received", 0),
+            "recorder": recorder_health,
+            "scanner": scanner_health,
+            "subscription_diagnostics": {
+                "target_count": len(self.targets),
+                "subscribed_symbol_count": subscribed,
+                "blocked_symbol_count": max(0, len(subscriptions) - subscribed),
+            },
+        }
+
     def snapshot(self) -> dict:
         """Return lightweight runtime state for shared-feed diagnostics."""
         feed = self._active_underlying_feed or self.underlying_feed
