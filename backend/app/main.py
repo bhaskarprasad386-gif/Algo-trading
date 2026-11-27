@@ -548,7 +548,6 @@ def _scanner_page_push_runtime_health(runner_name, runner):
         return {"common_feed": {"status": "UNAVAILABLE"}, "runners": {runner_name: None}}
 
 
-configure_page_push_snapshot("cash-future", _cash_future_page_push_snapshot)
 
 async def _shared_index_market_data_recovery_loop() -> None:
     """Start the data-only shared index runner and retry transient master/feed failures."""
@@ -703,8 +702,8 @@ async def lifespan(app: FastAPI):
         _iv_option_snapshot_task = asyncio.create_task(_iv_option_snapshot_daily_loop())
     if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
-    # Box Spread is temporarily excluded from the shared Angel One socket budget.
-    # Keep its routes/history intact, but do not create any Box-owned live subscriptions.
+    # Box Spread consumes only records published by SharedIndexMarketDataRunner.
+    # Its local fan-out has no broker socket or independent subscription path.
     if not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED and settings.LIVE_BOX_SPREAD_DATA_ENABLED and _live_box_spread_task is None:
         _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
     _dashboard_snapshot_task = asyncio.create_task(_dashboard_snapshot_publisher_loop())
