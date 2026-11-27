@@ -42,7 +42,8 @@ from app.algo.auth import AngelOneAuth
 from app.market_data.client import MarketDataClient
 from app.market_data.dashboard_snapshot_cache import cached_snapshot
 from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
-from app.market_data.shared_index_local_feed import SharedIndexRunnerLocalFeedManager
+from app.market_data.common_websocket import CommonWebSocketManager
+from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS, BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
 from app.market_data.box_spread_runner_supervisor import BoxSpreadRunnerSupervisor
 from app.market_data.instruments import InstrumentMaster
@@ -94,10 +95,13 @@ install_iv_basket_immutability_guards(engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 shared_index_market_data_runner = SharedIndexMarketDataRunner(instrument_master=instrument_master)
-# Box Spread is a local consumer of the Shared Runner's published records.
-# This manager has no broker socket factory and cannot create another connection.
-box_shared_feed_manager = SharedIndexRunnerLocalFeedManager(shared_index_market_data_runner)
-box_shared_feed_manager.attach()
+# Box Spread owns a fully separate broker-feed manager. It must never
+# register consumers or subscriptions on the Shared Runner's NIFTY/BANKNIFTY manager.
+box_market_data_auth = AngelOneAuth()
+box_isolated_feed_manager = CommonWebSocketManager(
+    socket_factory=lambda: MarketDataWebSocket(auth=box_market_data_auth, auto_reconnect=False),
+    async_callback_dispatch=True,
+)
 configure_shared_index_runner_snapshot(shared_index_market_data_runner.snapshot)
 configure_shared_index_runner_health_snapshot(shared_index_market_data_runner.health_snapshot)
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
@@ -109,8 +113,8 @@ _iv_skew_flip_runtime_lock = threading.RLock()
 live_box_spread_latest_results: tuple = ()
 live_box_spread_runner: LiveBoxSpreadRunner | None = None
 live_box_spread_supervisor: BoxSpreadRunnerSupervisor | None = None
-# Box adapters consume only the local fan-out of SharedIndexMarketDataRunner records.
-# They never create additional broker subscriptions or sockets.
+# Box Spread adapters use only the dedicated Box-owned broker manager.
+# No Box callback or subscription is registered on SharedIndexMarketDataRunner.
 LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = False
 BOX_SPREAD_INDEX_SELECTION_LOCK = threading.Lock()
 BOX_SPREAD_INDEX_PRESETS = {
@@ -666,9 +670,9 @@ async def lifespan(app: FastAPI):
                 if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
                     app_logger.error("Background task shutdown failed: %s", result)
         try:
-            box_shared_feed_manager.close()
+            box_isolated_feed_manager.close()
         except Exception:
-            app_logger.exception("Shared Runner local fan-out shutdown failed")
+            app_logger.exception("Box isolated feed manager shutdown failed")
         # Broker adapters own authenticated provider sessions in process memory.
         # Drain them before shutdown completes; failures are logged per provider
         # and must not prevent the remaining sessions or market-data runners closing.
