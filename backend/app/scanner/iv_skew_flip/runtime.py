@@ -34,6 +34,26 @@ from .spot_feed import IVSpotFeedAdapter
 from .shared_runner_feed import IVSharedRunnerOptionFeedAdapter, IVSharedRunnerSpotFeedAdapter
 
 
+class _DisabledIVMarketDataTransport:
+    """No-op transport for isolated tests; IV production data must come from SharedIndexMarketDataRunner."""
+
+    def start(self, _descriptors, _callback):
+        return ()
+
+    def stop(self) -> None:
+        return None
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "status": "DISABLED_BY_SCOPE",
+            "subscriptions": 0,
+            "active_instruments": 0,
+            "socket_groups": 0,
+            "consumers": {},
+            "owns_subscriptions": False,
+        }
+
+
 class _DisabledIVFutureContextFeed:
     """Explicitly disable IV-owned futures transport in shared-runner mode.
 
@@ -58,7 +78,6 @@ class _DisabledIVFutureContextFeed:
     def stop(self) -> None:
         return None
 from .alerts import AlertCooldownStore, IVEarlyEntryAlertEngine
-from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from .universe import resolve_option_universe
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -120,36 +139,27 @@ class IVSkewFlipRuntime:
     ) -> None:
         if refresh_seconds < 1.0 or refresh_seconds > 3.0:
             raise ValueError("universe refresh cadence must be between 1 and 3 seconds")
+        if feed_manager is not None:
+            raise ValueError("IV runtime cannot accept a direct feed manager; use SharedIndexMarketDataRunner")
+        if close_feed_manager:
+            raise ValueError("IV runtime never owns or closes a broker feed manager")
         self.instrument_master = instrument_master
-        self.feed_manager = feed_manager
+        self.feed_manager = None
         self.shared_runner = shared_runner
-        # A manager injected by the application may be shared with other
-        # scanners. Only close managers whose lifecycle this runtime owns.
-        self.close_feed_manager = bool(close_feed_manager)
-        # Production attaches to the already-running shared index runner. The
-        # compatibility path remains available for isolated tests/tools, but
-        # production IV never registers duplicate market-data consumers.
+        self.close_feed_manager = False
+        # Production attaches only to the application-owned shared index runner.
+        # Isolated runtimes receive a no-op transport and cannot create sockets.
         if shared_runner is not None:
             self.spot_feed = spot_feed or IVSharedRunnerSpotFeedAdapter(
                 shared_runner=shared_runner, clock_ns=clock_ns,
             )
         else:
             self.spot_feed = spot_feed or IVSpotFeedAdapter(
-                feed=CommonStrategyMarketFeed(
-                    "iv-skew-flip-spot", manager=feed_manager, mode=3,
-                ) if feed_manager is not None else None,
+                feed=_DisabledIVMarketDataTransport(),
                 clock_ns=clock_ns,
-                persist_last_price=True if feed_manager is not None else None,
+                persist_last_price=False,
             )
-        self.future_feed = future_feed or (
-            _DisabledIVFutureContextFeed()
-            if shared_runner is not None else IVIndexFutureFeedAdapter(
-                feed=CommonStrategyMarketFeed(
-                    "iv-skew-flip-index-futures", manager=feed_manager, mode=3,
-                ) if feed_manager is not None else None,
-                clock_ns=clock_ns,
-            )
-        )
+        self.future_feed = future_feed or _DisabledIVFutureContextFeed()
         self._future_contracts: tuple[Any, ...] = ()
         self._basis_histories: dict[str, BasisHistory] = {}
         self._basis_analysis: dict[str, dict[str, Any]] = {}
@@ -160,9 +170,7 @@ class IVSkewFlipRuntime:
                 )
             ) if shared_runner is not None else (
                 lambda stream_id: IVSkewFlipFeedAdapter(
-                    feed=CommonStrategyMarketFeed(
-                        f"iv-skew-flip-{stream_id.lower()}", manager=feed_manager, mode=3,
-                    ) if feed_manager is not None else None,
+                    feed=_DisabledIVMarketDataTransport(),
                     consumer=f"iv-skew-flip-{stream_id.lower()}",
                     clock_ns=clock_ns,
                 )
@@ -194,10 +202,7 @@ class IVSkewFlipRuntime:
             raise ValueError("equity pressure requires an injected verified weight basket")
         self.equity_feed_factory = equity_feed_factory or (
             lambda: IVWeightedEquityFeedAdapter(
-                feed=CommonStrategyMarketFeed(
-                    "iv-skew-flip-equities", manager=feed_manager, mode=3,
-                ) if feed_manager is not None else None,
-                clock_ns=clock_ns,
+                feed=_DisabledIVMarketDataTransport(), clock_ns=clock_ns,
             )
         )
         self._equity_feed: IVWeightedEquityFeedAdapter | None = None
@@ -1137,11 +1142,7 @@ class IVSkewFlipRuntime:
         # Capture one manager view and reuse it in the spot diagnostics. Calling
         # snapshot twice could otherwise report a transient socket retirement
         # between the top-level connection block and the nested spot block.
-        manager_snapshot = (
-            self.feed_manager.snapshot()
-            if self.feed_manager is not None
-            else None
-        )
+        manager_snapshot = None
         with self._lock:
             started = self._started
             feeds = dict(self._option_feeds)
@@ -1177,23 +1178,15 @@ class IVSkewFlipRuntime:
                     "iv_owns_shared_runner": False,
                 }
                 if self.shared_runner is not None
-                else (
-                    {
-                        "isolation": "SHARED_PROCESS_MANAGER",
-                        "manager_owner": "APPLICATION",
-                        "manager": manager_snapshot,
-                        "socket_mode": 3,
-                        "global_socket_limit": 3,
-                        "owns_manager": self.close_feed_manager,
-                    }
-                    if self.feed_manager is not None
-                    else {
-                        "isolation": "COMMON_FEED_ADAPTER",
-                        "socket_mode": 1,
-                        "global_socket_limit": None,
-                        "owns_manager": False,
-                    }
-                )
+                else {
+                    "isolation": "SHARED_RUNNER_REQUIRED",
+                    "manager_owner": "NONE",
+                    "manager": None,
+                    "socket_mode": None,
+                    "global_socket_limit": 0,
+                    "owns_manager": False,
+                    "iv_owns_subscriptions": False,
+                }
             ),
             "refresh_seconds": self.refresh_seconds,
             "signal_evaluation_seconds": self.evaluation_seconds,
