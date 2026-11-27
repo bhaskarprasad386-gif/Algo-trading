@@ -44,7 +44,6 @@ from app.models.synthetic_trace_status_check import SyntheticTraceStatusCheck
 from app.models.synthetic_trace_opportunity import SyntheticTraceOpportunity
 from app.algo.auth import AngelOneAuth
 from app.market_data.client import MarketDataClient
-from app.market_data.live_cash_future_stream import live_cash_future_health
 from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
 from app.market_data.dashboard_snapshot_cache import cached_snapshot
@@ -2122,21 +2121,6 @@ def market_data_runtime_health():
 def runtime_diagnostic_errors(limit: int = 50):
     """Return real backend/feed/runtime errors captured since process start."""
     return {"status": "ok", "errors": runtime_diagnostics.snapshot(limit=limit), "count": len(runtime_diagnostics.snapshot(limit=1000))}
-
-
-@app.get("/api/v1/market-data/live-cash-future/health")
-def live_cash_future_health_route():
-    state = live_cash_future_health()
-    scanner = live_cash_future_scanner.health()
-    observations = max(1, int(scanner.get("observations", 0)))
-    state.update({
-        "pair_rate": round(float(scanner.get("pairs", 0)) / observations, 4),
-        "scanner_pairs": int(scanner.get("pairs", 0)),
-        "scanner_dropped": int(scanner.get("dropped", 0)),
-        "scanner_persisted": int(scanner.get("persisted", 0)),
-        "coverage": max(int(state.get("coverage", 0)), len({row.get("symbol") for row in live_cash_future_scanner.snapshot(max_age_seconds=30, limit=50) if row.get("symbol")})),
-    })
-    return state
 
 
 def _get_iv_scanner_enabled() -> bool:
