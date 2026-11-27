@@ -137,9 +137,9 @@ def test_snapshot_provider_is_read_only_and_page_scoped():
         "iv-skew-flip",
         lambda: observed.append("read") or {"rows": []},
     )
-    assert push._snapshot("credit-butterfly-condor-weekly") == {"rows": []}
+    assert push._snapshot("iv-skew-flip") == {"rows": []}
     assert observed == ["read"]
-    push.configure_snapshot_provider("credit-butterfly-condor-weekly", None)
+    push.configure_snapshot_provider("iv-skew-flip", None)
     try:
         push.configure_snapshot_provider("unknown-page", lambda: {})
     except ValueError as exc:
@@ -151,7 +151,7 @@ def test_snapshot_provider_is_read_only_and_page_scoped():
 
 
 def test_missing_snapshot_provider_is_not_an_authoritative_empty_snapshot():
-    page = "credit-butterfly-condor-weekly"
+    page = "iv-skew-flip"
     push.configure_snapshot_provider(page, None)
     assert push._snapshot(page) == {"snapshot_status": "UNAVAILABLE"}
     frame = push._consistent_snapshot_frame(page)
@@ -471,9 +471,9 @@ def test_journal_dispatch_uses_page_sequence_cursor_not_global_event_id(monkeypa
 
 def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch):
     async def scenario():
-        queue = asyncio.Queue(maxsize=3)
-        pages = {"iv-skew-flip", "iv-skew-flip", "weekly-swing"}
-        for page in pages:
+        queue = asyncio.Queue(maxsize=2)
+        pages = {"iv-skew-flip", "weekly-swing"}
+        for page in ("iv-skew-flip", "weekly-swing"):
             queue.put_nowait({"page": page, "event": "PATCH", "sequence": 1})
         monkeypatch.setattr(push, "_subscribers", {(queue, frozenset(pages))})
         monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 7)
@@ -489,7 +489,7 @@ def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch)
         # it cannot race the test and steal one of the snapshot markers.
         next_waiter.cancel()
         await asyncio.gather(next_waiter, return_exceptions=True)
-        markers = [queue.get_nowait() for _ in range(3)]
+        markers = [queue.get_nowait() for _ in range(2)]
         assert {frame["page"] for frame in markers} == pages
         assert all(frame["event"] == "SNAPSHOT_REQUIRED" and frame["sequence"] == 7 for frame in markers)
     asyncio.run(scenario())
