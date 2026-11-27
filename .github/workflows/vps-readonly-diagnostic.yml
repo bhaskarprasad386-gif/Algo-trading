@@ -55,7 +55,6 @@ jobs:
             value=$(grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | tail -n 1 | cut -d= -f2- || true)
             if [ -z "$value" ]; then
               case "$key" in
-                LIVE_SYNTHETIC_DATA_ENABLED) value="unset (code default true)" ;;
                 *) value="unset (check code default)" ;;
               esac
             fi
