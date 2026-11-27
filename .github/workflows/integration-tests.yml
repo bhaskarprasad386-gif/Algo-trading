@@ -38,7 +38,7 @@ jobs:
           LIVE_CASH_FUTURE_DATA_ENABLED: "false"
           LIVE_CALENDAR_SPREAD_DATA_ENABLED: "false"
           LIVE_SYNTHETIC_DATA_ENABLED: "false"
-              LIVE_MARKET_DATA_PERSISTENCE_ENABLED: "false"
+          LIVE_MARKET_DATA_PERSISTENCE_ENABLED: "false"
           LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED: "false"
         run: >
           python -m pytest -q --tb=short -r fE
