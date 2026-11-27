@@ -1180,12 +1180,16 @@ def test_callback_retirement_watcher_start_failure_is_queued_and_retried(monkeyp
     adapter = TimedOutAdapter(worker)
     real_thread = Thread
 
-    class FailWatcherThread:
-        def __init__(self, *args, **kwargs):
-            self._thread = real_thread(*args, **kwargs)
+    class ThreadFactoryMeta(type):
+        def __instancecheck__(cls, instance):
+            return isinstance(instance, real_thread)
 
-        def start(self):
-            raise RuntimeError("thread quota exhausted")
+    class FailWatcherThread(metaclass=ThreadFactoryMeta):
+        def __new__(cls, *args, **kwargs):
+            class BrokenStartThread(real_thread):
+                def start(self):
+                    raise RuntimeError("thread quota exhausted")
+            return BrokenStartThread(*args, **kwargs)
 
     monkeypatch.setattr(module, "Thread", FailWatcherThread)
     manager._stop_retired_callback_adapter(adapter, SocketGroup(1, 0), 12)
