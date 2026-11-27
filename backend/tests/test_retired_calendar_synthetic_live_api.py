@@ -7,11 +7,11 @@ def test_cash_future_calendar_and_synthetic_live_apis_are_not_mounted():
     shell = (root.parent / "frontend" / "components" / "app-shell.tsx").read_text(encoding="utf-8")
     dashboard = (root.parent / "frontend" / "app" / "page.tsx").read_text(encoding="utf-8")
 
-    for retired in ("cash-future", "calendar-spread", "synthetic-arbitrage", "synthetic-future-cash-carry"):
+    for retired in ("cash-future", "calendar-spread", "synthetic-arbitrage", "synthetic-future-cash-carry", "full-fno"):
         assert f'"id": "{retired}"' not in main
         assert f'"{retired}"' not in shell
         assert f'"{retired}"' not in dashboard
-    for retired_router in ("scanner_router", "auto_scanner_router", "monthly_results_router", "cash_future_strategy_router", "calendar_spread_strategy_router"):
+    for retired_router in ("scanner_router", "auto_scanner_router", "monthly_results_router", "cash_future_strategy_router", "calendar_spread_strategy_router", "full_fno_router"):
         assert f"app.include_router({retired_router})" not in main
     assert "CashFutureDownloadManager" not in main
 
@@ -86,11 +86,11 @@ def test_retired_strategy_models_and_full_fno_backtest_are_not_registered_or_imp
         "LiveCalendarSpreadAlertHistory", "LiveCalendarSpreadScannerResult",
         "LiveSyntheticAlertHistory", "LiveSyntheticPairHistory",
         "LiveBoxSpreadAlertHistory", "LiveBoxSpreadSnapshot", "LiveBoxSpreadSnapshotKey",
-        "BacktestJob", "BacktestJobResultChunk",
+        "BacktestJobResultChunk",
     ):
         assert retired not in models
     assert "cash_future" not in init_db.lower()
-    assert "backtest_jobs" not in migrations
+    assert "backtest_jobs" in migrations  # Generic durable historical-download jobs remain active.
     assert "backtest_job_result_chunks" not in migrations
     assert "live_synthetic_alert_history" not in migrations
 
