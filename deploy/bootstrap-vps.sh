@@ -24,6 +24,16 @@ die() { printf '\n[algo-vps] ERROR: %s\n' "$*" >&2; exit 1; }
 
 cd "$APP_DIR"
 
+log "Removing retired independent IV master recovery timer and credential"
+systemctl disable --now algo-trading-master-recovery.timer 2>/dev/null || true
+systemctl stop algo-trading-master-recovery.service 2>/dev/null || true
+rm -f /etc/systemd/system/algo-trading-master-recovery.service
+rm -f /etc/systemd/system/algo-trading-master-recovery.timer
+rm -f /etc/algo-trading/master-recovery.env
+rmdir /etc/algo-trading 2>/dev/null || true
+systemctl daemon-reload
+systemctl reset-failed algo-trading-master-recovery.service 2>/dev/null || true
+
 log "Checking repository state"
 git diff --quiet || die "Working tree has uncommitted changes; refusing to overwrite them."
 git diff --cached --quiet || die "Index has staged changes; refusing to continue."
