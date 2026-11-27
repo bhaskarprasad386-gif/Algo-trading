@@ -657,8 +657,8 @@ async def lifespan(app: FastAPI):
     # Shared Runner's already-published option records without extra API traffic.
     if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
-    # Box Spread consumes only records published by SharedIndexMarketDataRunner.
-    # Its local fan-out has no broker socket or independent subscription path.
+    # Box Spread is isolated on its own bounded broker-feed manager.
+    # It cannot register tokens or callbacks on the Shared Index WebSocket.
     if not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED and settings.LIVE_BOX_SPREAD_DATA_ENABLED and _live_box_spread_task is None:
         _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
     _dashboard_snapshot_task = asyncio.create_task(_dashboard_snapshot_publisher_loop())
@@ -708,7 +708,7 @@ async def lifespan(app: FastAPI):
         try:
             box_isolated_feed_manager.close()
         except Exception:
-            app_logger.exception("Shared Runner local fan-out shutdown failed")
+            app_logger.exception("Isolated Box Spread feed shutdown failed")
         # Broker adapters own authenticated provider sessions in process memory.
         # Drain them before shutdown completes; failures are logged per provider
         # and must not prevent the remaining sessions or market-data runners closing.
