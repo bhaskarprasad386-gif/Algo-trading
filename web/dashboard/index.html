@@ -709,30 +709,28 @@ function setChartRange(range){
  const label=document.getElementById('chartLabel');
  if(label && liveSnapshot?.indices?.[0]?.ltp) label.textContent='NIFTY 50 • ₹'+fmt(liveSnapshot.indices[0].ltp)+' • '+range+' snapshot • '+stamp();
 }
-function renderMarketCards(indices,commodities){
- marketOverviewPayload={indices:indices||[],commodities:commodities||[]};
- setMarketTab(marketTab);
+function renderMarketCards(indices){
+ marketOverviewPayload={indices:indices||[]};
+ setMarketTab('indices');
 }
-let marketOverviewPayload={indices:[],commodities:[]};
+let marketOverviewPayload={indices:[]};
 let marketTab='indices';
 function setMarketTab(tab){
- marketTab=tab;
- document.querySelectorAll('[data-market-tab]').forEach(b=>b.classList.toggle('active',b.dataset.marketTab===tab));
- document.getElementById('marketDetailTable').style.display=tab==='indices'?'block':'none';
- document.getElementById('commodityDetailTable').style.display=tab==='commodities'?'block':'none';
- document.getElementById('foDetailTable').style.display=tab==='fo'?'block':'none';
- if(tab==='indices') renderMarketGroup(marketOverviewPayload.indices,'INDEX');
- if(tab==='commodities') renderMarketGroup(marketOverviewPayload.commodities,'COMMODITY');
- if(tab==='fo') renderFOMarket();
+ marketTab=tab==='fo'?'fo':'indices';
+ document.querySelectorAll('[data-market-tab]').forEach(btn=>btn.classList.toggle('active',btn.dataset.marketTab===marketTab));
+ document.getElementById('marketDetailTable').style.display=marketTab==='indices'?'block':'none';
+ document.getElementById('foDetailTable').style.display=marketTab==='fo'?'block':'none';
+ if(marketTab==='indices') renderMarketGroup(marketOverviewPayload.indices,'INDEX');
+ if(marketTab==='fo') renderFOMarket();
 }
 function renderMarketGroup(items,label){
- const preferred=label==='INDEX'?['NIFTY','BANKNIFTY','FINNIFTY','MIDCPNIFTY']:['GOLD','SILVER','CRUDEOIL','NATURALGAS'];
+ const preferred=['NIFTY','BANKNIFTY','FINNIFTY','MIDCPNIFTY'];
  const ordered=[];(items||[]).forEach(x=>{if(preferred.includes(String(x.symbol||'').toUpperCase()))ordered.push(x)});
  (items||[]).forEach(x=>{if(ordered.length<4&&!ordered.includes(x))ordered.push(x)});
- document.getElementById('homeMarketTiles').innerHTML=ordered.slice(0,4).map(x=>{const ch=Number(x.change_percent||0);return '<div class="market-tile"><div class="sym">'+x.symbol+'</div><div class="ltp">₹'+fmt(x.ltp)+'</div><div class="chg '+(ch>0?'up':ch<0?'down':'neutral')+'">'+pct(ch)+' • '+(x.status||'LIVE')+'</div></div>'}).join('')||'<div class="market-tile"><div class="sym">'+label+'</div><div class="ltp">—</div><div class="chg">No live quote</div></div>';
+ document.getElementById('homeMarketTiles').innerHTML=ordered.slice(0,4).map(x=>{const ch=Number(x.change_percent||0);return '<div class="market-tile"><div class="sym">'+x.symbol+'</div><div class="ltp">₹'+fmt(x.ltp)+'</div><div class="chg '+(ch>0?'up':ch<0?'down':'neutral')+'">'+pct(ch)+' • '+(x.status||'LIVE')+'</div></div>'}).join('')||'<div class="market-tile"><div class="sym">INDICES</div><div class="ltp">—</div><div class="chg">No live quote</div></div>';
  const rows=(items||[]).map(x=>'<tr><td>'+x.exchange+'</td><td><strong>'+x.symbol+'</strong></td><td>₹'+fmt(x.ltp)+'</td><td class="'+(Number(x.change_percent)>0?'up':Number(x.change_percent)<0?'down':'')+'">'+pct(x.change_percent)+'</td><td>'+fmt(x.bid)+'</td><td>'+fmt(x.ask)+'</td><td>'+fmt(x.volume)+'</td><td>'+fmt(x.oi)+'</td><td>'+x.status+'</td></tr>').join('');
- document.getElementById(label==='INDEX'?'indexRows':'commodityRows').innerHTML=rows||'<tr><td colspan="9">No live quote available.</td></tr>';
- if(label==='INDEX'&&ordered[0]) updateChart(Number(ordered[0].ltp||0));
+ document.getElementById('indexRows').innerHTML=rows||'<tr><td colspan="9">No live quote available.</td></tr>';
+ if(ordered[0]) updateChart(Number(ordered[0].ltp||0));
 }
 function renderFOMarket(){
  const data=Array.from(document.querySelectorAll('#rows tr')).slice(0,50);
@@ -749,7 +747,7 @@ async function loadMarketOverview(){
  const status=document.getElementById('marketFeedStatus');status.textContent='Feed: READING LIVE QUOTES…';
  try{
   const r=await fetch(base()+'/api/v1/market-data/overview',{cache:'no-store'});if(!r.ok)throw new Error('Market API '+r.status);
-  const p=await r.json();liveSnapshot=p;renderMarketCards(p.indices||[],p.commodities||[]);
+  const p=await r.json();liveSnapshot=p;renderMarketCards(p.indices||[]);
   status.textContent=(p.nse_market_session||p.market_session)==='CLOSED'?'Feed: NSE MARKET CLOSED • LAST CLOSE SNAPSHOT':(p.errors||[]).length?'Feed: OVERVIEW PARTIAL • '+p.errors.length+' source errors':'Feed: OVERVIEW LOADED • FRESHNESS CHECKED SEPARATELY';
   document.getElementById('homeBackend').textContent='ONLINE';document.getElementById('homeBackend').className='health-state up';
   document.getElementById('homeFeed').textContent=(p.nse_market_session||p.market_session)==='CLOSED'?'MARKET CLOSED':'CHECK FRESHNESS';document.getElementById('homeFeed').className='health-state neutral';
