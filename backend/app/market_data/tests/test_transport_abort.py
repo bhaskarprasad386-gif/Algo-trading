@@ -252,6 +252,7 @@ def test_sdk_close_falls_back_to_shutdown_when_abort_is_noop_and_sdk_clears_sock
         def shutdown(self):
             self.shutdown_called = True
             release_transport.set()
+            release_close_worker.set()
 
     low_level = NoopAbortLowLevelSocket()
     wsapp = SimpleNamespace(sock=low_level)
