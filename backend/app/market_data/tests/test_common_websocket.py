@@ -1860,7 +1860,7 @@ def test_exchange_freshness_snapshot_does_not_hide_stale_nse_nfo_behind_bse():
         manager._last_raw_frame_at_by_exchange_type.update({
             (group, 1): now - 60.0,
             (group, 2): now - 60.0,
-            (group, 5): now,
+            (group, 3): now,
         })
         manager._last_raw_frame_at_by_group[group] = now
         manager._socket_created_at[group] -= 60.0
