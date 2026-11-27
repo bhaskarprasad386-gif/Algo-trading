@@ -39,6 +39,16 @@ data class MarketOverviewResponse(
     val commodities: List<MarketOverviewRow> = emptyList(),
     val errors: List<Map<String, Any?>> = emptyList()
 )
+data class AppUpdateInfo(val platform: String = "android", val version_code: Int = 1, val version_name: String = "1.0", val release_notes: String = "", val apk_url: String = "", val sha256: String = "", val mandatory: Boolean = false)
+data class StrategyRegistryItem(
+    val id: String = "", val name: String = "", val version: String = "1",
+    val enabled: Boolean = true, val screen: String = "backend",
+    val data_mode: String = "", val execution_mode: String = "SCANNER ONLY",
+    val live_orders: Boolean = false, val capabilities: List<String> = emptyList(),
+    val live_route: String? = null, val workspace_route: String? = null
+)
+data class StrategyWorkspaceResponse(val status: String = "", val workspace: StrategyRegistryItem = StrategyRegistryItem())
+data class StrategyRegistryResponse(val strategies: List<StrategyRegistryItem> = emptyList())
 data class MarketLtpResponse(val status: Boolean = false, val exchange: String = "", val tradingsymbol: String = "", val symboltoken: String = "", val ltp: Double? = null)
 data class RealOwnerLoginRequest(val password: String)
 data class RealOwnerLoginResponse(val access_token: String = "", val token_type: String = "bearer", val expires_in: Long = 0L)
