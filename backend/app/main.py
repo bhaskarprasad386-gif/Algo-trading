@@ -48,7 +48,8 @@ from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
 from app.market_data.dashboard_snapshot_cache import cached_snapshot
 from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
-from app.market_data.shared_index_local_feed import SharedIndexRunnerLocalFeedManager
+from app.market_data.common_websocket import CommonWebSocketManager
+from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
@@ -110,7 +111,11 @@ install_iv_basket_immutability_guards(engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 shared_index_market_data_runner = SharedIndexMarketDataRunner(instrument_master=instrument_master)
-box_shared_feed_manager = SharedIndexRunnerLocalFeedManager(shared_index_market_data_runner)
+box_market_data_auth = AngelOneAuth()
+box_isolated_feed_manager = CommonWebSocketManager(
+    socket_factory=lambda: MarketDataWebSocket(auth=box_market_data_auth, auto_reconnect=False),
+    async_callback_dispatch=True,
+)
 configure_shared_index_runner_snapshot(shared_index_market_data_runner.snapshot)
 configure_shared_index_runner_health_snapshot(shared_index_market_data_runner.health_snapshot)
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
@@ -527,7 +532,7 @@ async def _shared_index_market_data_recovery_loop() -> None:
     retry_delay = 5.0
     max_retry_delay = 60.0
     try:
-        box_shared_feed_manager.attach()
+        
         while True:
             # Do not redownload the Angel One master while the runner is
             # already active; only retry after a failed start.
@@ -708,7 +713,7 @@ async def lifespan(app: FastAPI):
                 if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
                     app_logger.error("Background task shutdown failed: %s", result)
         try:
-            box_shared_feed_manager.close()
+            box_isolated_feed_manager.close()
         except Exception:
             app_logger.exception("Shared Runner local fan-out shutdown failed")
         # Broker adapters own authenticated provider sessions in process memory.
@@ -1451,7 +1456,7 @@ async def _live_box_spread_loop() -> None:
                 auth=AngelOneAuth(),
                 on_results=lambda results: _update_live_box_spread_results(results),
                     on_spot_price=_publish_box_spot_page_update,
-                shared_feed_manager=box_shared_feed_manager,
+                shared_feed_manager=box_isolated_feed_manager,
             )
             live_box_spread_runner = runner
             worker, worker_errors = _start_box_spread_runner_worker(runner)
@@ -1468,7 +1473,7 @@ async def _live_box_spread_loop() -> None:
                     consumer_namespace=f"box-stage-{uuid.uuid4().hex[:12]}",
                     publish_enabled=False,
                     publication_gate=runner.publication_gate,
-                    shared_feed_manager=box_shared_feed_manager,
+                    shared_feed_manager=box_isolated_feed_manager,
                 )
 
             def set_active_runner(active_runner):
@@ -2122,10 +2127,9 @@ def _save_iv_scanner_enabled(enabled: bool) -> bool:
 
 def _start_iv_skew_flip_runtime(*, iv_instruments=None):
     global iv_skew_flip_runtime
-    raise RuntimeError(
-        "IV Skew Flip live feed is paused: the production Angel One WebSocket "
-        "is reserved exclusively for SharedIndexMarketDataRunner (NIFTY/BANKNIFTY)"
-    )
+    runner_health = shared_index_market_data_runner.health_snapshot()
+    if not runner_health.get("enabled") or not runner_health.get("initial_option_bootstrap_done"):
+        raise RuntimeError("IV Scanner waits for the Shared Index Runner NIFTY/BANKNIFTY spot and option feed to become ready")
     # Serialize start/stop requests so simultaneous UI/API requests cannot
     # create duplicate IV consumers or publish a half-started runtime.
     with _iv_skew_flip_runtime_lock:
@@ -2156,7 +2160,7 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
         # IV and Box Spread share the process-wide Angel One manager.
         # IV consumers request mode 3, while the manager enforces one global
         # three-socket budget across all registered strategy subscriptions.
-        iv_feed_manager = shared_common_manager()
+        iv_feed_manager = None  # IV consumes runner-published records; it never registers a broker WebSocket consumer.
         runtime = IVSkewFlipRuntime(
             instrument_master=instrument_master,
             # Universe/early-move refresh is bounded at the supported 3s
