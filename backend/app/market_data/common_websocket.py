@@ -1205,7 +1205,48 @@ class CommonWebSocketManager:
             name=f"common-ws-connect-{group.mode}-{group.shard}",
             daemon=True,
         )
-        worker.start()
+        try:
+            worker.start()
+        except Exception as exc:
+            # Thread creation can fail under process/thread pressure. Since the
+            # connect body never ran, release its admission markers and leave the
+            # untouched placeholder eligible for a later reconcile retry.
+            with self._lock:
+                if self._connect_pending_generation.get(group) == generation:
+                    self._connect_pending_generation.pop(group, None)
+                if self._connect_started_generation.get(group) == generation:
+                    self._connect_started_generation.pop(group, None)
+                self._connect_retirement_claims.discard((group, generation))
+                is_current = (
+                    not self._closed
+                    and self._sockets.get(group) is socket
+                    and self._socket_generation.get(group) == generation
+                )
+                if is_current:
+                    self._connect_failures += 1
+                    self._last_connect_failure = {
+                        "group": f"{group.mode}:{group.shard}",
+                        "error_type": type(exc).__name__,
+                        "error": f"connect worker start failed: {exc}",
+                        "failed_at_ns": time.time_ns(),
+                        "subscriptions": len(pairs),
+                    }
+            if is_current:
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type=type(exc).__name__,
+                    message=f"connect worker start failed: {exc}",
+                    context={
+                        "event": "socket_connect_worker_start",
+                        "group": f"{group.mode}:{group.shard}",
+                        "generation": generation,
+                        "subscriptions": len(pairs),
+                    },
+                )
+            raise RuntimeError(
+                f"Unable to start WebSocket connect worker for group "
+                f"{group.mode}:{group.shard}: {type(exc).__name__}: {exc}"
+            ) from exc
         # Keep the old immediate-error behavior for callers/tests, but cap how
         # long reconcile waits. If connect hangs, the recovery loop can replace
         # the socket after _connect_timeout_seconds instead of waiting on this
@@ -1487,7 +1528,23 @@ class CommonWebSocketManager:
             name=f"common-ws-{operation_name}-{group.mode}-{group.shard}",
             daemon=True,
         )
-        worker.start()
+        try:
+            worker.start()
+        except Exception as exc:
+            # No SDK call ran. Remove the reservation so a later reconcile or
+            # caller retry is not permanently rejected as an in-flight operation.
+            with self._lock:
+                tracked = self._socket_operation_workers.pop(operation_id, None)
+                self._socket_operation_events.pop(operation_id, None)
+                if tracked is not None:
+                    tracked["worker_alive"] = False
+                    tracked["outcome"] = "start_failed"
+                    tracked["completed_at"] = time.monotonic()
+                    self._socket_operation_worker_failures += 1
+            raise RuntimeError(
+                f"Unable to start WebSocket {operation_name} worker for group "
+                f"{group_key}: {type(exc).__name__}: {exc}"
+            ) from exc
         finished = completed.wait(timeout=max(0.01, self._socket_call_wait_seconds))
         error = failure.get("exception")
         if finished and error is None:
