@@ -62,12 +62,12 @@ def test_box_session_failure_cleans_up_without_disabling_supervisor(monkeypatch)
         def start(self):
             pass
 
-    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "BoxSpreadAtmTracker", Tracker)
     monkeypatch.setattr(
-        mod, "concrete_strikes_from_master",
+        mod, "box_spread_strikes_from_master",
         lambda *args, **kwargs: {"ABC": (100.0, 110.0)},
     )
-    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "BoxSpreadUnderlyingFeed", Feed)
     monkeypatch.setattr(mod, "Thread", InlineThread)
 
     def fail_selection(*args, **kwargs):
