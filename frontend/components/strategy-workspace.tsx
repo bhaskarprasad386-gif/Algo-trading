@@ -962,10 +962,10 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   }, [slug]);
 
   const saveIndexSelection = async () => {
-    if (slug !== "box-spread" || (indexSelectionDraft.length === 0 && weeklyOnlyDraft.length === 0)) return;
+    if (slug !== "box-spread" || indexSelectionDraft.length === 0) return;
     const saveRequestSequence = ++indexSelectionRequestSequence.current;
-    const weeklyOnly = weeklyOnlyDraft;
-    const effectiveSymbols = Array.from(new Set([...indexSelectionDraft, ...weeklyOnly]));
+    const weeklyOnly: string[] = [];
+    const effectiveSymbols = Array.from(new Set(indexSelectionDraft));
     setIndexSelectionSaving(true);
     setIndexSelectionError(null);
     setIndexSelectionMessage("");
@@ -1570,24 +1570,16 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </button>
           {indexSettingsExpanded && <div className="box-index-settings-content">
           <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">All Indices</button>
-            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","SENSEX"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY + SENSEX</button>
-            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","SENSEX","BANKNIFTY"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY + SENSEX + BANKNIFTY</button>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => { setIndexSelectionDraft(["NIFTY","BANKNIFTY"]); setWeeklyOnlyDraft([]); }} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY + BANKNIFTY</button>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => { setIndexSelectionDraft(["NIFTY"]); setWeeklyOnlyDraft([]); }} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY Only</button>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => { setIndexSelectionDraft(["BANKNIFTY"]); setWeeklyOnlyDraft([]); }} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">BANKNIFTY Only</button>
           </div>
           <div className="mt-3 rounded-lg border theme-border theme-surface-2 p-3">
-            <p className="text-xs font-extrabold theme-text">Expiry subscription mode</p>
-            <p className="mt-1 text-[11px] theme-muted">NIFTY/SENSEX default: Weekly + Monthly. Enable Weekly Only to subscribe just that index's weekly contracts.</p>
-            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {(["NIFTY", "SENSEX"] as const).map(symbol => (
-                <label key={symbol} className="flex min-h-10 items-center gap-2 rounded-lg border theme-border px-3 text-xs font-bold theme-text">
-                  <input type="checkbox" checked={weeklyOnlyDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading} onChange={event => { setWeeklyOnlyDraft(current => event.target.checked ? [...current.filter(item => item !== symbol), symbol] : current.filter(item => item !== symbol)); if (event.target.checked) setIndexSelectionDraft(current => current.filter(item => item !== symbol)); }} className="h-4 w-4 accent-emerald-600" />
-                  {symbol} Weekly Only
-                </label>
-              ))}
-            </div>
+            <p className="text-xs font-extrabold theme-text">Locked expiry routing</p>
+            <p className="mt-1 text-[11px] theme-muted">NIFTY weekly options and BANKNIFTY monthly options only. Box Scanner reads the same 31-strike CE/PE windows published by the Shared Runner.</p>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-            {["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"].map(symbol => (
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-2 xl:grid-cols-2">
+            {["NIFTY","BANKNIFTY"].map(symbol => (
               <label key={symbol} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3 text-xs font-bold theme-text">
                 <input type="checkbox" checked={indexSelectionDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading} onChange={(event) => { setIndexSelectionDraft(current => event.target.checked ? [...current.filter(item => item !== symbol), symbol] : current.filter(item => item !== symbol)); if (event.target.checked) setWeeklyOnlyDraft(current => current.filter(item => item !== symbol)); }} className="h-4 w-4 accent-emerald-600" />
                 {symbol}
