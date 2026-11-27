@@ -169,3 +169,32 @@ def test_local_feed_rejects_instruments_not_owned_by_shared_runner():
             feed.stop()
     finally:
         manager.close()
+
+
+def test_local_fanout_evicts_oldest_tick_when_bounded_queue_is_full():
+    runner = FakeSharedRunner()
+    manager = SharedIndexRunnerLocalFeedManager(runner, queue_capacity=1)
+    descriptor, first = _spot()
+    runner.state._allowed_keys = {descriptor.key.value}
+    manager.attach()
+    manager._ensure_worker_locked = lambda: None
+    manager.subscribe("box-queue-test", (descriptor.key,))
+
+    second = MarketDataRecord(
+        instrument=descriptor.key,
+        symbol="NIFTY",
+        instrument_type=InstrumentType.INDEX,
+        timestamp_ns=first.timestamp_ns + 1,
+        ltp=24001.0,
+        underlying="NIFTY",
+    )
+    try:
+        runner.publish(first)
+        runner.publish(second)
+        assert manager.snapshot()["queue_depth"] == 1
+        assert manager.snapshot()["queue_dropped"] == 1
+        queued = manager._queue.get_nowait()
+        manager._queue.task_done()
+        assert queued is second
+    finally:
+        manager.close()
