@@ -70,4 +70,4 @@ class BoxSpreadBacktester:
         return ArbitrageOpportunity("BOX",direction,low.timestamp_ns,low.underlying,low.expiry,low.strike,high.strike,edge,pnl,pnl,width)
 
 
-__all__=["ArbitrageOpportunity","BoxSpreadBacktester","FutureQuote","LiquidityPolicy","OptionQuote","SyntheticCashCarryBacktester"]
+__all__=["ArbitrageOpportunity","BoxSpreadBacktester","FutureQuote","LiquidityPolicy","OptionQuote"]
