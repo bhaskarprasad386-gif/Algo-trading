@@ -243,9 +243,9 @@ async def lifespan(app: FastAPI):
     # A single market-data WebSocket owner is permitted in production:
     # SharedIndexMarketDataRunner for NIFTY/BANKNIFTY only. The isolated
     # Shoonya supervisor is deliberately not started by application lifespan.
-    # IV Skew Flip is intentionally not started: the production Angel One
-    # WebSocket has one owner, SharedIndexMarketDataRunner, until IV is migrated
-    # to consume its published records without opening another feed consumer.
+    # IV Skew Flip may run only as a read-only consumer of records already
+    # published by SharedIndexMarketDataRunner. It must never create a broker
+    # WebSocket manager or register its own spot, option, or futures subscriptions.
     # Shared Index Market Data is data-only and isolated: no strategy signals or orders.
     if _shared_index_runner_task is None:
         _shared_index_runner_task = asyncio.create_task(_shared_index_market_data_recovery_loop())
