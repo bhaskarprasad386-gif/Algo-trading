@@ -723,7 +723,7 @@ class SharedIndexMarketDataRunner:
             per_underlying[underlying] == expected_by_underlying[underlying]
             for underlying in LOCKED
         )
-        universe_complete = _lifecycle_universe_complete(lifecycle)
+        universe_complete = observed_universe_complete and _lifecycle_universe_complete(lifecycle)
         feed_groups = state.get("feed_health_by_group", {})
         all_records_fresh = len(enriched_records) == 128 and all(
             record.get("fresh") for record in enriched_records
