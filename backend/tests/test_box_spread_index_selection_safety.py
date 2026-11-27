@@ -310,3 +310,11 @@ def test_box_spread_page_push_is_coalesced_at_250ms_not_one_second(monkeypatch):
     clock["now"] += 0.16
     main._update_live_box_spread_results(())
     assert len(published) == 2
+
+
+def test_box_paper_trading_http_and_private_websocket_routes_are_not_mounted():
+    paths = [
+        getattr(route, "path", "")
+        for route in main.app.routes
+    ]
+    assert not any(path.startswith("/api/v1/scanner/box-spread-paper") for path in paths)
