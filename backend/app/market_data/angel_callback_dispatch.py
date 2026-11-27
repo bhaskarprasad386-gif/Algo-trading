@@ -158,12 +158,22 @@ class AngelShardCallbackAdapter:
             if self._thread is not None and self._thread.is_alive():
                 return
             self._stop.clear()
-            self._thread = Thread(
+            worker = Thread(
                 target=self._run,
                 name=f"angel-shard-callback-{id(self):x}",
                 daemon=True,
             )
-            self._thread.start()
+            self._thread = worker
+            try:
+                worker.start()
+            except Exception:
+                # Thread.start() failure means _run/finally never executes.
+                # Do not retain an unstarted Thread: stop() cannot join it,
+                # and later start attempts must remain eligible.
+                if self._thread is worker:
+                    self._thread = None
+                self._stop.set()
+                raise
 
     def _run(self) -> None:
         while not self._stop.is_set() or not self._queue.empty():
