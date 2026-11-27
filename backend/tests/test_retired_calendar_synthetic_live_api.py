@@ -177,3 +177,7 @@ def test_iv_runtime_has_no_direct_websocket_fallbacks():
     assert "_DisabledIVMarketDataTransport" in runtime
     assert "SHARED_RUNNER_REQUIRED" in runtime
     assert "cannot accept a direct feed manager" in runtime
+    assert "download_iv_instruments" not in runtime
+    assert "instrument_rows_snapshot" in runtime
+    assert "download_iv_instruments" not in main
+    assert "instrument_rows_snapshot" in (root / "app" / "market_data" / "shared_index_market_data_runner.py").read_text(encoding="utf-8")
