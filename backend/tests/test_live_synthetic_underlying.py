@@ -231,7 +231,7 @@ def test_underlying_feed_clears_old_subscription_when_all_tokens_become_unresolv
     class FakeFeed:
         descriptor = staticmethod(original_descriptor)
 
-        def __init__(self, consumer, *, auth):
+        def __init__(self, consumer, *, auth, manager=None):
             self.start_calls = 0
             self.stop_calls = 0
 
