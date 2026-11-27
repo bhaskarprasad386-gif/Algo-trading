@@ -2065,55 +2065,32 @@ def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
 @app.get("/api/v1/market-data/runtime/health")
 @cached_snapshot(ttl_seconds=5.0, max_stale_seconds=20.0)
 def market_data_runtime_health():
-    """Expose process-local live-feed diagnostics for runtime troubleshooting."""
-    global _provider_readiness_observer_manager_id
-    manager = shared_common_manager()
-    # Register exactly once per shared manager instance. This is an additive
-    # read-only observer; it never mutates subscriptions or scanner callbacks.
-    with _provider_readiness_observer_lock:
-        manager_identity = id(manager)
-        if _provider_readiness_observer_manager_id != manager_identity:
-            manager.register_normalized_observer(
-                "provider-readiness-shadow", provider_readiness_bridge.angel_market_event
-            )
-            manager.register_transport_observer(
-                "provider-readiness-transport-shadow", provider_readiness_bridge.angel_transport_event
-            )
-            _provider_readiness_observer_manager_id = manager_identity
-    cash_runner = live_cash_future_runner
-    calendar_runner = live_calendar_spread_runner
-    synthetic_runner = live_synthetic_runner
+    """Expose only the Shared Runner's NIFTY/BANKNIFTY feed and Box Spread consumer."""
+    runner_snapshot = shared_index_market_data_runner.snapshot()
+    lifecycle = runner_snapshot.get("lifecycle", {}) if isinstance(runner_snapshot, dict) else {}
+    common_feed = lifecycle.get("shared_websocket", {}) if isinstance(lifecycle, dict) else {}
+    if not isinstance(common_feed, dict):
+        common_feed = {}
+    common_feed = dict(common_feed)
+    common_feed["owner"] = "SharedIndexMarketDataRunner"
+    common_feed["universe"] = ["NIFTY", "BANKNIFTY"]
     box_runner = live_box_spread_runner
-    calendar_counts = live_calendar_spread_scanner.counts_snapshot()
-    health_snapshot = getattr(manager, "health_snapshot", None)
-    common_feed = health_snapshot() if callable(health_snapshot) else manager.snapshot()
-    # The synthetic scanner needs both NSE underlying and NFO derivatives.
-    # A fresh tick from another exchange must not mask a missing/stale primary feed.
-    feed_health = _summarize_primary_exchange_feed(common_feed)
-    common_feed["age_seconds"] = feed_health["age_seconds"]
-    common_feed["status"] = feed_health["status"]
-    common_feed["exchange_freshness"] = feed_health["exchange_freshness"]
-    common_feed["required_exchange_types"] = [1, 2]
+    box_snapshot = None if box_runner is None else box_runner.snapshot()
     return {
         "status": "ok",
         "server_timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
         "common_feed": common_feed,
-        "provider_readiness": provider_readiness_bridge.snapshot(),
         "event_loop": event_loop_lag_monitor.snapshot(),
         "dashboard_stream": _dashboard_stream_telemetry.snapshot(),
         "runners": {
-            "cash_future": None if cash_runner is None else cash_runner.snapshot(),
-            "calendar_spread": None if calendar_runner is None else calendar_runner.snapshot(),
-            "synthetic_arbitrage": None if synthetic_runner is None else synthetic_runner.snapshot(),
-            "box_spread": None if box_runner is None else box_runner.snapshot(),
+            "shared_index_market_data": runner_snapshot,
+            "box_spread": box_snapshot,
         },
         "scanner": {
-            "strategy": "calendar-spread",
-            "signals": calendar_counts["signals"],
-            "pairs": calendar_counts["pairs"],
-            "diagnostics": live_calendar_spread_scanner.diagnostics_snapshot(limit=50)["counters"],
+            "strategy": "box-spread",
+            "opportunities": len(live_box_spread_latest_results),
         },
-        "cash_future_scanner": live_cash_future_scanner.health(),
+        "live_orders": "OFF",
     }
 
 
