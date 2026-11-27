@@ -24,7 +24,7 @@ from app.execution.recovery_coordinator import review_account_recovery
 from app.execution.broker_snapshot_event_sync import sync_account_order_status_events
 from app.execution.broker_tradebook_fill_sync import sync_account_tradebook_fills
 from app.execution.broker_event_review import review_deferred_broker_events
-from app.models import BoxSpreadRealOwnerState
+from app.models import RealTradingOwnerState
 from app.brokers.broker_event_replay_review_routes import router as replay_eligibility_router
 
 router = APIRouter(prefix="/api/v1/brokers", tags=["brokers"])
@@ -97,8 +97,8 @@ def sync_broker_order_status_events(
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     """Persist immutable order-status evidence from one complete current-day broker snapshot."""
-    owner_state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"  # Legacy durable owner key retained for existing account bindings
+    owner_state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"  # Legacy durable owner key retained for existing account bindings
     ).first()
     if owner_state is None or not owner_state.broker_name:
         raise HTTPException(status_code=409, detail="No authenticated real-trading broker account is bound")
@@ -149,8 +149,8 @@ def sync_broker_tradebook_fills(
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     """Atomically ingest real tradebook fills for the one authenticated real-trading account."""
-    owner_state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    owner_state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"
     ).first()
     if owner_state is None or not owner_state.broker_name:
         raise HTTPException(status_code=409, detail="No authenticated real-trading broker account is bound")
@@ -207,8 +207,8 @@ def review_broker_callback_events(
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     """Read-only visibility into persisted callbacks whose fill evidence is unresolved."""
-    owner_state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    owner_state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"
     ).first()
     if owner_state is None or not owner_state.broker_name:
         raise HTTPException(status_code=409, detail="No authenticated real-trading broker account is bound")
@@ -271,8 +271,8 @@ def review_execution_recovery(
     user_id: int = Depends(require_real_owner_access),
 ) -> dict:
     """Read-only review of pending execution intents against the active broker session."""
-    owner_state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    owner_state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"
     ).first()
     if owner_state is None or not owner_state.broker_name:
         raise HTTPException(status_code=409, detail="No authenticated real-trading broker account is bound")
@@ -320,8 +320,8 @@ def review_execution_recovery(
 @router.get("/safety")
 def safety_status(db: Session = Depends(get_db), user_id: int = Depends(require_real_owner_access)) -> dict:
     # Report the durable owner flags, not process-local memory that resets on restart.
-    state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"
     ).first()
     if state is None:
         return {"real_trading_enabled": False, "kill_switch": True, "enabled_at": None}
@@ -415,8 +415,8 @@ def status(broker: str, db: Session = Depends(get_db), user_id: int = Depends(re
     key = (user_id, broker.strip().lower())
     adapter = broker_sessions.get(*key)
     item = broker_connections.get(user_id, key[1])
-    owner_state = db.query(BoxSpreadRealOwnerState).filter(
-        BoxSpreadRealOwnerState.owner_key == "box-spread-real-owner"
+    owner_state = db.query(RealTradingOwnerState).filter(
+        RealTradingOwnerState.owner_key == "box-spread-real-owner"
     ).first()
     # The durable row is authoritative; missing ownership must remain fail-closed.
     return {
