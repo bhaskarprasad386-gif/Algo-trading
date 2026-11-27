@@ -18,7 +18,24 @@ class FakeSharedState:
         self.records = list(records)
 
     def records_snapshot(self):
-        return list(self.records)
+        raise AssertionError("IV adapter should use indexed raw accessors")
+
+    def latest_records_for_instruments(self, instrument_type, underlyings):
+        symbols = {str(item).upper() for item in underlyings}
+        return [
+            row for row in self.records
+            if str(row.get("instrument_type", "")).lower() == instrument_type
+            and str(row.get("underlying", "")).upper() in symbols
+        ]
+
+    def latest_records_for_tokens(self, tokens, *, exchange=None, segment=None):
+        requested = {str(token) for token in tokens}
+        return [
+            row for row in self.records
+            if str(row.get("token", "")) in requested
+            and (exchange is None or str(row.get("exchange", "NFO")).upper() == exchange)
+            and (segment is None or str(row.get("segment", "NFO")).upper() == segment)
+        ]
 
 
 class FakeSharedRunner:

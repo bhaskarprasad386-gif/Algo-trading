@@ -1157,6 +1157,17 @@ class IVSkewFlipRuntime:
                 symbol: dict(value) for symbol, value in self._equity_pressure_by_underlying.items()
             }
             basis_analysis = {symbol: dict(value) for symbol, value in self._basis_analysis.items()}
+            universe_tokens = {
+                stream_id: len(tokens) for stream_id, tokens in self._universe_tokens.items()
+            }
+            expiry_diagnostics = {
+                stream_id: dict(value) for stream_id, value in self._expiry_diagnostics.items()
+            }
+        # Feed/sampler snapshots can inspect locks and bounded histories. Build
+        # each once per runtime snapshot, then reuse the exact same view in both
+        # option_chains and indices to avoid duplicate work/inconsistent reads.
+        feed_snapshots = {stream_id: feed.snapshot() for stream_id, feed in feeds.items()}
+        sampler_snapshots = {stream_id: sampler.snapshot() for stream_id, sampler in samplers.items()}
         return {
             "status": "STOPPING" if self._stopping else ("RUNNING" if started else "STOPPED"),
             "consumer": "iv-skew-flip",
@@ -1165,10 +1176,15 @@ class IVSkewFlipRuntime:
                 {
                     "isolation": "SHARED_INDEX_MARKET_DATA_RUNNER",
                     "runner": (
-                        self.shared_runner.health_snapshot()
+                        self.shared_runner.readiness_snapshot()
                         if self.shared_runner is not None
-                        and callable(getattr(self.shared_runner, "health_snapshot", None))
-                        else None
+                        and callable(getattr(self.shared_runner, "readiness_snapshot", None))
+                        else (
+                            self.shared_runner.health_snapshot()
+                            if self.shared_runner is not None
+                            and callable(getattr(self.shared_runner, "health_snapshot", None))
+                            else None
+                        )
                     ),
                     "manager_owner": "APPLICATION",
                     "manager": manager_snapshot,
@@ -1218,11 +1234,11 @@ class IVSkewFlipRuntime:
                     "status": (
                         "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS}
                         else "WAITING_FOR_SPOT"
-                    ) if stream_id not in feeds else feeds[stream_id].snapshot().get("status", "WAITING"),
-                    "option_feed": feeds[stream_id].snapshot() if stream_id in feeds else {"status": "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS} else "WAITING_FOR_SPOT"},
-                    "sampler": samplers[stream_id].snapshot() if stream_id in samplers else {"status": "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS} else "WAITING"},
-                    "universe_tokens": len(self._universe_tokens.get(stream_id, ())),
-                    "expiry_selection": dict(self._expiry_diagnostics.get(stream_id, {})),
+                    ) if stream_id not in feeds else feed_snapshots[stream_id].get("status", "WAITING"),
+                    "option_feed": feed_snapshots[stream_id] if stream_id in feeds else {"status": "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS} else "WAITING_FOR_SPOT"},
+                    "sampler": sampler_snapshots[stream_id] if stream_id in samplers else {"status": "DISABLED_BY_SCOPE" if stream_id not in {key for key, _ in ACTIVE_CHAIN_CONFIGS} else "WAITING"},
+                    "universe_tokens": universe_tokens.get(stream_id, 0),
+                    "expiry_selection": expiry_diagnostics.get(stream_id, {}),
                     "error": errors.get(stream_id),
                     "signals": signals.get(stream_id),
                     "early_move": early_move.get(stream_id),
@@ -1231,16 +1247,16 @@ class IVSkewFlipRuntime:
             },
             "indices": {
                 "NIFTY": {
-                    "option_feed": feeds["NIFTY_WEEKLY"].snapshot() if "NIFTY_WEEKLY" in feeds else {"status": "WAITING_FOR_SPOT"},
-                    "sampler": samplers["NIFTY_WEEKLY"].snapshot() if "NIFTY_WEEKLY" in samplers else {"status": "WAITING"},
-                    "universe_tokens": len(self._universe_tokens.get("NIFTY_WEEKLY", ())),
+                    "option_feed": feed_snapshots["NIFTY_WEEKLY"] if "NIFTY_WEEKLY" in feeds else {"status": "WAITING_FOR_SPOT"},
+                    "sampler": sampler_snapshots["NIFTY_WEEKLY"] if "NIFTY_WEEKLY" in samplers else {"status": "WAITING"},
+                    "universe_tokens": universe_tokens.get("NIFTY_WEEKLY", 0),
                     "error": errors.get("NIFTY_WEEKLY"),
                     "signals": signals.get("NIFTY_WEEKLY"),
                 },
                 "BANKNIFTY": {
-                    "option_feed": feeds["BANKNIFTY_MONTHLY"].snapshot() if "BANKNIFTY_MONTHLY" in feeds else {"status": "WAITING_FOR_SPOT"},
-                    "sampler": samplers["BANKNIFTY_MONTHLY"].snapshot() if "BANKNIFTY_MONTHLY" in samplers else {"status": "WAITING"},
-                    "universe_tokens": len(self._universe_tokens.get("BANKNIFTY_MONTHLY", ())),
+                    "option_feed": feed_snapshots["BANKNIFTY_MONTHLY"] if "BANKNIFTY_MONTHLY" in feeds else {"status": "WAITING_FOR_SPOT"},
+                    "sampler": sampler_snapshots["BANKNIFTY_MONTHLY"] if "BANKNIFTY_MONTHLY" in samplers else {"status": "WAITING"},
+                    "universe_tokens": universe_tokens.get("BANKNIFTY_MONTHLY", 0),
                     "error": errors.get("BANKNIFTY_MONTHLY"),
                     "signals": signals.get("BANKNIFTY_MONTHLY"),
                 },

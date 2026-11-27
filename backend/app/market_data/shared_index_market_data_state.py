@@ -23,6 +23,9 @@ class SharedIndexMarketDataState:
         self.max_age_ns = int(max_age_seconds * 1_000_000_000)
         self._lock = RLock()
         self._latest: dict[str, Any] = {}
+        # Secondary indexes avoid rebuilding the full enriched snapshot for IV.
+        self._latest_by_token: dict[str, dict[str, Any]] = {}
+        self._latest_by_underlying_type: dict[tuple[str, str], dict[str, Any]] = {}
         # Once the runner publishes its owned universe, late ticks for retired
         # contracts are rejected instead of repopulating the cache after rotation.
         self._allowed_keys: set[str] | None = None
@@ -63,6 +66,15 @@ class SharedIndexMarketDataState:
                 self._capacity_dropped += 1
                 return False
             self._latest[key] = record
+            token = str(getattr(getattr(record, "instrument", None), "token", "") or "")
+            if token:
+                # Broker tokens are only unique within an exchange/segment.
+                # Preserve full identity so NSE/NFO collisions cannot cross-match.
+                self._latest_by_token.setdefault(token, {})[key] = record
+            underlying = str(getattr(record, "underlying", "") or "").strip().upper()
+            kind = str(getattr(getattr(record, "instrument_type", None), "value", "") or "").lower()
+            if underlying and kind == "index":
+                self._latest_by_underlying_type.setdefault((underlying, kind), {})[key] = record
             cutoff = ts - 5_000_000_000
             if record.oi is not None:
                 history = self._oi_history.setdefault(key, deque(maxlen=self.MAX_OI_HISTORY))
@@ -104,6 +116,8 @@ class SharedIndexMarketDataState:
             for key in tuple(self._latest):
                 get_shared_market_data_cache().delete(key)
             self._latest.clear()
+            self._latest_by_token.clear()
+            self._latest_by_underlying_type.clear()
             self._allowed_keys = None
             self._oi_history.clear()
             self._volume_history.clear()
@@ -124,7 +138,23 @@ class SharedIndexMarketDataState:
             self._allowed_keys = allowed
             removed = [key for key in self._latest if key not in allowed]
             for key in removed:
-                self._latest.pop(key, None)
+                retired = self._latest.pop(key, None)
+                if retired is not None:
+                    token = str(getattr(getattr(retired, "instrument", None), "token", "") or "")
+                    if token:
+                        token_records = self._latest_by_token.get(token)
+                        if token_records is not None:
+                            token_records.pop(key, None)
+                            if not token_records:
+                                self._latest_by_token.pop(token, None)
+                    underlying = str(getattr(retired, "underlying", "") or "").strip().upper()
+                    kind = str(getattr(getattr(retired, "instrument_type", None), "value", "") or "").lower()
+                    if underlying and kind:
+                        indexed_records = self._latest_by_underlying_type.get((underlying, kind))
+                        if indexed_records is not None:
+                            indexed_records.pop(key, None)
+                            if not indexed_records:
+                                self._latest_by_underlying_type.pop((underlying, kind), None)
                 # Retired contracts must not leave replayable quotes in the shared cache.
                 get_shared_market_data_cache().delete(key)
                 self._oi_history.pop(key, None)
@@ -132,6 +162,40 @@ class SharedIndexMarketDataState:
                 self._tick_history.pop(key, None)
             return len(removed)
 
+
+
+    def latest_records_for_tokens(
+        self, tokens, *, exchange: str | None = None, segment: str | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        """Return raw latest records by token, optionally constrained to venue identity.
+
+        Broker tokens are not globally unique; callers resolving a specific
+        instrument universe must pass its exchange and segment.
+        """
+        requested = tuple(dict.fromkeys(str(token) for token in tokens if str(token)))
+        wanted_exchange = str(exchange or "").strip().upper()
+        wanted_segment = str(segment or "").strip().upper()
+        with self._lock:
+            records = tuple(
+                record
+                for token in requested
+                for record in self._latest_by_token.get(token, {}).values()
+                if (not wanted_exchange or record.instrument.exchange.strip().upper() == wanted_exchange)
+                and (not wanted_segment or record.instrument.segment.strip().upper() == wanted_segment)
+            )
+        return tuple(record.as_dict() for record in records)
+
+    def latest_records_for_instruments(self, instrument_type: str, underlyings) -> tuple[dict[str, Any], ...]:
+        """Return raw latest records for a small set of underlying/type pairs."""
+        kind = str(instrument_type or "").strip().lower()
+        symbols = tuple(dict.fromkeys(str(item).strip().upper() for item in underlyings if str(item).strip()))
+        with self._lock:
+            records = tuple(
+                max(indexed_records.values(), key=lambda record: record.timestamp_ns)
+                for symbol in symbols
+                if (indexed_records := self._latest_by_underlying_type.get((symbol, kind)))
+            )
+        return tuple(record.as_dict() for record in records)
 
     def records_snapshot(self) -> list[dict[str, Any]]:
         """Return bounded current records with per-contract OI change over ~1s."""

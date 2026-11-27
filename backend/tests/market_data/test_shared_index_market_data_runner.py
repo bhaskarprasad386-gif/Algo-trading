@@ -448,6 +448,34 @@ def test_stale_master_refresh_failure_cannot_pollute_restarted_runner_epoch():
 
 
 
+def test_readiness_snapshot_is_lock_only_and_reports_lifecycle_flags():
+    runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(_rows()), manager=RunnerManager())
+    runner._running = True
+    runner._bootstrap_options_done = True
+    assert runner.readiness_snapshot() == {
+        "enabled": True,
+        "initial_option_bootstrap_done": True,
+    }
+    runner._running = False
+    assert runner.readiness_snapshot()["enabled"] is False
+
+
+def test_futures_rollover_selection_is_cached_for_market_date(monkeypatch):
+    rows = _rows()
+    runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=RunnerManager())
+    runner._rows = tuple(rows)
+    runner._futures_expiries = {"NIFTY": "2026-11-26", "BANKNIFTY": "2026-12-24"}
+    calls = []
+    original = runner.choose_nearest_future
+    def counted(rows_arg, underlying, *, today=None):
+        calls.append(underlying)
+        return original(rows_arg, underlying, today=today)
+    monkeypatch.setattr(runner, "choose_nearest_future", counted)
+    assert runner._check_futures_rollover() == ()
+    assert runner._check_futures_rollover() == ()
+    assert calls == ["NIFTY", "BANKNIFTY"]
+
+
 def test_futures_rollover_is_serialized_with_runner_stop():
     from threading import Event, Thread
     import time
@@ -465,6 +493,7 @@ def test_futures_rollover_is_serialized_with_runner_stop():
         return original_select(rows, underlying, today=today)
     runner.choose_nearest_future = blocked_selection
     runner._futures_expiries = {}  # force a replacement-selection path for the race
+    runner._futures_selection_date = None  # force a cache miss so selection remains in-flight
 
     rollover_done, stop_done = Event(), Event()
     rollover_thread = Thread(target=lambda: (runner._check_futures_rollover(), rollover_done.set()), daemon=True)

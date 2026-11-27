@@ -18,9 +18,12 @@ from .sampler import SpotSnapshot
 
 def _shared_runner_health(shared_runner: Any) -> dict[str, Any]:
     """Read current shared-runner health; cached quotes do not prove liveness."""
+    # IV readiness only needs two lifecycle flags. Prefer the lock-only API
+    # so one-second sampling never traverses all shared-feed records/registry.
+    readiness = getattr(shared_runner, "readiness_snapshot", None)
     health = getattr(shared_runner, "health_snapshot", None)
     try:
-        snapshot = health() if callable(health) else shared_runner.snapshot()
+        snapshot = readiness() if callable(readiness) else (health() if callable(health) else shared_runner.snapshot())
     except Exception:
         return {}
     return snapshot if isinstance(snapshot, dict) else {}
@@ -75,6 +78,9 @@ class IVSharedRunnerSpotFeedAdapter:
     def _records(self) -> list[dict[str, Any]]:
         state = getattr(self.shared_runner, "state", None)
         records = getattr(state, "records_snapshot", None)
+        indexed = getattr(state, "latest_records_for_instruments", None)
+        if callable(indexed):
+            return list(indexed("index", self.DEFAULT_SYMBOLS))
         return records() if callable(records) else []
 
     def _refresh_last(self) -> None:
@@ -274,7 +280,10 @@ class IVSharedRunnerOptionFeedAdapter:
         """Return one newest, identity-matched shared quote per requested token."""
         expected = {str(item.token): item for item in universe.contracts}
         latest: dict[str, dict[str, Any]] = {}
-        for row in self.shared_runner.state.records_snapshot():
+        state = self.shared_runner.state
+        indexed = getattr(state, "latest_records_for_tokens", None)
+        rows = indexed(expected, exchange="NFO", segment="NFO") if callable(indexed) else state.records_snapshot()
+        for row in rows:
             token = str(row.get("token") or "")
             contract = expected.get(token)
             if contract is None or str(row.get("instrument_type") or "").lower() != "option":

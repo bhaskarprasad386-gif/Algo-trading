@@ -1184,3 +1184,55 @@ def test_shared_runner_mode_never_constructs_an_iv_owned_future_websocket_feed()
     assert runtime.future_feed.snapshot()["status"] == "DISABLED_BY_SCOPE"
     assert runtime.future_feed.snapshot()["owns_subscriptions"] is False
     assert runtime.spot_feed.snapshot()["subscription_owner"] == "shared-index-market-data"
+
+
+def test_runtime_snapshot_uses_readiness_without_full_shared_runner_health():
+    class SharedRunner:
+        def readiness_snapshot(self):
+            return {"enabled": True, "initial_option_bootstrap_done": True}
+
+        def health_snapshot(self):
+            raise AssertionError("runtime status snapshot must not build full runner diagnostics")
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        shared_runner=SharedRunner(),
+    )
+
+    snapshot = runtime.snapshot()
+
+    assert snapshot["market_data_connection"]["runner"] == {
+        "enabled": True,
+        "initial_option_bootstrap_done": True,
+    }
+    assert runtime.stop()["status"] == "STOPPED"
+
+
+def test_runtime_snapshot_builds_each_feed_and_sampler_view_once():
+    class CountingSnapshot:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = 0
+
+        def snapshot(self):
+            self.calls += 1
+            return dict(self.payload)
+
+    runtime = IVSkewFlipRuntime(instrument_master=FakeMaster([]))
+    feeds = {
+        "NIFTY_WEEKLY": CountingSnapshot({"status": "LIVE", "consumer": "nifty"}),
+        "BANKNIFTY_MONTHLY": CountingSnapshot({"status": "LIVE", "consumer": "banknifty"}),
+    }
+    samplers = {
+        "NIFTY_WEEKLY": CountingSnapshot({"status": "RUNNING"}),
+        "BANKNIFTY_MONTHLY": CountingSnapshot({"status": "RUNNING"}),
+    }
+    runtime._option_feeds = feeds
+    runtime._samplers = samplers
+
+    snapshot = runtime.snapshot()
+
+    assert all(feed.calls == 1 for feed in feeds.values())
+    assert all(sampler.calls == 1 for sampler in samplers.values())
+    assert snapshot["option_chains"]["NIFTY_WEEKLY"]["option_feed"] == snapshot["indices"]["NIFTY"]["option_feed"]
+    assert snapshot["option_chains"]["BANKNIFTY_MONTHLY"]["sampler"] == snapshot["indices"]["BANKNIFTY"]["sampler"]

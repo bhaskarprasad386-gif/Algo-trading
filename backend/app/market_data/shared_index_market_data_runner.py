@@ -188,6 +188,8 @@ class SharedIndexMarketDataRunner:
         self._bootstrap_inflight = False
         self._spot_records: dict[str, Any] = {}
         self._futures_expiries: dict[str, str] = {}
+        self._futures_selection_date: date | None = None
+        self._futures_selection_cache: dict[str, dict] = {}
         self._master_refresh_interval_seconds = 24 * 60 * 60.0
         # Failed refreshes retry on a bounded short interval, not the full 24h cadence.
         self._master_refresh_retry_delay_seconds = 60.0
@@ -264,6 +266,9 @@ class SharedIndexMarketDataRunner:
                     if not self._running or generation != self._run_generation:
                         return
                     self._rows = refreshed
+                    # A refreshed master may contain a corrected contract list.
+                    self._futures_selection_date = None
+                    self._futures_selection_cache.clear()
                     self._master_last_refresh_at = datetime.now(IST).isoformat()
                     self._master_refresh_error = None
                     spots = dict(self._spot_records)
@@ -332,8 +337,15 @@ class SharedIndexMarketDataRunner:
                 from .common_strategy_feed import CommonStrategyMarketFeed
                 replacements = []
                 expiry_updates = {}
+                selection_date = datetime.now(IST).date()
+                if self._futures_selection_date != selection_date:
+                    self._futures_selection_cache = {
+                        underlying: self.choose_nearest_future(self._rows, underlying, today=selection_date)
+                        for underlying in LOCKED
+                    }
+                    self._futures_selection_date = selection_date
                 for underlying in LOCKED:
-                    selected = self.choose_nearest_future(self._rows, underlying)
+                    selected = self._futures_selection_cache[underlying]
                     if self._futures_expiries.get(underlying) == selected["expiry"]:
                         continue
                     raw_lot = selected["lot_size"]
@@ -476,6 +488,8 @@ class SharedIndexMarketDataRunner:
             self.rotation.trigger.reset()
             self._spot_records.clear()
             self._futures_expiries.clear()
+            self._futures_selection_date = None
+            self._futures_selection_cache.clear()
             self.state.clear()
             self.derived_iv.clear()
             self._bootstrap_options_done = False
@@ -510,6 +524,11 @@ class SharedIndexMarketDataRunner:
                 self.lifecycle.start_spot(spots)
                 self.lifecycle.start_futures(tuple(futures))
                 self._futures_expiries = future_expiries
+                self._futures_selection_date = datetime.now(IST).date()
+                self._futures_selection_cache = {
+                    underlying: self.choose_nearest_future(rows, underlying, today=self._futures_selection_date)
+                    for underlying in LOCKED
+                }
             return self.snapshot()
         except Exception as exc:
             with self._lock:
@@ -520,6 +539,8 @@ class SharedIndexMarketDataRunner:
                 self._bootstrap_inflight = False
                 self._spot_records.clear()
                 self._futures_expiries.clear()
+                self._futures_selection_date = None
+                self._futures_selection_cache.clear()
                 self._started_at = None
                 self.state.clear()
                 self.derived_iv.clear()
@@ -563,6 +584,18 @@ class SharedIndexMarketDataRunner:
 
     def latest(self, instrument_key: str):
         return self.state.latest(instrument_key)
+
+    def readiness_snapshot(self) -> dict:
+        """Return lock-only readiness flags for hot-path consumers.
+
+        This deliberately avoids state/lifecycle/registry traversal. It is not a
+        substitute for the detailed health snapshot exposed to diagnostics.
+        """
+        with self._lock:
+            return {
+                "enabled": self._running,
+                "initial_option_bootstrap_done": self._bootstrap_options_done,
+            }
 
     def health_snapshot(self) -> dict:
         """Return lightweight runner health without decorating/calculating IV records."""
