@@ -180,6 +180,7 @@ def test_iv_runtime_has_no_direct_websocket_fallbacks():
     root = Path(__file__).parents[1]
     runtime = (root / "app" / "scanner" / "iv_skew_flip" / "runtime.py").read_text(encoding="utf-8")
     package_init = (root / "app" / "scanner" / "iv_skew_flip" / "__init__.py").read_text(encoding="utf-8")
+    main = (root / "app" / "main.py").read_text(encoding="utf-8")
 
     assert "future_feed" not in package_init
     assert "CommonStrategyMarketFeed(" not in runtime
