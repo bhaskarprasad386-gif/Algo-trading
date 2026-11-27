@@ -501,17 +501,13 @@ def get_common_feed_health():
     from app.market_data.common_strategy_feed import shared_common_manager_snapshot
 
     snapshot = shared_common_manager_snapshot()
-    runner_snapshot = (
-        _live_cash_future_runner_snapshot_provider()
-        if _live_cash_future_runner_snapshot_provider is not None
-        else None
-    )
     return {
         "status": "success",
         "initialized": snapshot is not None,
+        "owner": "SharedIndexMarketDataRunner",
+        "universe": ["NIFTY", "BANKNIFTY"],
         "raw_market_data_persistence": bool(settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED),
         "live_orders": "OFF",
-        "cash_future_runner": runner_snapshot,
         "feed": snapshot or {
             "subscriptions": 0,
             "active_instruments": 0,
