@@ -26,7 +26,7 @@ IST = ZoneInfo("Asia/Kolkata")
 OPEN = time(9, 15)
 CLOSE = time(15, 30)
 
-_EXCHANGE_BY_TYPE = {1: "NSE", 2: "NFO", 3: "BSE", 4: "BFO", 5: "MCX", 7: "NCDEX"}
+_EXCHANGE_BY_TYPE = {1: "NSE", 2: "NFO", 3: "BSE", 4: "BFO", 7: "NCDEX"}
 
 
 @dataclass(frozen=True)
