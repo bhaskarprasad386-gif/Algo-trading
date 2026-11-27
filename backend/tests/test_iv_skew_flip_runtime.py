@@ -523,7 +523,7 @@ def test_runtime_start_retains_partially_registered_spot_feed_when_rollback_fail
     )
 
     try:
-        runtime.start()
+        runtime.start(instruments=rows)
     except RuntimeError as exc:
         assert "cleanup is pending" in str(exc)
     else:
