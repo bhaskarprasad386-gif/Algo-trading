@@ -54,6 +54,11 @@ def test_common_broker_websocket_is_exclusively_owned_by_shared_index_runner():
     assert "LiveBoxSpreadRunner" not in main
     assert "CommonWebSocketManager(" not in main
     assert "MarketDataWebSocket(" not in main
+    assert '"commodity-market-data"' not in feed_source
+    assert not (root / "app" / "market_data" / "engine.py").exists()
+    assert not (root / "app" / "market_data" / "live_feed.py").exists()
+    assert not (root / "app" / "market_data" / "live_commodity_stream.py").exists()
+    assert not (root / "app" / "market_data" / "commodity_subscriptions.py").exists()
 
 
 def test_iv_scanner_reads_shared_runner_without_owning_broker_subscriptions():
