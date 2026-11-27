@@ -1135,3 +1135,26 @@ def test_zero_contract_diagnostic_includes_skip_reasons(monkeypatch):
     assert len(rendered) == 1
     assert "targets=1" in rendered[0]
     assert "monthly_expiry_unresolved=[NIFTY]" in rendered[0]
+
+def test_runtime_health_snapshot_avoids_full_synthetic_diagnostics():
+    runner = LiveSyntheticRunner(
+        ":memory:",
+        [SyntheticLiveTarget("NIFTY", "INDEX", 100.0, "26NOV2026")],
+        allowed_stock_symbols=frozenset(),
+        instrument_master=_master(),
+        atm_provider=lambda _symbol, _timestamp: 100.0,
+    )
+    runner._subscription_diagnostics = {
+        "NIFTY": {"status": "SUBSCRIBED"},
+        "BANKNIFTY": {"status": "BLOCKED"},
+    }
+    # The health path must not call the full snapshot or scanner diagnostics.
+    runner.snapshot = lambda: (_ for _ in ()).throw(AssertionError("full snapshot called"))
+    health = runner.health_snapshot()
+    assert health["running"] is False
+    assert health["targets"] == 1
+    assert health["subscription_diagnostics"] == {
+        "target_count": 1, "subscribed_symbol_count": 1, "blocked_symbol_count": 1,
+    }
+    assert "atm_tracker_diagnostics" not in health
+    assert "underlying_feed" not in health
