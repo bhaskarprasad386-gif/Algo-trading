@@ -86,7 +86,9 @@ def get_alert_status(db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     cutoff = now - timedelta(days=30)
     active_rules = db.query(AlertRule).filter(
-        AlertRule.user_id == uid, AlertRule.enabled.is_(True)
+        AlertRule.user_id == uid,
+        AlertRule.enabled.is_(True),
+        AlertRule.strategy_id.in_(STRATEGIES),
     ).count()
     # Retired strategy history remains archived; no retired strategy table is queried.
     history_models = {}
