@@ -1,9 +1,8 @@
 """Durable, multi-worker browser-facing scanner page WebSocket.
 
-Only public scanner read models belong on this channel. Private account data
-uses the authenticated Box Paper channel. One DB journal tailer per worker
-fans out to local sockets; browser commands are limited to subscription and
-resynchronization in this transport.
+Only public scanner read models belong on this channel. One DB journal tailer
+per worker fans out to local sockets; browser commands are limited to
+subscription and resynchronization in this transport.
 """
 from __future__ import annotations
 
