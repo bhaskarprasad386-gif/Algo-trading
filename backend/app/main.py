@@ -28,7 +28,6 @@ from app.core.event_loop_telemetry import EventLoopLagMonitor
 from app.core.dashboard_stream_telemetry import DashboardStreamTelemetry
 from app.core.schema_migrations import run_schema_migrations
 from app.core.iv_basket_guards import install_iv_basket_immutability_guards
-from app.models import User, Instrument, Session, Position, SystemLog, BoxSpreadIndexSelection
 from app.models.broker_replay_eligibility_audit import BrokerReplayEligibilityAuditRecord  # noqa: F401 - register immutable operator review audit table
 from app.models.broker_order_event import BrokerOrderEventRecord  # noqa: F401 - register durable broker callback event table
 from app.models.execution_intent import ExecutionIntentRecord, ExecutionLegRecord, ExecutionIntentEventRecord, ExecutionFillRecord, ExecutionBrokerOrderRecord  # noqa: F401 - register durable execution and broker order identity tables
@@ -42,26 +41,18 @@ from app.algo.auth import AngelOneAuth
 from app.market_data.client import MarketDataClient
 from app.market_data.dashboard_snapshot_cache import cached_snapshot
 from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
-from app.market_data.common_websocket import CommonWebSocketManager
-from app.market_data.websocket import MarketDataWebSocket
-from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS, BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
-from app.market_data.box_spread_runner_supervisor import BoxSpreadRunnerSupervisor
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.provider_quote_parity_store import SQLiteQuoteParityStore
 from app.market_data.provider_quote_parity_routes import router as provider_quote_parity_router, configure_store as configure_provider_quote_parity_store, configure_worker as configure_provider_quote_parity_worker
 from app.market_data.provider_quote_parity_worker import BoundedQuoteParityWorker
 from app.market_data.provider_readiness_bridge import ProviderReadinessBridge
 from app.scanner.early_impulse_shoonya_observer import early_impulse_observer
-from app.market_data.box_spread_expiry import classify_index_expiry_dates
-from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
-BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
 from app.market_data.routes import router as market_data_router, configure_shared_index_runner_snapshot, configure_shared_index_runner_health_snapshot
 from app.scanner.routes import full_fno_router
 from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop, configure_page_update_callback as configure_weekly_swing_page_push, nifty200_scan_status
 
-from app.scanner.live_box_spread_routes import router as live_box_spread_router, configure as configure_live_box_spread, configure_diagnostics as configure_live_box_spread_diagnostics, configure_shared_snapshot as configure_live_box_spread_shared_snapshot, configure_monitor as configure_live_box_spread_monitor, configure_spot_provider as configure_live_box_spread_spot, configure_index_selection_provider as configure_live_box_index_selection, index_spot_snapshot as get_live_box_index_spot_snapshot, set_expiry_types as set_live_box_expiry_types, butterfly_condor_shadow as get_box_shadow_snapshot, edge_timing_analysis as get_box_edge_timing_analysis
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
 from app.scanner.iv_skew_flip.alerts import AlertCooldownStore
 from app.scanner.iv_skew_flip.angelone_option_snapshot import capture_angelone_option_snapshot
@@ -69,11 +60,9 @@ from app.scanner.iv_skew_flip.instruments import download_iv_instruments
 from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
 from app.scanner.iv_skew_flip.validation import SignalEvent, load_persisted_forward_outcomes, summarize_forward_outcomes, summarize_walk_forward_by_date
 from app.models.iv_signal_event import IVSignalEvent
-from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, configure_depth_provider as configure_live_box_spread_websocket_depth, _page_snapshot as box_opportunity_page_snapshot, set_expiry_types as set_live_box_websocket_expiry_types
 from app.scanner.page_push_websocket import router as page_push_websocket_router, configure_snapshot_provider as configure_page_push_snapshot, publish_page_update
 from app.scanner.early_impulse_routes import router as early_impulse_router
 from app.scanner.vpt_x_reversal_routes import router as vpt_x_reversal_router
-from app.scanner.butterfly_condor_shadow import evaluate_butterfly_condor_snapshot
 from app.intelligence.routes import router as intelligence_router
 from app.alert_routes import router as alert_router
 from app.backtesting.replay_routes import create_replay_router
@@ -95,14 +84,6 @@ install_iv_basket_immutability_guards(engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 shared_index_market_data_runner = SharedIndexMarketDataRunner(instrument_master=instrument_master)
-# Keep the existing Box Spread scanner isolated on its own broker manager.
-# It never registers consumers or subscriptions on the Shared Runner manager.
-box_market_data_auth = AngelOneAuth()
-box_isolated_feed_manager = CommonWebSocketManager(
-    socket_factory=lambda: MarketDataWebSocket(auth=box_market_data_auth, auto_reconnect=False),
-    async_callback_dispatch=True,
-)
-# Box Spread scanner remains enabled on its isolated broker manager.
 configure_shared_index_runner_snapshot(shared_index_market_data_runner.snapshot)
 configure_shared_index_runner_health_snapshot(shared_index_market_data_runner.health_snapshot)
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
@@ -111,298 +92,6 @@ provider_readiness_bridge = ProviderReadinessBridge()
 early_impulse_observer.configure_readiness(provider_readiness_bridge)
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
 _iv_skew_flip_runtime_lock = threading.RLock()
-live_box_spread_latest_results: tuple = ()
-live_box_spread_runner: LiveBoxSpreadRunner | None = None
-live_box_spread_supervisor: BoxSpreadRunnerSupervisor | None = None
-BOX_SPREAD_INDEX_SELECTION_LOCK = threading.Lock()
-BOX_SPREAD_INDEX_PRESETS = {
-    "ALL": ("NIFTY", "BANKNIFTY"),
-    "NIFTY_BANKNIFTY": ("NIFTY", "BANKNIFTY"),
-}
-BOX_SPREAD_LIVE_INDEX_UNIVERSE = frozenset({"NIFTY", "BANKNIFTY"})
-BOX_SPREAD_DEFAULT_INDEX_SELECTION = ("NIFTY", "BANKNIFTY")
-
-
-def _normalize_box_spread_index_symbols(symbols):
-    if not isinstance(symbols, (list, tuple, set, frozenset)):
-        raise ValueError("symbols must be a non-empty list")
-    normalized = tuple(sorted({str(item or "").strip().upper() for item in symbols if str(item or "").strip()}))
-    unsupported = sorted(set(normalized) - BOX_SPREAD_LIVE_INDEX_UNIVERSE)
-    if unsupported:
-        raise ValueError(
-            "Box Spread live data is locked to NIFTY and BANKNIFTY; "
-            f"unsupported indices: {', '.join(unsupported)}"
-        )
-    if not normalized:
-        raise ValueError("select at least one Box Spread index")
-    return normalized
-
-
-def _read_box_spread_selection_payload(raw):
-    """Read both legacy list rows and the structured index/expiry selection."""
-    payload = json.loads(raw or "[]")
-    if isinstance(payload, list):
-        return {"symbols": payload, "weekly_only_symbols": []}
-    if isinstance(payload, dict):
-        return {
-            "symbols": payload.get("symbols", []),
-            "weekly_only_symbols": payload.get("weekly_only_symbols", []),
-        }
-    raise ValueError("invalid saved Box Spread index selection")
-
-
-def _get_box_spread_index_selection():
-    try:
-        with SessionLocal() as db:
-            saved = db.get(BoxSpreadIndexSelection, 1)
-            if saved is not None:
-                payload = _read_box_spread_selection_payload(saved.symbols_json)
-                # Older deployments may have persisted SENSEX/MIDCPNIFTY or other
-                # indices. Migrate the effective live selection to the locked
-                # NIFTY/BANKNIFTY universe without broadening subscriptions.
-                locked = tuple(
-                    symbol for symbol in payload["symbols"]
-                    if str(symbol or "").strip().upper() in BOX_SPREAD_LIVE_INDEX_UNIVERSE
-                )
-                return _normalize_box_spread_index_symbols(locked or BOX_SPREAD_DEFAULT_INDEX_SELECTION)
-    except Exception as exc:
-        app_logger.exception("Box Spread index selection read failed; refusing to broaden the live subscription universe")
-        raise RuntimeError("Box Spread index selection is unavailable; live index subscriptions are paused until it can be read") from exc
-    return BOX_SPREAD_DEFAULT_INDEX_SELECTION
-
-
-def _get_box_spread_weekly_only_symbols():
-    try:
-        with SessionLocal() as db:
-            saved = db.get(BoxSpreadIndexSelection, 1)
-            if saved is None:
-                return ()
-            payload = _read_box_spread_selection_payload(saved.symbols_json)
-            selected = tuple(
-                symbol for symbol in payload["symbols"]
-                if str(symbol or "").strip().upper() in BOX_SPREAD_LIVE_INDEX_UNIVERSE
-            )
-            # Match the shared runner's locked expiry policy: NIFTY weekly,
-            # BANKNIFTY monthly. Never subscribe a second NIFTY monthly chain.
-            return ("NIFTY",) if "NIFTY" in selected else ()
-    except Exception as exc:
-        app_logger.exception("Box Spread expiry selection read failed; refusing to broaden the live subscription universe")
-        raise RuntimeError("Box Spread expiry selection is unavailable; live subscriptions are paused until it can be read") from exc
-
-
-def _save_box_spread_index_selection(symbols, weekly_only_symbols=()):
-    normalized = _normalize_box_spread_index_symbols(symbols)
-    requested_weekly = {str(item or "").strip().upper() for item in weekly_only_symbols if str(item or "").strip()}
-    # NIFTY weekly is the only supported NIFTY chain in the shared feed;
-    # BANKNIFTY remains on its monthly contract family.
-    weekly = tuple(sorted(requested_weekly | ({"NIFTY"} if "NIFTY" in normalized else set())))
-    unsupported_weekly = sorted(set(weekly) - {"NIFTY"})
-    if unsupported_weekly:
-        raise ValueError(f"weekly-only mode is supported only for NIFTY: {', '.join(unsupported_weekly)}")
-    if set(weekly) - set(normalized):
-        raise ValueError("weekly-only indices must also be included in selected indices")
-    payload = {"symbols": list(normalized), "weekly_only_symbols": list(weekly)}
-    with SessionLocal() as db:
-        saved = db.get(BoxSpreadIndexSelection, 1)
-        if saved is None:
-            saved = BoxSpreadIndexSelection(id=1, symbols_json=json.dumps(payload))
-            db.add(saved)
-        else:
-            saved.symbols_json = json.dumps(payload)
-            saved.updated_at = datetime.now(timezone.utc)
-        db.commit()
-    return normalized
-
-
-def _box_spread_targets_from_master(master, symbols, weekly_only_symbols=()):
-    """Build exact selected-index option targets without touching other consumers."""
-    selected = tuple(
-        symbol for symbol in _normalize_box_spread_index_symbols(symbols)
-        if symbol not in BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
-    )
-    weekly_only = set(weekly_only_symbols or ())
-    if weekly_only - {"NIFTY"} or weekly_only - set(selected):
-        raise ValueError("weekly-only mode is valid only for selected NIFTY")
-    today = datetime.now(IST).date()
-    targets = []
-    expiry_types = {}
-    for symbol in selected:
-        segment = "BFO" if symbol in BSE_BOX_INDEX_SYMBOLS else "NFO"
-        found = {}
-        for contract in getattr(master, "instruments", ()) or ():
-            if str(contract.get("exch_seg", "")).strip().upper() != segment:
-                continue
-            if str(contract.get("instrumenttype", "")).strip().upper() != "OPTIDX":
-                continue
-            if str(contract.get("name", "")).strip().upper() != symbol:
-                continue
-            raw = str(contract.get("expiry", "")).strip()
-            parsed = None
-            for fmt in ("%d%b%Y", "%d%b%y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y"):
-                try:
-                    parsed = datetime.strptime(raw.upper(), fmt).date()
-                    break
-                except ValueError:
-                    continue
-            if parsed is not None and parsed >= today:
-                found.setdefault(parsed, raw)
-        dates = sorted(found)
-        classifications = classify_index_expiry_dates(symbol, dates)
-        for day, raw in found.items():
-            expiry_types[(symbol, raw.upper())] = classifications.get(day, "UNKNOWN")
-        expiries = [(day, found[day], classifications.get(day, "UNKNOWN")) for day in dates]
-        weekly = next((item for item in expiries if item[2] == "WEEKLY"), None)
-        monthly = next((item for item in expiries if item[2] == "MONTHLY"), None)
-        # The Shared Index Runner owns exactly one expiry family per index:
-        # NIFTY weekly and BANKNIFTY monthly. Box must consume that same
-        # published contract set; adding a second expiry would create a
-        # subscription that the shared runner never owns.
-        required_expiry_type = "WEEKLY" if symbol == "NIFTY" else "MONTHLY"
-        selected_expiry = next(
-            (item for item in expiries if item[2] == required_expiry_type),
-            None,
-        )
-        selected_expiries = [selected_expiry] if selected_expiry is not None else []
-        if selected_expiries:
-            targets.extend(
-                BoxSpreadLiveTarget(symbol, "INDEX", expiry=item[1], weekly_only=symbol in weekly_only)
-                for item in selected_expiries
-            )
-        else:
-            # Preserve spot-only monitoring without allowing a weekly-only index
-            # to fall back to a monthly option chain in the runner.
-            targets.append(BoxSpreadLiveTarget(symbol, "INDEX", expiry=None, weekly_only=symbol in weekly_only))
-    return tuple(targets), expiry_types
-
-
-configure_live_box_spread(lambda: live_box_spread_latest_results)
-def _get_box_spread_active_index_symbols():
-    """Expose the publisher's active index universe during make-before-break handoff.
-
-    The persisted selection may already point at a staged candidate while the
-    previous runner is still publishing. Spot snapshots must follow the active
-    runner until the supervisor transfers ownership.
-    """
-    runner = live_box_spread_runner
-    if runner is None:
-        return _get_box_spread_index_selection()
-    return tuple(sorted({
-        str(target.underlying).strip().upper()
-        for target in runner.targets
-        if str(getattr(target, "underlying", "") or "").strip()
-    }))
-
-
-configure_live_box_index_selection(_get_box_spread_active_index_symbols)
-configure_live_box_spread_monitor(lambda: None if live_box_spread_runner is None or live_box_spread_runner.scanner is None else live_box_spread_runner.scanner.monitor_snapshot())
-configure_live_box_spread_diagnostics(
-    lambda: None if live_box_spread_runner is None else live_box_spread_runner.snapshot().get("scanner_diagnostics")
-)
-configure_live_box_spread_shared_snapshot(
-    lambda max_age_seconds=5.0: (
-        None if live_box_spread_runner is None
-        else live_box_spread_runner.shared_market_snapshot(max_age_seconds=max_age_seconds)
-    )
-)
-configure_live_box_spread_websocket(lambda: live_box_spread_latest_results)
-def _live_box_spread_spot_snapshot(symbol: str):
-    runner = live_box_spread_runner
-    tracker = None if runner is None else runner.tracker
-    return None if tracker is None else tracker.spot_snapshot(symbol, max_age_seconds=10.0)
-
-configure_live_box_spread_spot(_live_box_spread_spot_snapshot)
-configure_live_box_spread_websocket_spot(_live_box_spread_spot_snapshot)
-
-
-_box_spot_page_push_lock = threading.Lock()
-_last_box_spot_page_push_at: dict[str, float] = {}
-BOX_SPOT_PAGE_PUSH_MIN_INTERVAL_SECONDS = 0.10
-
-
-def _publish_box_spot_page_update(symbol: str, price: float, timestamp_ns: int | None) -> None:
-    """Push each underlying tick independently of the option scanner callback."""
-    normalized = str(symbol or "").strip().upper()
-    if not normalized:
-        return
-    now = time_module.monotonic()
-    with _box_spot_page_push_lock:
-        last = _last_box_spot_page_push_at.get(normalized, 0.0)
-        if now - last < BOX_SPOT_PAGE_PUSH_MIN_INTERVAL_SECONDS:
-            return
-        _last_box_spot_page_push_at[normalized] = now
-    try:
-        snapshot = _live_box_spread_spot_snapshot(normalized) or {}
-        source_timestamp = snapshot.get("spot_timestamp_ns") or timestamp_ns
-        age_seconds = snapshot.get("spot_age_seconds")
-        try:
-            age = float(age_seconds) if age_seconds is not None else None
-        except (TypeError, ValueError, OverflowError):
-            age = None
-        payload = {
-            "symbol": normalized,
-            "spot_price": snapshot.get("spot_price", price),
-            "spot_timestamp_ns": source_timestamp,
-            "spot_age_seconds": age,
-            "status": "LIVE" if age is not None and 0 <= age <= 5.0 else "STALE" if age is not None else "NO_DATA",
-        }
-        publish_page_update("box-spread", "PATCH", {"index_spots": [payload]})
-    except Exception:
-        app_logger.debug("Box Spread spot page push skipped for %s", normalized, exc_info=True)
-configure_live_box_spread_websocket_depth(
-    lambda opportunity: (
-        live_box_spread_runner.depth_shadow.depth_for_opportunity(opportunity)
-        if live_box_spread_runner is not None else {}
-    )
-)
-
-
-_box_shadow_page_cache = None
-_box_shadow_page_cache_at = 0.0
-_box_edge_timing_page_cache = None
-_box_edge_timing_page_cache_at = 0.0
-
-
-def _box_edge_timing_page_snapshot():
-    """Bound full-history aggregation cost while sharing it over the page socket."""
-    global _box_edge_timing_page_cache, _box_edge_timing_page_cache_at
-    now = time_module.monotonic()
-    if _box_edge_timing_page_cache is not None and now - _box_edge_timing_page_cache_at < 30.0:
-        return _box_edge_timing_page_cache
-    try:
-        payload = get_box_edge_timing_analysis()
-        if isinstance(payload, dict) and payload.get("strategy") == "box-spread":
-            _box_edge_timing_page_cache = payload
-            _box_edge_timing_page_cache_at = now
-    except Exception as exc:
-        app_logger.warning("Box Spread edge-timing page snapshot unavailable: {}", exc)
-    return _box_edge_timing_page_cache
-
-
-
-
-def _box_shadow_page_snapshot():
-    """Bound shadow evaluation cost while keeping page pushes near-live."""
-    global _box_shadow_page_cache, _box_shadow_page_cache_at
-    now = time_module.monotonic()
-    if _box_shadow_page_cache is not None and now - _box_shadow_page_cache_at < 1.0:
-        return _box_shadow_page_cache
-    try:
-        payload = get_box_shadow_snapshot(5.0, 2.0)
-    except Exception:
-        payload = {
-            "strategy": "box-spread-shadow", "runtime_state": "SNAPSHOT_UNAVAILABLE",
-            "execution_mode": "SHADOW_ONLY", "order_routing_enabled": False,
-            "result_count": 0, "results": [], "live_coverage": [],
-        }
-    _box_shadow_page_cache = payload if isinstance(payload, dict) else {
-        "strategy": "box-spread-shadow", "runtime_state": "SNAPSHOT_UNAVAILABLE",
-        "execution_mode": "SHADOW_ONLY", "order_routing_enabled": False,
-        "result_count": 0, "results": [], "live_coverage": [],
-    }
-    _box_shadow_page_cache_at = now
-    return _box_shadow_page_cache
-
-
 def _shared_runner_feed_snapshot() -> dict:
     """Read broker feed diagnostics from the sole Shared Runner owner."""
     runner_snapshot = shared_index_market_data_runner.snapshot()
@@ -411,61 +100,10 @@ def _shared_runner_feed_snapshot() -> dict:
     return dict(feed) if isinstance(feed, dict) else {}
 
 
-def _box_page_push_snapshot():
-    """Compose reconnect state from existing Box runner/feed snapshots only."""
-    try:
-        payload = box_opportunity_page_snapshot()
-    except Exception:
-        payload = {"opportunities": []}
-    try:
-        spot_payload = get_live_box_index_spot_snapshot()
-        payload["index_spots"] = spot_payload.get("data", []) if isinstance(spot_payload, dict) else []
-    except Exception:
-        payload["index_spots"] = []
-
-    # Read-only status snapshots replace the Box page's short-interval REST polls.
-    try:
-        runner = live_box_spread_runner
-        runner_snapshot = None if runner is None else runner.snapshot()
-        common_feed = _shared_runner_feed_snapshot()
-        feed_health = _summarize_primary_exchange_feed(common_feed)
-        common_feed["age_seconds"] = feed_health["age_seconds"]
-        common_feed["status"] = feed_health["status"]
-        common_feed["exchange_freshness"] = feed_health["exchange_freshness"]
-        payload["runtime_health"] = {
-            "common_feed": common_feed,
-            "runners": {"box_spread": runner_snapshot},
-        }
-    except Exception:
-        payload["runtime_health"] = {"common_feed": {"status": "UNAVAILABLE"}, "runners": {"box_spread": None}}
-    try:
-        supervisor = None if live_box_spread_supervisor is None else live_box_spread_supervisor.snapshot()
-        payload["index_selection_runtime"] = supervisor if isinstance(supervisor, dict) else {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}
-    except Exception:
-        payload["index_selection_runtime"] = {"active_symbols": [], "handoff": {"state": "UNAVAILABLE"}}
-    try:
-        payload["index_selection"] = {
-            "symbols": list(_get_box_spread_index_selection()),
-            "weekly_only_symbols": list(_get_box_spread_weekly_only_symbols()),
-        }
-    except Exception:
-        payload["index_selection"] = {"symbols": [], "weekly_only_symbols": []}
-    # Shadow panel is part of the same page snapshot, with a one-second
-    # evaluation cache so 250 ms scanner bursts do not repeat the calculation.
-    payload["shadow"] = _box_shadow_page_snapshot()
-    # This is a durable-history aggregate, not a quote-by-quote calculation.
-    # Recompute at most every 30 seconds and distribute through the page channel.
-    edge_timing = _box_edge_timing_page_snapshot()
-    if edge_timing is not None:
-        payload["edge_timing_analysis"] = edge_timing
-    return payload
-
-
 configure_page_push_snapshot("weekly-swing", nifty200_scan_status)
 configure_weekly_swing_page_push(
     lambda payload: publish_page_update("weekly-swing", "PATCH", payload)
 )
-configure_page_push_snapshot("box-spread", _box_page_push_snapshot)
 def _scanner_page_push_runtime_health(runner_name, runner):
     """Read-only feed and runner health included in scanner reconnect/live frames."""
     try:
@@ -524,7 +162,7 @@ async def _shared_index_market_data_recovery_loop() -> None:
 async def _iv_scanner_recovery_loop() -> None:
     """Retry a persisted IV Scanner ON state after transient startup failures.
 
-    This loop is deliberately isolated from Box Spread and never relaxes the
+    This loop never relaxes the
     instrument snapshot freshness/integrity checks. An explicitly saved OFF
     state is always respected.
     """
@@ -565,7 +203,7 @@ async def _iv_scanner_recovery_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _dashboard_snapshot_task, _event_loop_lag_task
-    global _history_collector_task, _contract_master_sync_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, _shared_index_runner_task
+    global _history_collector_task, _contract_master_sync_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, _shared_index_runner_task
     global provider_quote_parity_store, provider_quote_parity_worker
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     if settings.PROVIDER_QUOTE_PARITY_ENABLED:
@@ -621,11 +259,6 @@ async def lifespan(app: FastAPI):
     # Shared Runner's already-published option records without extra API traffic.
     if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
-    # Preserve the existing Box Spread live scanner on its dedicated broker
-    # manager. It must not attach to or fan out from the Shared Runner.
-    if settings.LIVE_BOX_SPREAD_DATA_ENABLED and not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED and _live_box_spread_task is None:
-        _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
-
     _dashboard_snapshot_task = asyncio.create_task(_dashboard_snapshot_publisher_loop())
     _event_loop_lag_task = asyncio.create_task(event_loop_lag_monitor.run())
     try:
@@ -642,7 +275,7 @@ async def lifespan(app: FastAPI):
             _dashboard_snapshot_task.cancel()
         if _event_loop_lag_task is not None:
             _event_loop_lag_task.cancel()
-        for task in (_dashboard_snapshot_task, _event_loop_lag_task, _history_collector_task, _contract_master_sync_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
+        for task in (_dashboard_snapshot_task, _event_loop_lag_task, _history_collector_task, _contract_master_sync_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
             if task is not None:
                 task.cancel()
         shutdown_tasks = tuple(
@@ -652,7 +285,6 @@ async def lifespan(app: FastAPI):
                 _event_loop_lag_task,
                 _history_collector_task,
                 _contract_master_sync_task,
-                _live_box_spread_task,
                 _weekly_swing_refresh_task,
                 _iv_option_snapshot_task,
                 _iv_scanner_recovery_task,
@@ -668,10 +300,6 @@ async def lifespan(app: FastAPI):
             for result in results:
                 if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
                     app_logger.error("Background task shutdown failed: %s", result)
-        try:
-            box_isolated_feed_manager.close()
-        except Exception:
-            app_logger.exception("Box isolated feed manager shutdown failed")
         # Broker adapters own authenticated provider sessions in process memory.
         # Drain them before shutdown completes; failures are logged per provider
         # and must not prevent the remaining sessions or market-data runners closing.
@@ -681,7 +309,6 @@ async def lifespan(app: FastAPI):
         _event_loop_lag_task = None
         _history_collector_task = None
         _contract_master_sync_task = None
-        _live_box_spread_task = None
         _weekly_swing_refresh_task = None
         _iv_option_snapshot_task = None
         _iv_scanner_recovery_task = None
@@ -781,7 +408,7 @@ _dashboard_stream_telemetry = DashboardStreamTelemetry()
 
 
 def _build_dashboard_snapshot_payload() -> dict:
-    """Publish the retained Box Spread read model only; retired scanners are absent."""
+    """Publish the dashboard runtime snapshot."""
     return {
         "type": "dashboard_snapshot",
         "timestamp": datetime.now(IST).isoformat(),
@@ -928,11 +555,6 @@ _iv_option_snapshot_task: asyncio.Task | None = None
 _weekly_swing_refresh_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None
 IST = ZoneInfo("Asia/Kolkata")
-# Box Spread uses its own isolated broker manager; the Shared Runner never receives Box subscriptions.
-LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = False
-_live_box_spread_task: asyncio.Task | None = None
-
-
 def _signal_live_runner_shutdown() -> None:
     """Signal worker-thread runners before cancelling their asyncio wrappers.
 
@@ -942,12 +564,6 @@ def _signal_live_runner_shutdown() -> None:
     unwind and perform its normal cleanup instead of reaching systemd's
     30-second stop deadline.
     """
-    if live_box_spread_supervisor is not None:
-        threading.Thread(
-            target=live_box_spread_supervisor.stop,
-            name="box-spread-supervisor-shutdown",
-            daemon=True,
-        ).start()
     for runner in (live_box_spread_runner,):
         if runner is None:
             continue
@@ -1019,385 +635,6 @@ async def _run_live_runner_in_daemon_thread(
             _stop_live_runner_nonblocking(runner, name=f"{name}-stop")
 
 
-def _start_box_spread_runner_worker(runner):
-    """Start the initial Box Spread worker and capture fatal thread errors."""
-    errors = []
-
-    def target():
-        try:
-            runner.run_forever()
-        except BaseException as exc:
-            runtime_diagnostics.record(
-                component="Scanner Runner",
-                severity="CRITICAL" if isinstance(exc, (SystemExit, KeyboardInterrupt)) else "ERROR",
-                error_type=type(exc).__name__,
-                message=str(exc) or repr(exc),
-                context={"worker": "live-box-spread-runner"},
-            )
-            errors.append(exc)
-            runner.stop()
-
-    worker = threading.Thread(target=target, name="live-box-spread-runner", daemon=True)
-    try:
-        setattr(runner, "_runner_worker", worker)
-    except Exception:
-        pass
-    worker.start()
-    return worker, errors
-
-
-async def _live_box_spread_loop() -> None:
-    """Supervise Box Spread with staged make-before-break runner handoffs."""
-    global live_box_spread_runner, live_box_spread_supervisor, live_box_spread_latest_results
-    retry_delay = 5.0
-    max_retry_delay = 60.0
-    while True:
-        master = instrument_master
-        runner = None
-        supervisor = None
-        try:
-            # Box Spread uses its own recent instrument-master cache on download failure.
-            # The shared InstrumentMaster behavior for other scanners remains unchanged.
-            # This downloader performs synchronous network I/O; keep it off the ASGI
-            # event loop so Angel One TLS/read timeouts cannot stall API health/routes.
-            await run_blocking_daemon(
-                download_box_spread_instruments, master,
-                thread_name="box-spread-instrument-master-fetch",
-            )
-            today = datetime.now(IST).date()
-            stock_symbols, index_symbols = set(), set()
-            for item in master.instruments:
-                segment = str(item.get("exch_seg", "")).strip().upper()
-                typ = str(item.get("instrumenttype", "")).strip().upper()
-                expiry_text = str(item.get("expiry", "")).strip()
-                if not expiry_text:
-                    continue
-                try:
-                    expiry = datetime.strptime(expiry_text.upper(), "%d%b%Y").date()
-                except ValueError:
-                    try:
-                        expiry = datetime.strptime(expiry_text.upper(), "%d%b%y").date()
-                    except ValueError:
-                        continue
-                if expiry < today:
-                    continue
-                name = str(item.get("name", "")).strip().upper()
-                if not name:
-                    continue
-                # Live Box Spread is intentionally index-only; stock contracts are not subscribed.
-                if typ == "OPTIDX" and name in {"NIFTY", "BANKNIFTY"}:
-                    expected_segment = "BFO" if name in BSE_BOX_INDEX_SYMBOLS else "NFO"
-                    if segment == expected_segment:
-                        index_symbols.add(name)
-
-            # Production market-data universe is intentionally locked to the
-            # two indices owned by SharedIndexMarketDataRunner. UI selections
-            # cannot expand broker subscriptions beyond this boundary.
-            selected_symbols = frozenset(_get_box_spread_index_selection()) & {"NIFTY", "BANKNIFTY"}
-            weekly_only_symbols = frozenset(_get_box_spread_weekly_only_symbols()) & {"NIFTY", "BANKNIFTY"}
-            targets, expiry_types = _box_spread_targets_from_master(master, selected_symbols, weekly_only_symbols)
-            set_live_box_expiry_types(expiry_types)
-            set_live_box_websocket_expiry_types(expiry_types)
-            if not targets:
-                app_logger.warning(
-                    "Box Spread live runner found no current F&O targets; retrying in {:.1f}s",
-                    retry_delay,
-                )
-                await asyncio.sleep(retry_delay)
-                retry_delay = min(max_retry_delay, retry_delay * 2.0)
-                continue
-
-            runner = LiveBoxSpreadRunner(
-                settings.BACKTEST_DATA_DB,
-                targets,
-                allowed_stock_symbols=frozenset(stock_symbols),
-                future_master=master,
-                auth=AngelOneAuth(),
-                on_results=lambda results: _update_live_box_spread_results(results),
-                    on_spot_price=_publish_box_spot_page_update,
-                shared_feed_manager=box_isolated_feed_manager,
-            )
-            live_box_spread_runner = runner
-            worker, worker_errors = _start_box_spread_runner_worker(runner)
-
-            def make_staged_runner(new_targets):
-                return LiveBoxSpreadRunner(
-                    settings.BACKTEST_DATA_DB,
-                    new_targets,
-                    allowed_stock_symbols=runner.allowed_stock_symbols,
-                    future_master=runner.master,
-                    auth=AngelOneAuth(),
-                    on_results=lambda results: _update_live_box_spread_results(results),
-                    on_spot_price=_publish_box_spot_page_update,
-                    consumer_namespace=f"box-stage-{uuid.uuid4().hex[:12]}",
-                    publish_enabled=False,
-                    publication_gate=runner.publication_gate,
-                    shared_feed_manager=box_isolated_feed_manager,
-                )
-
-            def set_active_runner(active_runner):
-                global live_box_spread_runner, live_box_spread_latest_results
-                live_box_spread_runner = active_runner
-                # Change global weekly/monthly filters only after the staged
-                # runner owns publication; during warm-up the old session's
-                # expiry routing must remain untouched.
-                active_symbols = {
-                    str(target.underlying).strip().upper()
-                    for target in active_runner.targets
-                }
-                active_weekly_only = _get_box_spread_weekly_only_symbols()
-                _active_targets, active_expiry_types = _box_spread_targets_from_master(
-                    active_runner.master, active_symbols, active_weekly_only
-                )
-                set_live_box_expiry_types(active_expiry_types)
-                set_live_box_websocket_expiry_types(active_expiry_types)
-                # Keep the old session's visible results intact during staging.
-                # Apply the selected-index filter only after publisher ownership
-                # has transferred to this active runner.
-                live_box_spread_latest_results = tuple(
-                    row for row in live_box_spread_latest_results
-                    if str(getattr(getattr(row, "low", None), "underlying", "") or "").strip().upper() in active_symbols
-                )
-
-            supervisor = BoxSpreadRunnerSupervisor(
-                active_runner=runner,
-                active_thread=worker,
-                runner_factory=make_staged_runner,
-                on_active=set_active_runner,
-                readiness_timeout_seconds=90.0,
-                readiness_poll_seconds=0.25,
-            )
-            live_box_spread_supervisor = supervisor
-
-            # Follow the currently active worker. A successful staged handoff
-            # swaps this pointer before stopping the old worker, so the loop
-            # naturally continues monitoring the replacement thread.
-            while True:
-                active_runner = supervisor.active_runner
-                active_worker = supervisor.active_thread
-                if active_runner.stop_event.is_set() or not active_worker.is_alive():
-                    break
-                await asyncio.sleep(0.25)
-
-            runner = supervisor.active_runner
-            if runner.stop_event.is_set():
-                if supervisor.is_shutting_down:
-                    return
-                raise RuntimeError("Active Box Spread runner stopped unexpectedly after handoff")
-            if worker_errors:
-                raise RuntimeError(f"Box Spread worker failed: {worker_errors[0]}")
-            app_logger.warning(
-                "Box Spread live runner exited unexpectedly; retrying in {:.1f}s",
-                retry_delay,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            app_logger.error(
-                "Box Spread live runner failed; retrying in {:.1f}s: {}",
-                retry_delay, exc,
-            )
-        finally:
-            if supervisor is not None:
-                await asyncio.to_thread(supervisor.stop)
-            elif runner is not None:
-                await asyncio.to_thread(runner.stop)
-            if live_box_spread_supervisor is supervisor:
-                live_box_spread_supervisor = None
-            if live_box_spread_runner is runner or (
-                supervisor is not None and live_box_spread_runner is supervisor.active_runner
-            ):
-                live_box_spread_runner = None
-        await asyncio.sleep(retry_delay)
-        retry_delay = min(max_retry_delay, retry_delay * 2.0)
-
-
-def _box_spread_result_key(result) -> tuple:
-    low = getattr(result, "low", None)
-    high = getattr(result, "high", None)
-    if low is None or high is None:
-        return ("", "", "", "", "", "")
-    try:
-        low_strike = format(float(getattr(low, "strike", "")), ".12g")
-        high_strike = format(float(getattr(high, "strike", "")), ".12g")
-    except (TypeError, ValueError, OverflowError):
-        low_strike = str(getattr(low, "strike", "") or "").strip().upper()
-        high_strike = str(getattr(high, "strike", "") or "").strip().upper()
-    return (
-        str(getattr(low, "underlying", "") or "").strip().upper(),
-        str(getattr(low, "instrument_class", "") or "").strip().upper(),
-        str(getattr(low, "expiry", "") or "").strip().upper(),
-        low_strike,
-        high_strike,
-        str(getattr(result, "direction", "") or "").strip().upper(),
-    )
-
-
-def _fresh_live_box_spread_results(results: tuple, max_age_seconds: float = 5.0) -> tuple:
-    now_ns = time_module.time_ns()
-    cutoff_ns = now_ns - int(max_age_seconds * 1_000_000_000)
-    fresh = []
-    for result in results:
-        try:
-            low_ts = int(result.low.timestamp_ns)
-            high_ts = int(result.high.timestamp_ns)
-        except (AttributeError, TypeError, ValueError, OverflowError):
-            continue
-        if not (cutoff_ns <= low_ts <= now_ns and cutoff_ns <= high_ts <= now_ns):
-            continue
-        if abs(low_ts - high_ts) > 3_000_000_000:
-            continue
-        fresh.append(result)
-    return tuple(fresh)
-
-
-_last_credit_butterfly_condor_push_at = 0.0
-
-
-def _credit_butterfly_condor_page_snapshot(expiry_type: str) -> dict:
-    """Evaluate both CE/PE shadow pages from Box's already-owned shared snapshot."""
-    kind = str(expiry_type or "").strip().upper()
-    symbols = {"NIFTY", "SENSEX"} if kind == "WEEKLY" else {"NIFTY", "SENSEX", "BANKNIFTY"}
-    runner = live_box_spread_runner
-    runtime_state = "WAITING_FOR_BOX_RUNNER"
-    if runner is None:
-        snapshot = {
-            "source": "box-spread-live-runner",
-            "quotes": {"captured_at_ns": time_module.time_ns(), "groups": [], "contract_count": 0},
-            "depth": {"enabled": False, "running": False, "record_count": 0, "records": []},
-        }
-    else:
-        try:
-            snapshot = runner.shared_market_snapshot(max_age_seconds=5.0)
-            runtime_state = "SNAPSHOT_AVAILABLE"
-        except Exception as exc:
-            app_logger.warning("Credit Butterfly/Condor snapshot unavailable: {}", exc)
-            snapshot = {
-                "source": "box-spread-live-runner",
-                "quotes": {"captured_at_ns": time_module.time_ns(), "groups": [], "contract_count": 0},
-                "depth": {"enabled": False, "running": False, "record_count": 0, "records": []},
-            }
-            runtime_state = "SNAPSHOT_UNAVAILABLE"
-    if not isinstance(snapshot, dict):
-        snapshot = {
-            "source": "box-spread-live-runner",
-            "quotes": {"captured_at_ns": time_module.time_ns(), "groups": [], "contract_count": 0},
-            "depth": {"enabled": False, "running": False, "record_count": 0, "records": []},
-        }
-        runtime_state = "SNAPSHOT_UNAVAILABLE"
-    evaluated = evaluate_butterfly_condor_snapshot(
-        snapshot, max_age_seconds=5.0, max_leg_skew_seconds=2.0,
-    )
-    results = [
-        row for row in evaluated.get("results", [])
-        if str(row.get("expiry_type") or "").upper() == kind
-        and str(row.get("underlying") or "").upper() in symbols
-    ]
-    coverage = [
-        row for row in evaluated.get("live_coverage", [])
-        if str(row.get("expiry_type") or "").upper() == kind
-        and str(row.get("underlying") or "").upper() in symbols
-    ]
-    quotes = snapshot.get("quotes") if isinstance(snapshot.get("quotes"), dict) else {}
-    depth = snapshot.get("depth") if isinstance(snapshot.get("depth"), dict) else {}
-    return {
-        **evaluated,
-        "strategy": "credit-butterfly-condor",
-        "runtime_state": runtime_state,
-        "execution_mode": "SHADOW_ONLY",
-        "order_routing_enabled": False,
-        "expiry_type": kind,
-        "allowed_underlyings": sorted(symbols),
-        "shared_snapshot": {
-            "source": str(snapshot.get("source") or "box-spread-live-runner"),
-            "read_only": True,
-            "quote_contract_count": int(quotes.get("contract_count") or 0),
-            "quote_group_count": len(quotes.get("groups") or []),
-            "captured_at_ns": quotes.get("captured_at_ns"),
-            "freshness_limit_seconds": quotes.get("freshness_limit_seconds", 5.0),
-            "depth_enabled": bool(depth.get("enabled", False)),
-            "depth_running": bool(depth.get("running", False)),
-            "depth_record_count": int(depth.get("record_count") or len(depth.get("records") or [])),
-        },
-        "result_count": len(results),
-        "results": results,
-        "live_coverage": coverage,
-    }
-
-
-def _publish_credit_butterfly_condor_pages(*, force: bool = False) -> None:
-    """Push page evaluations only from an existing Box scanner callback."""
-    global _last_credit_butterfly_condor_push_at
-    now = time_module.monotonic()
-    if not force and now - _last_credit_butterfly_condor_push_at < 1.0:
-        return
-    _last_credit_butterfly_condor_push_at = now
-    for expiry_type, page in (
-        ("WEEKLY", "credit-butterfly-condor-weekly"),
-        ("MONTHLY", "credit-butterfly-condor-monthly"),
-    ):
-        try:
-            payload = _credit_butterfly_condor_page_snapshot(expiry_type)
-            publish_page_update(page, "PATCH", {"payload": payload})
-        except Exception as exc:
-            # Strategy diagnostics must not interfere with the Box scanner callback.
-            app_logger.warning("Credit Butterfly/Condor {} push skipped: {}", expiry_type, exc)
-
-
-configure_page_push_snapshot(
-    "credit-butterfly-condor-weekly",
-    lambda: {"payload": _credit_butterfly_condor_page_snapshot("WEEKLY")},
-)
-configure_page_push_snapshot(
-    "credit-butterfly-condor-monthly",
-    lambda: {"payload": _credit_butterfly_condor_page_snapshot("MONTHLY")},
-)
-
-
-_last_box_page_push_at = 0.0
-BOX_SPREAD_PAGE_PUSH_INTERVAL_SECONDS = 0.25  # coalesce bursts, keep UI latency below 250 ms
-
-
-def _update_live_box_spread_results(results: tuple) -> None:
-    global live_box_spread_latest_results, _last_box_page_push_at
-    # Each scanner callback is scoped to a single quote bucket. Merge fresh
-    # rows across symbols instead of letting one symbol erase every other one.
-    selected_symbols = set(_get_box_spread_active_index_symbols())
-    selected_results = tuple(
-        result for result in (results or ())
-        if str(getattr(getattr(result, "low", None), "underlying", "") or "").strip().upper() in selected_symbols
-    )
-    combined = _fresh_live_box_spread_results(
-        tuple(live_box_spread_latest_results) + selected_results
-    )
-    latest = {}
-    for result in combined:
-        key = _box_spread_result_key(result)
-        try:
-            timestamp_ns = max(int(result.low.timestamp_ns), int(result.high.timestamp_ns))
-            edge = float(getattr(result, "executable_edge", 0) or 0)
-        except (AttributeError, TypeError, ValueError, OverflowError):
-            continue
-        previous = latest.get(key)
-        if previous is None or timestamp_ns > previous[0] or (
-            timestamp_ns == previous[0] and edge > previous[1]
-        ):
-            latest[key] = (timestamp_ns, edge, result)
-    live_box_spread_latest_results = tuple(item[2] for item in latest.values())
-    now = time_module.monotonic()
-    if now - _last_box_page_push_at >= BOX_SPREAD_PAGE_PUSH_INTERVAL_SECONDS:
-        _last_box_page_push_at = now
-        try:
-            page_snapshot = _box_page_push_snapshot()
-            publish_page_update("box-spread", "PATCH", page_snapshot)
-        except Exception:
-            pass
-    _publish_credit_butterfly_condor_pages()
-    if selected_results:
-        # The page socket must publish the merged fresh rows, not just this callback's bucket.
-        publish_live_box_spread_opportunities(live_box_spread_latest_results)
-
-
 def _sync_contract_master_snapshot(database_path: str, snapshot_date):
     catalog = ContractMasterCatalog(database_path)
     try:
@@ -1452,14 +689,6 @@ def app_update():
 
 
 STRATEGY_WORKSPACES = [
-    {
-        "id": "box-spread", "name": "Box Spread", "version": "1", "enabled": True,
-        "screen": "box_spread", "data_mode": "LIVE",
-        "execution_mode": "SCANNER ONLY", "live_orders": False,
-        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "RESULTS"],
-        "live_route": "/api/v1/scanner/box-spread/live",
-        "workspace_route": "/api/v1/scanner/box-spread/live"
-    },
     {
         "id": "full-fno", "name": "Full F&O Backtest", "version": "1", "enabled": True,
         "screen": "full_fno", "data_mode": "ACCUMULATED LIVE",
@@ -1544,7 +773,7 @@ def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
 @app.get("/api/v1/market-data/runtime/health")
 @cached_snapshot(ttl_seconds=5.0, max_stale_seconds=20.0)
 def market_data_runtime_health():
-    """Expose only the Shared Runner's NIFTY/BANKNIFTY feed and Box Spread consumer."""
+    """Expose only the Shared Runner's NIFTY/BANKNIFTY market-data feed."""
     runner_snapshot = shared_index_market_data_runner.snapshot()
     lifecycle = runner_snapshot.get("lifecycle", {}) if isinstance(runner_snapshot, dict) else {}
     common_feed = lifecycle.get("shared_websocket", {}) if isinstance(lifecycle, dict) else {}
@@ -1562,9 +791,7 @@ def market_data_runtime_health():
         "runners": {
             "shared_index_market_data": runner_snapshot,
         },
-        "retired_strategies": {
-            "box_spread": {"status": "DISABLED", "feed": "NONE", "runner": "NONE"},
-        },
+        "retired_strategies": {"box_spread": {"status": "RETIRED"}},
         "live_orders": "OFF",
     }
 
@@ -1627,10 +854,8 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
         # subscriptions or expand the locked spot/options/futures token universe.
         equity_baskets = {}
         equity_pressure_error = "DISABLED_BY_SCOPE: heavyweight pressure activation remains OFF"
-        # IV and Box Spread share the process-wide Angel One manager.
-        # IV consumers request mode 3, while the manager enforces one global
-        # three-socket budget across all registered strategy subscriptions.
-        iv_feed_manager = None  # IV consumes runner-published records; it never registers a broker WebSocket consumer.
+        # IV consumes runner-published records; it never registers a broker WebSocket consumer.
+        iv_feed_manager = None
         runtime = IVSkewFlipRuntime(
             instrument_master=instrument_master,
             # Universe/early-move refresh is bounded at the supported 3s
