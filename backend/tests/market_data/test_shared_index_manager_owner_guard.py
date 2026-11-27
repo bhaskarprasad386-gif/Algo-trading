@@ -1,0 +1,63 @@
+import pytest
+
+from app.market_data.common_strategy_feed import (
+    CommonStrategyMarketFeed,
+    SharedIndexOnlyWebSocketManager,
+)
+from app.market_data.contracts import InstrumentKey
+from app.market_data.registry import InstrumentDescriptor
+
+
+def _descriptor():
+    return InstrumentDescriptor(
+        key=InstrumentKey("NSE", "NSE", "99001"),
+        symbol="NIFTY",
+        instrument_type="index",
+        exchange="NSE",
+        segment="NSE",
+        underlying="NIFTY",
+    )
+
+
+def test_production_manager_accepts_only_shared_index_runner_consumers():
+    manager = SharedIndexOnlyWebSocketManager(socket_factory=lambda: object())
+
+    assert manager.validate_consumer("shared-index-market-data:spot")
+    assert manager.validate_consumer("shared-index-market-data:options")
+    assert manager.validate_consumer("shared-index-market-data:futures")
+
+    for consumer in (
+        "box-underlyings",
+        "box-options",
+        "box-spread-live-depth-shadow",
+        "iv-skew-flip-spot",
+        "cash-future-live",
+        "calendar-spread",
+        "synthetic-options",
+        "commodity-market-data",
+    ):
+        with pytest.raises(PermissionError, match="exclusively"):
+            manager.validate_consumer(consumer)
+
+
+def test_rejected_strategy_feed_does_not_mutate_registry_or_callback_routes():
+    manager = SharedIndexOnlyWebSocketManager(socket_factory=lambda: object())
+    feed = CommonStrategyMarketFeed("box-underlyings", manager=manager)
+
+    with pytest.raises(PermissionError, match="exclusively"):
+        feed.start((_descriptor(),), lambda _record: None)
+
+    assert manager.registry.get(_descriptor().key) is None
+    assert manager.registry.subscriptions() == ()
+    assert manager._record_callbacks == {}
+
+
+def test_direct_non_runner_subscription_is_rejected_before_registry_mutation():
+    manager = SharedIndexOnlyWebSocketManager(socket_factory=lambda: object())
+    descriptor = _descriptor()
+    manager.registry.register(descriptor)
+
+    with pytest.raises(PermissionError, match="exclusively"):
+        manager.subscribe("iv-skew-flip-spot", [descriptor.key], mode=3)
+
+    assert manager.registry.subscriptions() == ()
