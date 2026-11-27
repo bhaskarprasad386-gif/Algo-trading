@@ -6,7 +6,7 @@ runner's accepted NIFTY/BANKNIFTY records to registered local consumers.
 from __future__ import annotations
 
 from queue import Empty, Full, Queue
-from threading import Event, RLock, Thread
+from threading import Event, RLock, Thread, current_thread
 from typing import Any, Callable, Iterable
 
 from .contracts import InstrumentKey, MarketDataRecord
@@ -195,5 +195,5 @@ class SharedIndexRunnerLocalFeedManager:
             self._attached = False
             self._stop.set()
             worker = self._worker
-        if worker is not None and worker is not Thread.current_thread():
+        if worker is not None and worker is not current_thread():
             worker.join(timeout=1.0)
