@@ -221,7 +221,6 @@ def _get_box_spread_weekly_only_symbols():
             if saved is None:
                 return ()
             payload = _read_box_spread_selection_payload(saved.symbols_json)
-            weekly = _normalize_box_spread_index_symbols(payload["weekly_only_symbols"]) if payload.get("weekly_only_symbols") else ()
             selected = tuple(
                 symbol for symbol in payload["symbols"]
                 if str(symbol or "").strip().upper() in BOX_SPREAD_LIVE_INDEX_UNIVERSE
