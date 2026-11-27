@@ -594,7 +594,15 @@ class SharedIndexMarketDataRunner:
             for kind in ("index", "future", "option"):
                 group = feed_groups.get(underlying + ":" + kind, {})
                 counts[underlying][kind] = int(group.get("count", 0))
-        universe_complete = _lifecycle_universe_complete(lifecycle)
+        lifecycle_fields_present = any(
+            key in lifecycle for key in (
+                "spot_active", "spot_instruments", "futures_active",
+                "futures_instruments", "options_active", "options_instruments",
+            )
+        )
+        universe_complete = _observed_universe_complete(feed_groups) and (
+            not lifecycle_fields_present or _lifecycle_universe_complete(lifecycle)
+        )
         all_records_fresh = int(state.get("instrument_count", 0)) == 128 and int(state.get("fresh_count", 0)) == 128
         readiness = _readiness_from_groups(
             running=running, bootstrap_done=bootstrap_done,
