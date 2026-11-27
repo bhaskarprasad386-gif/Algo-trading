@@ -92,54 +92,13 @@ def test_run_strategy_builds_box_payoff_before_completion(tmp_path):
     assert ledger.events("box-e2e")[-1]["event_type"] == "PAYOFF_SNAPSHOT"
 
 
-def test_run_strategy_builds_synthetic_payoff(tmp_path):
-    ledger, writer = _writer(tmp_path, "synthetic-e2e", "synthetic-cash-carry")
+def test_run_strategy_rejects_retired_strategy_families(tmp_path):
+    _, writer = _writer(tmp_path)
     service = HistoricalArbitrageBacktestService(writer)
-    option = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "strike": 100,
-              "call_bid": 14, "call_ask": 15, "put_bid": 5, "put_ask": 6, "lot_size": 1}
-    future = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "bid": 120, "ask": 121, "lot_size": 1}
-    later_option = {**option, "timestamp_ns": 2, "call_bid": 25, "call_ask": 26, "put_bid": 2, "put_ask": 3}
-    later_future = {**future, "timestamp_ns": 2, "bid": 90, "ask": 91}
-    result = service.run_strategy("synthetic-cash-carry",
-                                  [{"timestamp_ns": 1, "option": option, "future": future},
-                                   {"timestamp_ns": 2, "option": later_option, "future": later_future}],
-                                  parameters={"direction": "SHORT"}, payoff_prices=(90, 100, 110))
-    assert result.completed_trades == 1
-    assert result.payoff is not None and len(result.payoff.legs) == 3
-    assert {leg.kind for leg in result.payoff.legs} == {"CALL", "PUT", "FUTURE"}
-    assert ledger.run("synthetic-e2e")["status"] == "COMPLETED"
-
-
-def test_run_strategy_builds_cash_future_payoff(tmp_path):
-    ledger, writer = _writer(tmp_path, "cash-future-e2e", "cash-future")
-    service = HistoricalArbitrageBacktestService(writer)
-    first = {"timestamp_ns": 1, "cash_future": {"timestamp_ns": 1, "underlying": "ABC",
-             "spot_bid": 99, "spot_ask": 100, "future_bid": 110, "future_ask": 111, "expiry": 20260924}}
-    second = {"timestamp_ns": 2, "cash_future": {"timestamp_ns": 2, "underlying": "ABC",
-              "spot_bid": 120, "spot_ask": 121, "future_bid": 90, "future_ask": 91, "expiry": 20260924}}
-    result = service.run_strategy("cash-future", [first, second], payoff_prices=(90, 100, 120))
-    assert result.completed_trades == 1
-    assert result.payoff is not None and len(result.payoff.legs) == 2
-    assert {leg.kind for leg in result.payoff.legs} == {"SPOT", "FUTURE"}
-    assert ledger.run("cash-future-e2e")["status"] == "COMPLETED"
-
-
-def test_run_strategy_builds_calendar_payoff_with_both_expiries(tmp_path):
-    ledger, writer = _writer(tmp_path, "calendar-e2e", "calendar-spread")
-    service = HistoricalArbitrageBacktestService(writer)
-    near = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924,
-            "bid": 100, "ask": 100, "lot_size": 1, "strike": 25000, "option_type": "CALL"}
-    far = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20261029,
-           "bid": 120, "ask": 121, "lot_size": 1, "strike": 25000, "option_type": "CALL"}
-    later_near = {**near, "timestamp_ns": 2, "bid": 130, "ask": 131}
-    later_far = {**far, "timestamp_ns": 2, "bid": 80, "ask": 90}
-    result = service.run_strategy("calendar-spread",
-                                  [{"timestamp_ns": 1, "near": near, "far": far},
-                                   {"timestamp_ns": 2, "near": later_near, "far": later_far}],
-                                  payoff_prices=(24900, 25000, 25100))
-    assert result.completed_trades == 1
-    assert result.payoff is not None and len(result.payoff.legs) == 2
-    assert {leg.kind for leg in result.payoff.legs} == {"CALL"}
-    assert {leg.side for leg in result.payoff.legs} == {"BUY", "SELL"}
-    assert {leg.entry_price for leg in result.payoff.legs} == {100, 120}
-    assert ledger.run("calendar-e2e")["status"] == "COMPLETED"
+    for strategy_id in ("synthetic-cash-carry", "cash-future", "calendar-spread"):
+        try:
+            service.run_strategy(strategy_id, ())
+        except ValueError as exc:
+            assert "unsupported arbitrage strategy" in str(exc)
+        else:
+            raise AssertionError(f"retired historical strategy must be rejected: {strategy_id}")
