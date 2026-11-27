@@ -2822,3 +2822,58 @@ def test_recovery_supervisor_worker_start_failure_releases_retry_slot(monkeypatc
     assert manager._recovery_thread is not None
     assert manager._recovery_thread.is_alive()
     manager.close()
+
+
+def test_failure_recovery_worker_start_failure_is_retried_by_supervisor(monkeypatch):
+    registry = InstrumentRegistry()
+    item = descriptor("failure-recovery-worker-start")
+    registry.register(item)
+    manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
+    manager._ensure_recovery_supervisor = lambda: None
+    original_thread = common_websocket_module.Thread
+    try:
+        manager.subscribe("failure-recovery-test", [item.key])
+        group = SocketGroup(1, 0)
+        socket = manager._sockets[group]
+        generation = manager._socket_generation[group]
+
+        class BrokenWorker:
+            def start(self):
+                raise RuntimeError("thread quota exhausted")
+
+        def selective_thread(*args, **kwargs):
+            if str(kwargs.get("name", "")).startswith("common-ws-failure-recovery-"):
+                return BrokenWorker()
+            return original_thread(*args, **kwargs)
+
+        monkeypatch.setattr(common_websocket_module, "Thread", selective_thread)
+        manager._schedule_socket_failure_recovery(
+            group, socket, generation, "simulated failure under thread pressure"
+        )
+
+        with manager._lock:
+            assert manager._failure_recovery_worker_active is False
+            assert group in manager._failure_recovery_pending_groups
+            assert group in manager._failure_recovery_pending_transports
+            assert manager._failure_recovery_pending_transports[group]["close_scheduled"] is False
+        assert socket.closed is False, "the failed worker must not pretend the socket was retired"
+
+        # Once worker creation is available again, the supervisor retry path
+        # must close the retained socket and run the normal recovery completion.
+        monkeypatch.setattr(common_websocket_module, "Thread", original_thread)
+        manager._retry_pending_failure_transport_closes()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            with manager._lock:
+                pending = group in manager._failure_recovery_pending_transports
+            if socket.closed and not pending:
+                break
+            time.sleep(0.01)
+
+        assert socket.closed is True
+        with manager._lock:
+            assert group not in manager._failure_recovery_pending_transports
+            assert manager._failure_recovery_worker_active is False
+    finally:
+        monkeypatch.setattr(common_websocket_module, "Thread", original_thread)
+        manager.close()
