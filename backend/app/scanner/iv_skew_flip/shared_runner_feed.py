@@ -75,6 +75,9 @@ class IVSharedRunnerSpotFeedAdapter:
     def _records(self) -> list[dict[str, Any]]:
         state = getattr(self.shared_runner, "state", None)
         records = getattr(state, "records_snapshot", None)
+        indexed = getattr(state, "latest_records_for_instruments", None)
+        if callable(indexed):
+            return list(indexed("index", self.DEFAULT_SYMBOLS))
         return records() if callable(records) else []
 
     def _refresh_last(self) -> None:
@@ -274,7 +277,10 @@ class IVSharedRunnerOptionFeedAdapter:
         """Return one newest, identity-matched shared quote per requested token."""
         expected = {str(item.token): item for item in universe.contracts}
         latest: dict[str, dict[str, Any]] = {}
-        for row in self.shared_runner.state.records_snapshot():
+        state = self.shared_runner.state
+        indexed = getattr(state, "latest_records_for_tokens", None)
+        rows = indexed(expected) if callable(indexed) else state.records_snapshot()
+        for row in rows:
             token = str(row.get("token") or "")
             contract = expected.get(token)
             if contract is None or str(row.get("instrument_type") or "").lower() != "option":
