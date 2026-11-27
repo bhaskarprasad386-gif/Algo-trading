@@ -93,6 +93,40 @@ class SharedIndexRunnerLocalFeedManager:
     def unregister_normalized_observer(self, consumer: str) -> None:
         self.unregister_normalized_callback(consumer)
 
+    def _validate_runner_descriptor(self, descriptor) -> None:
+        """Require an exact contract already registered by the Shared Runner."""
+        lifecycle = getattr(self.runner, "lifecycle", None)
+        spot_feed = getattr(lifecycle, "_spot_feed", None)
+        broker_manager = getattr(spot_feed, "manager", None)
+        broker_registry = getattr(broker_manager, "registry", None)
+        canonical = broker_registry.get(descriptor.key) if broker_registry is not None else None
+        if canonical is None:
+            raise PermissionError(
+                "instrument is not registered by SharedIndexMarketDataRunner: "
+                f"{descriptor.key.value}"
+            )
+        for field in ("instrument_type", "exchange", "segment", "underlying"):
+            supplied = str(getattr(descriptor, field, "") or "").strip().upper()
+            expected = str(getattr(canonical, field, "") or "").strip().upper()
+            if supplied != expected:
+                raise PermissionError(
+                    f"local consumer descriptor mismatch for {descriptor.key.value}: {field}"
+                )
+        if str(getattr(descriptor, "instrument_type", "")).strip().lower() == "option":
+            for field in ("expiry", "option_type"):
+                supplied = str(getattr(descriptor, field, "") or "").strip().upper()
+                expected = str(getattr(canonical, field, "") or "").strip().upper()
+                if supplied != expected:
+                    raise PermissionError(
+                        f"local option descriptor mismatch for {descriptor.key.value}: {field}"
+                    )
+            supplied_strike = getattr(descriptor, "strike", None)
+            expected_strike = getattr(canonical, "strike", None)
+            if supplied_strike is None or expected_strike is None or float(supplied_strike) != float(expected_strike):
+                raise PermissionError(
+                    f"local option descriptor mismatch for {descriptor.key.value}: strike"
+                )
+
     def subscribe(self, consumer: str, keys: Iterable[InstrumentKey], mode: int = 3):
         name = self._consumer_name(consumer)
         items = tuple(keys)
@@ -119,6 +153,20 @@ class SharedIndexRunnerLocalFeedManager:
                 "local strategy consumers may subscribe only to instruments currently owned "
                 f"by SharedIndexMarketDataRunner; rejected={rejected[:8]}"
             )
+        try:
+            for key in items:
+                descriptor = self.registry.get(key)
+                if descriptor is None:
+                    raise KeyError(f"instrument is not registered locally: {key.value}")
+                self._validate_runner_descriptor(descriptor)
+        except Exception:
+            with self._lock:
+                already_owns_keys = any(name in owners for owners in self._owners.values())
+                if not already_owns_keys:
+                    self._callbacks.pop(name, None)
+                    unused = tuple(key for key in items if key.value not in self._owners)
+                    self.registry.unregister_many(unused)
+            raise
 
         with self._lock:
             if self._closed:
