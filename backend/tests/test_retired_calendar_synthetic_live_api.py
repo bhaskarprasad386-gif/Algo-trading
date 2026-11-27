@@ -139,6 +139,8 @@ def test_iv_runtime_has_no_direct_websocket_fallbacks():
     runtime = (root / "app" / "scanner" / "iv_skew_flip" / "runtime.py").read_text(encoding="utf-8")
 
     assert "CommonStrategyMarketFeed(" not in runtime
+    assert "future_feed:" not in runtime
+    assert not (root / "app" / "scanner" / "iv_skew_flip" / "future_feed.py").exists()
     assert "IVSharedRunnerSpotFeedAdapter" in runtime
     assert "IVSharedRunnerOptionFeedAdapter" in runtime
     assert "_DisabledIVMarketDataTransport" in runtime
