@@ -123,11 +123,12 @@ def test_retired_strategy_models_and_full_fno_backtest_are_not_registered_or_imp
         "LiveCalendarSpreadAlertHistory", "LiveCalendarSpreadScannerResult",
         "LiveSyntheticAlertHistory", "LiveSyntheticPairHistory",
         "LiveBoxSpreadAlertHistory", "LiveBoxSpreadSnapshot", "LiveBoxSpreadSnapshotKey",
-        "BacktestJobResultChunk",
+        "BacktestJob", "BacktestJobResultChunk",
     ):
         assert retired not in models
     assert "cash_future" not in init_db.lower()
-    assert "backtest_jobs" in migrations  # Generic durable historical-download jobs remain active.
+    assert "backtest_jobs" not in migrations  # Existing rows are preserved, but startup no longer creates or alters this retired table.
+    assert "DROP TABLE backtest_jobs" not in migrations
     assert "backtest_job_result_chunks" not in migrations
     assert "live_synthetic_alert_history" not in migrations
 
@@ -138,7 +139,7 @@ def test_retired_strategy_models_and_full_fno_backtest_are_not_registered_or_imp
         "live_synthetic_pair_history.py", "synthetic_trace_opportunity.py",
         "synthetic_trace_status_check.py", "live_box_spread_alert_history.py",
         "live_box_spread_snapshot.py", "live_box_spread_snapshot_key.py",
-        "backtest_job_result_chunk.py",
+        "backtest_job_result_chunk.py", "backtest_job.py",
     ):
         assert not (root / "app" / "models" / retired_path).exists()
 
@@ -146,7 +147,7 @@ def test_retired_strategy_models_and_full_fno_backtest_are_not_registered_or_imp
         "scanner/backtest_jobs.py", "scanner/full_fno_backtest.py",
         "scanner/synchronized_replay.py", "scanner/routes.py",
         "backtesting/monthly_results_routes.py", "backtesting/routes.py",
-        "scanner/result_chunk_store.py",
+        "scanner/result_chunk_store.py", "market_data/historical_sync_jobs.py",
     ):
         assert not (root / "app" / retired_path).exists()
 
