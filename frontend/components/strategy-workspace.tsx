@@ -1026,7 +1026,6 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     setSavedIndexSymbols(nextSymbols);
     if (draftIsClean) {
       setIndexSelectionDraft(nextSymbols);
-      setWeeklyOnlyDraft([]);
     }
   }, [slug, pagePushData, savedIndexSymbols, indexSelectionDraft]);
   useEffect(() => {
