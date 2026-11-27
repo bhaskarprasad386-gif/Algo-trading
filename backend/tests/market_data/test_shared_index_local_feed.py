@@ -1,4 +1,5 @@
 from threading import Event
+from time import time_ns
 
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.contracts import InstrumentKey, InstrumentType, MarketDataRecord
@@ -30,7 +31,7 @@ def _spot():
         instrument=descriptor.key,
         symbol="NIFTY",
         instrument_type=InstrumentType.INDEX,
-        timestamp_ns=1_900_000_000_000_000_000,
+        timestamp_ns=time_ns(),
         ltp=24000.0,
         underlying="NIFTY",
     )
