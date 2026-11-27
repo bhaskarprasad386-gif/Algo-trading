@@ -147,8 +147,8 @@ def test_live_runner_bootstraps_spot_and_124_options_after_first_spot_tick():
                          if manager.registry.get(key).instrument_type == "option"]
     nifty_strikes = sorted({d.strike for d in option_descriptors if d.underlying == "NIFTY"})
     bank_strikes = sorted({d.strike for d in option_descriptors if d.underlying == "BANKNIFTY"})
-    assert len(nifty_strikes) == 31 and nifty_strikes[15] == 62000
-    assert len(bank_strikes) == 31 and bank_strikes[15] == 124000
+    assert len(nifty_strikes) == 31 and nifty_strikes[15] == 22000
+    assert len(bank_strikes) == 31 and bank_strikes[15] == 48000
     assert runner.snapshot()["state"]["fresh_count"] == 2
     assert runner.snapshot()["live_data_ready"] is False
     futures_consumer = runner.lifecycle.FUTURES_CONSUMER
@@ -523,7 +523,7 @@ def test_stale_option_bootstrap_cannot_subscribe_after_runner_restart(monkeypatc
     set_spots()
     assert runner._bootstrap_options() is True
     active_new_epoch = set(runner.lifecycle._option_keys)
-    assert len(active_new_epoch) == 48
+    assert len(active_new_epoch) == 124
 
     release_old.set()
     old_thread.join(timeout=3)
@@ -552,7 +552,7 @@ def test_concurrent_nifty_bank_option_rotations_are_serialized_and_atomic(monkey
         instrument=InstrumentKey("NSE", "NSE", "99002"), symbol="BANKNIFTY",
         instrument_type=InstrumentType.INDEX, timestamp_ns=time.time_ns(), ltp=48000.0,
         underlying="BANKNIFTY"))
-    assert len(runner.lifecycle._option_keys) == 48
+    assert len(runner.lifecycle._option_keys) == 124
 
     original_select = rotation_module.select_locked_index_options
     first_entered, release_first, second_entered = Event(), Event(), Event()
