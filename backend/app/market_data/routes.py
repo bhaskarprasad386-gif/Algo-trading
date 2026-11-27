@@ -718,11 +718,6 @@ def get_market_overview():
                         })
                 for item in instruments:
                     quote = by_token.get(item["symboltoken"], {})
-                    status = (
-                        "STALE" if quote and quote_is_stale
-                        else "LIVE" if quote
-                        else "NO_QUOTE"
-                    )
                     fallback_ltp = None
                     fallback_previous = None
                     status = (
