@@ -303,6 +303,11 @@ def _record(rule_id: int, account_key: str, event: str, outcome: str, reason: st
         pass
 
 
+async def _record_off_loop(*args, **kwargs) -> None:
+    """Persist monitor diagnostics without blocking the ASGI event loop."""
+    await asyncio.to_thread(_record, *args, **kwargs)
+
+
 async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any], rule_enabled: bool):
     # Imports are delayed to keep the router and the paper route module acyclic.
     from app.scanner import box_spread_paper_routes as paper
@@ -322,19 +327,19 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
     # scanning cannot proceed. This makes OFF/stale/no-candidate states visible
     # instead of silently returning from the background monitor.
     if not snapshot.get("fresh", False):
-        _record(rule_id, account_key, "ENTRY_SCAN", "SKIPPED",
+        await _record_off_loop(rule_id, account_key, "ENTRY_SCAN", "SKIPPED",
                 "scanner_snapshot_stale_or_unavailable;fresh_four_leg_data_required")
     elif not rule_enabled:
-        _record(rule_id, account_key, "ENTRY_SCAN", "DISABLED",
+        await _record_off_loop(rule_id, account_key, "ENTRY_SCAN", "DISABLED",
                 f"algo_rule_disabled;scanner_candidates={len(entry_rows)}")
     else:
         with paper._paper_execution_state_lock:
             entry_switch_enabled = paper._paper_execution_enabled
         if not entry_switch_enabled:
-            _record(rule_id, account_key, "ENTRY_SCAN", "BLOCKED",
+            await _record_off_loop(rule_id, account_key, "ENTRY_SCAN", "BLOCKED",
                     f"paper_execution_switch_OFF;scanner_candidates={len(entry_rows)}")
         elif not entry_rows:
-            _record(rule_id, account_key, "ENTRY_SCAN", "NO_CANDIDATES",
+            await _record_off_loop(rule_id, account_key, "ENTRY_SCAN", "NO_CANDIDATES",
                     "fresh_snapshot_has_no_entry_candidates;check_scanner_eligibility_and_feed")
 
     # Exit monitoring is independent of the new-entry kill switch. Turning OFF
@@ -351,19 +356,19 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
             # Hold through the complete expiry date in IST. Settlement becomes
             # a manual reconciliation item only after that date has passed.
             if expiry_date is None or datetime.now(ZoneInfo("Asia/Kolkata")).date() <= expiry_date:
-                _record(rule_id, account_key, "EXIT_CHECK", "HOLD_TO_EXPIRY",
+                await _record_off_loop(rule_id, account_key, "EXIT_CHECK", "HOLD_TO_EXPIRY",
                         "hold_to_expiry_rule_active", trade.id)
                 continue
             # Do not invent settlement prices or settle from client data. Keep the
             # expired position visible for trusted settlement/manual reconciliation.
-            _record(rule_id, account_key, "EXIT_CHECK", "MANUAL_SETTLEMENT_REQUIRED",
+            await _record_off_loop(rule_id, account_key, "EXIT_CHECK", "MANUAL_SETTLEMENT_REQUIRED",
                     "expiry_reached_but_verified_server_settlement_source_is_not_configured",
                     trade.id)
             continue
 
         live_row = paper._matching_live_row(contracts, snapshot=snapshot)
         if live_row is None:
-            _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
+            await _record_off_loop(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
                     "matching_fresh_four_leg_snapshot_unavailable", trade.id)
             continue
 
@@ -377,7 +382,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
             )
             observed_override = metric_value(live_row, "executable_edge")
             if entry_edge_reference is None or observed_override is None:
-                _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
+                await _record_off_loop(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
                         "remaining_edge_unavailable_without_durable_entry_edge_reference",
                         trade.id, exit_config["metric"], observed_override, exit_config["threshold"])
                 continue
@@ -385,7 +390,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
             signed = await asyncio.to_thread(_signed_open_quantities, trade.id, account_key)
             quantities_for_pnl = {role: abs(int(signed.get(role, 0))) for role in roles}
             if any(quantity <= 0 for quantity in quantities_for_pnl.values()) or len(set(quantities_for_pnl.values())) != 1:
-                _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
+                await _record_off_loop(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
                         "position_pnl_unavailable_for_incomplete_or_unequal_four_leg_exposure",
                         trade.id, exit_config["metric"], None, exit_config["threshold"])
                 continue
@@ -414,7 +419,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
             captured_edge = entry_edge_reference - observed
             reason = f"{reason}; entry_edge={entry_edge_reference:.4f}; remaining_edge={observed:.4f}; captured_edge={captured_edge:.4f} points"
         if not matched:
-            _record(rule_id, account_key, "EXIT_CHECK", "NO_ACTION", reason,
+            await _record_off_loop(rule_id, account_key, "EXIT_CHECK", "NO_ACTION", reason,
                     trade.id, exit_config["metric"], observed, exit_config["threshold"])
             continue
 
@@ -422,7 +427,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
             signed = await asyncio.to_thread(_signed_open_quantities, trade.id, account_key)
         open_quantities = {role: abs(int(signed.get(role, 0))) for role in roles}
         if any(quantity <= 0 for quantity in open_quantities.values()) or len(set(open_quantities.values())) != 1:
-            _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
+            await _record_off_loop(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
                     "four_leg_open_quantities_not_equal_or_missing; position left unchanged",
                     trade.id, exit_config["metric"], observed, exit_config["threshold"])
             continue
@@ -435,11 +440,11 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 fill_id=f"rule-exit-{rule_id}-{trade.id}-{uuid.uuid4().hex}",
             )
         except HTTPException as exc:
-            _record(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
+            await _record_off_loop(rule_id, account_key, "EXIT_CHECK", "SKIPPED",
                     f"shared_four_leg_exit_rejected:{exc.detail}",
                     trade.id, exit_config["metric"], observed, exit_config["threshold"])
             continue
-        _record(rule_id, account_key, "EXIT_CHECK", "EXIT_RECORDED",
+        await _record_off_loop(rule_id, account_key, "EXIT_CHECK", "EXIT_RECORDED",
                 f"{reason}; shared {exit_config['order_type']} four-leg paper basket; status={exit_result['status']}",
                 trade.id, exit_config["metric"], observed, exit_config["threshold"])
 
@@ -453,7 +458,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
     open_count = len(await asyncio.to_thread(_open_rule_trades, rule_id, account_key))
     max_open_positions = config["entry"]["max_open_positions"]
     if open_count >= max_open_positions:
-        _record(rule_id, account_key, "ENTRY_SCAN", "BLOCKED",
+        await _record_off_loop(rule_id, account_key, "ENTRY_SCAN", "BLOCKED",
                 f"max_open_positions_reached;open={open_count};maximum={max_open_positions}")
         return
 
@@ -496,7 +501,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
         skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
         if sum(skipped_reasons.values()) <= 20:
             observed = metric_value(skipped_row, config["entry"]["metric"])
-            _record(rule_id, account_key, "ENTRY_SCAN", "SKIPPED",
+            await _record_off_loop(rule_id, account_key, "ENTRY_SCAN", "SKIPPED",
                     f"candidate={str(skipped_row.get('symbol','')).upper()} "
                     f"expiry={skipped_row.get('expiry_date') or skipped_row.get('expiry')} "
                     f"direction={skipped_row.get('direction')};reason={reason}",
@@ -559,7 +564,7 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 max_per_window, idempotency_key,
             )
             if quota_slot is None:
-                _record(rule_id, account_key, "ENTRY_CHECK", "SKIPPED",
+                await _record_off_loop(rule_id, account_key, "ENTRY_CHECK", "SKIPPED",
                         f"{candidate_audit};interval_quota_full_or_candidate_already_reserved")
                 continue
             trade = await asyncio.to_thread(
@@ -600,30 +605,30 @@ async def _run_rule_cycle(rule_id: int, account_key: str, config: dict[str, Any]
                 "engine_latency_s": result.get("latency_seconds"),
                 "legs": leg_audit,
             }, separators=(",", ":"), default=str)
-            _record(rule_id, account_key, "ENTRY_CHECK", "ENTRY_RECORDED",
+            await _record_off_loop(rule_id, account_key, "ENTRY_CHECK", "ENTRY_RECORDED",
                     execution_audit, trade.id,
                     config["entry"]["metric"], metric_value(row, config["entry"]["metric"]),
                     config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
             entry_edge = metric_value(row, "executable_edge")
             if entry_edge is not None:
-                _record(rule_id, account_key, "ENTRY_EDGE_REFERENCE", "RECORDED",
+                await _record_off_loop(rule_id, account_key, "ENTRY_EDGE_REFERENCE", "RECORDED",
                         "immutable_entry_executable_edge_for_remaining_edge_exit",
                         trade.id, "entry_executable_edge", entry_edge, None)
         except HTTPException as exc:
-            _record(rule_id, account_key, "ENTRY_CHECK", "BLOCKED",
+            await _record_off_loop(rule_id, account_key, "ENTRY_CHECK", "BLOCKED",
                     f"{candidate_audit};paper_entry_blocked:{exc.status_code}:{exc.detail}",
                     trade.id if trade is not None else None,
                     config["entry"]["metric"], metric_value(row, config["entry"]["metric"]),
                     config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
         except Exception as exc:
-            _record(rule_id, account_key, "ENTRY_CHECK", "ERROR",
+            await _record_off_loop(rule_id, account_key, "ENTRY_CHECK", "ERROR",
                     f"{candidate_audit};paper_entry_error:{type(exc).__name__}:{exc}",
                     trade.id if trade is not None else None,
                     config["entry"]["metric"], metric_value(row, config["entry"]["metric"]),
                     config["entry"]["range_min"] if config["entry"].get("range_enabled") else config["entry"]["threshold"])
 
     if skipped_count > 20:
-        _record(rule_id, account_key, "ENTRY_SCAN", "SUMMARY",
+        await _record_off_loop(rule_id, account_key, "ENTRY_SCAN", "SUMMARY",
                 f"evaluated={evaluated_count};skipped={skipped_count};"
                 f"remaining_skips_aggregated={max(0, skipped_count - 20)};reasons={json.dumps(skipped_reasons, sort_keys=True)}")
 
@@ -645,7 +650,7 @@ async def paper_rule_monitor_loop():
                 try:
                     await _run_rule_cycle(rule_id, account_key, config, enabled)
                 except Exception as exc:
-                    _record(rule_id, account_key, "MONITOR", "ERROR",
+                    await _record_off_loop(rule_id, account_key, "MONITOR", "ERROR",
                             f"monitor_cycle_error:{type(exc).__name__}:{exc}")
         except asyncio.CancelledError:
             raise
