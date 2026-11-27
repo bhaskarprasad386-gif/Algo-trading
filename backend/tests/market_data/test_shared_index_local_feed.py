@@ -67,13 +67,20 @@ def test_local_feed_deduplicates_ticks_and_clears_only_requested_consumer():
     descriptor, record = _spot()
     first = Event()
     second = Event()
+    update_received = Event()
     observed = []
 
     one = CommonStrategyMarketFeed("box-underlyings", manager=manager)
     two = CommonStrategyMarketFeed("box-depth", manager=manager)
     try:
         one.start((descriptor,), lambda item: (observed.append(("one", item)), first.set()))
-        two.start((descriptor,), lambda item: (observed.append(("two", item)), second.set()))
+        def receive_two(item):
+            observed.append(("two", item))
+            second.set()
+            if item.timestamp_ns > record.timestamp_ns:
+                update_received.set()
+
+        two.start((descriptor,), receive_two)
         runner.records[descriptor.key.value] = record
 
         assert first.wait(1.0)
@@ -90,7 +97,7 @@ def test_local_feed_deduplicates_ticks_and_clears_only_requested_consumer():
             ltp=24001.0,
             underlying="NIFTY",
         )
-        assert Event().wait(0.02)
+        assert update_received.wait(1.0)
         assert len(observed) == 1
         assert observed[0][0] == "two"
     finally:
