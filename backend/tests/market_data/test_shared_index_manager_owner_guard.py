@@ -61,3 +61,25 @@ def test_direct_non_runner_subscription_is_rejected_before_registry_mutation():
         manager.subscribe("iv-skew-flip-spot", [descriptor.key], mode=3)
 
     assert manager.registry.subscriptions() == ()
+
+
+def test_shared_runner_owner_cannot_subscribe_outside_locked_index_universe():
+    manager = SharedIndexOnlyWebSocketManager(socket_factory=lambda: object())
+    descriptor = InstrumentDescriptor(
+        key=InstrumentKey("BSE", "BSE", "88001"),
+        symbol="SENSEX",
+        instrument_type="index",
+        exchange="BSE",
+        segment="BSE",
+        underlying="SENSEX",
+    )
+    feed = CommonStrategyMarketFeed(
+        "shared-index-market-data:spot",
+        manager=manager,
+    )
+
+    with pytest.raises(PermissionError, match="NIFTY/BANKNIFTY"):
+        feed.start((descriptor,), lambda _record: None)
+
+    assert manager.registry.get(descriptor.key) is None
+    assert manager.registry.subscriptions() == ()
