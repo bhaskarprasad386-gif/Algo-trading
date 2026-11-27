@@ -1541,6 +1541,12 @@ class CommonWebSocketManager:
                     tracked["outcome"] = "start_failed"
                     tracked["completed_at"] = time.monotonic()
                     self._socket_operation_worker_failures += 1
+                    # Keep the desired subscription delta pending for the
+                    # periodic supervisor; it will retry reconciliation once
+                    # worker creation is available again.
+                    pending_version = self._failure_recovery_pending_versions.get(group, 0) + 1
+                    self._failure_recovery_pending_versions[group] = pending_version
+                    self._failure_recovery_pending_groups.add(group)
             raise RuntimeError(
                 f"Unable to start WebSocket {operation_name} worker for group "
                 f"{group_key}: {type(exc).__name__}: {exc}"
