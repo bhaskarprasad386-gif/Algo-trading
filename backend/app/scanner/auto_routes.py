@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.market_data.instruments import InstrumentMaster
+from app.market_data.instruments import InstrumentMaster
 from app.models.cash_future_history import CashFutureHistory
 from app.models.live_cash_future_scanner_result import LiveCashFutureScannerResult
 from app.models.live_cash_future_alert_history import LiveCashFutureAlertHistory
@@ -26,6 +27,31 @@ def _expiry(value: object) -> date | None:
         except ValueError:
             continue
     return None
+
+
+def discover_cash_future_symbols(limit: int = 50) -> list[str]:
+    """Discover current stock-future symbols for the optional history collector.
+
+    This helper is retained for the separately gated historical collector only;
+    live Cash-Future scan routes and ranking calculations remain retired.
+    """
+    limit = getattr(limit, "default", limit)
+    master = InstrumentMaster()
+    master.search(exchange="NFO")
+    today = date.today()
+    symbols: set[str] = set()
+    for item in master.instruments:
+        if str(item.get("exch_seg", "")).upper() != "NFO":
+            continue
+        if str(item.get("instrumenttype", "")).upper() != "FUTSTK":
+            continue
+        expiry = _expiry(item.get("expiry"))
+        if not expiry or expiry < today:
+            continue
+        name = str(item.get("name", "")).strip().upper()
+        if name:
+            symbols.add(name)
+    return sorted(symbols)[:int(limit)]
 
 
 @router.get("/cash-future/live/fast")
