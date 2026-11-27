@@ -35,6 +35,16 @@ def test_box_spread_and_paper_trading_are_fully_retired():
     assert "LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED" not in main
     assert not (root.parent / "frontend" / "app" / "strategies" / "box-spread").exists()
     assert not (root.parent / "frontend" / "app" / "strategies" / "box-spread-paper").exists()
+    mobile = root.parent / "mobile" / "android" / "app" / "src" / "main"
+    for relative in (
+        "java/com/algotrading/app/MainActivity.kt",
+        "java/com/algotrading/app/ApiService.kt",
+        "AndroidManifest.xml",
+    ):
+        source = (mobile / relative).read_text(encoding="utf-8")
+        assert "BoxSpread" not in source
+        assert "box_spread" not in source.lower()
+        assert "box-spread" not in source.lower()
 
 
 def test_common_broker_websocket_is_exclusively_owned_by_shared_index_runner():
