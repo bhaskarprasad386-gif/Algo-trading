@@ -174,7 +174,7 @@ def test_nifty_weekly_option_expiry_seeds_atm_tracker_without_future_expiry(monk
     monkeypatch.setattr(mod, "select_box_contracts", stop_after_selection)
     runner = mod.LiveBoxSpreadRunner(
         object(),
-        [mod.BoxSpreadLiveTarget("NIFTY", "INDEX")],
+        [mod.BoxSpreadLiveTarget("NIFTY", "INDEX", expiry="11NOV2027")],
         allowed_stock_symbols=set(),
         future_master=Master(),
         auth=object(),
@@ -906,7 +906,7 @@ def test_weekly_only_without_weekly_expiry_never_calls_selector_or_falls_back_to
     assert selector_calls == []
     assert runner._readiness["state"] == "waiting_for_contracts"
     assert runner._readiness["unavailable_symbols"] == [
-        {"symbol": "NIFTY", "reason": "WEEKLY_EXPIRY_UNAVAILABLE"}
+        {"symbol": "NIFTY", "reason": "LOCKED_EXPIRY_UNAVAILABLE"}
     ]
 
 def test_runner_shared_market_snapshot_reuses_scanner_and_depth_without_new_feed(monkeypatch):
