@@ -286,6 +286,9 @@ class CommonWebSocketManager:
         # Retired transports remain visible until their close worker actually exits.
         # Store metadata only; never retain broker frames or authentication payloads.
         self._retired_transports: dict[str, dict[str, Any]] = {}
+        # Watchers are required to release retired-session admission after the
+        # close worker exits. Retain watcher targets when thread creation fails.
+        self._retired_transport_watch_pending: dict[str, dict[str, Any]] = {}
         # Subscribe/unsubscribe SDK workers may outlive the bounded caller wait.
         # Track active workers only (bounded by operations in flight), and keep
         # aggregate counters so late completion remains observable without leaks.
@@ -1781,10 +1784,12 @@ class CommonWebSocketManager:
                     return
                 has_intent = bool(self.registry.subscriptions())
                 has_pending_failure_transports = bool(self._failure_recovery_pending_transports)
-            if not has_intent and not has_pending_failure_transports:
+                has_pending_retirement_watchers = bool(self._retired_transport_watch_pending)
+            if not has_intent and not has_pending_failure_transports and not has_pending_retirement_watchers:
                 retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 continue
             try:
+                self._retry_pending_retired_transport_watchers()
                 self._retry_pending_failure_transport_closes()
                 # Before/after the regular session, tick silence is expected;
                 # don't churn otherwise-connected sockets every 30 seconds.
@@ -2529,11 +2534,79 @@ class CommonWebSocketManager:
                         f"{group.mode}:{group.shard}", reason, exc,
                     )
 
-        Thread(
+        self._start_retired_transport_watcher(
+            key=key,
+            group=group,
+            generation=generation,
+            reason=reason,
+            close_worker=close_worker,
             target=_watch,
+        )
+
+    def _start_retired_transport_watcher(
+        self,
+        *,
+        key: str,
+        group: SocketGroup,
+        generation: int | None,
+        reason: str,
+        close_worker: Thread,
+        target: Callable[[], None],
+    ) -> None:
+        """Start or queue the watcher that owns retired-session release."""
+        watcher = Thread(
+            target=target,
             name=f"common-ws-retire-watch-{group.mode}-{group.shard}",
             daemon=True,
-        ).start()
+        )
+        try:
+            watcher.start()
+        except Exception as exc:
+            with self._lock:
+                self._retired_transport_watch_pending[key] = {
+                    "group": group,
+                    "generation": generation,
+                    "reason": reason,
+                    "close_worker": close_worker,
+                    "target": target,
+                    "starting": False,
+                }
+            runtime_diagnostics.record(
+                component="Common Market Feed",
+                error_type=type(exc).__name__,
+                message=f"retired transport watcher start failed: {exc}",
+                context={"event": "retired_transport_watcher_start", "group": f"{group.mode}:{group.shard}", "generation": generation},
+            )
+            app_logger.warning(
+                "Common feed retired transport watcher could not start; supervisor will retry group=%s: %s",
+                f"{group.mode}:{group.shard}", exc,
+            )
+            return
+        with self._lock:
+            self._retired_transport_watch_pending.pop(key, None)
+
+    def _retry_pending_retired_transport_watchers(self) -> None:
+        """Retry watcher creation while keeping retired socket admission fenced."""
+        with self._lock:
+            pending_items = [
+                (key, dict(record))
+                for key, record in self._retired_transport_watch_pending.items()
+                if not record.get("starting")
+            ]
+            for key, _ in pending_items:
+                current = self._retired_transport_watch_pending.get(key)
+                if current is not None:
+                    current["starting"] = True
+
+        for key, record in pending_items:
+            self._start_retired_transport_watcher(
+                key=key,
+                group=record["group"],
+                generation=record["generation"],
+                reason=record["reason"],
+                close_worker=record["close_worker"],
+                target=record["target"],
+            )
 
     def _reconcile_after_retirement(self, group: SocketGroup) -> None:
         """Resume desired-state reconciliation after a retired close completes."""
@@ -3206,6 +3279,7 @@ class CommonWebSocketManager:
                 self._failure_recovery_generation_by_group.clear()
                 self._failure_recovery_pending_groups.clear()
                 self._failure_recovery_pending_transports.clear()
+                self._retired_transport_watch_pending.clear()
                 self._failure_recovery_pending_versions.clear()
         # The recovery supervisor may be waiting for _reconcile_lock. Release
         # that lock before joining it, otherwise every shutdown can burn the
