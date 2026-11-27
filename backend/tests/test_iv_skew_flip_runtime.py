@@ -1206,3 +1206,33 @@ def test_runtime_snapshot_uses_readiness_without_full_shared_runner_health():
         "initial_option_bootstrap_done": True,
     }
     assert runtime.stop()["status"] == "STOPPED"
+
+
+def test_runtime_snapshot_builds_each_feed_and_sampler_view_once():
+    class CountingSnapshot:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = 0
+
+        def snapshot(self):
+            self.calls += 1
+            return dict(self.payload)
+
+    runtime = IVSkewFlipRuntime(instrument_master=FakeMaster([]))
+    feeds = {
+        "NIFTY_WEEKLY": CountingSnapshot({"status": "LIVE", "consumer": "nifty"}),
+        "BANKNIFTY_MONTHLY": CountingSnapshot({"status": "LIVE", "consumer": "banknifty"}),
+    }
+    samplers = {
+        "NIFTY_WEEKLY": CountingSnapshot({"status": "RUNNING"}),
+        "BANKNIFTY_MONTHLY": CountingSnapshot({"status": "RUNNING"}),
+    }
+    runtime._option_feeds = feeds
+    runtime._samplers = samplers
+
+    snapshot = runtime.snapshot()
+
+    assert all(feed.calls == 1 for feed in feeds.values())
+    assert all(sampler.calls == 1 for sampler in samplers.values())
+    assert snapshot["option_chains"]["NIFTY_WEEKLY"]["option_feed"] == snapshot["indices"]["NIFTY"]["option_feed"]
+    assert snapshot["option_chains"]["BANKNIFTY_MONTHLY"]["sampler"] == snapshot["indices"]["BANKNIFTY"]["sampler"]
