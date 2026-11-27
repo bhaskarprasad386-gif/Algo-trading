@@ -266,12 +266,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        # IV scanner is opt-in and owns only its named shared-feed consumers.
-        if iv_skew_flip_runtime is not None:
-            iv_skew_flip_runtime.stop()
-            iv_skew_flip_runtime = None
-        # Signal blocking worker threads before cancelling their asyncio wrappers.
-        # This makes to_thread(run_forever) unwind promptly during service stop.
+        # Close admission first: recovery must not recreate the IV runtime or
+        # shared runner while application shutdown is in progress.
         if _dashboard_snapshot_task is not None:
             _dashboard_snapshot_task.cancel()
         if _event_loop_lag_task is not None:
@@ -299,6 +295,28 @@ async def lifespan(app: FastAPI):
             for result in results:
                 if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
                     app_logger.error("Background task shutdown failed: %s", result)
+        # Recovery tasks and the shared-runner loop have now been cancelled
+        # and awaited. Stop IV consumers before closing their process-wide source.
+        if iv_skew_flip_runtime is not None:
+            try:
+                iv_stop_state = iv_skew_flip_runtime.stop()
+                if isinstance(iv_stop_state, dict) and iv_stop_state.get("status") not in {"STOPPED", None}:
+                    app_logger.warning(
+                        "IV runtime did not report a clean STOPPED state during shutdown: %s",
+                        iv_stop_state.get("status"),
+                    )
+            except Exception:
+                app_logger.exception("IV runtime shutdown failed")
+            finally:
+                iv_skew_flip_runtime = None
+        # SharedIndexMarketDataRunner.stop() runs in the recovery task's finally.
+        # It only detaches its three consumers; the application lifespan is the
+        # sole owner allowed to close the process-wide broker manager.
+        try:
+            from app.market_data.common_strategy_feed import close_shared_common_manager
+            close_shared_common_manager()
+        except Exception:
+            app_logger.exception("Shared common WebSocket manager shutdown failed")
         # Broker adapters own authenticated provider sessions in process memory.
         # Drain them before shutdown completes; failures are logged per provider
         # and must not prevent the remaining sessions or market-data runners closing.
