@@ -1184,3 +1184,25 @@ def test_shared_runner_mode_never_constructs_an_iv_owned_future_websocket_feed()
     assert runtime.future_feed.snapshot()["status"] == "DISABLED_BY_SCOPE"
     assert runtime.future_feed.snapshot()["owns_subscriptions"] is False
     assert runtime.spot_feed.snapshot()["subscription_owner"] == "shared-index-market-data"
+
+
+def test_runtime_snapshot_uses_readiness_without_full_shared_runner_health():
+    class SharedRunner:
+        def readiness_snapshot(self):
+            return {"enabled": True, "initial_option_bootstrap_done": True}
+
+        def health_snapshot(self):
+            raise AssertionError("runtime status snapshot must not build full runner diagnostics")
+
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        shared_runner=SharedRunner(),
+    )
+
+    snapshot = runtime.snapshot()
+
+    assert snapshot["market_data_connection"]["runner"] == {
+        "enabled": True,
+        "initial_option_bootstrap_done": True,
+    }
+    assert runtime.stop()["status"] == "STOPPED"
