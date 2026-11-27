@@ -821,8 +821,6 @@ app.include_router(page_push_websocket_router)
 app.include_router(intelligence_router)
 app.include_router(early_impulse_router)
 app.include_router(vpt_x_reversal_router)
-if settings.BACKTESTING_ENABLED:
-    
 # Durable backtesting-download status is kept in its own SQLite file so API
 # requests never depend on an in-memory status object. The path can be
 # overridden for deployments through the BACKTEST_STATUS_DB environment var.
