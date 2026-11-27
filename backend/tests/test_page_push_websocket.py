@@ -474,15 +474,15 @@ def test_journal_dispatch_uses_page_sequence_cursor_not_global_event_id(monkeypa
 
 def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch):
     async def scenario():
-        queue = asyncio.Queue(maxsize=1)
+        queue = asyncio.Queue(maxsize=2)
         pages = {"iv-skew-flip", "weekly-swing"}
         queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 1})
-        queue.put_nowait({"page": "weekly-swing", "event": "PATCH", "sequence": 1}) if not queue.full() else None
         monkeypatch.setattr(push, "_subscribers", {(queue, frozenset(pages))})
         monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 7)
         waiter = asyncio.create_task(queue.get())
         await asyncio.wait_for(waiter, timeout=0.5)
         queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 2})
+        queue.put_nowait({"page": "weekly-swing", "event": "PATCH", "sequence": 2})
         next_waiter = await push._restart_event_waiter(queue, waiter, "weekly-swing")
         next_waiter.cancel()
         await asyncio.gather(next_waiter, return_exceptions=True)
