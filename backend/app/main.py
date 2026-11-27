@@ -49,6 +49,7 @@ from app.market_data.live_cash_future_common import LiveCashFutureCommonRunner
 from app.market_data.common_strategy_feed import shared_common_manager
 from app.market_data.dashboard_snapshot_cache import cached_snapshot
 from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
+from app.market_data.shared_index_local_feed import SharedIndexRunnerLocalFeedManager
 from app.market_data.live_calendar_spread_stream import LiveCalendarSpreadOneSecondCollector
 from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget, select_nearest_option_expiry, select_monthly_option_expiry
 from app.market_data.live_synthetic_underlying import filter_resolvable_index_symbols
@@ -116,6 +117,7 @@ install_iv_basket_immutability_guards(engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 shared_index_market_data_runner = SharedIndexMarketDataRunner(instrument_master=instrument_master)
+box_shared_feed_manager = SharedIndexRunnerLocalFeedManager(shared_index_market_data_runner)
 configure_shared_index_runner_snapshot(shared_index_market_data_runner.snapshot)
 configure_shared_index_runner_health_snapshot(shared_index_market_data_runner.health_snapshot)
 shoonya_market_data_supervisor: ShoonyaMarketDataSupervisor | None = None
@@ -157,9 +159,9 @@ _live_synthetic_universe_status = {
 live_box_spread_latest_results: tuple = ()
 live_box_spread_runner: LiveBoxSpreadRunner | None = None
 live_box_spread_supervisor: BoxSpreadRunnerSupervisor | None = None
-# Keep Box's legacy per-strategy feed adapters off until they consume the
-# SharedIndexMarketDataRunner's published records through a local adapter.
-LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = True
+# Box adapters consume only the local fan-out of SharedIndexMarketDataRunner records.
+# They never create additional broker subscriptions or sockets.
+LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = False
 BOX_SPREAD_INDEX_SELECTION_LOCK = threading.Lock()
 BOX_SPREAD_INDEX_PRESETS = {
     "ALL": ("NIFTY", "BANKNIFTY"),
@@ -1695,6 +1697,7 @@ async def _live_box_spread_loop() -> None:
                 auth=AngelOneAuth(),
                 on_results=lambda results: _update_live_box_spread_results(results),
                     on_spot_price=_publish_box_spot_page_update,
+                shared_feed_manager=box_shared_feed_manager,
             )
             live_box_spread_runner = runner
             worker, worker_errors = _start_box_spread_runner_worker(runner)
@@ -1711,6 +1714,7 @@ async def _live_box_spread_loop() -> None:
                     consumer_namespace=f"box-stage-{uuid.uuid4().hex[:12]}",
                     publish_enabled=False,
                     publication_gate=runner.publication_gate,
+                    shared_feed_manager=box_shared_feed_manager,
                 )
 
             def set_active_runner(active_runner):
