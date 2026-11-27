@@ -1,32 +1,61 @@
-"""Local fan-out adapter from SharedIndexMarketDataRunner to Box Spread consumers.
+"""Bounded local fan-out from SharedIndexMarketDataRunner to strategy adapters.
 
-This adapter never opens a broker socket. It polls the runner's bounded latest
-record state and dispatches only records for keys registered by local consumers.
+This adapter consumes runner-published records only. It never opens or
+subscribes to a broker WebSocket and never polls the shared cache.
 """
 from __future__ import annotations
 
-from threading import Event, RLock, Thread
-from time import time_ns
+from queue import Empty, Full, Queue
+from threading import Lock, RLock, Thread
 from typing import Any, Callable
 
 from .registry import InstrumentRegistry
 
 
 class SharedIndexRunnerLocalFeedManager:
-    def __init__(self, runner: Any, *, poll_seconds: float = 0.05) -> None:
-        if poll_seconds <= 0:
-            raise ValueError("poll_seconds must be positive")
+    def __init__(self, runner: Any, *, queue_capacity: int = 2048) -> None:
+        if isinstance(queue_capacity, bool) or int(queue_capacity) < 1:
+            raise ValueError("queue_capacity must be a positive integer")
         self.runner = runner
-        self.poll_seconds = float(poll_seconds)
         self.registry = InstrumentRegistry()
+        self._queue: Queue[Any] = Queue(maxsize=int(queue_capacity))
         self._lock = RLock()
+        self._dispatch_lock = Lock()
         self._callbacks: dict[str, Callable[[Any], None]] = {}
+        self._owners: dict[str, set[str]] = {}
         self._last_timestamp: dict[tuple[str, str], int] = {}
-        self._stop = Event()
-        self._thread: Thread | None = None
         self._closed = False
+        self._attached = False
+        self._thread: Thread | None = None
         self._delivered = 0
         self._callback_errors = 0
+        self._queue_dropped = 0
+
+    def attach(self) -> None:
+        """Route the runner's already-accepted records into the bounded queue."""
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("shared runner local feed manager is closed")
+            if self._attached:
+                return
+            state = getattr(self.runner, "state", None)
+            if state is None or not hasattr(state, "_publish"):
+                raise TypeError("runner state does not expose the record publication hook")
+            state._publish = self.on_record
+            self._attached = True
+
+    def on_record(self, record: Any) -> bool:
+        """Non-blocking producer hook; invoked only by Shared Runner state."""
+        with self._lock:
+            if self._closed or not self._attached:
+                return False
+        try:
+            self._queue.put_nowait(record)
+            return True
+        except Full:
+            with self._lock:
+                self._queue_dropped += 1
+            return False
 
     def register_normalized_callback(self, consumer: str, callback: Callable[[Any], None]) -> None:
         name = str(consumer or "").strip()
@@ -55,6 +84,7 @@ class SharedIndexRunnerLocalFeedManager:
                 raise RuntimeError("shared runner local feed manager is closed")
             for key in items:
                 self.registry.subscribe(name, key, mode)
+                self._owners.setdefault(key.value, set()).add(name)
             self._ensure_worker_locked()
         return self.registry.subscriptions()
 
@@ -64,67 +94,75 @@ class SharedIndexRunnerLocalFeedManager:
             targets = tuple(keys) if keys is not None else self.registry.active_keys()
             for key in targets:
                 self.registry.unsubscribe(name, key)
+                owners = self._owners.get(key.value)
+                if owners is not None:
+                    owners.discard(name)
+                    if not owners:
+                        self._owners.pop(key.value, None)
             self.registry.unregister_many(targets)
-            self._prune_worker_locked()
 
     def clear_consumer(self, consumer: str) -> None:
         name = str(consumer or "").strip()
         with self._lock:
-            owned_keys = tuple(
-                subscription.key
-                for subscription in self.registry.subscriptions()
-                if name in subscription.consumers
+            owned = tuple(
+                key for key, consumers in self._owners.items() if name in consumers
             )
             self.registry.clear_consumer(name)
-            self.registry.unregister_many(owned_keys)
             self._callbacks.pop(name, None)
-            for key in tuple(self._last_timestamp):
-                if key[0] == name:
-                    self._last_timestamp.pop(key, None)
-            self._prune_worker_locked()
+            for key in owned:
+                consumers = self._owners.get(key)
+                if consumers is not None:
+                    consumers.discard(name)
+                    if not consumers:
+                        self._owners.pop(key, None)
+                        self._last_timestamp.pop((name, key), None)
+            for identity in tuple(self._last_timestamp):
+                if identity[0] == name:
+                    self._last_timestamp.pop(identity, None)
+            self.registry.unregister_many(
+                key for key in self.registry.active_keys()
+                if key.value not in self._owners
+            )
 
     def _ensure_worker_locked(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
-        self._stop.clear()
         self._thread = Thread(
-            target=self._poll,
-            name="box-shared-index-local-feed",
+            target=self._dispatch,
+            name="shared-index-local-fanout",
             daemon=True,
         )
         self._thread.start()
 
-    def _prune_worker_locked(self) -> None:
-        # Keep the small local dispatcher alive after the first subscriber.
-        # Stopping/restarting it on every staged Box handoff creates a race in
-        # which a replacement subscription can be left without a poller.
-        return
-
-    def _poll(self) -> None:
-        while not self._stop.wait(self.poll_seconds):
-            with self._lock:
-                subscriptions = self.registry.subscriptions()
-                callbacks = dict(self._callbacks)
-            if not subscriptions:
+    def _dispatch(self) -> None:
+        while True:
+            try:
+                record = self._queue.get(timeout=0.25)
+            except Empty:
+                with self._lock:
+                    if self._closed:
+                        return
                 continue
-            for subscription in subscriptions:
-                key = subscription.key
-                record = self.runner.latest(key.value)
-                if record is None:
+            if record is None:
+                self._queue.task_done()
+                return
+            key = getattr(getattr(record, "instrument", None), "value", "")
+            timestamp_ns = getattr(record, "timestamp_ns", 0)
+            with self._lock:
+                consumers = tuple(self._owners.get(key, ()))
+                callbacks = tuple(
+                    (name, self._callbacks.get(name)) for name in consumers
+                )
+            for name, callback in callbacks:
+                if callback is None:
                     continue
-                age_ns = time_ns() - int(record.timestamp_ns)
-                if age_ns < -1_000_000_000 or age_ns > 5_000_000_000:
-                    continue
-                for consumer in subscription.consumers:
-                    callback = callbacks.get(consumer)
-                    if callback is None:
-                        continue
-                    identity = (consumer, key.value)
+                identity = (name, key)
+                with self._dispatch_lock:
                     with self._lock:
                         previous = self._last_timestamp.get(identity, 0)
-                        if record.timestamp_ns <= previous:
+                        if timestamp_ns <= previous:
                             continue
-                        self._last_timestamp[identity] = record.timestamp_ns
+                        self._last_timestamp[identity] = timestamp_ns
                     try:
                         callback(record)
                         with self._lock:
@@ -132,29 +170,50 @@ class SharedIndexRunnerLocalFeedManager:
                     except Exception:
                         with self._lock:
                             self._callback_errors += 1
+            self._queue.task_done()
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             active = self.registry.subscriptions()
             return {
                 "source": "shared-index-market-data-runner",
-                "running": bool(self._thread and self._thread.is_alive() and not self._stop.is_set()),
+                "attached": self._attached,
+                "running": bool(self._thread and self._thread.is_alive() and not self._closed),
                 "consumer_count": len({name for item in active for name in item.consumers}),
                 "instrument_count": len(active),
                 "delivered_records": self._delivered,
                 "callback_errors": self._callback_errors,
-                "poll_seconds": self.poll_seconds,
+                "queue_dropped": self._queue_dropped,
+                "queue_depth": self._queue.qsize(),
+                "queue_capacity": self._queue.maxsize,
             }
 
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
             self._closed = True
+            self._owners.clear()
+            self._callbacks.clear()
+            self._last_timestamp.clear()
             for subscription in self.registry.subscriptions():
                 for name in subscription.consumers:
                     self.registry.clear_consumer(name)
-            self._callbacks.clear()
-            self._last_timestamp.clear()
-            self._stop.set()
+            self.registry.unregister_many(self.registry.active_keys())
             thread = self._thread
+        # The queue is bounded; shutdown must not block behind a saturated queue.
+        try:
+            self._queue.put_nowait(None)
+        except Full:
+            while True:
+                try:
+                    self._queue.get_nowait()
+                    self._queue.task_done()
+                except Empty:
+                    break
+            try:
+                self._queue.put_nowait(None)
+            except Full:
+                pass
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
