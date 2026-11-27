@@ -130,8 +130,8 @@ class LiveSyntheticUnderlyingFeed:
                 if not token and symbol in self.index_symbols:
                     exchange = "BSE" if symbol in BSE_INDEX_SYMBOLS else "NSE"
                     token = self.instrument_master.resolve_index_token(symbol, exchange) or ""
-                elif not token and symbol in self.commodity_symbols:
-                    token = self.instrument_master.get_token(symbol, "MCX") or ""
+                elif symbol in self.commodity_symbols:
+                    token = ""
                 elif not token:
                     token = self.instrument_master.resolve_cash_token(symbol, "NSE") or ""
             except (LookupError, ValueError) as exc:
@@ -168,8 +168,8 @@ class LiveSyntheticUnderlyingFeed:
             if not token:
                 continue
             if symbol in self.commodity_symbols:
-                exchange = "MCX"
-            elif symbol in BSE_INDEX_SYMBOLS and symbol in self.index_symbols:
+                continue
+            if symbol in BSE_INDEX_SYMBOLS and symbol in self.index_symbols:
                 exchange = "BSE"
             else:
                 exchange = "NSE"
