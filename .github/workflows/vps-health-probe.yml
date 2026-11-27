@@ -140,7 +140,6 @@ jobs:
           fi
 
           echo "=== RETIRED SCANNERS ==="
-          echo "Cash-Future, Calendar Spread, Synthetic and Box Spread endpoints are intentionally not probed."
           acceptance_status=0
 
           echo "=== SERVICE MEMORY / PROCESS ==="
