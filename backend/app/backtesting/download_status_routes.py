@@ -14,13 +14,6 @@ def create_download_status_router(store: HistoricalDownloadStatusStore) -> APIRo
     """Create read-only historical-download and durable-backtest routes."""
     router = APIRouter(prefix="/api/v1/backtesting", tags=["backtesting"])
 
-    @router.get("/cash-future/downloads/{job_id}")
-    def get_cash_future_download_status(job_id: str) -> dict:
-        try:
-            return download_status_payload(store, job_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="download job not found") from exc
-
     @router.get("/runs")
     def list_backtest_runs() -> dict:
         """List durable backtest run summaries without loading trade history."""
