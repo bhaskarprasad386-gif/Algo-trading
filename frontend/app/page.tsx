@@ -191,7 +191,6 @@ export default function HomePage() {
           setWsStatus("connected");
           setLastDashboardMessageAt(lastSnapshotAt);
           setSnapshot({
-            box: Number(message?.integration?.box_spread?.count ?? 0),
             opportunities: Number(message?.scanner?.opportunity_count ?? 0),
             timestamp: message?.timestamp ?? null,
           });
@@ -344,15 +343,13 @@ export default function HomePage() {
         setRuntimeLastSuccessAt(sampleAt);
         const currentCounters = {
           commonTicks: Number(feed.ticks_received ?? 0),
-          boxPayloads: Number(runners.box_spread?.records_received ?? runners.box_spread?.payload_callbacks ?? runners.box_spread?.callbacks ?? 0),
-          boxUpdates: Number(runners.box_spread?.scanner_updates ?? runners.box_spread?.scanner_results ?? runners.box_spread?.observations ?? 0),
         };
         const previousCounters = runnerCountersRef.current;
         const previousSampleAt = runnerCounterSampleAtRef.current;
         if (previousCounters && previousSampleAt != null && receivedAt > previousSampleAt) {
           const elapsedSeconds = (receivedAt - previousSampleAt) / 1000;
           const rate = (key: string) => { const current = currentCounters[key as keyof typeof currentCounters]; const previous = previousCounters[key]; return !Number.isFinite(current) || !Number.isFinite(previous) || current < previous ? Number.NaN : (current - previous) / elapsedSeconds; };
-          setRunnerTps({ commonTicks: rate("commonTicks"), boxPayloads: rate("boxPayloads") });
+          setRunnerTps({ commonTicks: rate("commonTicks") });
         }
         runnerCounterSampleAtRef.current = receivedAt;
         if (previousCounters) {
@@ -379,10 +376,7 @@ export default function HomePage() {
         }
         // Prefer server-observed timestamps over when this browser first noticed
         // a cumulative counter. This preserves the true stale age across page reloads.
-        const serverActivitySamples: Array<[string, unknown]> = [
-          ["boxPayloads", runners.box_spread?.last_payload_at_ns],
-          ["boxUpdates", runners.box_spread?.last_scanner_update_at_ns],
-        ];
+        const serverActivitySamples: Array<[string, unknown]> = [];
         const nowMs = Date.now();
         const validServerActivity = serverActivitySamples.flatMap(([key, raw]) => {
           const ns = Number(raw);
@@ -434,9 +428,7 @@ export default function HomePage() {
           consumers: Array.isArray(feed.consumers) ? feed.consumers : [],
           deliveryErrors: Number(feed.delivery_errors ?? 0),
           normalizerErrors: Number(feed.normalizer_errors ?? 0),
-          runners: {
-            box_spread: runnerDetail(runners.box_spread),
-          },
+          runners: {},
         });
       } catch {
         // Keep last values for context; UI separately marks telemetry stale/unavailable.
