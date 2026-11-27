@@ -28,3 +28,19 @@ def test_generic_backtest_run_results_and_market_replay_remain():
     assert "app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))" in source
     assert "app.include_router(create_download_status_router(backtest_status_store))" in source
     assert "app.include_router(create_universal_result_router(universal_result_service))" in source
+
+
+def test_only_shared_index_runner_is_admitted_to_production_websocket():
+    source = Path(__file__).parents[1].joinpath("app", "main.py").read_text(encoding="utf-8")
+    feed_source = Path(__file__).parents[1].joinpath(
+        "app", "market_data", "common_strategy_feed.py"
+    ).read_text(encoding="utf-8")
+
+    assert "LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = True" in source
+    assert "_shared_index_market_data_recovery_loop()" in source
+    assert "_cash_future_history_loop())" not in source
+    assert "_live_cash_future_loop())" not in source
+    assert "_live_calendar_spread_loop())" not in source
+    assert "_live_synthetic_loop())" not in source
+    assert "SharedIndexOnlyWebSocketManager" in feed_source
+    assert "SharedIndexMarketDataRunner (NIFTY/BANKNIFTY)" in feed_source
