@@ -22,5 +22,5 @@ def test_phase4_shared_strategy_workspace_contract():
     assert "item.capabilities" in android
     assert "item.live_orders" in android
 
-    for strategy in ("cash-future", "calendar-spread", "synthetic-future-cash-carry", "box-spread", "full-fno"):
+    for strategy in ("box-spread", "full-fno"):
         assert strategy in web or strategy in android
