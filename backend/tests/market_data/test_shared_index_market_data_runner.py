@@ -477,6 +477,8 @@ def test_futures_rollover_selection_is_cached_for_market_date(monkeypatch):
     assert runner._check_futures_rollover() == ()
     assert calls == ["NIFTY", "BANKNIFTY"]
 
+
+def test_futures_rollover_is_serialized_with_runner_stop():
     from threading import Event, Thread
     import time
 
