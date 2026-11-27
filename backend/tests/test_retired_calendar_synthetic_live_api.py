@@ -188,3 +188,17 @@ def test_iv_runtime_has_no_direct_websocket_fallbacks():
     assert "instrument_rows_snapshot" in runtime
     assert "download_iv_instruments" not in main
     assert "instrument_rows_snapshot" in (root / "app" / "market_data" / "shared_index_market_data_runner.py").read_text(encoding="utf-8")
+
+
+def test_iv_has_no_independent_instrument_master_recovery_job_or_script():
+    root = Path(__file__).parents[1]
+    repository = root.parent
+    assert not (repository / ".github" / "workflows" / "iv-master-cache.yml").exists()
+    assert not (root / "scripts" / "recover_iv_master_artifact.py").exists()
+    assert not (root / "scripts" / "recover_latest_master_artifacts.py").exists()
+
+    main = (root / "app" / "main.py").read_text(encoding="utf-8")
+    runtime = (root / "app" / "scanner" / "iv_skew_flip" / "runtime.py").read_text(encoding="utf-8")
+    assert "download_iv_instruments" not in main
+    assert "download_iv_instruments" not in runtime
+    assert "instrument_rows_snapshot" in runtime
