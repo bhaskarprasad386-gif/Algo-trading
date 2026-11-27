@@ -61,7 +61,7 @@ def test_iv_scanner_reads_shared_runner_without_owning_broker_subscriptions():
     assert "shared_runner=shared_index_market_data_runner" in main
     assert "IVSharedRunnerSpotFeedAdapter" in runtime
     assert "IVSharedRunnerOptionFeedAdapter" in runtime
-    assert "owns_subscriptions": False" in adapters
+    assert '"owns_subscriptions": False' in adapters
     assert "shared-index-market-data" in adapters
     assert "CommonStrategyMarketFeed(" not in main
     assert "MarketDataWebSocket(" not in main
