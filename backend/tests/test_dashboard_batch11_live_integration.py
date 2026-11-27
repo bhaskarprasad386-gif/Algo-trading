@@ -21,5 +21,6 @@ def test_dashboard_push_never_opens_a_broker_socket_per_browser():
     src = MAIN.read_text(encoding="utf-8")
     assert '"broker_socket_per_browser": False' in src
     assert "SharedIndexMarketDataRunner" in src
-    assert "box_shared_feed_manager" in src
+    assert "box_isolated_feed_manager = CommonWebSocketManager" in src
+    assert "box_isolated_feed_manager" in src
     assert "app.include_router(live_box_spread_websocket_router)" in src
