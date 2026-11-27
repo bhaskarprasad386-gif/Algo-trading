@@ -1023,24 +1023,21 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       indexSelectionDraftInitialized.current = false;
       return;
     }
-    const selection = pagePushData.index_selection as { symbols?: unknown; weekly_only_symbols?: unknown } | undefined;
-    if (!selection || !Array.isArray(selection.symbols) || !Array.isArray(selection.weekly_only_symbols)) return;
+    const selection = pagePushData.index_selection as { symbols?: unknown } | undefined;
+    if (!selection || !Array.isArray(selection.symbols)) return;
     const nextSymbols = selection.symbols.filter((item): item is string => typeof item === "string");
-    const nextWeeklyOnly = selection.weekly_only_symbols.filter((item): item is string => typeof item === "string");
     indexSelectionRequestSequence.current += 1;
     setIndexSelectionLoading(false);
     const previousSymbols = savedIndexSymbols.slice().sort();
-    const previousWeeklyOnly = savedWeeklyOnlySymbols.slice().sort();
-    const draftSymbols = Array.from(new Set([...indexSelectionDraft, ...weeklyOnlyDraft])).sort();
+    const draftSymbols = indexSelectionDraft.slice().sort();
     const draftIsClean = indexSelectionDraftInitialized.current
       && draftSymbols.length === previousSymbols.length
-      && draftSymbols.every((symbol, index) => symbol === previousSymbols[index])
-      && weeklyOnlyDraft.slice().sort().join("|") === previousWeeklyOnly.join("|");
+      && draftSymbols.every((symbol, index) => symbol === previousSymbols[index]);
     setSavedIndexSymbols(nextSymbols);
-    setSavedWeeklyOnlySymbols(nextWeeklyOnly);
+    setSavedWeeklyOnlySymbols([]);
     if (draftIsClean) {
-      setIndexSelectionDraft(nextSymbols.filter(symbol => !nextWeeklyOnly.includes(symbol)));
-      setWeeklyOnlyDraft(nextWeeklyOnly);
+      setIndexSelectionDraft(nextSymbols);
+      setWeeklyOnlyDraft([]);
     }
   }, [slug, pagePushData, savedIndexSymbols, savedWeeklyOnlySymbols, indexSelectionDraft, weeklyOnlyDraft]);
   useEffect(() => {
@@ -1624,7 +1621,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </div>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <div className="space-y-1"><p className="text-[11px] theme-muted">Saved: {savedIndexSymbols.length ? savedIndexSymbols.join(" · ") : "Loading…"}</p><p className="text-[11px] theme-muted">Weekly Only: {savedWeeklyOnlySymbols.length ? savedWeeklyOnlySymbols.join(" · ") : "None"} · Other selected indices use available standard expiries.</p><p className="text-[11px] font-bold theme-text">Actually active: {activeIndexSymbols.length ? activeIndexSymbols.join(" · ") : "No active runner reported"}</p><p className="text-[10px] theme-muted">Feed handoff: {indexHandoffState}</p></div>
-            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || (indexSelectionDraft.length === 0 && weeklyOnlyDraft.length === 0) || (new Set([...indexSelectionDraft, ...weeklyOnlyDraft]).size === savedIndexSymbols.length && [...indexSelectionDraft, ...weeklyOnlyDraft].every(symbol => savedIndexSymbols.includes(symbol)) && weeklyOnlyDraft.length === savedWeeklyOnlySymbols.length && weeklyOnlyDraft.every(symbol => savedWeeklyOnlySymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || indexSelectionDraft.length === 0 || (indexSelectionDraft.length === savedIndexSymbols.length && indexSelectionDraft.every(symbol => savedIndexSymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
               {indexSelectionSaving ? "SAVING / SWITCHING…" : "Save & Apply Selection"}
             </button>
           </div>
