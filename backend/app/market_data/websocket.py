@@ -63,7 +63,33 @@ def _close_sdk_connection_bounded(socket: Any, *, phase: str, timeout_seconds: f
             failure["exception"] = exc
 
     worker = Thread(target=_close, name=f"angel-ws-sdk-close-{phase}", daemon=True)
-    worker.start()
+    try:
+        worker.start()
+    except Exception as exc:
+        # The SDK close worker never entered _close(). Fall back to the
+        # retained low-level descriptor directly; do not execute the SDK's
+        # potentially blocking close_connection() on this caller thread.
+        app_logger.error(
+            f"Unable to start Angel WebSocket SDK close worker phase={phase}: {exc}"
+        )
+        for method_name in ("abort", "shutdown"):
+            method = getattr(low_level_socket, method_name, None)
+            if callable(method):
+                try:
+                    method()
+                except Exception as fallback_exc:
+                    app_logger.warning(
+                        f"Angel WebSocket low-level {method_name} fallback failed "
+                        f"phase={phase}: {fallback_exc}"
+                    )
+            if transport_thread is not None and transport_thread is not current_thread():
+                transport_thread.join(timeout=max(0.01, float(timeout_seconds)))
+                if not transport_thread.is_alive():
+                    break
+        transport_alive = bool(transport_thread and transport_thread.is_alive())
+        if transport_alive:
+            _log_transport_thread_stack(transport_thread, phase=f"close-worker-start-failed-{phase}")
+        return not transport_alive
     worker.join(timeout=max(0.01, float(timeout_seconds)))
     transport_alive = bool(transport_thread and transport_thread.is_alive())
     needs_abort = worker.is_alive() or transport_alive or "exception" in failure
