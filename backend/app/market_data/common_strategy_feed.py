@@ -142,6 +142,11 @@ def shared_common_manager(
     with _SHARED_LOCK:
         if _SHARED_MANAGER_CLOSING:
             raise RuntimeError("shared market-data manager is shutting down")
+        if _SHARED_MANAGER is not None and bool(getattr(_SHARED_MANAGER, "_closed", False)):
+            raise RuntimeError(
+                "previous shared market-data manager is closed but not fully retired; "
+                "retry shutdown before requesting a replacement"
+            )
         if _SHARED_MANAGER is None:
             _SHARED_AUTH = auth or AngelOneAuth()
             factory = socket_factory or (lambda: MarketDataWebSocket(auth=_SHARED_AUTH, auto_reconnect=False))
