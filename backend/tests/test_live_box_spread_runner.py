@@ -974,3 +974,51 @@ def test_spot_page_callback_is_blocked_after_publisher_ownership_transfers():
 
 
     assert calls == [("new", ("SENSEX", 80000, 2))]
+
+
+def test_banknifty_missing_monthly_expiry_never_falls_back_to_future_expiry(monkeypatch):
+    import app.market_data.live_box_spread_runner as mod
+
+    class Master:
+        _loaded = True
+        instruments = [
+            {"exch_seg": "NFO", "name": "BANKNIFTY", "instrumenttype": "FUTIDX", "expiry": "26NOV2026"},
+            {"exch_seg": "NFO", "name": "BANKNIFTY", "instrumenttype": "OPTIDX", "expiry": "26NOV2026"},
+        ]
+        def download(self):
+            raise AssertionError("already-loaded master must not be downloaded")
+
+    class Tracker:
+        def __init__(self, *args, **kwargs):
+            pass
+        def atm(self, symbol, now_ns, **kwargs):
+            return 48000.0
+
+    class Feed:
+        def __init__(self, *args, **kwargs):
+            pass
+        def run_forever(self):
+            pass
+        def stop(self):
+            pass
+
+    selector_calls = []
+    monkeypatch.setattr(mod, "LiveSyntheticAtmTracker", Tracker)
+    monkeypatch.setattr(mod, "LiveSyntheticUnderlyingFeed", Feed)
+    monkeypatch.setattr(mod, "concrete_strikes_from_master", lambda *a, **k: {"BANKNIFTY": ()})
+    monkeypatch.setattr(mod, "select_box_contracts", lambda *a, **k: selector_calls.append(k))
+    runner = mod.LiveBoxSpreadRunner(
+        object(),
+        [mod.BoxSpreadLiveTarget("BANKNIFTY", "INDEX", expiry=None)],
+        allowed_stock_symbols=set(),
+        future_master=Master(),
+        auth=object(),
+    )
+    monkeypatch.setattr(mod, "sleep", lambda _seconds: runner.stop_event.set())
+
+    runner._run_session()
+
+    assert selector_calls == []
+    assert runner._readiness["unavailable_symbols"] == [
+        {"symbol": "BANKNIFTY", "reason": "LOCKED_EXPIRY_UNAVAILABLE"}
+    ]
