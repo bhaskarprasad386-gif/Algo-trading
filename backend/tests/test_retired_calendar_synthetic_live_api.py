@@ -50,6 +50,7 @@ def test_only_shared_index_runner_is_admitted_to_production_websocket():
     assert "SharedIndexMarketDataRunner (NIFTY/BANKNIFTY)" in feed_source
     assert "CommonWebSocketManager(" not in source
     assert "MarketDataWebSocket(" not in source
+    assert "shared_common_manager()" not in source
     assert "SharedIndexRunnerLocalFeedManager(shared_index_market_data_runner)" in source
     assert "box_shared_feed_manager.attach()" in source
     assert "shared_feed_manager=box_shared_feed_manager" in source
