@@ -55,6 +55,7 @@ def test_box_spread_and_retired_scanners_have_no_public_channels_or_alerts():
     custom_alerts = (REPO / "frontend" / "app" / "custom-alert" / "page.tsx").read_text(encoding="utf-8")
     page_push = (ROOT / "app" / "scanner" / "page_push_websocket.py").read_text(encoding="utf-8")
     alerts = (ROOT / "app" / "alert_routes.py").read_text(encoding="utf-8")
+    notifier = (ROOT / "app" / "notifications" / "common.py").read_text(encoding="utf-8")
 
     assert 'href: "/strategies/box-spread"' not in shell
     assert 'pathname.startsWith("/strategies/box-spread")' not in shell
@@ -72,6 +73,7 @@ def test_box_spread_and_retired_scanners_have_no_public_channels_or_alerts():
         assert f'"{retired}"' not in channel_block
     assert "STRATEGIES = set()" in alerts
     assert 'history_models = {}' in alerts
+    assert 'strategy_metrics = {}' in notifier
 
     android_main = (REPO / "mobile" / "android" / "app" / "src" / "main" / "java" / "com" / "algotrading" / "app" / "MainActivity.kt").read_text(encoding="utf-8")
     android_manifest = (REPO / "mobile" / "android" / "app" / "src" / "main" / "AndroidManifest.xml").read_text(encoding="utf-8")
