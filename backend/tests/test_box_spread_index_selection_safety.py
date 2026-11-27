@@ -144,15 +144,13 @@ def test_live_results_continue_using_old_active_indices_while_new_selection_stag
     assert main.live_box_spread_latest_results == (row,)
     assert published == [row]
 
-def test_box_spread_index_universe_and_presets_cover_all_six_supported_indices():
-    expected = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
-
-    assert set(main.OPTION_STRATEGY_INDEX_SYMBOLS) == expected
-    assert set(main.BOX_SPREAD_INDEX_PRESETS["ALL"]) == expected
-    assert set(main.BOX_SPREAD_INDEX_PRESETS["NIFTY_SENSEX"]) == {"NIFTY", "SENSEX"}
-    assert set(main.BOX_SPREAD_INDEX_PRESETS["NIFTY_SENSEX_BANKNIFTY"]) == {
-        "NIFTY", "SENSEX", "BANKNIFTY"
+def test_box_spread_index_universe_and_presets_are_locked_to_nifty_and_banknifty():
+    assert set(main.OPTION_STRATEGY_INDEX_SYMBOLS) == {
+        "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"
     }
+    assert set(main.BOX_SPREAD_LIVE_INDEX_UNIVERSE) == {"NIFTY", "BANKNIFTY"}
+    assert set(main.BOX_SPREAD_INDEX_PRESETS["ALL"]) == {"NIFTY", "BANKNIFTY"}
+    assert set(main.BOX_SPREAD_INDEX_PRESETS["NIFTY_BANKNIFTY"]) == {"NIFTY", "BANKNIFTY"}
 
 
 def test_box_spread_target_builder_uses_only_selected_indices_and_correct_exchange_segments():
@@ -237,7 +235,7 @@ def test_weekly_only_selection_is_limited_to_nifty():
 
 def test_weekly_only_selection_must_also_be_selected():
     with pytest.raises(ValueError, match="weekly-only indices must also be included"):
-        main._save_box_spread_index_selection(["NIFTY"], ["BANKNIFTY"])
+        main._save_box_spread_index_selection(["BANKNIFTY"], ["NIFTY"])
 
 def test_sensex_is_rejected_from_box_spread_live_targets():
     from types import SimpleNamespace
