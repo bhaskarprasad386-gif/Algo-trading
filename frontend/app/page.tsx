@@ -345,21 +345,15 @@ export default function HomePage() {
         setRuntimeLastSuccessAt(sampleAt);
         const currentCounters = {
           commonTicks: Number(feed.ticks_received ?? 0),
-          cashPayloads: Number(runners.cash_future?.records_received ?? runners.cash_future?.payload_callbacks ?? runners.cash_future?.callbacks ?? 0),
-          cashUpdates: Number(runners.cash_future?.scanner_updates ?? runners.cash_future?.scanner_results ?? runners.cash_future?.observations ?? 0),
-          syntheticPayloads: Number(runners.synthetic_arbitrage?.records_received ?? runners.synthetic_arbitrage?.payload_callbacks ?? runners.synthetic_arbitrage?.callbacks ?? 0),
-          syntheticUpdates: Number(runners.synthetic_arbitrage?.scanner_updates ?? runners.synthetic_arbitrage?.scanner_results ?? runners.synthetic_arbitrage?.observations ?? 0),
           boxPayloads: Number(runners.box_spread?.records_received ?? runners.box_spread?.payload_callbacks ?? runners.box_spread?.callbacks ?? 0),
           boxUpdates: Number(runners.box_spread?.scanner_updates ?? runners.box_spread?.scanner_results ?? runners.box_spread?.observations ?? 0),
-          calendarPayloads: Number(runners.calendar_spread?.records_received ?? runners.calendar_spread?.payload_callbacks ?? runners.calendar_spread?.callbacks ?? 0),
-          calendarUpdates: Number(runners.calendar_spread?.scanner_updates ?? runners.calendar_spread?.scanner_results ?? runners.calendar_spread?.observations ?? 0),
         };
         const previousCounters = runnerCountersRef.current;
         const previousSampleAt = runnerCounterSampleAtRef.current;
         if (previousCounters && previousSampleAt != null && receivedAt > previousSampleAt) {
           const elapsedSeconds = (receivedAt - previousSampleAt) / 1000;
           const rate = (key: string) => { const current = currentCounters[key as keyof typeof currentCounters]; const previous = previousCounters[key]; return !Number.isFinite(current) || !Number.isFinite(previous) || current < previous ? Number.NaN : (current - previous) / elapsedSeconds; };
-          setRunnerTps({ commonTicks: rate("commonTicks"), cashPayloads: rate("cashPayloads"), syntheticPayloads: rate("syntheticPayloads"), boxPayloads: rate("boxPayloads"), calendarPayloads: rate("calendarPayloads") });
+          setRunnerTps({ commonTicks: rate("commonTicks"), boxPayloads: rate("boxPayloads") });
         }
         runnerCounterSampleAtRef.current = receivedAt;
         if (previousCounters) {
@@ -387,8 +381,8 @@ export default function HomePage() {
         // Prefer server-observed timestamps over when this browser first noticed
         // a cumulative counter. This preserves the true stale age across page reloads.
         const serverActivitySamples: Array<[string, unknown]> = [
-          ["cashPayloads", runners.cash_future?.last_payload_at_ns],
-          ["cashUpdates", runners.cash_future?.last_scanner_update_at_ns],
+          ["boxPayloads", runners.box_spread?.last_payload_at_ns],
+          ["boxUpdates", runners.box_spread?.last_scanner_update_at_ns],
         ];
         const nowMs = Date.now();
         const validServerActivity = serverActivitySamples.flatMap(([key, raw]) => {
@@ -442,10 +436,7 @@ export default function HomePage() {
           deliveryErrors: Number(feed.delivery_errors ?? 0),
           normalizerErrors: Number(feed.normalizer_errors ?? 0),
           runners: {
-            cash_future: runnerDetail(runners.cash_future),
-            synthetic_arbitrage: runnerDetail(runners.synthetic_arbitrage),
             box_spread: runnerDetail(runners.box_spread),
-            calendar_spread: runnerDetail(runners.calendar_spread),
           },
         });
       } catch {
