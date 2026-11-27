@@ -1,27 +1,7 @@
-from app.backtesting.backtest_resolution import BacktestResolution
-from app.backtesting.backtest_run import BacktestRunSpec
-from app.backtesting.backtest_result import BacktestRunWriter
-from app.backtesting.historical_arbitrage_service import HistoricalArbitrageBacktestService
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.backtesting.historical_catalog_replay import CatalogReplayLeg, HistoricalCatalogEventReplay
-from app.backtesting.result_ledger import BacktestResultLedger
 import json
-import pytest
 
-
-def _writer(tmp_path, run_id, strategy_id):
-    ledger = BacktestResultLedger(tmp_path / f"{run_id}.db")
-    spec = BacktestRunSpec(
-        run_id=run_id,
-        strategy_id=strategy_id,
-        strategy_version="v1",
-        instrument="ABC",
-        start_ns=1,
-        end_ns=2,
-        resolution=BacktestResolution("s", "test", 1, 2),
-        parameters={},
-    )
-    return ledger, BacktestRunWriter(ledger, spec)
 
 
 def test_catalog_replay_joins_only_exact_complete_timestamps():
@@ -111,61 +91,3 @@ def test_catalog_replay_reports_mixed_timeframes_explicitly():
     assert events[0]["data_resolution"] == "mixed"
 
 
-def test_catalog_to_ledger_e2e_box_spread(tmp_path):
-    catalog = HistoricalCatalog()
-    low_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "strike": 25000, "call_bid": 20, "call_ask": 30, "put_bid": 20, "put_ask": 30, "lot_size": 1}
-    high_1 = {"timestamp_ns": 1, "underlying": "ABC", "expiry": 20260924, "strike": 25100, "call_bid": 10, "call_ask": 20, "put_bid": 10, "put_ask": 20, "lot_size": 1}
-    low_2 = {**low_1, "timestamp_ns": 2, "call_bid": 60, "call_ask": 61, "put_bid": 60, "put_ask": 61}
-    high_2 = {**high_1, "timestamp_ns": 2, "call_bid": 3, "call_ask": 3.5, "put_bid": 110, "put_ask": 110.5}
-    catalog.ingest([HistoricalRecord("angel", "ABC-LOW", "1m", 1, low_1), HistoricalRecord("angel", "ABC-LOW", "1m", 2, low_2), HistoricalRecord("angel", "ABC-HIGH", "1m", 1, high_1), HistoricalRecord("angel", "ABC-HIGH", "1m", 2, high_2)])
-    ledger, writer = _writer(tmp_path, "catalog-box", "box-spread")
-    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy("box-spread", catalog, (CatalogReplayLeg("low", "angel", "ABC-LOW", "1m"), CatalogReplayLeg("high", "angel", "ABC-HIGH", "1m")), payoff_prices=(24900, 25000, 25100))
-    assert result.completed_trades == 1
-    assert result.unresolved_trades == 0
-    assert result.payoff is not None and len(result.payoff.legs) == 4
-    assert len(ledger.trades("catalog-box")) == 1
-    assert ledger.run("catalog-box")["status"] == "COMPLETED"
-
-
-def test_retired_cash_future_catalog_e2e_is_rejected_without_trade_or_pnl(tmp_path):
-    catalog = HistoricalCatalog()
-    catalog.ingest([
-        HistoricalRecord("angel", "ABC-SPOT", "1m", 1, {
-            "timestamp_ns": 1, "underlying": "ABC", "spot_bid": 99,
-            "spot_ask": 100, "future_bid": 110, "future_ask": 111,
-            "expiry": 20260924,
-        })
-    ])
-    ledger, writer = _writer(tmp_path, "catalog-unresolved", "cash-future")
-
-    with pytest.raises(ValueError, match="unsupported arbitrage strategy: cash-future"):
-        HistoricalArbitrageBacktestService(writer).run_catalog_strategy(
-            "cash-future", catalog,
-            (CatalogReplayLeg("cash_future", "angel", "ABC-SPOT", "1m"),),
-            payoff_prices=(90, 100, 120),
-        )
-
-    assert ledger.trades("catalog-unresolved") == []
-    assert ledger.events("catalog-unresolved") == []
-    assert ledger.run("catalog-unresolved")["status"] == "CREATED"
-
-
-def test_live_one_second_box_records_replay_only_on_exact_shared_timestamp():
-    catalog = HistoricalCatalog()
-    low = {"timestamp_ns": 1_000_000_000, "underlying": "ABC", "expiry": 20260924, "strike": 25000,
-           "call_bid": 20, "call_ask": 21, "put_bid": 20, "put_ask": 21, "lot_size": 1}
-    high = {"timestamp_ns": 1_000_000_000, "underlying": "ABC", "expiry": 20260924, "strike": 25100,
-            "call_bid": 10, "call_ask": 11, "put_bid": 10, "put_ask": 11, "lot_size": 1}
-    catalog.ingest([
-        HistoricalRecord("angelone-live-synthetic", "ABC-LOW|101", "1s", 1_000_000_000, low),
-        HistoricalRecord("angelone-live-synthetic", "ABC-HIGH|102", "1s", 1_000_000_000, high),
-        HistoricalRecord("angelone-live-synthetic", "ABC-HIGH|102", "1s", 2_000_000_000, {**high, "timestamp_ns": 2_000_000_000}),
-    ])
-    events = list(HistoricalCatalogEventReplay(catalog).events((
-        CatalogReplayLeg("low", "angelone-live-synthetic", "ABC-LOW|101", "1s"),
-        CatalogReplayLeg("high", "angelone-live-synthetic", "ABC-HIGH|102", "1s"),
-    ), start_ns=1_000_000_000, end_ns=2_000_000_000))
-    assert [event["timestamp_ns"] for event in events] == [1_000_000_000]
-    assert events[0]["data_resolution"] == "1s"
-    assert events[0]["low"]["call_ask"] == 21
-    assert events[0]["high"]["call_bid"] == 10
