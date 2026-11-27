@@ -1,21 +1,13 @@
 from pathlib import Path
 
-
 MAIN_ACTIVITY = Path(__file__).parents[2] / "mobile" / "android" / "app" / "src" / "main" / "java" / "com" / "algotrading" / "app" / "MainActivity.kt"
 
 
-def test_android_scanner_result_retention_contract():
+def test_disabled_cash_future_screen_does_not_retain_stale_results():
     body = MAIN_ACTIVITY.read_text(encoding="utf-8")
-
-    assert "private var lastScannerResult: String? = null" in body
-    assert "REFRESHING LIVE 1s SCANNER..." in body
-    assert "lastScannerResult = result" in body
-    assert "REFRESH FAILED" in body
-    assert "val failedAt = currentTimestamp()" in body
-    assert 'Scanner Failed: ${error.message ?: "API error"}' in body
-    assert 'Last Attempt: ${currentTimestamp()}' in body
-
-    scan_block = body.split("private fun runCashFutureScanner()", 1)[1]
-    assert "lastScannerResult?.let" in scan_block
-    assert "lastScannerResult = result" in scan_block
-    assert "REFRESH FAILED" in scan_block
+    assert "Cash-Future live scanning is disabled." in body
+    assert "Cash-Future scanner alerts are disabled." in body
+    assert "lastScannerResult" not in body
+    assert "lastExecutableOpportunity" not in body
+    assert "openScannerDetail" not in body
+    assert "runCashFutureScanner" not in body
