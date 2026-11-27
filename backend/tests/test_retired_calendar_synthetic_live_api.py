@@ -55,3 +55,12 @@ def test_only_shared_index_runner_is_admitted_to_production_websocket():
     assert "/shoonya/subscriptions" not in market_routes
     assert "/shoonya-health" not in market_routes
     assert "ShoonyaSubscriptionRequest" not in market_routes
+    assert "/api/v1/market-data/live-cash-future/health" not in source
+    runtime_start = source.index("def market_data_runtime_health")
+    runtime_end = source.index("def runtime_diagnostic_errors", runtime_start)
+    runtime_health = source[runtime_start:runtime_end]
+    assert "register_normalized_observer" not in runtime_health
+    assert "register_transport_observer" not in runtime_health
+    assert '"cash_future"' not in runtime_health
+    assert '"calendar_spread"' not in runtime_health
+    assert '"synthetic_arbitrage"' not in runtime_health
