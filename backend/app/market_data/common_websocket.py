@@ -2228,9 +2228,12 @@ class CommonWebSocketManager:
             ),),
         )
         if not accepted and adapter.snapshot().get("integrity_fault"):
-            Thread(target=lambda: self._handle_socket_failure(
+            # The recovery scheduler already coalesces generations and retains
+            # failed worker starts for the shared supervisor; avoid a naked
+            # callback-thread spawn that could silently lose the integrity fault.
+            self._schedule_socket_failure_recovery(
                 group, socket, generation, "callback_dispatch_integrity_fault"
-            ), name=f"angel-callback-fault-{group.mode}-{group.shard}-{generation}", daemon=True).start()
+            )
 
     def _is_current_data_generation(self, group: SocketGroup, generation: int | None) -> bool:
         """Fence deferred work from a socket generation that has since retired."""
