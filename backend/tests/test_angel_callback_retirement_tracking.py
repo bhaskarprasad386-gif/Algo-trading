@@ -1121,3 +1121,85 @@ def test_failure_recovery_keeps_same_shard_distinct_across_subscription_modes():
     assert state["failure_recovery_pending_groups"] == ["2:0"]
     assert manager._sockets == {}
     manager.close()
+
+
+class StopAdapter:
+    def __init__(self, worker=None):
+        self._thread = worker
+        self.stopped = Event()
+
+    def snapshot(self):
+        return {}
+
+    def stop(self, *, timeout, drain):
+        self.stopped.set()
+
+
+def test_callback_retirement_worker_start_failure_is_queued_and_retried(monkeypatch):
+    import app.market_data.common_websocket as module
+
+    manager = CommonWebSocketManager()
+    group = SocketGroup(1, 0)
+    adapter = StopAdapter()
+    manager._callback_adapters[group] = (9, adapter)
+    real_thread = Thread
+
+    class FailOnceThread:
+        def __init__(self, *args, **kwargs):
+            self._thread = real_thread(*args, **kwargs)
+
+        def start(self):
+            raise RuntimeError("thread quota exhausted")
+
+    monkeypatch.setattr(module, "Thread", FailOnceThread)
+    with manager._lock:
+        manager._retire_callback_adapter_locked(group)
+
+    state = manager.snapshot()
+    assert state["callback_retirement_start_pending_count"] == 1
+    assert group not in manager._callback_adapters
+    assert not adapter.stopped.is_set()
+
+    monkeypatch.setattr(module, "Thread", real_thread)
+    manager._retry_pending_callback_retirements()
+    deadline = time.monotonic() + 1.0
+    while not adapter.stopped.is_set() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert adapter.stopped.is_set()
+    assert manager.snapshot()["callback_retirement_start_pending_count"] == 0
+    manager.close()
+
+
+def test_callback_retirement_watcher_start_failure_is_queued_and_retried(monkeypatch):
+    import app.market_data.common_websocket as module
+
+    release = Event()
+    worker = Thread(target=lambda: release.wait(timeout=2.0), daemon=True)
+    worker.start()
+    manager = CommonWebSocketManager()
+    adapter = TimedOutAdapter(worker)
+    real_thread = Thread
+
+    class FailWatcherThread:
+        def __init__(self, *args, **kwargs):
+            self._thread = real_thread(*args, **kwargs)
+
+        def start(self):
+            raise RuntimeError("thread quota exhausted")
+
+    monkeypatch.setattr(module, "Thread", FailWatcherThread)
+    manager._stop_retired_callback_adapter(adapter, SocketGroup(1, 0), 12)
+    state = manager.snapshot()
+    assert state["retired_callback_worker_count"] == 1
+    assert state["callback_retirement_watch_pending_count"] == 1
+
+    monkeypatch.setattr(module, "Thread", real_thread)
+    manager._retry_pending_callback_retirement_watchers()
+    release.set()
+    worker.join(timeout=1.0)
+    deadline = time.monotonic() + 1.0
+    while manager.snapshot()["retired_callback_worker_count"] and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert manager.snapshot()["retired_callback_worker_count"] == 0
+    assert manager.snapshot()["callback_retirement_watch_pending_count"] == 0
+    manager.close()
