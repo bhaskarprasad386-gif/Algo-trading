@@ -733,18 +733,9 @@ async def lifespan(app: FastAPI):
         _iv_option_snapshot_task = asyncio.create_task(_iv_option_snapshot_daily_loop())
     if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
-    if _collector_enabled() and _history_collector_task is None:
-        _history_collector_task = asyncio.create_task(_cash_future_history_loop())
-    if settings.LIVE_CASH_FUTURE_DATA_ENABLED and _live_cash_future_task is None:
-        _live_cash_future_task = asyncio.create_task(_live_cash_future_loop())
-    if settings.LIVE_CALENDAR_SPREAD_DATA_ENABLED and _live_calendar_spread_task is None:
-        _live_calendar_spread_task = asyncio.create_task(_live_calendar_spread_loop())
-    if not LIVE_SYNTHETIC_RUNNER_FORCE_DISABLED and settings.LIVE_SYNTHETIC_DATA_ENABLED and _live_synthetic_task is None:
-        _live_synthetic_task = asyncio.create_task(_live_synthetic_loop())
-    # Box Spread is temporarily excluded from the shared Angel One socket budget.
-    # Keep its routes/history intact, but do not create any Box-owned live subscriptions.
-    if not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED and settings.LIVE_BOX_SPREAD_DATA_ENABLED and _live_box_spread_task is None:
-        _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
+    # These four retired strategy owners must never register market-data consumers.
+    # Their legacy loops remain temporarily importable for the staged removal, but
+    # application lifespan does not schedule them or the Cash-Future history poller.
     _dashboard_snapshot_task = asyncio.create_task(_dashboard_snapshot_publisher_loop())
     _event_loop_lag_task = asyncio.create_task(event_loop_lag_monitor.run())
     try:
@@ -1194,9 +1185,11 @@ _live_calendar_spread_task: asyncio.Task | None = None
 live_calendar_spread_runner: LiveCalendarSpreadOneSecondCollector | None = None
 IST = ZoneInfo("Asia/Kolkata")
 _live_synthetic_task: asyncio.Task | None = None
-# Synthetic Future runner is intentionally disabled; keep its routes/history isolated.
+# Retired strategy runners are permanently excluded from application startup.
+# The flags are retained only until their legacy modules/routes are deleted.
+LIVE_CASH_FUTURE_RUNNER_FORCE_DISABLED = True
+LIVE_CALENDAR_SPREAD_RUNNER_FORCE_DISABLED = True
 LIVE_SYNTHETIC_RUNNER_FORCE_DISABLED = True
-# Temporarily keep Box Spread out of the three-session shared index topology.
 LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = True
 _live_box_spread_task: asyncio.Task | None = None
 MARKET_OPEN = time(9, 15)
@@ -1239,7 +1232,8 @@ MARKET_CLOSE = time(15, 30)
 
 
 def _collector_enabled() -> bool:
-    return settings.CASH_FUTURE_HISTORY_ENABLED
+    # Cash-Future historical polling is retired along with its live consumer.
+    return False
 
 
 def _collector_symbols() -> list[str]:
