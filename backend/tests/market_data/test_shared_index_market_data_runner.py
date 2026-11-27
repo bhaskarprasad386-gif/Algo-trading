@@ -851,3 +851,37 @@ def test_real_common_manager_keeps_locked_runner_on_exactly_three_socket_lanes()
     finally:
         runner.stop()
         manager.close()
+
+
+def test_master_refresh_worker_start_failure_releases_retry_admission(monkeypatch):
+    import time
+    rows = _rows()
+    master = FakeMaster(rows)
+    runner = SharedIndexMarketDataRunner(instrument_master=master, manager=RunnerManager())
+    assert runner.start(rows)["enabled"] is True
+    runner._master_refresh_interval_seconds = 0
+    runner._master_refresh_retry_delay_seconds = 0
+    original_thread = runner_module.Thread
+
+    class BrokenThread:
+        def __init__(self, *args, **kwargs):
+            self.name = kwargs.get("name", "broken-master-refresh")
+
+        def start(self):
+            raise RuntimeError("thread quota exhausted")
+
+    monkeypatch.setattr(runner_module, "Thread", BrokenThread)
+    assert runner._schedule_master_refresh() is False
+    assert runner._master_refresh_inflight is False
+    assert runner._master_refresh_generation is None
+    assert "master refresh worker start failed" in runner._master_refresh_error
+
+    # Restoring thread creation must allow the exact same runner to retry.
+    monkeypatch.setattr(runner_module, "Thread", original_thread)
+    assert runner._schedule_master_refresh() is True
+    deadline = time.monotonic() + 2
+    while runner._master_refresh_inflight and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert runner._master_refresh_inflight is False
+    assert runner._master_refresh_error is None
+    runner.stop()

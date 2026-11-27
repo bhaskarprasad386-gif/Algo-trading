@@ -293,7 +293,25 @@ class SharedIndexMarketDataRunner:
                         self._master_refresh_inflight = False
                         self._master_refresh_generation = None
 
-        Thread(target=worker, name="shared-index-master-refresh", daemon=True).start()
+        refresh_worker = Thread(
+            target=worker,
+            name="shared-index-master-refresh",
+            daemon=True,
+        )
+        try:
+            refresh_worker.start()
+        except Exception as exc:
+            # A failed Thread.start() never enters worker.finally. Release the
+            # refresh admission explicitly so a later live tick can retry.
+            with self._lock:
+                if self._master_refresh_generation == generation:
+                    self._master_refresh_inflight = False
+                    self._master_refresh_generation = None
+                    self._master_refresh_error = (
+                        f"{type(exc).__name__}: master refresh worker start failed: {exc}"
+                    )[:200]
+                    self._master_refresh_started_at = time.monotonic()
+            return False
         return True
 
     def _check_option_expiry_rollover(self) -> tuple[str, ...]:
