@@ -14,7 +14,6 @@ jobs:
       SECRET_KEY: ci-test-secret-key-not-for-production
       PYTHONPATH: backend
       DATABASE_URL: "sqlite:///:memory:"
-      LIVE_SYNTHETIC_DATA_ENABLED: "false"
       LIVE_MARKET_DATA_PERSISTENCE_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
@@ -79,7 +78,6 @@ jobs:
           DATABASE_URL: "sqlite:///:memory:"
           IV_TEST_POSTGRES_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/iv_basket_test"
           # CI must not start broker-backed live collectors; those are exercised by dedicated integration/runtime checks.
-          LIVE_SYNTHETIC_DATA_ENABLED: "false"
           LIVE_MARKET_DATA_PERSISTENCE_ENABLED: "false"
         run: >-
           python -m pytest backend/tests -q --tb=short -r fE
