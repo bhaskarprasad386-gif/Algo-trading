@@ -177,6 +177,7 @@ def test_local_fanout_evicts_oldest_tick_when_bounded_queue_is_full():
     descriptor, first = _spot()
     runner.state._allowed_keys = {descriptor.key.value}
     manager.attach()
+    manager.registry.register(descriptor)
     manager._ensure_worker_locked = lambda: None
     manager.subscribe("box-queue-test", (descriptor.key,))
 
