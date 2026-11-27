@@ -656,6 +656,8 @@ async def lifespan(app: FastAPI):
     # Shared Index Market Data is data-only and isolated: no strategy signals or orders.
     if _shared_index_runner_task is None:
         _shared_index_runner_task = asyncio.create_task(_shared_index_market_data_recovery_loop())
+    if _iv_scanner_recovery_task is None:
+        _iv_scanner_recovery_task = asyncio.create_task(_iv_scanner_recovery_loop())
     if _weekly_swing_refresh_task is None:
         _weekly_swing_refresh_task = asyncio.create_task(weekly_swing_daily_refresh_loop())
     # Broker-native IV snapshots are not fetched independently. IV calculation
