@@ -29,6 +29,15 @@ EXPECTED_FEED_GROUPS = {
 }
 
 
+def _lifecycle_universe_complete(lifecycle: dict[str, Any]) -> bool:
+    """Use subscription ownership for structural coverage, not received ticks."""
+    return bool(
+        lifecycle.get("spot_active") is True and int(lifecycle.get("spot_instruments", 0)) == 2
+        and lifecycle.get("futures_active") is True and int(lifecycle.get("futures_instruments", 0)) == 2
+        and lifecycle.get("options_active") is True and int(lifecycle.get("options_instruments", 0)) == 124
+    )
+
+
 def _readiness_from_groups(*, running: bool, bootstrap_done: bool,
                            universe_complete: bool, feed_groups: dict[str, dict]) -> dict[str, Any]:
     """Separate core-feed liveness from freshness of every option contract.
@@ -47,8 +56,8 @@ def _readiness_from_groups(*, running: bool, bootstrap_done: bool,
     for underlying in LOCKED:
         group = feed_groups.get(f"{underlying}:option", {})
         option_sides[underlying] = {
-            "CE": {"fresh": int(group.get("ce_fresh_count", 0)), "total": int(group.get("ce_count", 0))},
-            "PE": {"fresh": int(group.get("pe_fresh_count", 0)), "total": int(group.get("pe_count", 0))},
+            "CE": {"fresh": int(group.get("ce_fresh_count", 0)), "total": 31},
+            "PE": {"fresh": int(group.get("pe_fresh_count", 0)), "total": 31},
         }
     # Require at least half of each CE/PE side to be fresh. This tolerates
     # illiquid wings while preventing a single live contract from declaring a
@@ -568,7 +577,7 @@ class SharedIndexMarketDataRunner:
             for kind in ("index", "future", "option"):
                 group = feed_groups.get(underlying + ":" + kind, {})
                 counts[underlying][kind] = int(group.get("count", 0))
-        universe_complete = counts == expected
+        universe_complete = _lifecycle_universe_complete(lifecycle)
         all_records_fresh = int(state.get("instrument_count", 0)) == 128 and int(state.get("fresh_count", 0)) == 128
         readiness = _readiness_from_groups(
             running=running, bootstrap_done=bootstrap_done,
@@ -684,11 +693,12 @@ class SharedIndexMarketDataRunner:
             "NIFTY": {"index": 1, "future": 1, "option": 62, "CE": 31, "PE": 31},
             "BANKNIFTY": {"index": 1, "future": 1, "option": 62, "CE": 31, "PE": 31},
         }
-        universe_complete = type_counts == {"index": 2, "future": 2, "option": 124}
-        universe_complete = universe_complete and all(
+        observed_universe_complete = type_counts == {"index": 2, "future": 2, "option": 124}
+        observed_universe_complete = observed_universe_complete and all(
             per_underlying[underlying] == expected_by_underlying[underlying]
             for underlying in LOCKED
         )
+        universe_complete = _lifecycle_universe_complete(lifecycle)
         feed_groups = state.get("feed_health_by_group", {})
         all_records_fresh = len(enriched_records) == 128 and all(
             record.get("fresh") for record in enriched_records
@@ -717,7 +727,10 @@ class SharedIndexMarketDataRunner:
             "option_universe": {"NIFTY": "weekly ATM +/- 15", "BANKNIFTY": "monthly ATM +/- 15"},
             "state": state,
             "records": enriched_records,
-            "universe_coverage": {"counts": type_counts, "per_underlying": per_underlying, "complete": universe_complete},
+            "universe_coverage": {
+                "counts": type_counts, "per_underlying": per_underlying,
+                "complete": universe_complete, "observed_records_complete": observed_universe_complete,
+            },
             "all_records_fresh": all_records_fresh,
             "readiness": readiness,
             "master_refresh": master_refresh,
