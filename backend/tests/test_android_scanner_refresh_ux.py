@@ -21,7 +21,8 @@ def test_cash_future_scanner_has_no_scheduled_or_network_refresh():
     body = MAIN_ACTIVITY.read_text(encoding="utf-8")
     assert "private fun runCashFutureScanner" not in body
     assert "liveCashFutureScan(" not in body
-    assert "scannerRefreshHandler.postDelayed(scannerRefreshRunnable" not in body
-    assert "scannerRefreshRunnable = Runnable { }" in body
+    assert "Handler(Looper.getMainLooper())" not in body
+    assert "postDelayed(" not in body
+    assert "scheduleScannerRefresh" not in body
+    assert "scannerRefreshRunnable" not in body
     assert "override fun onDestroy()" in body
-    assert "scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable)" in body
