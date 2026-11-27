@@ -37,6 +37,8 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
         raise ValueError("stock is outside the configured top-15 liquid stock universe")
 
     expected_exchange = exchange.upper() if exchange else "NFO"
+    if expected_exchange not in {"NFO", "BFO"}:
+        raise ValueError("synthetic subscriptions support only NFO and BFO")
     future_type = {"STOCK": "FUTSTK", "INDEX": "FUTIDX"}[cls]
     option_types = {"STOCK": {"OPTSTK"}, "INDEX": {"OPTIDX"}}[cls]
     if cls == "INDEX" and exchange is None:
