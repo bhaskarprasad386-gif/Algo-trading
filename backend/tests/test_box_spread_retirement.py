@@ -98,7 +98,7 @@ def test_box_spread_and_retired_scanners_have_no_public_channels_or_alerts():
         assert f'"{retired}"' not in channel_block
     assert "STRATEGIES = set()" in alerts
     assert 'history_models = {}' in alerts
-    assert 'strategy_metrics = {}' in notifier
+    assert "strategy_metrics" not in notifier
 
     android_main = (REPO / "mobile" / "android" / "app" / "src" / "main" / "java" / "com" / "algotrading" / "app" / "MainActivity.kt").read_text(encoding="utf-8")
     android_manifest = (REPO / "mobile" / "android" / "app" / "src" / "main" / "AndroidManifest.xml").read_text(encoding="utf-8")
