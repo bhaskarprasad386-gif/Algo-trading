@@ -1,7 +1,8 @@
-"""Strategy-facing adapter over the shared Angel One WebSocket manager.
+"""Shared Index Runner's sole adapter to the production Angel One WebSocket.
 
-Strategies register concrete instruments and consume canonical MarketDataRecord
-values. No strategy opens or owns a broker WebSocket directly.
+The runner owns the broker subscription lifecycle and publishes canonical
+MarketDataRecord values. Strategy code must consume runner state, not attach
+additional consumers to the production manager.
 """
 from __future__ import annotations
 
@@ -107,7 +108,7 @@ def shared_common_manager(
     auth: AngelOneAuth | None = None,
     socket_factory: Callable[[], Any] | None = None,
 ) -> CommonWebSocketManager:
-    """Return the process-wide common broker manager used by strategy consumers."""
+    """Return the process-wide manager reserved for SharedIndexMarketDataRunner."""
     global _SHARED_MANAGER, _SHARED_AUTH
     with _SHARED_LOCK:
         if _SHARED_MANAGER is None:
