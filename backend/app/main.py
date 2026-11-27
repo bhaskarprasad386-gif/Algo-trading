@@ -67,7 +67,7 @@ from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_L
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
-from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot, configure_shoonya_snapshot, configure_shoonya_supervisor, configure_shared_index_runner_snapshot, configure_shared_index_runner_health_snapshot
+from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot, configure_shared_index_runner_snapshot, configure_shared_index_runner_health_snapshot
 from app.scanner.routes import full_fno_router, configure_live_cash_future_snapshot
 from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop, configure_page_update_callback as configure_weekly_swing_page_push, nifty200_scan_status
 from app.scanner.auto_routes import discover_cash_future_symbols
@@ -669,8 +669,6 @@ async def lifespan(app: FastAPI):
     # A single market-data WebSocket owner is permitted in production:
     # SharedIndexMarketDataRunner for NIFTY/BANKNIFTY only. The isolated
     # Shoonya supervisor is deliberately not started by application lifespan.
-    configure_shoonya_snapshot(None)
-    configure_shoonya_supervisor(None)
     # IV Skew Flip is intentionally not started: the production Angel One
     # WebSocket has one owner, SharedIndexMarketDataRunner, until IV is migrated
     # to consume its published records without opening another feed consumer.
