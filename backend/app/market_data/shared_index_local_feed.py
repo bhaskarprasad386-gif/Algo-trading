@@ -91,6 +91,14 @@ class SharedIndexRunnerLocalFeedManager:
             raise TypeError("Shared Runner state does not expose active instrument ownership")
         rejected = [key.value for key in items if not allows(key)]
         if rejected:
+            with self._lock:
+                already_owns_keys = any(
+                    name in owners for owners in self._owners.values()
+                )
+                if not already_owns_keys:
+                    self._callbacks.pop(name, None)
+                    unused = tuple(key for key in items if key.value not in self._owners)
+                    self.registry.unregister_many(unused)
             raise PermissionError(
                 "local strategy consumers may subscribe only to instruments currently owned "
                 f"by SharedIndexMarketDataRunner; rejected={rejected[:8]}"
