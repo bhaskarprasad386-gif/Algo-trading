@@ -50,6 +50,10 @@ def _close_sdk_connection_bounded(socket: Any, *, phase: str, timeout_seconds: f
     call and any fallback bounded so callbacks and handshake admission unwind.
     """
     failure: dict[str, Exception] = {}
+    # Capture the transport before SDK close starts: close_connection() may
+    # clear wsapp.sock while its run_forever reader is still blocked.
+    wsapp = getattr(socket, "wsapp", None)
+    low_level_socket = getattr(wsapp, "sock", None) if wsapp is not None else None
 
     def _close() -> None:
         try:
@@ -62,8 +66,6 @@ def _close_sdk_connection_bounded(socket: Any, *, phase: str, timeout_seconds: f
     worker.join(timeout=max(0.01, float(timeout_seconds)))
     needs_abort = worker.is_alive() or "exception" in failure
     if needs_abort:
-        wsapp = getattr(socket, "wsapp", None)
-        low_level_socket = getattr(wsapp, "sock", None) if wsapp is not None else None
         abort = getattr(low_level_socket, "abort", None)
         if callable(abort):
             try:
@@ -72,6 +74,20 @@ def _close_sdk_connection_bounded(socket: Any, *, phase: str, timeout_seconds: f
                 app_logger.warning(f"Angel WebSocket low-level abort failed phase={phase}: {exc}")
         if worker.is_alive():
             worker.join(timeout=max(0.01, float(timeout_seconds)))
+        # websocket-client abort() is conditional on its connected flag. During
+        # close-handshake teardown it can be a no-op while recv_frame() remains
+        # blocked. Escalate through WebSocket.shutdown(), which shuts down the
+        # retained underlying descriptor and wakes the reader.
+        if worker.is_alive():
+            shutdown = getattr(low_level_socket, "shutdown", None)
+            if callable(shutdown):
+                try:
+                    shutdown()
+                except Exception as exc:
+                    app_logger.warning(
+                        f"Angel WebSocket low-level shutdown failed phase={phase}: {exc}"
+                    )
+                worker.join(timeout=max(0.01, float(timeout_seconds)))
     if "exception" in failure:
         app_logger.warning(
             f"Angel WebSocket SDK close failed phase={phase}: {failure['exception']}"
