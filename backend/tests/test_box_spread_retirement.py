@@ -48,10 +48,11 @@ def test_box_spread_has_no_production_runtime_or_feed_owner():
     assert "BOX_SPREAD" not in systemd
     assert "box_spread_pending" not in systemd
 
-    recovery = (REPO / "backend" / "scripts" / "recover_latest_master_artifacts.py").read_text(encoding="utf-8")
-    assert "box_spread" not in recovery
-    assert "ARTIFACT_NAME = \"iv-instrument-master-validated\"" in recovery
-    assert "InstrumentMaster._write_disk_snapshot(rows" in recovery
+    assert not (REPO / "backend" / "scripts" / "recover_latest_master_artifacts.py").exists()
+    assert not (REPO / "backend" / "scripts" / "recover_iv_master_artifact.py").exists()
+    assert not (REPO / ".github" / "workflows" / "iv-master-cache.yml").exists()
+    assert not (ROOT / "app" / "backtesting" / "arbitrage_backtester.py").exists()
+    assert not (ROOT / "app" / "backtesting" / "arbitrage_strategy_adapters.py").exists()
 
     for workflow_path in (
         ".github/workflows/targeted-common-feed-tests.yml",
