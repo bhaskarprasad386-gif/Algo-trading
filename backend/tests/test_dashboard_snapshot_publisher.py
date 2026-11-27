@@ -160,13 +160,13 @@ def test_dashboard_payload_contains_only_box_spread_read_model():
         and node.name == "_build_dashboard_snapshot_payload"
     )
     source = ast.unparse(payload)
-    assert '"box_spread"' in source
+    assert "box_spread" in source
     assert "live_cash_future_scanner" not in source
     assert "live_calendar_spread_scanner" not in source
     assert "live_synthetic_latest_results" not in source
-    assert '"cash_future"' not in source
-    assert '"calendar_spread"' not in source
-    assert '"synthetic_arbitrage"' not in source
+    assert "cash_future" not in source
+    assert "calendar_spread" not in source
+    assert "synthetic_arbitrage" not in source
 
 
 def test_retired_cash_future_page_push_provider_is_absent():
