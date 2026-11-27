@@ -30,7 +30,7 @@ class BoxSpreadUnderlyingFeed:
         concrete_tokens: dict[str, str] | None = None,
         index_symbols: frozenset[str] = frozenset(),
         commodity_symbols: frozenset[str] = frozenset(),
-        consumer: str = "synthetic-underlyings",
+        consumer: str = "box-underlyings",
         refresh_instrument_master: bool = True,
         manager: Any | None = None,
     ) -> None:
