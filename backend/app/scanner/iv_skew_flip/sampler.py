@@ -1,4 +1,4 @@
-"""One-second IV/OI sampling over the IV scanner's shared-feed quotes.
+"""One-second OI sampling over the IV scanner's shared-feed quotes.
 
 The sampler never fabricates exchange ticks: every sample records the source
 quote timestamp. Repeated UI samples may reuse a still-fresh quote, while the
@@ -59,7 +59,7 @@ class OptionMetricSample:
 
 
 class IVOneSecondSampler:
-    """Calculate IV once per second and retain source-timestamped OI history."""
+    """Retain source-timestamped OI history; local IV calculation is disabled."""
 
     def __init__(
         self,
