@@ -24,7 +24,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var tvAlertCenter: TextView
     private lateinit var btnFullFnoBacktest: Button
-    private lateinit var btnBoxSpread: Button
     private lateinit var etBrokerApiKey: EditText
     private lateinit var etBrokerClientCode: EditText
     private lateinit var etBrokerPassword: EditText
@@ -76,7 +75,6 @@ class MainActivity : AppCompatActivity() {
         tvAlertCenter = findViewById(R.id.tvAlertCenter)
         cbShowAlerts = findViewById(R.id.cbShowAlerts)
         btnFullFnoBacktest = findViewById(R.id.btnFullFnoBacktest)
-        btnBoxSpread = findViewById(R.id.btnBoxSpread)
         etBrokerApiKey = findViewById(R.id.etBrokerApiKey)
         etBrokerClientCode = findViewById(R.id.etBrokerClientCode)
         etBrokerPassword = findViewById(R.id.etBrokerPassword)
@@ -101,13 +99,12 @@ class MainActivity : AppCompatActivity() {
         btnSaveDashboardLayout.setOnClickListener { saveDashboardLayout() }
         btnResetDashboardLayout.setOnClickListener { resetDashboardLayout() }
         btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
-        btnBoxSpread.setOnClickListener { startActivity(Intent(this, BoxSpreadActivity::class.java)) }
         
         btnConnectBroker.setOnClickListener { connectAngelOne() }; btnDisconnectBroker.setOnClickListener { disconnectAngelOne() }
         btnEnableRealTrading.setOnClickListener { confirmEnableRealTrading() }; btnDisableRealTrading.setOnClickListener { disableRealTrading() }; btnKillSwitch.setOnClickListener { triggerKillSwitch() }
         
         btnQuickMarket.setOnClickListener { mainScroll.smoothScrollTo(0, 0); loadMarketOverview() }
-        btnQuickScanner.setOnClickListener { startActivity(Intent(this, BoxSpreadActivity::class.java)) }
+        btnQuickScanner.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
         btnQuickStrategies.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
         btnQuickResults.setOnClickListener { startActivity(Intent(this, ResultsJournalActivity::class.java)) }
         btnQuickExpansion.setOnClickListener { mainScroll.post { mainScroll.smoothScrollTo(0, findViewById<View>(R.id.phase13Expansion).top) } }
@@ -153,7 +150,6 @@ class MainActivity : AppCompatActivity() {
         tvAlertCenter.visibility = if (cbShowAlerts.isChecked) visible else hidden
         btnStrategies.visibility = if (cbShowStrategy.isChecked) visible else hidden
         btnFullFnoBacktest.visibility = if (cbShowStrategy.isChecked) visible else hidden
-        btnBoxSpread.visibility = if (cbShowStrategy.isChecked) visible else hidden
         btnResultsJournal.visibility = if (cbShowResults.isChecked) visible else hidden
     }
     private fun loadMarketOverview() = lifecycleScope.launch(Dispatchers.IO) {
@@ -210,12 +206,12 @@ class MainActivity : AppCompatActivity() {
         if (ownerLoginPromptShown || ApiService.hasRealOwnerAccessToken() || isFinishing) return
         ownerLoginPromptShown = true
         val passwordInput = EditText(this).apply {
-            hint = "Box Spread owner password"
+            hint = "Real trading owner password"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
         AlertDialog.Builder(this)
-            .setTitle("Box Spread Owner Login")
-            .setMessage("Enter the dedicated real-owner password. This is separate from your broker password.")
+            .setTitle("Real Trading Owner Login")
+            .setMessage("Enter the dedicated real-trading owner password. This is separate from your broker password.")
             .setView(passwordInput)
             .setNegativeButton("LATER") { _, _ -> ownerLoginPromptShown = false }
             .setPositiveButton("LOGIN") { _, _ ->
