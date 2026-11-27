@@ -6,15 +6,14 @@ import Link from "next/link";
 import { Card, PageTitle } from "@/components/ui";
 import { appConfig, getDashboardWsUrl } from "@/lib/config";
 
-function LiveTickAge({ timestampNs }: { timestampNs: number | null | undefined }) {
+function LiveTickAge({ timestampMs }: { timestampMs: number | null | undefined }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
-  const ns = timestampNs == null ? NaN : Number(timestampNs);
-  const tickMs = ns / 1_000_000;
-  if (!Number.isFinite(ns) || ns <= 0 || !Number.isFinite(tickMs)) {
+  const tickMs = timestampMs == null ? NaN : Number(timestampMs);
+  if (!Number.isFinite(tickMs) || tickMs <= 0) {
     return <span className="tabular-nums">Last tick: unavailable</span>;
   }
   const age = (now - tickMs) / 1000;
@@ -53,7 +52,7 @@ export default function HomePage() {
   const [lastDashboardMessageAt, setLastDashboardMessageAt] = useState<number | null>(null);
   const [feedStatus, setFeedStatus] = useState<"checking" | "live" | "stale" | "no-data" | "closed" | "error">("checking");
   const [feedAge, setFeedAge] = useState<number | null>(null);
-  const [latestTickTimestampNsByExchange, setLatestTickTimestampNsByExchange] = useState<Record<string, number | null>>({ NSE: null, NFO: null });
+  const [latestTickReceivedAtByExchange, setLatestTickReceivedAtByExchange] = useState<Record<string, number | null>>({ NSE: null, NFO: null });
   const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; connectedGroupNames: string[]; requiredSocketGroups: string[]; requiredSocketGroupCount: number | null; missingSocketGroups: string[]; disconnectedGroups: string[]; maxSocketSessions: number; lastConnectFailure: any; lastSocketFailure: any; retiredTransportCount: number; brokerCooldownRemaining: number; failureRecoveryGroups: string[]; transportCloseTimedOutGroups: string[]; socketHealthByGroup: Record<string, any>; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; payloads: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, connectedGroupNames: [], requiredSocketGroups: [], requiredSocketGroupCount: null, missingSocketGroups: [], disconnectedGroups: [], maxSocketSessions: 3, lastConnectFailure: null, lastSocketFailure: null, retiredTransportCount: 0, brokerCooldownRemaining: 0, failureRecoveryGroups: [], transportCloseTimedOutGroups: [], socketHealthByGroup: {}, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const healthFailureCountRef = useRef(0);
   const noteApiReachable = () => {
@@ -348,12 +347,14 @@ export default function HomePage() {
         if (exchangeFreshness && typeof exchangeFreshness === "object") {
           const next: Record<string, number | null> = { NSE: null, NFO: null };
           for (const exchange of ["NSE", "NFO"]) {
-            const raw = exchangeFreshness[exchange]?.latest_tick_timestamp_ns;
-            const ns = raw == null ? NaN : Number(raw);
-            const ms = ns / 1_000_000;
-            next[exchange] = Number.isFinite(ns) && ns > 0 && Number.isFinite(ms) && ms <= Date.now() + 5000 ? ns : null;
+            const receivedAt = exchangeFreshness[exchange]?.last_tick_received_at;
+            const receivedMs = typeof receivedAt === "string" ? new Date(receivedAt).getTime() : NaN;
+            const rawNs = exchangeFreshness[exchange]?.latest_tick_timestamp_ns;
+            const fallbackMs = rawNs == null ? NaN : Number(rawNs) / 1_000_000;
+            const tickMs = Number.isFinite(receivedMs) ? receivedMs : fallbackMs;
+            next[exchange] = Number.isFinite(tickMs) && tickMs > 0 && tickMs <= Date.now() + 5000 ? tickMs : null;
           }
-          setLatestTickTimestampNsByExchange(next);
+          setLatestTickReceivedAtByExchange(next);
         }
         if (session === "CLOSED") setFeedStatus("closed");
         else if (session !== "OPEN") setFeedStatus("no-data");
@@ -785,7 +786,7 @@ export default function HomePage() {
                 <div key={exchange} className="rounded-xl border theme-border p-3">
                   <div className="text-[10px] font-bold">{exchange} • LATEST BROKER TICK</div>
                   <div className="mt-1 text-[10px] theme-muted">
-                    <LiveTickAge timestampNs={latestTickTimestampNsByExchange[exchange]} />
+                    <LiveTickAge timestampMs={latestTickReceivedAtByExchange[exchange]} />
                   </div>
                 </div>
               ))}
