@@ -2386,15 +2386,11 @@ def market_data_runtime_health():
                 "provider-readiness-transport-shadow", provider_readiness_bridge.angel_transport_event
             )
             _provider_readiness_observer_manager_id = manager_identity
-    cash_runner = live_cash_future_runner
-    calendar_runner = live_calendar_spread_runner
-    synthetic_runner = live_synthetic_runner
-    box_runner = live_box_spread_runner
-    calendar_counts = live_calendar_spread_scanner.counts_snapshot()
     health_snapshot = getattr(manager, "health_snapshot", None)
     common_feed = health_snapshot() if callable(health_snapshot) else manager.snapshot()
-    # The synthetic scanner needs both NSE underlying and NFO derivatives.
-    # A fresh tick from another exchange must not mask a missing/stale primary feed.
+    # Shared Angel One feed health is data-plane telemetry, not a retired
+    # scanner health proxy. Keep the exchange freshness gate without touching
+    # retired scanner objects or their database-backed diagnostics.
     feed_health = _summarize_primary_exchange_feed(common_feed)
     common_feed["age_seconds"] = feed_health["age_seconds"]
     common_feed["status"] = feed_health["status"]
@@ -2407,19 +2403,13 @@ def market_data_runtime_health():
         "provider_readiness": provider_readiness_bridge.snapshot(),
         "event_loop": event_loop_lag_monitor.snapshot(),
         "dashboard_stream": _dashboard_stream_telemetry.snapshot(),
-        "runners": {
-            "cash_future": None if cash_runner is None else cash_runner.snapshot(),
-            "calendar_spread": None if calendar_runner is None else calendar_runner.snapshot(),
-            "synthetic_arbitrage": None if synthetic_runner is None else synthetic_runner.snapshot(),
-            "box_spread": None if box_runner is None else box_runner.snapshot(),
-        },
+        "runners": {},
         "scanner": {
-            "strategy": "calendar-spread",
-            "signals": calendar_counts["signals"],
-            "pairs": calendar_counts["pairs"],
-            "diagnostics": live_calendar_spread_scanner.diagnostics_snapshot(limit=50)["counters"],
+            "status": "retired",
+            "signals": 0,
+            "pairs": 0,
+            "diagnostics": {},
         },
-        "cash_future_scanner": live_cash_future_scanner.health(),
     }
 
 
