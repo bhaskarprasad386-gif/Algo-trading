@@ -232,9 +232,7 @@ async def lifespan(app: FastAPI):
         configure_provider_quote_parity_worker(None)
     # Recovery is intentionally deferred until application startup so the schema
     # migration module has no dependency on scanner/backtest job modules.
-    from app.scanner.backtest_jobs import recover_interrupted_jobs
     from app.brokers.real_owner_state import reconcile_owner_state_on_startup
-    recover_interrupted_jobs()
     # Broker adapter sessions are process-local and are not restored across
     # restarts. Never trust a persisted connected flag after process startup.
     with SessionLocal() as owner_state_db:
