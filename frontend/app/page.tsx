@@ -715,7 +715,7 @@ export default function HomePage() {
             <div className="text-right text-[10px] theme-subtle">Auto-refresh • API sample: {runtimeServerTimestamp ? new Date(runtimeServerTimestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata" }) : "unavailable"}</div>
           </div>
 
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
             <Card className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
               <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">API SERVER</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (apiStatus === "connected" ? "theme-success-bg theme-success" : apiStatus === "error" ? "theme-danger-bg theme-danger" : "theme-warning-bg theme-warning")}>{apiStatus === "connected" ? "ONLINE" : apiStatus === "degraded" ? "DEGRADED" : apiStatus === "error" ? "UNREACHABLE" : "CHECKING"}</span></div>
               <div className="mt-2 break-words text-[11px] theme-muted">{apiDetail}</div>
