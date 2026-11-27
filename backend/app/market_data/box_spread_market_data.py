@@ -59,7 +59,7 @@ class BoxSpreadOptionFutureRecorder:
         poll_seconds: float = 0.25,
         on_observation: Callable[[dict[str, Any]], None] | None = None,
         manager: Any | None = None,
-        consumer: str = "synthetic-options",
+        consumer: str = "box-spread-options",
     ) -> None:
         if not subscriptions:
             raise ValueError("at least one Box Spread subscription is required")
