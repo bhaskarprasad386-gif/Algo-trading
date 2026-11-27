@@ -630,155 +630,79 @@ def _overview_quote_batch(client, exchange: str, instruments: list[dict[str, str
 
 
 @router.get("/overview")
-@cached_snapshot(ttl_seconds=4.0, max_stale_seconds=30.0)
+@cached_snapshot(ttl_seconds=1.0, max_stale_seconds=5.0)
 def get_market_overview():
-    """Return a bounded live overview for configured NSE/BSE indices and MCX commodities."""
-    from app.market_data.client import MarketDataClient
-    from app.market_data.historical import HistoricalDataClient
-    from app.market_data.instruments import InstrumentMaster
+    """Return NIFTY/BANKNIFTY spot quotes from the sole Shared Runner; never poll broker REST."""
+    provider = _shared_index_runner_snapshot_provider
+    snapshot = None
+    if callable(provider):
+        try:
+            candidate = provider()
+            snapshot = candidate if isinstance(candidate, dict) else None
+        except Exception:
+            snapshot = None
 
-    index_specs = [
-        *(("NSE", symbol) for symbol in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY")),
-        *(("BSE", symbol) for symbol in ("SENSEX", "BANKEX")),
-    ]
-    commodity_specs = [("MCX", symbol) for symbol in ("GOLD", "SILVER", "CRUDEOIL", "NATURALGAS")]
-    master = InstrumentMaster()
-    client = MarketDataClient()
-    historical_client = HistoricalDataClient(client)
-    ist = ZoneInfo("Asia/Kolkata")
-    now = datetime.now(ist)
+    latest_spots = snapshot.get("latest_spots", {}) if snapshot else {}
+    records = snapshot.get("records", ()) if snapshot else ()
+    records_by_symbol = {
+        str(row.get("underlying") or "").strip().upper(): row
+        for row in records
+        if isinstance(row, dict)
+        and str(row.get("instrument_type") or "").strip().lower() == "index"
+    }
+    indices = []
+    for symbol in ("NIFTY", "BANKNIFTY"):
+        spot = latest_spots.get(symbol) if isinstance(latest_spots, dict) else None
+        row = records_by_symbol.get(symbol, {})
+        spot = spot if isinstance(spot, dict) else {}
+        ltp = spot.get("price") if spot.get("price") is not None else row.get("ltp")
+        close = row.get("close")
+        age = spot.get("age_seconds")
+        if age is None:
+            age = row.get("feed_age_seconds")
+        try:
+            age = max(0.0, float(age)) if age is not None else None
+        except (TypeError, ValueError):
+            age = None
+        fresh = bool(snapshot and snapshot.get("enabled") and row.get("fresh") and age is not None and age <= 5.0)
+        try:
+            change_percent = (
+                (float(ltp) - float(close)) / float(close) * 100.0
+                if ltp is not None and close is not None and float(close) > 0
+                else None
+            )
+        except (TypeError, ValueError, ZeroDivisionError):
+            change_percent = None
+        indices.append({
+            "exchange": "NSE",
+            "symbol": symbol,
+            "token": None,
+            "ltp": ltp,
+            "open": row.get("open"),
+            "high": row.get("high"),
+            "low": row.get("low"),
+            "close": close,
+            "change_percent": change_percent,
+            "volume": row.get("volume"),
+            "oi": row.get("oi"),
+            "bid": row.get("bid"),
+            "ask": row.get("ask"),
+            "quote_cache_age_seconds": age,
+            "status": "LIVE" if fresh and ltp is not None else "STALE" if ltp is not None else "NO_DATA",
+        })
+
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
     market_open = _nse_market_is_open(now)
-    mcx_market_open = _mcx_market_is_open(now)
-    cache_key = now.date().isoformat()
-    if not market_open and not mcx_market_open:
-        with _CLOSED_OVERVIEW_CACHE_LOCK:
-            cached = _CLOSED_OVERVIEW_CACHE.get(cache_key)
-        if cached is not None:
-            return cached
-
-    def last_trading_closes(exchange, token):
-        """Return a 15-minute cached historical close; it is not a live quote."""
-        now = datetime.now(ist)
-        cache_key = (now.date().isoformat(), exchange, str(token))
-        monotonic_now = __import__("time").monotonic()
-        with _OVERVIEW_HISTORICAL_CACHE_LOCK:
-            cached = _OVERVIEW_HISTORICAL_CACHE.get(cache_key)
-            if cached is not None and monotonic_now - cached[0] < 900.0:
-                return cached[1], cached[2]
-        from_date = (now - timedelta(days=10)).strftime("%Y-%m-%d 00:00")
-        to_date = now.strftime("%Y-%m-%d %H:%M")
-        response = historical_client.get_candles(
-            exchange=exchange,
-            symboltoken=token,
-            interval="ONE_DAY",
-            from_date=from_date,
-            to_date=to_date,
-        )
-        candles = response.get("data") or []
-        valid = [
-            row for row in candles
-            if isinstance(row, (list, tuple)) and len(row) >= 5 and row[4] is not None
-        ] if isinstance(candles, list) else []
-        latest = float(valid[-1][4]) if valid else None
-        prior = float(valid[-2][4]) if len(valid) >= 2 else latest
-        if latest is not None:
-            with _OVERVIEW_HISTORICAL_CACHE_LOCK:
-                _OVERVIEW_HISTORICAL_CACHE[cache_key] = (monotonic_now, latest, prior)
-                # Keep only the current date's bounded index universe.
-                for old_key in tuple(_OVERVIEW_HISTORICAL_CACHE):
-                    if old_key[0] != cache_key[0]:
-                        _OVERVIEW_HISTORICAL_CACHE.pop(old_key, None)
-        return latest, prior
-
-    def resolve(specs):
-        resolved = []
-        errors = []
-        for exchange, symbol in specs:
-            try:
-                token = _resolve_overview_instrument(
-                    master, exchange, symbol, cache_key
-                )
-                if not token:
-                    errors.append({"exchange": exchange, "symbol": symbol, "error": "instrument_not_found"})
-                    continue
-                resolved.append((exchange, symbol, token))
-            except Exception as exc:
-                errors.append({"exchange": exchange, "symbol": symbol, "error": str(exc)})
-        return resolved, errors
-
-    def fetch(specs):
-        resolved, errors = resolve(specs)
-        by_exchange = {}
-        for exchange, symbol, token in resolved:
-            if token:
-                by_exchange.setdefault(exchange, []).append({"symbol": symbol, "symboltoken": token})
-        rows = []
-        for exchange, instruments in by_exchange.items():
-            try:
-                by_token = {}
-                exchange_open = market_open if exchange in {"NSE", "BSE"} else mcx_market_open
-                quote_age_seconds = None
-                quote_is_stale = False
-                if exchange_open:
-                    by_token, quote_age_seconds, quote_is_stale, quote_refresh_warning = (
-                        _overview_quote_batch(client, exchange, instruments)
-                    )
-                    if quote_refresh_warning:
-                        errors.append({
-                            "exchange": exchange,
-                            "error": quote_refresh_warning,
-                        })
-                for item in instruments:
-                    quote = by_token.get(item["symboltoken"], {})
-                    fallback_ltp = None
-                    fallback_previous = None
-                    status = (
-                        "STALE" if quote and quote_is_stale
-                        else "LIVE" if quote
-                        else "NO_QUOTE"
-                    )
-                    if not exchange_open:
-                        try:
-                            fallback_ltp, fallback_previous = last_trading_closes(exchange, item["symboltoken"])
-                            if fallback_ltp is not None:
-                                status = "CLOSED_LAST_CLOSE"
-                        except Exception as fallback_exc:
-                            errors.append({
-                                "exchange": exchange,
-                                "symbol": item["symbol"],
-                                "error": f"last_close_fallback_failed: {fallback_exc}",
-                            })
-                    ltp = quote.get("ltp") if quote.get("ltp") is not None else fallback_ltp
-                    close = quote.get("close") if quote.get("close") is not None else fallback_previous
-                    rows.append({"exchange": exchange, "symbol": item["symbol"], "token": item["symboltoken"],
-                                 "ltp": ltp, "open": quote.get("open"), "high": quote.get("high"),
-                                 "low": quote.get("low"), "close": close, "change_percent": quote.get("percentChange"),
-                                 "volume": quote.get("tradeVolume"), "oi": quote.get("opnInterest"),
-                                 "bid": (quote.get("depth", {}).get("buy", [{}])[0].get("price") if quote.get("depth") else None),
-                                 "ask": (quote.get("depth", {}).get("sell", [{}])[0].get("price") if quote.get("depth") else None),
-                                 "quote_cache_age_seconds": quote_age_seconds,
-                                 "status": status})
-            except Exception as exc:
-                errors.extend({"exchange": exchange, "symbol": item["symbol"], "error": str(exc)} for item in instruments)
-        return rows, errors
-
-    indices, index_errors = fetch(index_specs)
-    commodities, commodity_errors = fetch(commodity_specs)
-    result = {
+    return {
         "status": "success",
-        "mode": "live",
+        "mode": "shared-runner-only",
         "market_session": "OPEN" if market_open else "CLOSED",
         "nse_market_session": "OPEN" if market_open else "CLOSED",
-        "mcx_market_session": "OPEN" if mcx_market_open else "CLOSED",
+        "mcx_market_session": "DISABLED",
         "indices": indices,
-        "commodities": commodities,
-        "errors": index_errors + commodity_errors,
+        "commodities": [],
+        "errors": [] if snapshot is not None else [{"source": "shared-index-market-data", "error": "runner_snapshot_unavailable"}],
     }
-    if not market_open and not mcx_market_open:
-        with _CLOSED_OVERVIEW_CACHE_LOCK:
-            _CLOSED_OVERVIEW_CACHE.clear()
-            _CLOSED_OVERVIEW_CACHE[cache_key] = result
-    return result
 
 
 @router.get("/shared-index-runner/health")
