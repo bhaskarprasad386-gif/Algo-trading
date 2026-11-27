@@ -9,12 +9,11 @@ from app.scanner.iv_skew_flip.engine import (
 )
 
 
-def test_implied_volatility_round_trip_for_call_and_put():
+def test_local_implied_volatility_solver_is_disabled():
     for kind in ("CE", "PE"):
         premium = black_scholes_price(kind, 22000, 22000, 7 / 365, 0.22)
         recovered = implied_volatility(kind, 22000, 22000, 7 / 365, premium)
-        assert recovered is not None
-        assert abs(recovered - 0.22) < 1e-6
+        assert recovered is None
 
 
 def test_implied_volatility_rejects_invalid_arbitrage_price():
@@ -25,8 +24,9 @@ def test_gamma_blast_requires_oi_drop_and_premium_rise():
     prior = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 1, 100, oi=100000, token="N1")
     current = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 112, oi=90000, token="N1")
     signal = evaluate_gamma_blast(current, prior)
-    assert signal.status == "SIGNAL"
-    assert signal.direction == "BULLISH"
+    assert signal.status == "WAITING"
+    assert signal.direction is None
+    assert "local IV calculation is disabled" in signal.reason
 
 @pytest.mark.parametrize(
     "field,value",
@@ -76,9 +76,9 @@ def _synthetic_chain(call_iv=0.24, put_iv=0.20):
 def test_iv_skew_generates_bullish_signal_from_synthetic_chain():
     quotes, now, now_ns, config = _synthetic_chain()
     signal = evaluate_skew(quotes, 22000, now, now_ns, config)
-    assert signal.status == "SIGNAL"
-    assert signal.direction == "BULLISH"
-    assert signal.value is not None and signal.value > config.bullish_skew_threshold
+    assert signal.status == "WAITING"
+    assert signal.direction is None
+    assert "local IV calculation is disabled" in signal.reason
 
 
 def test_iv_flip_detects_confirmed_atm_crossover():
@@ -91,8 +91,9 @@ def test_iv_flip_detects_confirmed_atm_crossover():
 def test_iv_flip_without_prior_opposite_side_does_not_signal():
     quotes, now, now_ns, config = _synthetic_chain()
     signal = evaluate_flip(quotes, 22000, now, now_ns, config, previous_atm_diff=None)
-    assert signal.status == "NEUTRAL"
+    assert signal.status == "WAITING"
     assert signal.direction is None
+    assert "local IV calculation is disabled" in signal.reason
 
 
 def test_confluence_does_not_double_count_correlated_iv_surface_signals():
