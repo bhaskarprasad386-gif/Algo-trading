@@ -24,6 +24,7 @@ from app.core.logger import app_logger
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS = frozenset({"MIDCPNIFTY"})
 WEEKLY_EXPIRY_PRIORITY_SYMBOLS = frozenset({"NIFTY", "SENSEX"})
+LOCKED_BOX_INDEX_SYMBOLS = frozenset({"NIFTY", "BANKNIFTY"})
 INDEX_EDGE_THRESHOLDS = {
     "NIFTY": 5.0,
     "FINNIFTY": 5.0,
@@ -452,7 +453,13 @@ class LiveBoxSpreadRunner:
         selected_expiries = {}
         for target in self.targets:
             wanted = target.expiry
-            if wanted is None and target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS and not getattr(target, "weekly_only", False):
+            symbol = target.underlying.strip().upper()
+            if target.instrument_class.strip().upper() == "INDEX" and symbol in LOCKED_BOX_INDEX_SYMBOLS and wanted is None:
+                # A missing locked expiry must not be replaced by a different
+                # expiry family inferred from the option/futures master.
+                strikes.setdefault(symbol, ())
+                continue
+            if wanted is None and symbol in WEEKLY_EXPIRY_PRIORITY_SYMBOLS and not getattr(target, "weekly_only", False):
                 expected_segment = "BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO"
                 option_expiries = []
                 for item in self.master.instruments:
@@ -548,7 +555,14 @@ class LiveBoxSpreadRunner:
                     # Letting the selector infer expiry independently can pick an
                     # expired option chain from the instrument master.
                     wanted = target.expiry or next(iter(selected_expiries.get(target.underlying.strip().upper(), ())), None)
-                    if wanted is None and target.underlying.strip().upper() not in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
+                    symbol = target.underlying.strip().upper()
+                    if target.instrument_class.strip().upper() == "INDEX" and symbol in LOCKED_BOX_INDEX_SYMBOLS and wanted is None:
+                        unavailable_symbols.append({
+                            "symbol": target.underlying,
+                            "reason": "LOCKED_EXPIRY_UNAVAILABLE",
+                        })
+                        continue
+                    if wanted is None and symbol not in LOCKED_BOX_INDEX_SYMBOLS and symbol not in WEEKLY_EXPIRY_PRIORITY_SYMBOLS:
                         future_type = "FUTSTK" if target.instrument_class == "STOCK" else "FUTIDX"
                         expiries = []
                         for item in self.master.instruments:
