@@ -241,7 +241,7 @@ def test_broker_status_reports_durable_owner_flags_and_defaults_closed(db):
 def test_single_owner_rejects_same_client_identity_under_a_different_broker(db):
     original = claim_authenticated_account(db, "angel_one", "CLIENT123")
 
-    # The Box Spread owner is intentionally bound to one account total, not
+    # The real-trading owner is intentionally bound to one account total, not
     # one account per broker. A matching broker-side ID under another broker
     # is a different identity and must not replace the existing binding.
     with pytest.raises(HTTPException) as raised:
