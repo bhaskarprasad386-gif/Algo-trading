@@ -344,7 +344,7 @@ def test_dual_index_start_subscribes_union_once_and_rolls_back_shared_feed(monke
     )
 
     with pytest.raises(RuntimeError, match="shared subscription failure"):
-        runtime.start()
+        runtime.start(instruments=rows)
 
     assert len(created) == 1
     assert created[0].received_symbols == ["AAA", "BBB", "CCC"]
