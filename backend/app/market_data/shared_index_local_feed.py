@@ -6,7 +6,7 @@ record state and dispatches only records for keys registered by local consumers.
 from __future__ import annotations
 
 from threading import Event, RLock, Thread
-from time import sleep
+from time import time_ns
 from typing import Any, Callable
 
 from .registry import InstrumentRegistry
@@ -88,9 +88,10 @@ class SharedIndexRunnerLocalFeedManager:
         self._thread.start()
 
     def _prune_worker_locked(self) -> None:
-        if self.registry.subscriptions():
-            return
-        self._stop.set()
+        # Keep the small local dispatcher alive after the first subscriber.
+        # Stopping/restarting it on every staged Box handoff creates a race in
+        # which a replacement subscription can be left without a poller.
+        return
 
     def _poll(self) -> None:
         while not self._stop.wait(self.poll_seconds):
@@ -103,6 +104,9 @@ class SharedIndexRunnerLocalFeedManager:
                 key = subscription.key
                 record = self.runner.latest(key.value)
                 if record is None:
+                    continue
+                age_ns = time_ns() - int(record.timestamp_ns)
+                if age_ns < -1_000_000_000 or age_ns > 5_000_000_000:
                     continue
                 for consumer in subscription.consumers:
                     callback = callbacks.get(consumer)
@@ -138,9 +142,11 @@ class SharedIndexRunnerLocalFeedManager:
     def close(self) -> None:
         with self._lock:
             self._closed = True
-            self.registry.clear_consumer("*")
-            for name in tuple(self._callbacks):
-                self._callbacks.pop(name, None)
+            for subscription in self.registry.subscriptions():
+                for name in subscription.consumers:
+                    self.registry.clear_consumer(name)
+            self._callbacks.clear()
+            self._last_timestamp.clear()
             self._stop.set()
             thread = self._thread
         if thread is not None and thread.is_alive():
