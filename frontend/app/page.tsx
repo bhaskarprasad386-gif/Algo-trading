@@ -69,7 +69,15 @@ export default function HomePage() {
         const liveBody = await liveResponse.json();
         if (liveBody?.status !== "ok") throw new Error("invalid liveness response");
         processReachable = true;
+        // If liveness recovered after the UI declared the API unreachable,
+        // force a fresh readiness sample now. Otherwise the 30-second
+        // readiness throttle can leave the red UNREACHABLE state stuck even
+        // though /health/live is responding again.
+        const recoveredAfterFailures = healthFailureCountRef.current >= 3;
         healthFailureCountRef.current = 0;
+        if (recoveredAfterFailures) {
+          lastReadinessCheckAtRef.current = 0;
+        }
       } catch (error) {
         healthFailureCountRef.current += 1;
         if (!cancelled) {
