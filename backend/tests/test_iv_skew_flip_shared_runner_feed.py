@@ -28,9 +28,14 @@ class FakeSharedState:
             and str(row.get("underlying", "")).upper() in symbols
         ]
 
-    def latest_records_for_tokens(self, tokens):
+    def latest_records_for_tokens(self, tokens, *, exchange=None, segment=None):
         requested = {str(token) for token in tokens}
-        return [row for row in self.records if str(row.get("token", "")) in requested]
+        return [
+            row for row in self.records
+            if str(row.get("token", "")) in requested
+            and (exchange is None or str(row.get("exchange", "NFO")).upper() == exchange)
+            and (segment is None or str(row.get("segment", "NFO")).upper() == segment)
+        ]
 
 
 class FakeSharedRunner:
