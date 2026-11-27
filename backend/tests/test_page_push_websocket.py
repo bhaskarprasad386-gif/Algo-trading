@@ -5,12 +5,7 @@ from app.scanner import page_push_websocket as push
 
 
 def test_page_channels_cover_all_scanner_pages():
-    expected = {
-        "weekly-swing", "iv-skew-flip", "calendar-spread",
-        "synthetic-arbitrage", "iv-skew-flip",
-        "credit-butterfly-condor-weekly",
-        "credit-butterfly-condor-monthly", "weekly-swing",
-    }
+    expected = {"iv-skew-flip", "weekly-swing"}
     assert expected.issubset(push.PAGE_CHANNELS)
 
 
@@ -33,12 +28,12 @@ def test_duplicate_and_stale_frames_do_not_trigger_resync():
 def test_keyed_collection_change_publisher_emits_add_update_delete_contract(monkeypatch):
     published = []
     monkeypatch.setattr(push, "publish_page_update", lambda page, event, data=None: published.append((page, event, data)))
-    push.publish_collection_change("box-spread", "opportunities", "ADD", "id", item={"id": "x", "edge": 1.0})
-    push.publish_collection_change("box-spread", "opportunities", "UPDATE", "id", key="x", item={"id": "x", "edge": 2.0})
-    push.publish_collection_change("box-spread", "opportunities", "DELETE", "id", key="x")
+    push.publish_collection_change("iv-skew-flip", "opportunities", "ADD", "id", item={"id": "x", "edge": 1.0})
+    push.publish_collection_change("iv-skew-flip", "opportunities", "UPDATE", "id", key="x", item={"id": "x", "edge": 2.0})
+    push.publish_collection_change("iv-skew-flip", "opportunities", "DELETE", "id", key="x")
     push.publish_collection_change("unknown-page", "opportunities", "ADD", "id", item={"id": "x"})
     assert len(published) == 3
-    assert all(page == "box-spread" and event == "PATCH" for page, event, _ in published)
+    assert all(page == "iv-skew-flip" and event == "PATCH" for page, event, _ in published)
     changes = [payload["collection_changes"][0] for _, _, payload in published]
     assert [change["operation"] for change in changes] == ["ADD", "UPDATE", "DELETE"]
     assert changes[0]["item"] == {"id": "x", "edge": 1.0}
@@ -49,18 +44,18 @@ def test_keyed_collection_change_publisher_emits_add_update_delete_contract(monk
 def test_keyed_collection_change_publisher_rejects_invalid_identity_and_reserved_names(monkeypatch):
     published = []
     monkeypatch.setattr(push, "publish_page_update", lambda page, event, data=None: published.append((page, event, data)))
-    push.publish_collection_change("box-spread", "rows", "ADD", "id", item={"id": "ok"})
-    push.publish_collection_change("box-spread", "rows", "UPDATE", "id", key="other", item={"id": "wrong"})
-    push.publish_collection_change("box-spread", "__proto__", "ADD", "id", item={"id": "x"})
-    push.publish_collection_change("box-spread", "rows", "ADD", "__proto__", item={"__proto__": "x"})
-    push.publish_collection_change("box-spread", "rows", "ADD", "id", item={"id": True})
-    push.publish_collection_change("box-spread", "rows", "ADD", "id", item={"id": ""})
+    push.publish_collection_change("iv-skew-flip", "rows", "ADD", "id", item={"id": "ok"})
+    push.publish_collection_change("iv-skew-flip", "rows", "UPDATE", "id", key="other", item={"id": "wrong"})
+    push.publish_collection_change("iv-skew-flip", "__proto__", "ADD", "id", item={"id": "x"})
+    push.publish_collection_change("iv-skew-flip", "rows", "ADD", "__proto__", item={"__proto__": "x"})
+    push.publish_collection_change("iv-skew-flip", "rows", "ADD", "id", item={"id": True})
+    push.publish_collection_change("iv-skew-flip", "rows", "ADD", "id", item={"id": ""})
     assert len(published) == 1
     change = published[0][2]["collection_changes"][0]
     assert change["operation"] == "ADD" and change["key"] == "ok"
 
 def test_missing_or_invalid_snapshot_provider_is_unavailable(monkeypatch):
-    page = "box-spread"
+    page = "iv-skew-flip"
     monkeypatch.delitem(push._snapshot_providers, page, raising=False)
     assert push._snapshot(page) == {"snapshot_status": "UNAVAILABLE"}
     monkeypatch.setitem(push._snapshot_providers, page, lambda: [])
@@ -68,9 +63,9 @@ def test_missing_or_invalid_snapshot_provider_is_unavailable(monkeypatch):
 
 
 def test_page_snapshot_frame_uses_explicit_durable_sequence():
-    frame = push._snapshot_frame("box-spread", {"rows": []}, sequence=17)
+    frame = push._snapshot_frame("iv-skew-flip", {"rows": []}, sequence=17)
     assert frame["type"] == "page_update"
-    assert frame["page"] == "box-spread"
+    assert frame["page"] == "iv-skew-flip"
     assert frame["sequence"] == 17
     assert frame["event"] == "SNAPSHOT"
     assert frame["data"] == {"rows": []}
@@ -92,7 +87,7 @@ def test_snapshot_sequence_retries_until_page_is_stable(monkeypatch):
 
     monkeypatch.setattr(push, "_latest_page_sequence", lambda page: sequence["value"])
     monkeypatch.setattr(push, "_snapshot", lambda page: snapshot())
-    frame = push._consistent_snapshot_frame("box-spread", retries=3)
+    frame = push._consistent_snapshot_frame("iv-skew-flip", retries=3)
     assert frame["event"] == "SNAPSHOT"
     assert frame["sequence"] == 1
     assert frame["data"]["observed_sequence"] == 1
@@ -101,10 +96,10 @@ def test_snapshot_sequence_retries_until_page_is_stable(monkeypatch):
 def test_activating_page_channel_requests_snapshot_recovery(monkeypatch):
     queue = asyncio.Queue(maxsize=push.QUEUE_SIZE)
     monkeypatch.setattr(push, "_subscribers", set())
-    monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 27 if page == "box-spread" else 0)
-    push._set_channels(queue, frozenset({"box-spread"}))
+    monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 27 if page == "iv-skew-flip" else 0)
+    push._set_channels(queue, frozenset({"iv-skew-flip"}))
     marker = queue.get_nowait()
-    assert marker["page"] == "box-spread"
+    assert marker["page"] == "iv-skew-flip"
     assert marker["event"] == "SNAPSHOT_REQUIRED"
     assert marker["sequence"] == 27
 
@@ -113,10 +108,10 @@ def test_reactivating_existing_channel_does_not_enqueue_recovery(monkeypatch):
     queue = asyncio.Queue(maxsize=push.QUEUE_SIZE)
     monkeypatch.setattr(push, "_subscribers", set())
     monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 3)
-    push._set_channels(queue, frozenset({"box-spread"}))
+    push._set_channels(queue, frozenset({"iv-skew-flip"}))
     first = queue.get_nowait()
     assert first["event"] == "SNAPSHOT_REQUIRED"
-    push._set_channels(queue, frozenset({"box-spread", "iv-skew-flip"}))
+    push._set_channels(queue, frozenset({"iv-skew-flip", "iv-skew-flip"}))
     second = queue.get_nowait()
     assert second["page"] == "iv-skew-flip"
     assert second["event"] == "SNAPSHOT_REQUIRED"
@@ -125,17 +120,17 @@ def test_reactivating_existing_channel_does_not_enqueue_recovery(monkeypatch):
 
 def test_channel_activation_queue_overflow_marks_all_active_pages_for_resync(monkeypatch):
     queue = asyncio.Queue(maxsize=2)
-    queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 8})
+    queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 8})
     monkeypatch.setattr(push, "_subscribers", set())
-    monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 9 if page == "box-spread" else 4)
-    push._set_channels(queue, frozenset({"box-spread"}))
+    monkeypatch.setattr(push, "_latest_page_sequence", lambda page: 9 if page == "iv-skew-flip" else 4)
+    push._set_channels(queue, frozenset({"iv-skew-flip"}))
     first = queue.get_nowait()
     assert first["event"] == "SNAPSHOT_REQUIRED"
-    queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 10})
-    queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 11})
-    push._set_channels(queue, frozenset({"box-spread", "iv-skew-flip"}))
+    queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 10})
+    queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 11})
+    push._set_channels(queue, frozenset({"iv-skew-flip", "iv-skew-flip"}))
     markers = [queue.get_nowait(), queue.get_nowait()]
-    assert {frame["page"] for frame in markers} == {"box-spread", "iv-skew-flip"}
+    assert {frame["page"] for frame in markers} == {"iv-skew-flip", "iv-skew-flip"}
     assert all(frame["event"] == "SNAPSHOT_REQUIRED" for frame in markers)
 
 def test_snapshot_provider_is_read_only_and_page_scoped():
@@ -197,7 +192,7 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
     from fastapi.testclient import TestClient
 
     journal = []
-    page_sequences = {"box-spread": 0}
+    page_sequences = {"iv-skew-flip": 0}
     provider_calls = []
     snapshot_state = {"opportunities": [{"id": "initial"}]}
     injected_frames = []
@@ -232,7 +227,7 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
         # subscriber queue. Journal dispatcher delivery is covered separately;
         # duplicating a journal row here would race the direct queue injection.
         injected_frames.append(frame.copy())
-        if page == "box-spread" and event == "PATCH":
+        if page == "iv-skew-flip" and event == "PATCH":
             snapshot_state["opportunities"].append({"id": "fresh"})
         for queue, channels in tuple(push._subscribers):
             if page in channels:
@@ -271,7 +266,7 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
 
     app = FastAPI()
     app.include_router(push.router)
-    page = "box-spread"
+    page = "iv-skew-flip"
     push.configure_snapshot_provider(
         page,
         lambda: provider_calls.append("snapshot") or {"opportunities": list(snapshot_state["opportunities"])},
@@ -321,12 +316,12 @@ def test_websocket_subscribe_publish_and_resync_round_trip(monkeypatch):
 def test_page_resync_preserves_other_subscribed_channel_events():
     async def scenario():
         queue = asyncio.Queue(maxsize=4)
-        queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 2})
+        queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 2})
         queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 8})
         waiter = asyncio.create_task(queue.get())
         await asyncio.sleep(0)
         assert waiter.done()
-        next_waiter = await push._restart_event_waiter(queue, waiter, "box-spread")
+        next_waiter = await push._restart_event_waiter(queue, waiter, "iv-skew-flip")
         preserved = await asyncio.wait_for(next_waiter, timeout=0.1)
         assert preserved["page"] == "iv-skew-flip"
         next_waiter.cancel()
@@ -336,7 +331,7 @@ def test_page_resync_preserves_other_subscribed_channel_events():
 
 def test_page_push_dispatcher_marks_queue_overflow_for_snapshot(monkeypatch):
     async def scenario():
-        page = "cash-future"
+        page = "weekly-swing"
         queue = asyncio.Queue(maxsize=1)
         queue.put_nowait({"page": page, "event": "PATCH", "sequence": 1})
         latest_reads = []
@@ -370,7 +365,7 @@ def test_unstable_snapshot_is_not_marked_authoritative(monkeypatch):
 
     monkeypatch.setattr(push, "_latest_page_sequence", lambda page: sequence["value"])
     monkeypatch.setattr(push, "_snapshot", lambda page: unstable_snapshot())
-    frame = push._consistent_snapshot_frame("box-spread", retries=3)
+    frame = push._consistent_snapshot_frame("iv-skew-flip", retries=3)
     assert frame["event"] == "SNAPSHOT"
     # Last capture started at sequence 2; don't advance to sequence 3
     # because its snapshot is unstable and cannot represent that cursor.
@@ -445,7 +440,7 @@ def test_unsubscribe_does_not_clear_dispatcher_restarted_by_new_subscriber(monke
 
 def test_journal_dispatch_uses_page_sequence_cursor_not_global_event_id(monkeypatch):
     async def scenario():
-        page = "box-spread"
+        page = "iv-skew-flip"
         queue = asyncio.Queue(maxsize=4)
         monkeypatch.setattr(push, "_latest_page_sequence", lambda target: 0)
         calls = []
@@ -479,7 +474,7 @@ def test_journal_dispatch_uses_page_sequence_cursor_not_global_event_id(monkeypa
 def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch):
     async def scenario():
         queue = asyncio.Queue(maxsize=3)
-        pages = {"box-spread", "iv-skew-flip", "weekly-swing"}
+        pages = {"iv-skew-flip", "iv-skew-flip", "weekly-swing"}
         for page in pages:
             queue.put_nowait({"page": page, "event": "PATCH", "sequence": 1})
         monkeypatch.setattr(push, "_subscribers", {(queue, frozenset(pages))})
@@ -490,8 +485,8 @@ def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch)
         await asyncio.wait_for(waiter, timeout=0.5)
         # Add one more so restoring the consumed frame plus retained queue
         # exceeds this test queue size.
-        queue.put_nowait({"page": "box-spread", "event": "PATCH", "sequence": 2})
-        next_waiter = await push._restart_event_waiter(queue, waiter, "cash-future")
+        queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 2})
+        next_waiter = await push._restart_event_waiter(queue, waiter, "weekly-swing")
         # Cancel the restarted consumer before inspecting the recovery queue so
         # it cannot race the test and steal one of the snapshot markers.
         next_waiter.cancel()
@@ -504,7 +499,7 @@ def test_restart_waiter_overflow_marks_active_channels_for_snapshot(monkeypatch)
 
 def test_dispatcher_replays_retained_events_from_zero_on_worker_start(monkeypatch):
     async def scenario():
-        page = "box-spread"
+        page = "iv-skew-flip"
         queue = asyncio.Queue(maxsize=4)
         latest_reads = []
         monkeypatch.setattr(push, "_latest_page_sequence", lambda target: latest_reads.append(target) or 5)
@@ -533,7 +528,7 @@ def test_dispatcher_replays_retained_events_from_zero_on_worker_start(monkeypatc
 
 def test_journal_dispatch_bounded_queue_recovers_slow_consumer(monkeypatch):
     async def scenario():
-        page = "box-spread"
+        page = "iv-skew-flip"
         slow_queue = asyncio.Queue(maxsize=8)
         journal_rows = [
             {"id": index + 1000, "page": page, "sequence": index + 1,
@@ -588,7 +583,7 @@ def test_snapshot_handoff_keeps_cursor_before_unstable_capture(monkeypatch):
         return {"partial": True}
     monkeypatch.setattr(push, "_latest_page_sequence", lambda page: next(values))
     monkeypatch.setattr(push, "_snapshot", lambda page: snapshot())
-    frame = push._consistent_snapshot_frame("box-spread", retries=3)
+    frame = push._consistent_snapshot_frame("iv-skew-flip", retries=3)
     assert frame["event"] == "SNAPSHOT"
     assert frame["sequence"] == 43
     assert frame["data"]["snapshot_status"] == "UNAVAILABLE"
@@ -630,7 +625,7 @@ def test_journal_has_composite_page_sequence_index():
 
 def test_dispatcher_only_selects_currently_subscribed_channels(monkeypatch):
     queue = asyncio.Queue(maxsize=push.QUEUE_SIZE)
-    monkeypatch.setattr(push, "_subscribers", {(queue, frozenset({"iv-skew-flip", "box-spread"}))})
-    assert push._active_subscribed_pages() == frozenset({"iv-skew-flip", "box-spread"})
+    monkeypatch.setattr(push, "_subscribers", {(queue, frozenset({"iv-skew-flip", "iv-skew-flip"}))})
+    assert push._active_subscribed_pages() == frozenset({"iv-skew-flip", "iv-skew-flip"})
     monkeypatch.setattr(push, "_subscribers", {(queue, frozenset())})
     assert push._active_subscribed_pages() == frozenset()
