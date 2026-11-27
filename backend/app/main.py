@@ -668,28 +668,12 @@ async def lifespan(app: FastAPI):
     # restarts. Never trust a persisted connected flag after process startup.
     with SessionLocal() as owner_state_db:
         reconcile_owner_state_on_startup(owner_state_db)
-    # Shoonya has a separate process-local owner and registry. Enabling the
-    # adapter creates only the isolated shadow supervisor; it opens no socket
-    # until an explicit subscription set is registered.
-    if settings.SHOONYA_MARKET_DATA_ENABLED and shoonya_market_data_supervisor is None:
-        shoonya_market_data_supervisor = ShoonyaMarketDataSupervisor(
-            uid=settings.SHOONYA_UID,
-            actid=settings.SHOONYA_ACTID,
-            access_token=settings.SHOONYA_ACCESS_TOKEN,
-            max_tokens=settings.SHOONYA_MARKET_DATA_MAX_TOKENS,
-            max_dispatch_queue=settings.SHOONYA_MARKET_DATA_DISPATCH_QUEUE_MAX,
-            reconnect_min_seconds=settings.SHOONYA_MARKET_DATA_RECONNECT_MIN_SECONDS,
-            reconnect_max_seconds=settings.SHOONYA_MARKET_DATA_RECONNECT_MAX_SECONDS,
-            frame_timeout_seconds=settings.SHOONYA_MARKET_DATA_FRAME_TIMEOUT_SECONDS,
-            auth_timeout_seconds=settings.SHOONYA_MARKET_DATA_AUTH_TIMEOUT_SECONDS,
-            on_session_observation=early_impulse_observer.on_session_observation,
-            on_tick_observation=early_impulse_observer.on_tick_observation,
-        )
-        configure_shoonya_snapshot(shoonya_market_data_supervisor.snapshot)
-        configure_shoonya_supervisor(lambda: shoonya_market_data_supervisor)
-    elif not settings.SHOONYA_MARKET_DATA_ENABLED:
-        configure_shoonya_snapshot(None)
-        configure_shoonya_supervisor(None)
+    # A single market-data WebSocket owner is permitted in production:
+    # SharedIndexMarketDataRunner for NIFTY/BANKNIFTY only. The isolated
+    # Shoonya supervisor is deliberately not started by application lifespan.
+    shoonya_market_data_supervisor = None
+    configure_shoonya_snapshot(None)
+    configure_shoonya_supervisor(None)
     # IV Skew Flip is intentionally not started: the production Angel One
     # WebSocket has one owner, SharedIndexMarketDataRunner, until IV is migrated
     # to consume its published records without opening another feed consumer.
@@ -711,12 +695,6 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        # Shoonya owns an isolated shadow feed; stop it before application tasks unwind.
-        if shoonya_market_data_supervisor is not None:
-            shoonya_market_data_supervisor.stop()
-            shoonya_market_data_supervisor = None
-            configure_shoonya_snapshot(None)
-            configure_shoonya_supervisor(None)
         # IV scanner is opt-in and owns only its named shared-feed consumers.
         if iv_skew_flip_runtime is not None:
             iv_skew_flip_runtime.stop()
