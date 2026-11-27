@@ -36,7 +36,9 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
     if cls == "STOCK" and symbol not in {s.strip().upper() for s in allowed_stock_symbols}:
         raise ValueError("stock is outside the configured top-15 liquid stock universe")
 
-    expected_exchange = exchange.upper() if exchange else ("MCX" if cls == "COMMODITY" else "NFO")
+    if cls == "COMMODITY":
+        raise ValueError("commodity contracts are no longer supported")
+    expected_exchange = exchange.upper() if exchange else "NFO"
     future_type = {"STOCK": "FUTSTK", "INDEX": "FUTIDX", "COMMODITY": "FUTCOM"}[cls]
     option_types = {"STOCK": {"OPTSTK"}, "INDEX": {"OPTIDX"}, "COMMODITY": {"OPTFUT"}}[cls]
     if cls == "INDEX" and exchange is None:
@@ -92,7 +94,7 @@ def select_synthetic_contracts(master: InstrumentMaster, *, underlying: str,
         raise LookupError(f"current future has incomplete token/symbol metadata for {symbol}")
 
     subscriptions = [SyntheticSubscription(
-        exchange_type={"NFO":2,"BFO":4,"MCX":5}[expected_exchange],
+        exchange_type={"NFO":2,"BFO":4}[expected_exchange],
         token=future_token,
         symbol=future_symbol, underlying=symbol,
         instrument_class=cls, expiry=str(current.get("expiry","")).strip(),
