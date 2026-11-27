@@ -94,7 +94,7 @@ def test_selection_fails_closed_when_active_runner_has_no_handoff_supervisor(mon
 
     with pytest.raises(HTTPException) as error:
         main.set_box_spread_index_selection(
-            main.BoxSpreadIndexSelectionRequest(symbols=["NIFTY", "SENSEX"])
+            main.BoxSpreadIndexSelectionRequest(symbols=["NIFTY", "BANKNIFTY"])
         )
 
     assert error.value.status_code == 503
@@ -118,10 +118,10 @@ def test_spot_index_universe_follows_active_runner_during_staged_handoff(monkeyp
 
 
 def test_spot_index_universe_uses_saved_selection_before_runner_starts(monkeypatch):
-    monkeypatch.setattr(main, "_get_box_spread_index_selection", lambda: ("SENSEX", "BANKEX"))
+    monkeypatch.setattr(main, "_get_box_spread_index_selection", lambda: ("NIFTY", "BANKNIFTY"))
     monkeypatch.setattr(main, "live_box_spread_runner", None)
 
-    assert main._get_box_spread_active_index_symbols() == ("SENSEX", "BANKEX")
+    assert main._get_box_spread_active_index_symbols() == ("NIFTY", "BANKNIFTY")
 
 def test_live_results_continue_using_old_active_indices_while_new_selection_stages(monkeypatch):
     from types import SimpleNamespace
@@ -132,7 +132,7 @@ def test_live_results_continue_using_old_active_indices_while_new_selection_stag
         executable_edge=12.0,
     )
     published = []
-    monkeypatch.setattr(main, "_get_box_spread_index_selection", lambda: ("BANKEX",))
+    monkeypatch.setattr(main, "_get_box_spread_index_selection", lambda: ("BANKNIFTY",))
     monkeypatch.setattr(main, "_get_box_spread_active_index_symbols", lambda: ("NIFTY",))
     monkeypatch.setattr(main, "_fresh_live_box_spread_results", lambda rows: tuple(rows))
     monkeypatch.setattr(main, "_box_spread_result_key", lambda item: ("NIFTY",))
@@ -178,22 +178,25 @@ def test_box_spread_target_builder_uses_only_selected_indices_and_correct_exchan
     ])
     master = SimpleNamespace(instruments=instruments)
 
-    targets, _ = main._box_spread_targets_from_master(master, ["SENSEX", "NIFTY", "BANKEX"])
+    targets, _ = main._box_spread_targets_from_master(master, ["NIFTY", "BANKNIFTY"])
 
     assert {(target.underlying, target.instrument_class) for target in targets} == {
-        ("NIFTY", "INDEX"), ("SENSEX", "INDEX"), ("BANKEX", "INDEX")
+        ("NIFTY", "INDEX"), ("BANKNIFTY", "INDEX")
     }
-    assert len(targets) == 3
+    assert len(targets) == 2
     assert all(target.expiry == expiry for target in targets)
 
 
-def test_box_spread_all_index_selection_normalizes_to_exact_six_supported_symbols():
-    selected = main._normalize_box_spread_index_symbols([
-        "nifty", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "sensex", "BANKEX", "NIFTY"
-    ])
+def test_box_spread_live_selection_is_locked_to_nifty_and_banknifty():
+    selected = main._normalize_box_spread_index_symbols(["nifty", "BANKNIFTY", "NIFTY"])
+    assert selected == ("BANKNIFTY", "NIFTY")
+    assert main.BOX_SPREAD_DEFAULT_INDEX_SELECTION == ("NIFTY", "BANKNIFTY")
 
-    assert set(selected) == {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"}
-    assert len(selected) == 6
+
+@pytest.mark.parametrize("symbol", ["FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"])
+def test_box_spread_live_selection_rejects_unlocked_indices(symbol):
+    with pytest.raises(ValueError, match="locked to NIFTY and BANKNIFTY"):
+        main._normalize_box_spread_index_symbols(["NIFTY", symbol])
 
 
 
@@ -227,41 +230,20 @@ def test_weekly_only_target_builder_never_adds_monthly_contracts(monkeypatch):
     assert all(target.weekly_only is False for target in standard_targets)
 
 
-def test_weekly_only_selection_is_limited_to_selected_nifty_or_sensex():
-    with pytest.raises(ValueError, match="weekly-only mode is supported only"):
-        main._save_box_spread_index_selection(["BANKNIFTY", "FINNIFTY"], ["FINNIFTY"])
+def test_weekly_only_selection_is_limited_to_nifty():
+    with pytest.raises(ValueError, match="locked to NIFTY and BANKNIFTY"):
+        main._save_box_spread_index_selection(["NIFTY", "BANKNIFTY", "FINNIFTY"], ["NIFTY"])
 
 
 def test_weekly_only_selection_must_also_be_selected():
     with pytest.raises(ValueError, match="weekly-only indices must also be included"):
-        main._save_box_spread_index_selection(["SENSEX"], ["NIFTY"])
+        main._save_box_spread_index_selection(["NIFTY"], ["BANKNIFTY"])
 
-def test_sensex_weekly_only_target_builder_excludes_monthly_and_marks_target(monkeypatch):
-    from datetime import date
+def test_sensex_is_rejected_from_box_spread_live_targets():
     from types import SimpleNamespace
 
-    weekly_raw = "31DEC2099"
-    monthly_raw = "30DEC2099"
-    weekly_day = date(2099, 12, 31)
-    monthly_day = date(2099, 12, 30)
-    instruments = [
-        {"exch_seg": "BFO", "instrumenttype": "OPTIDX", "name": "SENSEX", "expiry": weekly_raw},
-        {"exch_seg": "BFO", "instrumenttype": "OPTIDX", "name": "SENSEX", "expiry": monthly_raw},
-    ]
-    monkeypatch.setattr(
-        main,
-        "classify_index_expiry_dates",
-        lambda symbol, dates: {weekly_day: "WEEKLY", monthly_day: "MONTHLY"},
-    )
-
-    targets, expiry_types = main._box_spread_targets_from_master(
-        SimpleNamespace(instruments=instruments), ["SENSEX"], ["SENSEX"]
-    )
-
-    assert [(target.underlying, target.expiry, target.weekly_only) for target in targets] == [
-        ("SENSEX", weekly_raw, True)
-    ]
-    assert expiry_types[("SENSEX", monthly_raw)] == "MONTHLY"
+    with pytest.raises(ValueError, match="locked to NIFTY and BANKNIFTY"):
+        main._box_spread_targets_from_master(SimpleNamespace(instruments=[]), ["SENSEX"], ["SENSEX"])
 
 
 def test_weekly_only_without_classified_weekly_expiry_stays_spot_only(monkeypatch):
@@ -288,25 +270,13 @@ def test_weekly_only_without_classified_weekly_expiry_stays_spot_only(monkeypatc
     assert targets[0].weekly_only is True
 
 
-def test_midcpnifty_is_excluded_from_box_spread_live_targets_only():
+def test_midcpnifty_and_other_indices_are_rejected_from_box_spread_live_targets():
     from types import SimpleNamespace
 
-    expiry = "31DEC2099"
-    instruments = [
-        {"exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": symbol, "expiry": expiry}
-        for symbol in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY")
-    ]
-
-    targets, _ = main._box_spread_targets_from_master(
-        SimpleNamespace(instruments=instruments),
-        ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"],
-    )
-
-    assert {target.underlying for target in targets} == {
-        "NIFTY", "BANKNIFTY", "FINNIFTY"
-    }
-    assert "MIDCPNIFTY" in main.OPTION_STRATEGY_INDEX_SYMBOLS
-
+    with pytest.raises(ValueError, match="locked to NIFTY and BANKNIFTY"):
+        main._box_spread_targets_from_master(
+            SimpleNamespace(instruments=[]), ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]
+        )
 
 
 def test_box_spread_page_push_is_coalesced_at_250ms_not_one_second(monkeypatch):
