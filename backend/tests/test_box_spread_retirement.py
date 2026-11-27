@@ -53,6 +53,8 @@ def test_box_spread_and_retired_scanners_have_no_public_channels_or_alerts():
     shell = (REPO / "frontend" / "components" / "app-shell.tsx").read_text(encoding="utf-8")
     dashboard = (REPO / "frontend" / "app" / "page.tsx").read_text(encoding="utf-8")
     custom_alerts = (REPO / "frontend" / "app" / "custom-alert" / "page.tsx").read_text(encoding="utf-8")
+    global_css = (REPO / "frontend" / "app" / "globals.css").read_text(encoding="utf-8")
+    broker_dashboard = (REPO / "web" / "dashboard" / "broker.html").read_text(encoding="utf-8")
     page_push = (ROOT / "app" / "scanner" / "page_push_websocket.py").read_text(encoding="utf-8")
     alerts = (ROOT / "app" / "alert_routes.py").read_text(encoding="utf-8")
     notifier = (ROOT / "app" / "notifications" / "common.py").read_text(encoding="utf-8")
@@ -64,6 +66,10 @@ def test_box_spread_and_retired_scanners_have_no_public_channels_or_alerts():
     assert "box_spread" not in dashboard
     assert "BoxSpread" not in custom_alerts
     assert "box-spread" not in custom_alerts
+    assert "box-spread-page" not in global_css
+    assert "Box Spread Owner Login" not in broker_dashboard
+    assert "boxSpreadOwnerToken" not in broker_dashboard
+    assert "realTradingOwnerToken" in broker_dashboard
     assert not (REPO / "frontend" / "app" / "strategies" / "box-spread" / "page.tsx").exists()
     assert not (REPO / "frontend" / "components" / "strategy-workspace.tsx").exists()
     assert not (REPO / "frontend" / "app" / "strategies" / "credit-butterfly-condor" / "monthly" / "page.tsx").exists()
