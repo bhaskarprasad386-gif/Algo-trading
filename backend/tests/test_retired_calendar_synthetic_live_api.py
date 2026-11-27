@@ -48,6 +48,11 @@ def test_only_shared_index_runner_is_admitted_to_production_websocket():
     assert "_live_synthetic_loop())" not in source
     assert "SharedIndexOnlyWebSocketManager" in feed_source
     assert "SharedIndexMarketDataRunner (NIFTY/BANKNIFTY)" in feed_source
+    assert "CommonWebSocketManager(" not in source
+    assert "MarketDataWebSocket(" not in source
+    assert "SharedIndexRunnerLocalFeedManager(shared_index_market_data_runner)" in source
+    assert "box_shared_feed_manager.attach()" in source
+    assert "shared_feed_manager=box_shared_feed_manager" in source
     assert "ShoonyaMarketDataSupervisor(" not in source
     assert "SHOONYA_MARKET_DATA_ENABLED and shoonya_market_data_supervisor" not in source
     assert "shoonya_market_data_supervisor" not in source
