@@ -660,7 +660,7 @@ class SharedIndexMarketDataRunner:
             "all_records_fresh": all_records_fresh,
             "master_refresh": master_refresh,
             "option_flow_aggregates": aggregates,
-            "derived_iv_model": {"method": "Black-Scholes", "source": "derived_bsm", "risk_free_rate": 0.065, "risk_free_rate_unit": "annual_decimal", "expiry_time_ist": "15:30", "iv_unit": "percent", "velocity_windows_seconds": [1, 3, 5], "quote_metrics": ["mid_price", "microprice", "spread_pct", "quote_imbalance", "tick_rate_1s"], "option_flow_aggregate_windows_seconds": [1, 3, 5], "volume_source": "broker_day_volume", "volume_delta_window_seconds": 1, "oi_source": "broker_open_interest", "oi_delta_window_seconds": 1},
+            "derived_iv_model": {"status": "DISABLED", "reason": "LOCAL_IV_CALCULATION_DISABLED", "iv_fields": "NULL"},
             "lifecycle": lifecycle,
             "rotation": rotation,
             "live_data_ready": live_data_ready,
