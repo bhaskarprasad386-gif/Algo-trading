@@ -66,7 +66,7 @@ from app.market_data.nifty50_universe import TOP15_LIQUID_STOCK_SYMBOLS, TOP15_L
 BSE_BOX_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 from app.instruments.routes import router as instruments_router
 from app.strategy_engine.routes import router as arbitrage_router
-from app.market_data.routes import router as market_data_router, configure_live_cash_future_runner_snapshot, configure_shared_index_runner_snapshot, configure_shared_index_runner_health_snapshot
+from app.market_data.routes import router as market_data_router, configure_shared_index_runner_snapshot, configure_shared_index_runner_health_snapshot
 from app.scanner.routes import full_fno_router, configure_live_cash_future_snapshot
 from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop, configure_page_update_callback as configure_weekly_swing_page_push, nifty200_scan_status
 from app.scanner.auto_routes import discover_cash_future_symbols
@@ -121,10 +121,6 @@ iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
 _iv_skew_flip_runtime_lock = threading.RLock()
 live_cash_future_scanner = LiveCashFutureScanner()
 configure_live_cash_future_snapshot(live_cash_future_scanner.snapshot)
-live_cash_future_runner: LiveCashFutureCommonRunner | None = None
-configure_live_cash_future_runner_snapshot(
-    lambda: None if live_cash_future_runner is None else live_cash_future_runner.snapshot()
-)
 live_calendar_spread_scanner = LiveCalendarSpreadScanner(
     minimum_gap_points=settings.LIVE_CALENDAR_SPREAD_MIN_GAP_POINTS,
     minimum_gross_profit=settings.LIVE_CALENDAR_SPREAD_MIN_GROSS_PROFIT,
@@ -602,7 +598,7 @@ async def _iv_scanner_recovery_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _dashboard_snapshot_task, _event_loop_lag_task
-    global _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, _shared_index_runner_task
+    global _history_collector_task, _contract_master_sync_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, _shared_index_runner_task
     global provider_quote_parity_store, provider_quote_parity_worker
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     if settings.PROVIDER_QUOTE_PARITY_ENABLED:
@@ -676,7 +672,7 @@ async def lifespan(app: FastAPI):
             _dashboard_snapshot_task.cancel()
         if _event_loop_lag_task is not None:
             _event_loop_lag_task.cancel()
-        for task in (_dashboard_snapshot_task, _event_loop_lag_task, _history_collector_task, _contract_master_sync_task, _live_cash_future_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
+        for task in (_dashboard_snapshot_task, _event_loop_lag_task, _history_collector_task, _contract_master_sync_task, _live_calendar_spread_task, _live_synthetic_task, _live_box_spread_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
             if task is not None:
                 task.cancel()
         shutdown_tasks = tuple(
@@ -718,7 +714,6 @@ async def lifespan(app: FastAPI):
         _event_loop_lag_task = None
         _history_collector_task = None
         _contract_master_sync_task = None
-        _live_cash_future_task = None
         _live_calendar_spread_task = None
         _live_synthetic_task = None
         _live_box_spread_task = None
@@ -983,7 +978,6 @@ _shared_index_runner_task: asyncio.Task | None = None
 _iv_option_snapshot_task: asyncio.Task | None = None
 _weekly_swing_refresh_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None
-_live_cash_future_task: asyncio.Task | None = None
 _live_calendar_spread_task: asyncio.Task | None = None
 live_calendar_spread_runner: LiveCalendarSpreadOneSecondCollector | None = None
 IST = ZoneInfo("Asia/Kolkata")
@@ -1012,7 +1006,6 @@ def _signal_live_runner_shutdown() -> None:
             daemon=True,
         ).start()
     for runner in (
-        live_cash_future_runner,
         live_calendar_spread_runner,
         live_synthetic_runner,
         live_box_spread_runner,
