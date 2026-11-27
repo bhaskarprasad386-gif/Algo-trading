@@ -606,10 +606,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
   const [calendarRuntime, setCalendarRuntime] = useState<Record<string, unknown> | null>(null);
   const [boxDepthShadow, setBoxDepthShadow] = useState<Record<string, unknown> | null>(null);
   const [indexSelectionDraft, setIndexSelectionDraft] = useState<string[]>([]);
-  const [weeklyOnlyDraft, setWeeklyOnlyDraft] = useState<string[]>([]);
   const [activeIndexSymbols, setActiveIndexSymbols] = useState<string[]>([]);
   const [savedIndexSymbols, setSavedIndexSymbols] = useState<string[]>([]);
-  const [savedWeeklyOnlySymbols, setSavedWeeklyOnlySymbols] = useState<string[]>([]);
   const [indexHandoffState, setIndexHandoffState] = useState("CHECKING");
   const [indexSelectionLoading, setIndexSelectionLoading] = useState(false);
   const [indexSelectionSaving, setIndexSelectionSaving] = useState(false);
@@ -932,19 +930,16 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body?.detail?.message || body?.detail || "Unable to load saved index selection");
         const symbols = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : [];
-        const weeklyOnly = Array.isArray(body?.weekly_only_symbols) ? body.weekly_only_symbols.filter((item: unknown): item is string => typeof item === "string") : [];
         const runtime = body?.runtime?.supervisor;
         const active = Array.isArray(runtime?.active_symbols) ? runtime.active_symbols.filter((item: unknown): item is string => typeof item === "string") : [];
         const handoff = typeof runtime?.handoff?.state === "string" ? runtime.handoff.state : "UNKNOWN";
         if (!cancelled && requestSequence === indexSelectionRequestSequence.current) {
           setSavedIndexSymbols(symbols);
-          setSavedWeeklyOnlySymbols(weeklyOnly);
           setActiveIndexSymbols(active);
           setIndexHandoffState(handoff);
           // Polling refreshes saved/runtime status only; it must not overwrite an in-progress user draft.
           if (!indexSelectionDraftInitialized.current) {
             setIndexSelectionDraft(symbols);
-            setWeeklyOnlyDraft([]);
             indexSelectionDraftInitialized.current = true;
           }
           setIndexSelectionError(null);
@@ -981,11 +976,8 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       // A newer cross-session push is authoritative; do not let this POST response rewind it.
       if (saveRequestSequence !== indexSelectionRequestSequence.current) return;
       const saved = Array.isArray(body?.symbols) ? body.symbols.filter((item: unknown): item is string => typeof item === "string") : effectiveSymbols;
-      const savedWeeklyOnly = Array.isArray(body?.weekly_only_symbols) ? body.weekly_only_symbols.filter((item: unknown): item is string => typeof item === "string") : weeklyOnly;
       setSavedIndexSymbols(saved);
-      setSavedWeeklyOnlySymbols(savedWeeklyOnly);
       setIndexSelectionDraft(saved);
-      setWeeklyOnlyDraft([]);
       indexSelectionDraftInitialized.current = true;
       const handoff = typeof body?.switch?.state === "string" ? body.switch.state : "SAVED";
       setIndexHandoffState(handoff);
@@ -1011,7 +1003,6 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
     if (event === "REMOVE" && removedKeys.includes("index_selection")) {
       indexSelectionRequestSequence.current += 1;
       setSavedIndexSymbols([]);
-      setSavedWeeklyOnlySymbols([]);
       setIndexSelectionDraft([]);
       setWeeklyOnlyDraft([]);
       setActiveIndexSymbols([]);
@@ -1039,7 +1030,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       setIndexSelectionDraft(nextSymbols);
       setWeeklyOnlyDraft([]);
     }
-  }, [slug, pagePushData, savedIndexSymbols, savedWeeklyOnlySymbols, indexSelectionDraft, weeklyOnlyDraft]);
+  }, [slug, pagePushData, savedIndexSymbols, indexSelectionDraft]);
   useEffect(() => {
     if (slug !== "box-spread" || !pagePushData) { if (slug !== "box-spread") setIndexSpotRows([]); return; }
     const spots = pagePushData?.index_spots;
@@ -1567,9 +1558,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           </button>
           {indexSettingsExpanded && <div className="box-index-settings-content">
           <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => { setIndexSelectionDraft(["NIFTY","BANKNIFTY"]); setWeeklyOnlyDraft([]); }} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY + BANKNIFTY</button>
-            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => { setIndexSelectionDraft(["NIFTY"]); setWeeklyOnlyDraft([]); }} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY Only</button>
-            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => { setIndexSelectionDraft(["BANKNIFTY"]); setWeeklyOnlyDraft([]); }} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">BANKNIFTY Only</button>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY","BANKNIFTY"]) } className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY + BANKNIFTY</button>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["NIFTY"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">NIFTY Only</button>
+            <button type="button" disabled={indexSelectionSaving || indexSelectionLoading} onClick={() => setIndexSelectionDraft(["BANKNIFTY"])} className="min-h-9 rounded-lg border theme-border px-3 text-xs font-semibold theme-text disabled:opacity-50">BANKNIFTY Only</button>
           </div>
           <div className="mt-3 rounded-lg border theme-border theme-surface-2 p-3">
             <p className="text-xs font-extrabold theme-text">Locked expiry routing</p>
@@ -1578,7 +1569,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-2 xl:grid-cols-2">
             {["NIFTY","BANKNIFTY"].map(symbol => (
               <label key={symbol} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border theme-border theme-surface-2 px-3 text-xs font-bold theme-text">
-                <input type="checkbox" checked={indexSelectionDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading} onChange={(event) => { setIndexSelectionDraft(current => event.target.checked ? [...current.filter(item => item !== symbol), symbol] : current.filter(item => item !== symbol)); if (event.target.checked) setWeeklyOnlyDraft(current => current.filter(item => item !== symbol)); }} className="h-4 w-4 accent-emerald-600" />
+                <input type="checkbox" checked={indexSelectionDraft.includes(symbol)} disabled={indexSelectionSaving || indexSelectionLoading} onChange={(event) => { setIndexSelectionDraft(current => event.target.checked ? [...current.filter(item => item !== symbol), symbol] : current.filter(item => item !== symbol)); }} className="h-4 w-4 accent-emerald-600" />
                 {symbol}
               </label>
             ))}
@@ -1589,10 +1580,9 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
               <span className="text-[10px] font-semibold theme-muted">Runtime subscription + latest spot tick · refresh 1s</span>
             </div>
             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {["NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX"].map(symbol => {
+              {["NIFTY","BANKNIFTY"].map(symbol => {
                 const subscribed = activeIndexSymbols.includes(symbol);
                 const saved = savedIndexSymbols.includes(symbol);
-                const weeklyOnly = savedWeeklyOnlySymbols.includes(symbol);
                 const spot = indexSpotRows.find(row => row.symbol === symbol);
                 const age = spot?.spot_age_seconds;
                 const hasFreshTick = spot?.status === "LIVE" && typeof age === "number" && age <= 5;
@@ -1611,7 +1601,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
                     <span className="text-xs font-extrabold theme-text">{symbol}</span>
                     <span className={"text-[10px] font-extrabold " + tone}>{status}</span>
                   </div>
-                  <p className="mt-1 text-[10px] theme-muted">Subscription: {subscribed ? "ACTIVE" : saved ? "PENDING / HANDOFF" : "OFF"}{weeklyOnly ? " · WEEKLY ONLY" : ""}</p>
+                  <p className="mt-1 text-[10px] theme-muted">Subscription: {subscribed ? "ACTIVE" : saved ? "PENDING / HANDOFF" : "OFF"}</p>
                   <p className="mt-1 text-[10px] theme-muted">Spot: {spot?.spot_price == null ? "—" : formatValue(spot.spot_price)} · Age: {typeof age === "number" ? age.toFixed(2) + "s" : "—"}</p>
                   <p className="text-[10px] theme-muted">Last tick: {quoteTime}</p>
                 </div>;
