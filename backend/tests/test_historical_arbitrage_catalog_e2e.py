@@ -1,12 +1,14 @@
-from app.backtesting.backtest_result import BacktestRunWriter
+import pytest
+
 from app.backtesting.backtest_run import BacktestResolution, BacktestRunSpec
+from app.backtesting.backtest_result import BacktestRunWriter
 from app.backtesting.historical_arbitrage_service import HistoricalArbitrageBacktestService
 from app.backtesting.historical_catalog import HistoricalCatalog, HistoricalRecord
 from app.backtesting.historical_catalog_replay import CatalogReplayLeg
 from app.backtesting.result_ledger import BacktestResultLedger
 
 
-def test_catalog_cash_future_replay_reaches_ledger_and_pnl(tmp_path):
+def test_retired_cash_future_catalog_replay_is_rejected_before_ledger_execution(tmp_path):
     catalog = HistoricalCatalog()
     catalog.ingest([
         HistoricalRecord("historical", "NSE:ABC", "1m", 1, {
@@ -26,16 +28,14 @@ def test_catalog_cash_future_replay_reaches_ledger_and_pnl(tmp_path):
         resolution=BacktestResolution("m", "historical", 1, 2), parameters={},
     )
     writer = BacktestRunWriter(ledger, spec)
-    result = HistoricalArbitrageBacktestService(writer).run_catalog_strategy(
-        "cash-future", catalog,
-        (CatalogReplayLeg("cash_future", "historical", "NSE:ABC", "1m"),),
-        payoff_prices=(90, 100, 120),
-    )
 
-    assert result.completed_trades == 1
-    assert result.unresolved_trades == 0
-    assert result.realized_pnl > 0
-    assert result.payoff is not None
-    assert ledger.run("catalog-cf-e2e")["status"] == "COMPLETED"
-    assert len(ledger.trades("catalog-cf-e2e")) == 1
-    assert ledger.events("catalog-cf-e2e")[-1]["event_type"] == "PAYOFF_SNAPSHOT"
+    with pytest.raises(ValueError, match="unsupported arbitrage strategy: cash-future"):
+        HistoricalArbitrageBacktestService(writer).run_catalog_strategy(
+            "cash-future", catalog,
+            (CatalogReplayLeg("cash_future", "historical", "NSE:ABC", "1m"),),
+            payoff_prices=(90, 100, 120),
+        )
+
+    assert ledger.trades("catalog-cf-e2e") == []
+    assert ledger.events("catalog-cf-e2e") == []
+    assert ledger.run("catalog-cf-e2e")["status"] == "CREATED"
