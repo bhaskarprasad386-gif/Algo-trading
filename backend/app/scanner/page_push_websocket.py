@@ -25,6 +25,7 @@ from app.core.database import engine
 router = APIRouter(tags=["page-push"])
 # Only retained scanner pages may allocate durable page-push channels.
 PAGE_CHANNELS = frozenset({
+    "box-spread",
     "iv-skew-flip",
     "credit-butterfly-condor-weekly",
     "credit-butterfly-condor-monthly",
