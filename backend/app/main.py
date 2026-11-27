@@ -641,12 +641,9 @@ async def lifespan(app: FastAPI):
     # restarts. Never trust a persisted connected flag after process startup.
     with SessionLocal() as owner_state_db:
         reconcile_owner_state_on_startup(owner_state_db)
-    # A single market-data WebSocket owner is permitted in production:
-    # SharedIndexMarketDataRunner for NIFTY/BANKNIFTY only. The isolated
-    # Shoonya supervisor is deliberately not started by application lifespan.
-    # IV Skew Flip is intentionally not started: the production Angel One
-    # WebSocket has one owner, SharedIndexMarketDataRunner, until IV is migrated
-    # to consume its published records without opening another feed consumer.
+    # The production common manager is owned only by SharedIndexMarketDataRunner
+    # for NIFTY/BANKNIFTY. Box Spread has a separate isolated manager; IV consumes
+    # spot/options from the shared runner and never registers a broker consumer.
     # Shared Index Market Data is data-only and isolated: no strategy signals or orders.
     if _shared_index_runner_task is None:
         _shared_index_runner_task = asyncio.create_task(_shared_index_market_data_recovery_loop())
@@ -666,7 +663,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        # IV scanner is opt-in and owns only its named shared-feed consumers.
+        # IV scanner is opt-in and consumes only Shared Runner-published records.
         if iv_skew_flip_runtime is not None:
             iv_skew_flip_runtime.stop()
             iv_skew_flip_runtime = None
@@ -988,7 +985,7 @@ IST = ZoneInfo("Asia/Kolkata")
 _live_synthetic_task: asyncio.Task | None = None
 # Synthetic Future runner is intentionally disabled; keep its routes/history isolated.
 LIVE_SYNTHETIC_RUNNER_FORCE_DISABLED = True
-# Box adapters consume the Shared Runner's published NIFTY/BANKNIFTY records only.
+# Box Spread runs on a dedicated isolated broker-feed manager.
 LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = False
 _live_box_spread_task: asyncio.Task | None = None
 MARKET_OPEN = time(9, 15)
