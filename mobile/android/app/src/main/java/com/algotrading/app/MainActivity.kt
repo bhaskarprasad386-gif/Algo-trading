@@ -3,8 +3,6 @@ package com.algotrading.app
 import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.text.InputType
 import android.widget.Button
 import android.widget.CheckBox
@@ -69,12 +67,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnQuickResults: Button
     private lateinit var btnQuickExpansion: Button
 
-    private val scannerRefreshHandler = Handler(Looper.getMainLooper())
-    private lateinit var scannerRefreshRunnable: Runnable
-    private lateinit var scannerCountdownRunnable: Runnable
-    private var scannerCountdownSeconds = 0L
-    private var lastScannerResult: String? = null
-    private var lastExecutableOpportunity: LiveCashFutureSignal? = null
     private var ownerLoginPromptShown = false
 
     private fun currentTimestamp(): String = SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(Date())
@@ -113,20 +105,7 @@ class MainActivity : AppCompatActivity() {
         btnKillSwitch = findViewById(R.id.btnKillSwitch)
         btnAppUpdate = findViewById(R.id.btnAppUpdate)
         btnStrategies = findViewById(R.id.btnStrategies)
-        scannerRefreshRunnable = Runnable { runCashFutureScanner() }
-        scannerCountdownRunnable = object : Runnable {
-            override fun run() {
-                if (!cbScannerAutoRefresh.isChecked || !btnRunScanner.isEnabled) {
-                    tvScannerNextRefresh.text = if (btnRunScanner.isEnabled) "Next Refresh: —" else "Next Refresh: SCAN IN PROGRESS"
-                    return
-                }
-                scannerCountdownSeconds -= 1L
-                if (scannerCountdownSeconds <= 0L) { tvScannerNextRefresh.text = "Next Refresh: NOW"; return }
-                tvScannerNextRefresh.text = "Next Refresh: ${scannerCountdownSeconds}s"
-                scannerRefreshHandler.postDelayed(this, 1000L)
-            }
-        }
-        updateScannerAutoRefreshStatus(); checkServerStatus(); checkBrokerStatus(); checkSafetyStatus(); loadMarketOverview()
+        disableCashFutureScanner(); checkServerStatus(); checkBrokerStatus(); checkSafetyStatus(); loadMarketOverview()
         btnAppUpdate.setOnClickListener { startActivity(Intent(this, UpdateActivity::class.java)) }
         btnStrategies.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
         btnResultsJournal.setOnClickListener { startActivity(Intent(this, ResultsJournalActivity::class.java)) }
@@ -134,31 +113,21 @@ class MainActivity : AppCompatActivity() {
         btnLiveDataHealthRefresh.setOnClickListener { loadLiveDataHealth() }
         btnSaveDashboardLayout.setOnClickListener { saveDashboardLayout() }
         btnResetDashboardLayout.setOnClickListener { resetDashboardLayout() }
-        btnRunScanner.setOnClickListener { runCashFutureScanner() }
+        btnRunScanner.setOnClickListener { disableCashFutureScanner() }
         btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
         btnBoxSpread.setOnClickListener { startActivity(Intent(this, BoxSpreadActivity::class.java)) }
-        cbScannerAutoRefresh.setOnCheckedChangeListener { _, _ -> scheduleScannerRefresh() }
-        etScannerRefreshSeconds.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) scheduleScannerRefresh() }
+        
         btnConnectBroker.setOnClickListener { connectAngelOne() }; btnDisconnectBroker.setOnClickListener { disconnectAngelOne() }
         btnEnableRealTrading.setOnClickListener { confirmEnableRealTrading() }; btnDisableRealTrading.setOnClickListener { disableRealTrading() }; btnKillSwitch.setOnClickListener { triggerKillSwitch() }
-        tvScannerResult.setOnClickListener { openScannerDetail(lastExecutableOpportunity) }
+        
         btnQuickMarket.setOnClickListener { mainScroll.smoothScrollTo(0, 0); loadMarketOverview() }
-        btnQuickScanner.setOnClickListener { mainScroll.post { mainScroll.smoothScrollTo(0, btnRunScanner.top) }; runCashFutureScanner() }
+        btnQuickScanner.setOnClickListener { mainScroll.post { mainScroll.smoothScrollTo(0, btnRunScanner.top) } }
         btnQuickStrategies.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
         btnQuickResults.setOnClickListener { startActivity(Intent(this, ResultsJournalActivity::class.java)) }
         btnQuickExpansion.setOnClickListener { mainScroll.post { mainScroll.smoothScrollTo(0, findViewById<View>(R.id.phase13Expansion).top) } }
     }
 
-    override fun onDestroy() { scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable); scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable); super.onDestroy() }
-
-    private fun updateScannerAutoRefreshStatus() { tvScannerAutoRefreshStatus.text = if (cbScannerAutoRefresh.isChecked) "Auto Refresh: ON" else "Auto Refresh: OFF" }
-    private fun scheduleScannerRefresh() {
-        scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable); scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable); updateScannerAutoRefreshStatus()
-        if (!cbScannerAutoRefresh.isChecked || !btnRunScanner.isEnabled) { tvScannerNextRefresh.text = if (btnRunScanner.isEnabled) "Next Refresh: —" else "Next Refresh: SCAN IN PROGRESS"; return }
-        val seconds = etScannerRefreshSeconds.text.toString().toLongOrNull()?.coerceIn(10L, 300L) ?: 30L
-        etScannerRefreshSeconds.setText(seconds.toString()); scannerCountdownSeconds = seconds; tvScannerNextRefresh.text = "Next Refresh: ${scannerCountdownSeconds}s"
-        scannerRefreshHandler.postDelayed(scannerRefreshRunnable, seconds * 1000L); scannerRefreshHandler.postDelayed(scannerCountdownRunnable, 1000L)
-    }
+    override fun onDestroy() { super.onDestroy() }
 
     private fun dashboardPreferences() = getSharedPreferences("dashboard_layout", MODE_PRIVATE)
     private fun loadDashboardLayout() {
@@ -315,80 +284,16 @@ class MainActivity : AppCompatActivity() {
     }
     private fun disconnectAngelOne() = lifecycleScope.launch(Dispatchers.IO) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnecting…" }; try { ApiService.retrofitService.disconnectBroker("angel_one"); withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Angel One disconnected • Real Trading OFF" }; checkSafetyStatus() } catch (error: Exception) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnect failed • ${error.message ?: "API error"}"; if (!ApiService.hasRealOwnerAccessToken()) promptRealOwnerLogin() } } }
 
-    private fun openScannerDetail(opportunity: LiveCashFutureSignal?) {
-        opportunity ?: return
-        val cash = opportunity.cash_ask ?: opportunity.cash_ltp
-        val future = opportunity.future_bid ?: opportunity.future_ltp
-        startActivity(Intent(this, ScannerDetailActivity::class.java).apply {
-            putExtra(ScannerDetailActivity.EXTRA_SYMBOL, opportunity.symbol)
-            putExtra(ScannerDetailActivity.EXTRA_CASH_PRICE, cash)
-            putExtra(ScannerDetailActivity.EXTRA_FUTURE_PRICE, future)
-            putExtra(ScannerDetailActivity.EXTRA_GAP, opportunity.gap)
-            putExtra(ScannerDetailActivity.EXTRA_GAP_PCT, opportunity.gap_pct)
-            putExtra(ScannerDetailActivity.EXTRA_GROSS_SPREAD_PROFIT, opportunity.gross_profit ?: opportunity.gross_lot_value ?: 0.0)
-            putExtra(ScannerDetailActivity.EXTRA_MARGIN_REQUIRED, opportunity.capacity_notional ?: 0.0)
-            putExtra(ScannerDetailActivity.EXTRA_DEPLOYED_CAPITAL, opportunity.capacity_notional ?: 0.0)
-            putExtra(ScannerDetailActivity.EXTRA_NET_PROFIT, opportunity.net_profit ?: 0.0)
-            putExtra(ScannerDetailActivity.EXTRA_ROI_PCT, opportunity.net_gap_pct)
-        })
+    private fun disableCashFutureScanner() {
+        cbScannerAutoRefresh.isChecked = false
+        cbScannerAutoRefresh.isEnabled = false
+        etScannerRefreshSeconds.isEnabled = false
+        btnRunScanner.isEnabled = false
+        btnRunScanner.text = "CASH-FUTURE SCANNER DISABLED"
+        tvScannerAutoRefreshStatus.text = "Auto Refresh: DISABLED"
+        tvScannerNextRefresh.text = "Next Refresh: DISABLED"
+        tvScannerResult.text = "Cash-Future live scanning is disabled. No scanner API request will be sent."
+        tvAlertCenter.text = "Cash-Future scanner alerts are disabled."
     }
-
-    private fun runCashFutureScanner(): Job = lifecycleScope.launch(Dispatchers.IO) {
-        withContext(Dispatchers.Main) { scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable); scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable); tvScannerNextRefresh.text = "Next Refresh: SCAN IN PROGRESS"; btnRunScanner.isEnabled = false; btnRunScanner.text = "SCANNING LIVE..."; tvScannerResult.text = lastScannerResult?.let { "$it\n\nREFRESHING LIVE 1s SCANNER..." } ?: "LIVE SCAN IN PROGRESS\n\nReading Cash–Future 1-second signals..." }
-        try {
-            val response = ApiService.retrofitService.liveCashFutureScan(maxAgeSeconds = 5.0, limit = 50)
-            val completedAt = currentTimestamp()
-            val sorted = response.data.sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }.thenByDescending { it.roi_pct }.thenByDescending { it.net_profit })
-            val executable = sorted.firstOrNull { it.executable }
-            val responseDataSize = response.data.size
-            val responsePositiveGapCount = response.data.count { it.gap > 0.0 && it.net_gap > 0.0 }
-            val expiredCount = response.data.count { it.lifecycle == "EXPIRED" }
-            val result = buildString {
-                append("LIVE 1s SCAN — "); append("\n");
-                // Source contract compatibility: append("LIVE 1s SCAN — \n")
-                append(if (sorted.isEmpty()) "NO CURRENT SIGNALS" else "SUCCESS"); append("\n")
-                append("Last Scan: $completedAt\n\n")
-                append("Current signals:\n"); append("Current signals: ${sorted.size}\n")
-                append("Executable positive-gap signals: ${sorted.count { it.gap > 0.0 && it.net_gap > 0.0 }}\n")
-                append("Source: Angel One WebSocket → 1s collector → live scanner\n\n")
-                sorted.forEach { item ->
-                    append("────────────────────\n")
-                    append("${item.symbol} • ${item.contract_month} • Rank ${String.format(Locale.US, "%.3f", item.rank_score)}\n")
-                    append("Cash: ₹${item.cash_ask ?: item.cash_ltp}\n")
-                    append("Cash Ask: ₹${item.cash_ask ?: item.cash_ltp}\n")
-                    append("Future: ₹${item.future_bid ?: item.future_ltp}\n")
-                    append("Future Bid: ₹${item.future_bid ?: item.future_ltp}\n")
-                    append("Gap: ₹${item.gap} (${item.gap_pct}%)\n")
-                    append("Net Gap: ${item.net_gap_pct}%\n")
-                    append("Gross Spread: ₹${item.gross_profit ?: item.gross_lot_value ?: 0.0}\n")
-                    append("Net Profit: ₹${item.net_profit ?: 0.0}\n")
-                    append("ROI: ${item.net_gap_pct}%\n")
-                    append("Margin: ₹${item.capacity_notional ?: 0.0}\n")
-                    append("Deployed Capital: ₹${item.capacity_notional ?: 0.0}\n")
-                    append("Cash H/L: ₹${item.cash_day_high} / ₹${item.cash_day_low}\n")
-                    append("Future H/L: ₹${item.future_day_high} / ₹${item.future_day_low}\n")
-                    append("Liquidity: ${item.liquidity_qty ?: 0.0} • Stable: ${item.stable_observations}s\n")
-                    append("Lots: ${item.alert_lots ?: 0} • Alert: ${item.alert_event ?: "NONE"}\n")
-                    append("Lifecycle: ${item.lifecycle}\n\n")
-                }
-            }
-            withContext(Dispatchers.Main) {
-                val errorText = response.errors.joinToString("\n") { error -> "Error: ${error.symbol} • ${error.error}" }
-                val alertEvents = sorted.filter { !it.alert_event.isNullOrBlank() }
-                val alertText = if (alertEvents.isEmpty()) "ALERT CENTER • NO NEW EVENTS\\n\\nNo NEW / RECOVERY alert event in the latest scan." else buildString { append("ALERT CENTER • ${alertEvents.size} EVENT(S)\\n\\n"); alertEvents.take(20).forEach { item -> append("${item.alert_event} • ${item.symbol} • ${item.contract_month}\\nGap ${item.gap_pct}% • Net ${item.net_gap_pct}% • Lifecycle ${item.lifecycle}\\n\\n") } }
-                lastScannerResult = result
-                tvAlertCenter.text = alertText
-                if (errorText.isNotBlank()) lastScannerResult = "$lastScannerResult\n$errorText"
-                lastExecutableOpportunity = executable
-                tvScannerResult.text = lastScannerResult
-            }
-        } catch (error: Exception) {
-            val failedAt = currentTimestamp()
-            withContext(Dispatchers.Main) { val failure = "SCAN ERROR\n\nLast Attempt: $failedAt\n\nScanner Failed: ${error.message ?: "API error"}"; lastScannerResult = failure; tvScannerResult.text = failure; lastExecutableOpportunity = null }
-        } finally {
-            withContext(Dispatchers.Main) { btnRunScanner.isEnabled = true; btnRunScanner.text = "RUN LIVE CASH–FUTURE SCAN"; if (lastScannerResult?.contains("SCAN ERROR") == true) tvScannerResult.text = "REFRESH FAILED\n\nLast Attempt: ${currentTimestamp()}\n\n${lastScannerResult}"; scheduleScannerRefresh() }
-        }
-    }
-
 
 }

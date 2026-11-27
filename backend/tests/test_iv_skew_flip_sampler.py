@@ -23,7 +23,7 @@ def _sampler(source, clock_ns):
     )
 
 
-def test_one_second_sampler_calculates_iv_and_samples_oi_from_fresh_quotes():
+def test_one_second_sampler_disables_iv_and_still_samples_oi_from_fresh_quotes():
     now_ns = 1_800_000_000_000_000_000
     now = datetime(2026, 11, 6, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
     source = QuoteSource()
@@ -45,16 +45,16 @@ def test_one_second_sampler_calculates_iv_and_samples_oi_from_fresh_quotes():
     assert result["cadence_seconds"] == 1
     assert result["status"] == "LIVE"
     assert result["sample_count"] == 2
-    assert all(value is not None and 15 < value < 25 for value in result["iv_values"].values())
+    assert all(value is None for value in result["iv_values"].values())
     assert result["oi_values"] == {"ce-token": 12000, "pe-token": 15000}
     assert result["oi_live_count"] == 2
-    assert result["iv_live_count"] == 2
+    assert result["iv_live_count"] == 0
     assert result["history_samples_by_token"] == {"ce-token": 1, "pe-token": 1}
     assert len(result["live_metrics"]) == 2
     assert {row["token"] for row in result["live_metrics"]} == {"ce-token", "pe-token"}
-    assert all(row["oi_live"] and row["iv_live"] for row in result["live_metrics"])
+    assert all(row["oi_live"] and not row["iv_live"] for row in result["live_metrics"])
     assert all(row["iv_unit"] == "PERCENT" for row in result["live_metrics"])
-    assert all(row["iv_input"] == "BID_ASK_MIDPOINT" for row in result["live_metrics"])
+    assert all(row["iv_input"] is None and row["iv_status"] == "DISABLED" for row in result["live_metrics"])
     assert all(row["source_age_ms"] == 0.0 for row in result["live_metrics"])
 
     # A one-second UI refresh may reuse the same still-fresh broker quote,
@@ -97,7 +97,7 @@ def test_one_second_sampler_records_new_oi_only_on_new_source_tick():
     assert metric["volume"] == 150
     assert metric["volume_change_1s"] == 50
     assert metric["volume_change_pct_1s"] == 50.0
-    assert metric["iv_change_1s"] is not None
+    assert metric["iv_change_1s"] is None
 
 
 def test_one_second_sampler_fails_closed_without_fresh_spot():
@@ -203,7 +203,7 @@ def test_sampler_retains_last_iv_when_spot_becomes_stale_but_marks_it_not_live()
     )
     assert live["status"] == "LIVE"
     assert live["sample_count"] == 1
-    last_iv = live["iv_values"]["ce-token"]
+    assert live["iv_values"]["ce-token"] is None
     waiting = sampler.sample_once(
         now_ns=now_ns + 10_000_000_000,
         now=now,
@@ -213,11 +213,11 @@ def test_sampler_retains_last_iv_when_spot_becomes_stale_but_marks_it_not_live()
     assert waiting["sample_count"] == 0
     assert waiting["iv_live_count"] == 0
     assert waiting["display_metric_count"] == 1
-    assert waiting["live_metrics"][0]["iv"] == last_iv
+    assert waiting["live_metrics"][0]["iv"] is None
     assert waiting["live_metrics"][0]["iv_live"] is False
-    assert waiting["live_metrics"][0]["iv_status"] == "LAST"
+    assert waiting["live_metrics"][0]["iv_status"] == "DISABLED"
     assert waiting["oi_values"] == {"ce-token": 10000}
-    assert waiting["iv_values"] == {"ce-token": last_iv}
+    assert waiting["iv_values"] == {"ce-token": None}
     assert waiting["reason"] == "fresh spot snapshot unavailable"
 
 
@@ -233,7 +233,7 @@ def test_sampler_retains_last_iv_when_option_quote_disappears():
     first = sampler.sample_once(
         now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
     )
-    last_iv = first["iv_values"]["vanished-ce"]
+    assert first["iv_values"]["vanished-ce"] is None
     source.quotes = ()
     second = sampler.sample_once(
         now_ns=now_ns + 1_000_000_000, now=now,
@@ -242,8 +242,8 @@ def test_sampler_retains_last_iv_when_option_quote_disappears():
     assert second["sample_count"] == 0
     assert second["iv_live_count"] == 0
     assert second["display_metric_count"] == 1
-    assert second["live_metrics"][0]["iv"] == last_iv
-    assert second["live_metrics"][0]["iv_status"] == "LAST"
+    assert second["live_metrics"][0]["iv"] is None
+    assert second["live_metrics"][0]["iv_status"] == "DISABLED"
 
 
 
@@ -503,8 +503,10 @@ def test_sampler_keeps_iv_live_when_oi_observation_is_five_minutes_old():
     assert result["oi_live_count"] == 0
     assert result["oi_stale_count"] == 1
     assert result["oi_missing_count"] == 0
-    # OI staleness is independent: valid fresh option price/spot still yields IV.
-    assert metric["iv_live"] is True
+    # OI staleness is independent; local IV remains disabled.
+    assert metric["iv_live"] is False
+    assert metric["iv"] is None
+    assert metric["iv_status"] == "DISABLED"
 
 
 def test_sampler_reports_volume_change_only_on_new_monotonic_source_ticks():
@@ -557,11 +559,9 @@ def test_snapshot_separates_raw_live_samples_from_display_carried_iv():
     first = sampler.sample_once(
         now_ns=now_ns, now=now, spot=SpotSnapshot(21950, now_ns),
     )
-    last_iv = first["live_samples"][0].iv
-    assert last_iv is not None
+    assert first["live_samples"][0].iv is None
 
-    # A fresh broker quote can exist while its current mark/IV is unavailable.
-    # UI continuity may retain last-good IV, but alert logic must see None.
+    # Local IV is disabled for both display and alert-facing live samples.
     source.quotes = (OptionQuote(
         "NIFTY", "2026-11-12", 21950, "CE", now_ns + 1_000_000_000,
         None, None, None, 10000, 10, "ce-token",
@@ -571,7 +571,7 @@ def test_snapshot_separates_raw_live_samples_from_display_carried_iv():
         spot=SpotSnapshot(21950, now_ns + 1_000_000_000),
     )
     assert second["live_samples"][0].iv is None
-    assert second["samples"][0].iv == last_iv
+    assert second["samples"][0].iv is None
 
 
 def test_sampler_persists_and_restores_oi_source_timestamp_separately_from_price_tick():

@@ -87,7 +87,7 @@ from app.models.iv_signal_event import IVSignalEvent
 from app.scanner.box_spread_paper_routes import router as box_spread_paper_router, build_paper_market_snapshot, build_paper_private_snapshot
 from app.scanner.box_spread_paper_websocket import router as box_spread_paper_private_ws_router, configure_snapshot_provider as configure_paper_private_ws_snapshot, configure_market_snapshot_provider as configure_paper_market_ws_snapshot, publish_paper_update
 from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
-from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router, paper_rule_monitor_loop
+from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router
 from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, configure_depth_provider as configure_live_box_spread_websocket_depth, _page_snapshot as box_opportunity_page_snapshot, set_expiry_types as set_live_box_websocket_expiry_types
 from app.scanner.page_push_websocket import router as page_push_websocket_router, configure_snapshot_provider as configure_page_push_snapshot, publish_page_update
 from app.scanner.early_impulse_routes import router as early_impulse_router
@@ -495,8 +495,20 @@ configure_weekly_swing_page_push(
 )
 configure_page_push_snapshot("box-spread", _box_page_push_snapshot)
 def _cash_future_page_push_snapshot():
+    # The REST live APIs and runner are disabled by configuration. Reconnect
+    # snapshots must not invoke the dormant scanner's ranking/pair aggregation.
+    if not settings.LIVE_CASH_FUTURE_DATA_ENABLED:
+        return {
+            "status": "DISABLED",
+            "rows": [],
+            "pairs": [],
+            "stats": {"status": "DISABLED"},
+            "scan_at": None,
+            "runner": None,
+        }
     stats = live_cash_future_scanner.health()
     return {
+        "status": "LIVE",
         "rows": live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=500),
         "pairs": live_cash_future_scanner.pair_snapshot(max_age_seconds=120.0, limit=500),
         "stats": stats,
@@ -733,7 +745,6 @@ async def lifespan(app: FastAPI):
     # Keep its routes/history intact, but do not create any Box-owned live subscriptions.
     if not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED and settings.LIVE_BOX_SPREAD_DATA_ENABLED and _live_box_spread_task is None:
         _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
-    paper_rule_task = asyncio.create_task(paper_rule_monitor_loop())
     _dashboard_snapshot_task = asyncio.create_task(_dashboard_snapshot_publisher_loop())
     _event_loop_lag_task = asyncio.create_task(event_loop_lag_monitor.run())
     try:
@@ -752,7 +763,6 @@ async def lifespan(app: FastAPI):
         # Signal blocking worker threads before cancelling their asyncio wrappers.
         # This makes to_thread(run_forever) unwind promptly during service stop.
         _signal_live_runner_shutdown()
-        paper_rule_task.cancel()
         if _dashboard_snapshot_task is not None:
             _dashboard_snapshot_task.cancel()
         if _event_loop_lag_task is not None:
@@ -775,7 +785,6 @@ async def lifespan(app: FastAPI):
                 _iv_option_snapshot_task,
                 _iv_scanner_recovery_task,
                 _shared_index_runner_task,
-                paper_rule_task,
             )
             if task is not None
         )
@@ -975,12 +984,39 @@ _dashboard_stream_telemetry = DashboardStreamTelemetry()
 
 
 def _build_dashboard_snapshot_payload() -> dict:
-    """Build one immutable-by-convention dashboard snapshot for all viewers."""
-    snapshot = live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=50)
-    health = live_cash_future_scanner.health()
-    calendar_snapshot = live_calendar_spread_scanner.snapshot(limit=200)
-    synthetic_snapshot = _fresh_live_synthetic_results(live_synthetic_latest_results)
-    box_snapshot = live_box_spread_latest_results
+    """Build one immutable-by-convention dashboard snapshot for all viewers.
+
+    Disabled scanner families contribute empty read models and are never asked
+    to build snapshots. This keeps the legacy dashboard wire shape stable
+    without doing hidden calculation/aggregation for stopped runners.
+    """
+    cash_future_enabled = bool(settings.LIVE_CASH_FUTURE_DATA_ENABLED)
+    calendar_enabled = bool(settings.LIVE_CALENDAR_SPREAD_DATA_ENABLED)
+    synthetic_enabled = bool(
+        not LIVE_SYNTHETIC_RUNNER_FORCE_DISABLED
+        and settings.LIVE_SYNTHETIC_DATA_ENABLED
+    )
+    box_enabled = bool(
+        not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED
+        and settings.LIVE_BOX_SPREAD_DATA_ENABLED
+    )
+    snapshot = (
+        live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=50)
+        if cash_future_enabled else []
+    )
+    health = (
+        live_cash_future_scanner.health()
+        if cash_future_enabled else {"status": "DISABLED"}
+    )
+    calendar_snapshot = (
+        live_calendar_spread_scanner.snapshot(limit=200)
+        if calendar_enabled else []
+    )
+    synthetic_snapshot = (
+        _fresh_live_synthetic_results(live_synthetic_latest_results)
+        if synthetic_enabled else ()
+    )
+    box_snapshot = live_box_spread_latest_results if box_enabled else ()
 
     def _ts(items):
         if not items:
@@ -2565,6 +2601,10 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
         iv_feed_manager = shared_common_manager()
         runtime = IVSkewFlipRuntime(
             instrument_master=instrument_master,
+            # Universe/early-move refresh is bounded at the supported 3s
+            # cadence; one-second OI sampler and 60s signal evaluation remain
+            # independent and retain their existing semantics.
+            refresh_seconds=3.0,
             equity_pressure_enabled=bool(equity_baskets),
             equity_baskets=equity_baskets,
             equity_pressure_unavailable_reason=equity_pressure_error,

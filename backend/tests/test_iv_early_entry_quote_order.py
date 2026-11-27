@@ -33,7 +33,7 @@ def test_sampler_rejects_out_of_order_quote_even_when_still_inside_freshness_win
     )
     assert first["sample_count"] == 1
     first_iv = first["live_samples"][0].iv
-    assert first_iv is not None
+    assert first_iv is None  # Local IV calculation is intentionally disabled
 
     # This frame is only 1.5 seconds old, so freshness alone would accept it,
     # but its source timestamp is older than the already accepted tick.
@@ -51,4 +51,4 @@ def test_sampler_rejects_out_of_order_quote_even_when_still_inside_freshness_win
     assert second["live_samples"] == ()
     assert second["status"] == "WAITING"
     # UI continuity remains allowed, but the delayed frame cannot become LIVE.
-    assert second["samples"][0].iv == first_iv
+    assert second["samples"][0].iv is None

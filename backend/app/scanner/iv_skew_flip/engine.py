@@ -1,8 +1,8 @@
 """Pure, isolated analytics for the IV Skew / IV Flip / Gamma Blast scanner.
 
 This module intentionally has no broker, order-routing, Box Spread, or Synthetic
-Runner dependencies. IV is derived from option marks because the canonical
-Angel One market-data record carries LTP/depth/OI, not an exchange IV field.
+Runner dependencies. Local IV derivation is disabled. IV Skew/Flip signals fail closed unless a
+separate broker-native IV source is explicitly wired into the engine.
 """
 from __future__ import annotations
 
@@ -102,36 +102,8 @@ def implied_volatility(
     option_type: str, spot: float, strike: float, years: float, premium: float,
     rate: float = 0.065, dividend_yield: float = 0.0,
 ) -> float | None:
-    """Return annualized IV as a decimal; reject prices outside BS bounds."""
-    values = (spot, strike, years, premium, rate, dividend_yield)
-    if not all(isfinite(float(v)) for v in values) or min(spot, strike, years, premium) <= 0:
-        return None
-    kind = option_type.strip().upper()
-    if kind == "CE":
-        lower = max(0.0, spot * exp(-dividend_yield * years) - strike * exp(-rate * years))
-        upper = spot * exp(-dividend_yield * years)
-    elif kind == "PE":
-        lower = max(0.0, strike * exp(-rate * years) - spot * exp(-dividend_yield * years))
-        upper = strike * exp(-rate * years)
-    else:
-        return None
-    if premium < lower - 1e-8 or premium >= upper:
-        return None
-    lo, hi = 1e-5, 5.0
-    try:
-        if black_scholes_price(kind, spot, strike, years, hi, rate, dividend_yield) < premium:
-            return None
-        for _ in range(80):
-            mid = (lo + hi) / 2.0
-            model = black_scholes_price(kind, spot, strike, years, mid, rate, dividend_yield)
-            if model < premium:
-                lo = mid
-            else:
-                hi = mid
-        return (lo + hi) / 2.0
-    except (ValueError, OverflowError, ZeroDivisionError):
-        return None
-
+    """Local IV inversion is deliberately disabled; use broker-native IV only."""
+    return None
 
 def _expiry_years(expiry: str, now: datetime) -> float | None:
     """Expiry is valued to 15:30 IST; caller must supply an aware IST datetime."""
@@ -170,13 +142,8 @@ def _fresh(quote: OptionQuote, now_ns: int, max_age_seconds: float) -> bool:
 
 
 def _iv(quote: OptionQuote, spot: float, years: float, config: ScannerConfig) -> float | None:
-    mark = quote.mark
-    if mark is None:
-        return None
-    return implied_volatility(
-        quote.option_type, spot, quote.strike, years, mark,
-        config.risk_free_rate, config.dividend_yield,
-    )
+    """Never derive IV from local option marks."""
+    return None
 
 
 def evaluate_skew(
@@ -228,7 +195,7 @@ def evaluate_skew(
         if call_iv is not None and put_iv is not None:
             spreads.append((call_iv - put_iv) * 100.0)
     if len(spreads) < 2:
-        return Signal("IV_SKEW", None, None, None, "WAITING", "at least two matched CE/PE IV pairs are required")
+        return Signal("IV_SKEW", None, None, None, "WAITING", "local IV calculation is disabled; broker-native IV is not wired into this signal engine")
     value = sum(spreads) / len(spreads)
     direction = "BULLISH" if value >= config.bullish_skew_threshold else "BEARISH" if value <= config.bearish_skew_threshold else None
     return Signal("IV_SKEW", direction, round(value, 4), config.bullish_skew_threshold if direction == "BULLISH" else config.bearish_skew_threshold if direction == "BEARISH" else None, "SIGNAL" if direction else "NEUTRAL", f"mean matched CE-IV minus PE-IV across {len(spreads)} strike pairs")
@@ -261,7 +228,7 @@ def evaluate_flip(
     call_iv = _iv(pair["CE"], spot, years, config)
     put_iv = _iv(pair["PE"], spot, years, config)
     if call_iv is None or put_iv is None:
-        return Signal("IV_FLIP", None, None, None, "WAITING", "ATM IV could not be solved from valid option marks")
+        return Signal("IV_FLIP", None, None, None, "WAITING", "local IV calculation is disabled; broker-native IV is not wired into this signal engine")
     diff = (call_iv - put_iv) * 100.0
     gap = config.min_flip_gap_iv_points
     crossed_up = previous_atm_diff is not None and previous_atm_diff <= -gap and diff >= gap

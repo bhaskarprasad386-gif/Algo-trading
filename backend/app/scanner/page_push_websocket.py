@@ -17,7 +17,7 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from sqlalchemy import Column, Float, Integer, JSON, MetaData, String, Table, delete, func, insert, select, update
+from sqlalchemy import Column, Float, Index, Integer, JSON, MetaData, String, Table, delete, func, insert, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.database import engine
@@ -36,6 +36,8 @@ PAGE_CHANNELS = frozenset({
 QUEUE_SIZE = 32
 HEARTBEAT_SECONDS = 20.0
 DISPATCH_POLL_SECONDS = 0.25
+JOURNAL_RETENTION_EVENTS = 10_000
+JOURNAL_PRUNE_INTERVAL = 100
 _log = logging.getLogger(__name__)
 metadata = MetaData()
 events = Table(
@@ -52,6 +54,7 @@ sequences = Table(
     Column("page", String(64), primary_key=True),
     Column("sequence", Integer, nullable=False, default=0),
 )
+Index("ix_algo_scanner_page_ws_page_sequence", events.c.page, events.c.page_sequence)
 metadata.create_all(bind=engine)
 
 _snapshot_providers: dict[str, Callable[[], dict[str, Any]]] = {}
@@ -100,6 +103,24 @@ def _latest_page_sequence(page: str) -> int:
             select(sequences.c.sequence).where(sequences.c.page == page)
         ).scalar_one_or_none()
     return int(value or 0)
+
+
+def _journal_prune_cutoff(sequence: int) -> int | None:
+    """Return an amortized retention cutoff; avoid an OFFSET scan per event."""
+    current = max(0, int(sequence))
+    if current <= JOURNAL_RETENTION_EVENTS or current % JOURNAL_PRUNE_INTERVAL:
+        return None
+    return current - JOURNAL_RETENTION_EVENTS
+
+
+def _active_subscribed_pages() -> frozenset[str]:
+    """Poll only journal channels currently requested by local subscribers."""
+    return frozenset(
+        page
+        for _, channels in tuple(_subscribers)
+        for page in channels
+        if page in PAGE_CHANNELS
+    )
 
 
 def _sequence_gap(last_sequence: int, incoming_sequence: int) -> bool:
@@ -237,12 +258,14 @@ def publish_page_update(page: str, event: str, data: dict[str, Any] | None = Non
                 page=page, page_sequence=next_sequence, event=event,
                 data=safe_data, created_at=datetime.now(timezone.utc).timestamp(),
             ))
-            cutoff = connection.execute(
-                select(events.c.id).where(events.c.page == page)
-                .order_by(events.c.id.desc()).offset(10000).limit(1)
-            ).scalar_one_or_none()
-            if cutoff is not None:
-                connection.execute(delete(events).where(events.c.page == page, events.c.id < int(cutoff)))
+            cutoff_sequence = _journal_prune_cutoff(next_sequence)
+            if cutoff_sequence is not None:
+                connection.execute(
+                    delete(events).where(
+                        events.c.page == page,
+                        events.c.page_sequence <= cutoff_sequence,
+                    )
+                )
     except Exception:
         _log.exception("Could not persist scanner page update for %s", page)
 
@@ -294,7 +317,8 @@ async def _journal_dispatch_loop() -> None:
     while _subscribers:
         progressed = False
         try:
-            for page in PAGE_CHANNELS:
+            active_pages = _active_subscribed_pages()
+            for page in active_pages:
                 rows = await asyncio.to_thread(_events_after, page, cursors.get(page, 0))
                 for row in rows:
                     sequence = row["sequence"]

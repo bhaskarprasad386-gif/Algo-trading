@@ -31,8 +31,7 @@ def test_early_move_metrics_do_not_reuse_display_carried_iv_for_new_quote():
     first = sampler.sample_once(
         now_ns=base_ns, now=now, spot=SpotSnapshot(21950.0, base_ns),
     )
-    last_iv = first["live_samples"][0].iv
-    assert last_iv is not None
+    assert first["live_samples"][0].iv is None
 
     next_ns = base_ns + 1_000_000_000
     source.quotes = (OptionQuote(
@@ -43,9 +42,10 @@ def test_early_move_metrics_do_not_reuse_display_carried_iv_for_new_quote():
         now_ns=next_ns, now=now, spot=SpotSnapshot(21950.0, next_ns),
     )
 
-    # UI display is allowed to carry forward the last good IV.
-    assert second["live_metrics"][0]["iv"] == last_iv
+    # No locally solved or display-carried IV may leak into live metrics.
+    assert second["live_metrics"][0]["iv"] is None
     assert second["live_metrics"][0]["iv_live"] is False
+    assert second["live_metrics"][0]["iv_status"] == "DISABLED"
     # Alert-facing metrics must retain the raw current quote's missing IV.
     assert second["raw_live_metrics"][0]["iv"] is None
     assert second["raw_live_metrics"][0]["iv_input"] is None
