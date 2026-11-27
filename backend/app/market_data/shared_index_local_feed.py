@@ -124,7 +124,10 @@ class SharedIndexRunnerLocalFeedManager:
     def _on_record(self, record: Any) -> None:
         key = getattr(getattr(record, "instrument", None), "value", "")
         with self._lock:
-            if self._closed or not any(key in keys for keys in self._subscriptions.values()):
+            if self._closed or not any(
+                any(item.value == key for item in keys)
+                for keys in self._subscriptions.values()
+            ):
                 return
         try:
             self._queue.put_nowait(record)
