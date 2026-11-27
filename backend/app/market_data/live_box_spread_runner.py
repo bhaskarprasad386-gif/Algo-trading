@@ -104,12 +104,13 @@ class BoxSpreadLiveTarget:
 
 
 class LiveBoxSpreadRunner:
-    def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,on_spot_price=None,policy=None,consumer_namespace="box",publish_enabled=True,publication_gate=None):
+    def __init__(self,data_db,targets,*,allowed_stock_symbols,future_master=None,auth=None,on_results=None,on_spot_price=None,policy=None,consumer_namespace="box",publish_enabled=True,publication_gate=None,shared_feed_manager=None):
         self.data_db=data_db; self.targets=tuple(sorted(targets, key=lambda target: (0 if target.underlying.strip().upper() in WEEKLY_EXPIRY_PRIORITY_SYMBOLS else 1, target.underlying.strip().upper()))); self.allowed_stock_symbols=frozenset(allowed_stock_symbols)
         self.consumer_namespace = str(consumer_namespace or "box").strip()
         if not self.consumer_namespace or any(not (char.isalnum() or char in "-_:") for char in self.consumer_namespace):
             raise ValueError("consumer_namespace must contain only letters, numbers, hyphens, underscores or colons")
         self.master=future_master or InstrumentMaster(); self.auth=auth or AngelOneAuth(); self.on_results=on_results; self.on_spot_price=on_spot_price; self._spot_publish_callback=self._publish_spot_price
+        self.shared_feed_manager = shared_feed_manager
         self.policy=policy or ScanPolicy(); self.stop_event=Event(); self.recorder=None; self.feed=None; self.tracker=None; self.scanner=None; self.pipeline=None
         self._publish_enabled = bool(publish_enabled)
         self._publishing_requested = bool(publish_enabled)
@@ -120,7 +121,16 @@ class LiveBoxSpreadRunner:
         self._reconfigure_event = Event()
         self._targets_lock = Lock()
         self._pending_targets = None
-        self.depth_shadow = BoxLiveDepthShadowFeed(enabled=bool(settings.LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED), consumer=f"{self.consumer_namespace}-live-depth-shadow")
+        depth_consumer = f"{self.consumer_namespace}-live-depth-shadow"
+        depth_feed = (
+            CommonStrategyMarketFeed(depth_consumer, manager=self.shared_feed_manager)
+            if self.shared_feed_manager is not None else None
+        )
+        self.depth_shadow = BoxLiveDepthShadowFeed(
+            enabled=bool(settings.LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED),
+            consumer=depth_consumer,
+            feed=depth_feed,
+        )
         self._depth_shadow_lock = Lock()
         self._depth_shadow_last_comparisons = []
         self.depth_shadow_diagnostics = BoxDepthShadowDiagnostics()
@@ -548,7 +558,7 @@ class LiveBoxSpreadRunner:
             strikes.setdefault(symbol.strip().upper(), ())
         self.tracker=LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
         index_symbols=frozenset(t.underlying for t in self.targets if t.instrument_class=="INDEX")
-        self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,on_price=self._spot_publish_callback,index_symbols=index_symbols,consumer=f"{self.consumer_namespace}-underlyings",refresh_instrument_master=False)
+        self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,on_price=self._spot_publish_callback,index_symbols=index_symbols,consumer=f"{self.consumer_namespace}-underlyings",refresh_instrument_master=False,manager=self.shared_feed_manager)
         self._feed_thread = Thread(target=self.feed.run_forever,daemon=True,name="box-underlying-feed")
         self._feed_thread.start()
         try:
@@ -744,7 +754,7 @@ class LiveBoxSpreadRunner:
                 # Fail closed: never start an L1-only live opportunity publisher.
                 depth_descriptors = self._depth_shadow_descriptors(subs)
                 self.depth_shadow.start(depth_descriptors)
-                self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,consumer=f"{self.consumer_namespace}-options")
+                self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,manager=self.shared_feed_manager,consumer=f"{self.consumer_namespace}-options")
                 recorder = self.recorder
                 recorder_thread = Thread(target=recorder.run_forever, daemon=True, name="box-option-recorder")
                 recorder_thread.start()
