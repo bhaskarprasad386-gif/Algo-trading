@@ -1,4 +1,4 @@
-"""First-class registry for the four historical arbitrage strategy families."""
+"""First-class registry for the retained Box Spread historical strategy."""
 
 from __future__ import annotations
 
@@ -7,12 +7,7 @@ import inspect
 from typing import Any, Mapping
 
 from .provenance import provenance_hash
-from .arbitrage_strategy_adapters import (
-    BoxSpreadStrategyAdapter,
-    CalendarSpreadStrategyAdapter,
-    CashFutureStrategyAdapter,
-    SyntheticCashCarryStrategyAdapter,
-)
+from .arbitrage_strategy_adapters import BoxSpreadStrategyAdapter
 
 
 @dataclass(frozen=True)
@@ -23,11 +18,6 @@ class ArbitrageStrategyDefinition:
 
 STRATEGIES: dict[str, ArbitrageStrategyDefinition] = {
     "box-spread": ArbitrageStrategyDefinition("box-spread", BoxSpreadStrategyAdapter),
-    "synthetic-cash-carry": ArbitrageStrategyDefinition(
-        "synthetic-cash-carry", SyntheticCashCarryStrategyAdapter
-    ),
-    "cash-future": ArbitrageStrategyDefinition("cash-future", CashFutureStrategyAdapter),
-    "calendar-spread": ArbitrageStrategyDefinition("calendar-spread", CalendarSpreadStrategyAdapter),
 }
 
 
