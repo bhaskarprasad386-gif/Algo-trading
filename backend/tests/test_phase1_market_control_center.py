@@ -11,7 +11,7 @@ def test_phase1_web_market_control_center_contract():
     ui = WEB.read_text(encoding="utf-8")
     assert "MARKET WATCH" in ui.upper()
     assert 'id="indexRows"' in ui
-    assert 'id="commodityRows"' in ui
+    assert 'id="commodityRows"' not in ui
     assert "/api/v1/market-data/overview" in ui
     assert "Angel One" in ui
     assert "ORDERS OFF" in ui
