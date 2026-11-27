@@ -139,80 +139,9 @@ jobs:
           PY
           fi
 
-          echo "=== LIVE SCANNER SNAPSHOTS ==="
-          for endpoint in \
-            "/api/v1/scanner/cash-future/live/fast?max_age_seconds=5&limit=5" \
-            "/api/v1/scanner/calendar-spread/live?limit=5" \
-            "/api/v1/scanner/synthetic-cash-carry/live?limit=5" \
-            "/api/v1/scanner/box-spread/live?limit=5"; do
-                        safe_name=$(printf '%s' "$endpoint" | tr '\/?=&' '____')
-            code=$(curl -sS --connect-timeout 2 --max-time 8 -o "/tmp/scanner_$safe_name" -w "%{http_code}" "http://127.0.0.1:8000$endpoint" 2>/dev/null || true)
-            echo "SCANNER_ENDPOINT=$endpoint HTTP=$code"
-            if [ "$code" != "000" ]; then
-              head -c 6000 "/tmp/scanner_$safe_name" || true
-              echo
-            fi
-          done
-
-          echo "=== BOX SPREAD ACCEPTANCE ==="
-          box_diag_code=$(curl -sS --connect-timeout 2 --max-time 8 -o /tmp/box_spread_diag_body -w "%{http_code}" http://127.0.0.1:8000/api/v1/scanner/box-spread/diagnostics 2>/dev/null || true)
-          echo "BOX_SPREAD_DIAGNOSTICS_HTTP=$box_diag_code"
-          if [ "$box_diag_code" != "000" ]; then
-            cat /tmp/box_spread_diag_body || true
-            echo
-          fi
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          try:
-              diag = json.loads(Path("/tmp/box_spread_diag_body").read_text())
-          except Exception:
-              diag = {}
-
-          last_scan = diag.get("last_scan")
-          counts = diag.get("counts") if isinstance(diag.get("counts"), dict) else {}
-          outcome = last_scan.get("outcome", "UNKNOWN") if isinstance(last_scan, dict) else "UNKNOWN"
-          active_buckets = diag.get("active_buckets", 0)
-          status = str(diag.get("status", "waiting")).lower()
-          print(f"BOX_SPREAD_STATUS={status.upper()}")
-          print(f"BOX_SPREAD_ACTIVE_BUCKETS={active_buckets}")
-          print(f"BOX_SPREAD_LAST_SCAN_OUTCOME={outcome}")
-          print(f"BOX_SPREAD_DIAGNOSTIC_COUNTERS={json.dumps(counts, sort_keys=True)}")
-
-          # During a closed market session, no fresh scan is expected. Keep
-          # diagnostics visible, but only enforce scanner readiness while the
-          # live-health endpoint reports an open market. Unknown session state
-          # fails closed rather than masking a real outage.
-          try:
-              live_health = json.loads(Path("/tmp/live_health_body").read_text())
-              market_session = str(live_health.get("market_session", "")).strip().upper()
-          except Exception:
-              market_session = ""
-          print(f"BOX_SPREAD_MARKET_SESSION={market_session or 'UNKNOWN'}")
-          if market_session == "CLOSED":
-              print("BOX_SPREAD_GATE_DIAGNOSTICS_AVAILABLE=SKIP_MARKET_CLOSED")
-              print("BOX_SPREAD_GATE_LAST_SCAN_PRESENT=SKIP_MARKET_CLOSED")
-              valid_buckets = isinstance(active_buckets, int) and active_buckets >= 0
-              print(f"BOX_SPREAD_GATE_ACTIVE_BUCKET_COUNT_VALID={'PASS' if valid_buckets else 'FAIL'}")
-              if not valid_buckets:
-                  print("BOX_SPREAD_ACCEPTANCE_RESULT=FAIL")
-                  raise SystemExit(1)
-              print("BOX_SPREAD_ACCEPTANCE_RESULT=SKIP_MARKET_CLOSED")
-          else:
-              checks = {
-                  "diagnostics_available": status == "available",
-                  "last_scan_present": isinstance(last_scan, dict) and bool(last_scan),
-                  "active_bucket_count_valid": isinstance(active_buckets, int) and active_buckets >= 0,
-              }
-              for name, passed in checks.items():
-                  print(f"BOX_SPREAD_GATE_{name.upper()}={'PASS' if passed else 'FAIL'}")
-              passed = all(checks.values())
-              print("BOX_SPREAD_ACCEPTANCE_RESULT=" + ("PASS" if passed else "FAIL"))
-              if not passed:
-                  raise SystemExit(1)
-          PY
-          acceptance_status=$?
+          echo "=== RETIRED SCANNERS ==="
+          echo "Cash-Future, Calendar Spread, Synthetic and Box Spread endpoints are intentionally not probed."
+          acceptance_status=0
 
           echo "=== SERVICE MEMORY / PROCESS ==="
           systemctl show algo-trading.service --no-pager \
