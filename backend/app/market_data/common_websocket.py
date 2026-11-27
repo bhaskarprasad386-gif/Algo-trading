@@ -313,7 +313,7 @@ class CommonWebSocketManager:
     @staticmethod
     def _default_exchange_type(key: InstrumentKey) -> int:
         value = key.exchange.strip().upper()
-        mapping = {"NSE": 1, "NFO": 2, "BSE": 3, "BFO": 4, "MCX": 5, "NCDEX": 7}
+        mapping = {"NSE": 1, "NFO": 2, "BSE": 3, "BFO": 4, "NCDEX": 7}
         if value not in mapping:
             raise ValueError(f"unsupported exchange for Angel One WebSocket: {value}")
         return mapping[value]
