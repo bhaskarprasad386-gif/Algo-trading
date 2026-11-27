@@ -88,10 +88,8 @@ def get_alert_status(db: Session = Depends(get_db)):
     active_rules = db.query(AlertRule).filter(
         AlertRule.user_id == uid, AlertRule.enabled.is_(True)
     ).count()
-    # Retired strategy history rows remain archived in their tables; only
-    # the active Box Spread alert stream is exposed by this endpoint.
-    from app.models import LiveBoxSpreadAlertHistory
-    history_models = {"box-spread": LiveBoxSpreadAlertHistory}
+    # Retired strategy history remains archived; no retired strategy table is queried.
+    history_models = {}
     by_strategy = {}
     for strategy, model in history_models.items():
         by_strategy[strategy] = db.query(model).filter(model.observed_at >= cutoff).count()
