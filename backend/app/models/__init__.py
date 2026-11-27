@@ -10,6 +10,7 @@ from app.models.account import TradingAccount
 from app.models.password_reset_token import PasswordResetToken
 from app.models.historical_market_bar import HistoricalMarketBar
 from app.models.backtest_data_coverage import BacktestDataCoverage
+from app.models.backtest_job import BacktestJob
 from app.models.alert_rule import AlertRule
 from app.models.alert_contact import AlertContact
 from app.models.real_trading_owner_state import RealTradingOwnerState
@@ -20,7 +21,7 @@ from app.models.iv_spot_observation import IVSpotObservation
 
 __all__ = [
     "User", "TradingAccount", "Session", "Instrument", "Tick", "Candle",
-    "Order", "Position", "SystemLog", "PasswordResetToken",
+    "Order", "Position", "SystemLog", "BacktestJob", "PasswordResetToken",
     "HistoricalMarketBar", "BacktestDataCoverage",
     "AlertRule", "AlertContact", "RealTradingOwnerState",
     "IVScannerControl", "IVSpotLastPrice", "IVOptionObservation", "IVSpotObservation",
