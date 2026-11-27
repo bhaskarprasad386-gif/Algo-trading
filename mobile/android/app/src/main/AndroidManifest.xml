@@ -14,7 +14,6 @@
         <activity android:name=".StrategyRegistryActivity" android:exported="false" />
         <activity android:name=".ResultsJournalActivity" android:exported="false" />
         <activity android:name=".ScannerDetailActivity" android:exported="false" />
-        <activity android:name=".FullFnoBacktestActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
