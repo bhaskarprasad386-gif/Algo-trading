@@ -26,6 +26,42 @@ _SHARED_MANAGER: CommonWebSocketManager | None = None
 _SHARED_AUTH: AngelOneAuth | None = None
 
 
+class SharedIndexOnlyWebSocketManager(CommonWebSocketManager):
+    """Production broker manager accepts subscriptions only from the shared index runner."""
+
+    ALLOWED_CONSUMERS = frozenset({
+        "shared-index-market-data:spot",
+        "shared-index-market-data:options",
+        "shared-index-market-data:futures",
+    })
+
+    @classmethod
+    def validate_consumer(cls, consumer: str) -> str:
+        normalized = str(consumer or "").strip()
+        if normalized not in cls.ALLOWED_CONSUMERS:
+            raise PermissionError(
+                "the production Angel One WebSocket is owned exclusively by "
+                "SharedIndexMarketDataRunner (NIFTY/BANKNIFTY)"
+            )
+        return normalized
+
+    def register_normalized_callback(self, consumer: str, callback) -> None:
+        self.validate_consumer(consumer)
+        return super().register_normalized_callback(consumer, callback)
+
+    def subscribe(self, consumer: str, keys, mode: int = 1):
+        self.validate_consumer(consumer)
+        return super().subscribe(consumer, keys, mode)
+
+    def unsubscribe(self, consumer: str, keys=None) -> None:
+        self.validate_consumer(consumer)
+        return super().unsubscribe(consumer, keys)
+
+    def clear_consumer(self, consumer: str) -> None:
+        self.validate_consumer(consumer)
+        return super().clear_consumer(consumer)
+
+
 def shared_common_manager_snapshot() -> dict[str, Any] | None:
     """Return runtime state without creating the shared manager or persisting ticks."""
     with _SHARED_LOCK:
@@ -46,7 +82,7 @@ def shared_common_manager(
         if _SHARED_MANAGER is None:
             _SHARED_AUTH = auth or AngelOneAuth()
             factory = socket_factory or (lambda: MarketDataWebSocket(auth=_SHARED_AUTH, auto_reconnect=False))
-            _SHARED_MANAGER = CommonWebSocketManager(
+            _SHARED_MANAGER = SharedIndexOnlyWebSocketManager(
                 socket_factory=factory,
                 # Keep the broker transport callback limited to bounded enqueue.
                 # Strategy normalization/cache fan-out runs on the shard worker,
@@ -217,6 +253,9 @@ class CommonStrategyMarketFeed:
             raise TypeError("callback must be callable")
         if len({descriptor.key for descriptor in descriptors}) != len(descriptors):
             raise ValueError("duplicate instruments in feed start")
+        validate_consumer = getattr(self.manager, "validate_consumer", None)
+        if callable(validate_consumer):
+            validate_consumer(self.consumer)
         # InstrumentKey is the broker-level identity. Multiple strategy
         # consumers may describe the same broker instrument with different
         # strategy metadata (for example an option subscription carrying its
