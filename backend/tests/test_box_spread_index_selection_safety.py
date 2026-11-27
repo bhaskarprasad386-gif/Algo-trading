@@ -4,50 +4,22 @@ from fastapi import HTTPException
 from app import main
 
 
-def test_index_deselection_is_blocked_while_paper_position_is_open(monkeypatch):
+def test_index_deselection_no_longer_depends_on_retired_paper_ledger(monkeypatch):
     monkeypatch.setattr(main, "_get_box_spread_index_selection", lambda: ("NIFTY", "BANKNIFTY"))
-    monkeypatch.setattr(main, "_box_spread_open_paper_symbols", lambda: {"BANKNIFTY"})
+    monkeypatch.setattr(main, "live_box_spread_runner", None)
+    monkeypatch.setattr(main, "live_box_spread_supervisor", None)
     saved = []
-    monkeypatch.setattr(main, "_save_box_spread_index_selection", lambda symbols, weekly_only_symbols=(): saved.append((tuple(symbols), tuple(weekly_only_symbols))))
-
-    with pytest.raises(HTTPException) as error:
-        main.set_box_spread_index_selection(main.BoxSpreadIndexSelectionRequest(symbols=["NIFTY"]))
-
-    assert error.value.status_code == 409
-    assert error.value.detail["blocked_indices"] == ["BANKNIFTY"]
-    assert saved == []
-
-
-def test_index_deselection_fails_closed_if_paper_ledger_cannot_be_checked(monkeypatch):
-    monkeypatch.setattr(main, "_get_box_spread_index_selection", lambda: ("NIFTY", "BANKNIFTY"))
-
-    def unavailable():
-        raise RuntimeError("ledger unavailable")
-
-    monkeypatch.setattr(main, "_box_spread_open_paper_symbols", unavailable)
-    saved = []
-    monkeypatch.setattr(main, "_save_box_spread_index_selection", lambda symbols: saved.append(tuple(symbols)))
-
-    with pytest.raises(HTTPException) as error:
-        main.set_box_spread_index_selection(main.BoxSpreadIndexSelectionRequest(symbols=["NIFTY"]))
-
-    assert error.value.status_code == 503
-    assert saved == []
-
-
-def test_index_deselection_is_allowed_after_all_paper_legs_are_flat(monkeypatch):
-    monkeypatch.setattr(main, "_get_box_spread_index_selection", lambda: ("NIFTY", "BANKNIFTY"))
-    monkeypatch.setattr(main, "_box_spread_open_paper_symbols", lambda: set())
-    saved = []
-    monkeypatch.setattr(main, "_save_box_spread_index_selection", lambda symbols, weekly_only_symbols=(): saved.append((tuple(symbols), tuple(weekly_only_symbols))) or tuple(symbols))
+    monkeypatch.setattr(
+        main,
+        "_save_box_spread_index_selection",
+        lambda symbols, weekly_only_symbols=(): saved.append((tuple(symbols), tuple(weekly_only_symbols))) or tuple(symbols),
+    )
 
     result = main.set_box_spread_index_selection(main.BoxSpreadIndexSelectionRequest(symbols=["NIFTY"]))
 
     assert result["status"] == "success"
     assert result["symbols"] == ["NIFTY"]
-    assert saved == [(('NIFTY',), ())]
-
-
+    assert saved == [(("NIFTY",), ())]
 
 def test_legacy_saved_selection_is_clamped_to_nifty_and_banknifty(monkeypatch):
     from types import SimpleNamespace
@@ -256,8 +228,7 @@ def test_weekly_only_target_builder_never_adds_monthly_contracts(monkeypatch):
     )
 
     assert [(target.expiry, target.weekly_only) for target in weekly_targets] == [(weekly_raw, True)]
-    assert {target.expiry for target in standard_targets} == {weekly_raw, monthly_raw}
-    assert all(target.weekly_only is False for target in standard_targets)
+    assert [(target.expiry, target.weekly_only) for target in standard_targets] == [(weekly_raw, False)]
 
 
 def test_weekly_only_selection_is_limited_to_nifty():
@@ -319,15 +290,14 @@ def test_box_spread_page_push_is_coalesced_at_250ms_not_one_second(monkeypatch):
     monkeypatch.setattr(main, "_fresh_live_box_spread_results", lambda rows: tuple(rows))
     monkeypatch.setattr(main, "_box_page_push_snapshot", lambda: {"opportunities": []})
     monkeypatch.setattr(main, "publish_page_update", lambda *args: published.append(("public", args)))
-    monkeypatch.setattr(main, "publish_paper_update", lambda *args: published.append(("private", args)))
     monkeypatch.setattr(main, "_publish_credit_butterfly_condor_pages", lambda: None)
     monkeypatch.setattr(main, "publish_live_box_spread_opportunities", lambda rows: None)
 
     main._update_live_box_spread_results(())
-    assert len(published) == 2
+    assert len(published) == 1
     clock["now"] += 0.10
     main._update_live_box_spread_results(())
-    assert len(published) == 2
+    assert len(published) == 1
     clock["now"] += 0.16
     main._update_live_box_spread_results(())
-    assert len(published) == 4
+    assert len(published) == 2
