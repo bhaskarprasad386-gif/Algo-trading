@@ -758,6 +758,10 @@ async def lifespan(app: FastAPI):
             for result in results:
                 if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
                     app_logger.error("Background task shutdown failed: %s", result)
+        try:
+            box_shared_feed_manager.close()
+        except Exception:
+            app_logger.exception("Shared Runner local fan-out shutdown failed")
         # Broker adapters own authenticated provider sessions in process memory.
         # Drain them before shutdown completes; failures are logged per provider
         # and must not prevent the remaining sessions or market-data runners closing.
@@ -1139,8 +1143,8 @@ IST = ZoneInfo("Asia/Kolkata")
 _live_synthetic_task: asyncio.Task | None = None
 # Synthetic Future runner is intentionally disabled; keep its routes/history isolated.
 LIVE_SYNTHETIC_RUNNER_FORCE_DISABLED = True
-# Temporarily keep Box Spread out of the three-session shared index topology.
-LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = True
+# Box adapters consume the Shared Runner's published NIFTY/BANKNIFTY records only.
+LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = False
 _live_box_spread_task: asyncio.Task | None = None
 MARKET_OPEN = time(9, 15)
 
