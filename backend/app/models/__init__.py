@@ -1,5 +1,4 @@
 from app.models.candle import Candle
-from app.models.cash_future_history import CashFutureHistory
 from app.models.instrument import Instrument
 from app.models.order import Order
 from app.models.position import Position
@@ -13,13 +12,6 @@ from app.models.backtest_job_result_chunk import BacktestJobResultChunk
 from app.models.password_reset_token import PasswordResetToken
 from app.models.historical_market_bar import HistoricalMarketBar
 from app.models.backtest_data_coverage import BacktestDataCoverage
-from app.models.live_cash_future_scanner_result import LiveCashFutureScannerResult
-from app.models.live_cash_future_alert_history import LiveCashFutureAlertHistory
-from app.models.live_synthetic_alert_history import LiveSyntheticAlertHistory
-from app.models.live_box_spread_alert_history import LiveBoxSpreadAlertHistory
-from app.models.live_box_spread_snapshot import LiveBoxSpreadSnapshot
-from app.models.live_box_spread_snapshot_key import LiveBoxSpreadSnapshotKey
-from app.models.live_calendar_spread_alert_history import LiveCalendarSpreadAlertHistory
 from app.models.alert_rule import AlertRule
 from app.models.alert_contact import AlertContact
 from app.models.real_trading_owner_state import RealTradingOwnerState
@@ -29,11 +21,10 @@ from app.models.iv_option_observation import IVOptionObservation
 from app.models.iv_spot_observation import IVSpotObservation
 
 __all__ = [
-    "User", "TradingAccount", "Session", "Instrument", "Tick", "Candle", "CashFutureHistory",
+    "User", "TradingAccount", "Session", "Instrument", "Tick", "Candle",
     "Order", "Position", "SystemLog", "BacktestJob", "BacktestJobResultChunk", "PasswordResetToken",
-    "HistoricalMarketBar", "BacktestDataCoverage", "LiveCashFutureScannerResult", "LiveCashFutureAlertHistory",
-    "LiveSyntheticAlertHistory", "LiveBoxSpreadAlertHistory", "LiveBoxSpreadSnapshot", "LiveBoxSpreadSnapshotKey",
-    "LiveCalendarSpreadAlertHistory", "AlertRule", "AlertContact", "RealTradingOwnerState",
+    "HistoricalMarketBar", "BacktestDataCoverage",
+    "AlertRule", "AlertContact", "RealTradingOwnerState",
     "IVScannerControl", "IVSpotLastPrice", "IVOptionObservation", "IVSpotObservation",
 ]
 
