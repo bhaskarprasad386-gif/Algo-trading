@@ -1,4 +1,5 @@
 from datetime import date, datetime, time, timedelta
+from math import isfinite
 from threading import Lock
 from zoneinfo import ZoneInfo
 
@@ -414,6 +415,10 @@ def get_live_data_health():
         common.get("latest_tick_timestamp_ns_by_exchange_type", {}) if common else {}
     )
     exchange_freshness: dict[str, dict[str, object]] = {}
+    received_ages_by_exchange = (
+        common.get("last_exchange_tick_received_age_seconds_by_exchange_type", {})
+        if common else {}
+    )
     for exchange_type, exchange_name in ((1, "NSE"), (2, "NFO")):
         raw_timestamp = timestamps_by_exchange.get(str(exchange_type))
         if raw_timestamp is None:
@@ -427,9 +432,22 @@ def get_live_data_health():
             if timestamp_ns is not None else None
         )
         age = None if raw_age is None or raw_age < -5.0 else max(0.0, raw_age)
+        raw_received_age = received_ages_by_exchange.get(str(exchange_type))
+        try:
+            received_age = float(raw_received_age) if raw_received_age is not None else None
+        except (TypeError, ValueError, OverflowError):
+            received_age = None
+        if received_age is not None and (not isfinite(received_age) or received_age < 0):
+            received_age = None
+        received_at = (
+            (now - timedelta(seconds=received_age)).isoformat()
+            if received_age is not None else None
+        )
         exchange_freshness[exchange_name] = {
             "exchange_type": exchange_type,
             "latest_tick_timestamp_ns": timestamp_ns,
+            "last_tick_received_at": received_at,
+            "last_tick_received_age_seconds": received_age,
             "age_seconds": age,
             "status": (
                 "LIVE" if market_open and age is not None and age <= 5.0
