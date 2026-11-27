@@ -3,8 +3,6 @@ package com.algotrading.app
 import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.text.InputType
 import android.widget.Button
 import android.widget.CheckBox
@@ -69,11 +67,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnQuickResults: Button
     private lateinit var btnQuickExpansion: Button
 
-    private val scannerRefreshHandler = Handler(Looper.getMainLooper())
-    private lateinit var scannerRefreshRunnable: Runnable
-    private lateinit var scannerCountdownRunnable: Runnable
-    private var scannerCountdownSeconds = 0L
-    private var lastScannerResult: String? = null
     private var ownerLoginPromptShown = false
 
     private fun currentTimestamp(): String = SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault()).format(Date())
@@ -112,19 +105,6 @@ class MainActivity : AppCompatActivity() {
         btnKillSwitch = findViewById(R.id.btnKillSwitch)
         btnAppUpdate = findViewById(R.id.btnAppUpdate)
         btnStrategies = findViewById(R.id.btnStrategies)
-        scannerRefreshRunnable = Runnable { }
-        scannerCountdownRunnable = object : Runnable {
-            override fun run() {
-                if (!cbScannerAutoRefresh.isChecked || !btnRunScanner.isEnabled) {
-                    tvScannerNextRefresh.text = if (btnRunScanner.isEnabled) "Next Refresh: —" else "Next Refresh: SCAN IN PROGRESS"
-                    return
-                }
-                scannerCountdownSeconds -= 1L
-                if (scannerCountdownSeconds <= 0L) { tvScannerNextRefresh.text = "Next Refresh: NOW"; return }
-                tvScannerNextRefresh.text = "Next Refresh: ${scannerCountdownSeconds}s"
-                scannerRefreshHandler.postDelayed(this, 1000L)
-            }
-        }
         disableCashFutureScanner(); checkServerStatus(); checkBrokerStatus(); checkSafetyStatus(); loadMarketOverview()
         btnAppUpdate.setOnClickListener { startActivity(Intent(this, UpdateActivity::class.java)) }
         btnStrategies.setOnClickListener { startActivity(Intent(this, StrategyRegistryActivity::class.java)) }
@@ -137,7 +117,6 @@ class MainActivity : AppCompatActivity() {
         btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
         btnBoxSpread.setOnClickListener { startActivity(Intent(this, BoxSpreadActivity::class.java)) }
         
-        etScannerRefreshSeconds.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) scheduleScannerRefresh() }
         btnConnectBroker.setOnClickListener { connectAngelOne() }; btnDisconnectBroker.setOnClickListener { disconnectAngelOne() }
         btnEnableRealTrading.setOnClickListener { confirmEnableRealTrading() }; btnDisableRealTrading.setOnClickListener { disableRealTrading() }; btnKillSwitch.setOnClickListener { triggerKillSwitch() }
         
@@ -148,16 +127,7 @@ class MainActivity : AppCompatActivity() {
         btnQuickExpansion.setOnClickListener { mainScroll.post { mainScroll.smoothScrollTo(0, findViewById<View>(R.id.phase13Expansion).top) } }
     }
 
-    override fun onDestroy() { scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable); scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable); super.onDestroy() }
-
-    private fun updateScannerAutoRefreshStatus() { tvScannerAutoRefreshStatus.text = if (cbScannerAutoRefresh.isChecked) "Auto Refresh: ON" else "Auto Refresh: OFF" }
-    private fun scheduleScannerRefresh() {
-        scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable); scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable); updateScannerAutoRefreshStatus()
-        if (!cbScannerAutoRefresh.isChecked || !btnRunScanner.isEnabled) { tvScannerNextRefresh.text = if (btnRunScanner.isEnabled) "Next Refresh: —" else "Next Refresh: SCAN IN PROGRESS"; return }
-        val seconds = etScannerRefreshSeconds.text.toString().toLongOrNull()?.coerceIn(10L, 300L) ?: 30L
-        etScannerRefreshSeconds.setText(seconds.toString()); scannerCountdownSeconds = seconds; tvScannerNextRefresh.text = "Next Refresh: ${scannerCountdownSeconds}s"
-        scannerRefreshHandler.postDelayed(scannerRefreshRunnable, seconds * 1000L); scannerRefreshHandler.postDelayed(scannerCountdownRunnable, 1000L)
-    }
+    override fun onDestroy() { super.onDestroy() }
 
     private fun dashboardPreferences() = getSharedPreferences("dashboard_layout", MODE_PRIVATE)
     private fun loadDashboardLayout() {
@@ -315,8 +285,6 @@ class MainActivity : AppCompatActivity() {
     private fun disconnectAngelOne() = lifecycleScope.launch(Dispatchers.IO) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnecting…" }; try { ApiService.retrofitService.disconnectBroker("angel_one"); withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Angel One disconnected • Real Trading OFF" }; checkSafetyStatus() } catch (error: Exception) { withContext(Dispatchers.Main) { tvBrokerStatus.text = "Broker Status: Disconnect failed • ${error.message ?: "API error"}"; if (!ApiService.hasRealOwnerAccessToken()) promptRealOwnerLogin() } } }
 
     private fun showCashFutureScannerDisabled() {
-        scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable)
-        scannerRefreshHandler.removeCallbacks(scannerCountdownRunnable)
         cbScannerAutoRefresh.isChecked = false
         cbScannerAutoRefresh.isEnabled = false
         etScannerRefreshSeconds.isEnabled = false
