@@ -23,7 +23,6 @@ import java.util.Locale
 class MainActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var tvAlertCenter: TextView
-    private lateinit var btnFullFnoBacktest: Button
     private lateinit var etBrokerApiKey: EditText
     private lateinit var etBrokerClientCode: EditText
     private lateinit var etBrokerPassword: EditText
@@ -74,7 +73,6 @@ class MainActivity : AppCompatActivity() {
         btnQuickExpansion = findViewById(R.id.btnQuickExpansion)
         tvAlertCenter = findViewById(R.id.tvAlertCenter)
         cbShowAlerts = findViewById(R.id.cbShowAlerts)
-        btnFullFnoBacktest = findViewById(R.id.btnFullFnoBacktest)
         etBrokerApiKey = findViewById(R.id.etBrokerApiKey)
         etBrokerClientCode = findViewById(R.id.etBrokerClientCode)
         etBrokerPassword = findViewById(R.id.etBrokerPassword)
@@ -98,7 +96,6 @@ class MainActivity : AppCompatActivity() {
         btnLiveDataHealthRefresh.setOnClickListener { loadLiveDataHealth() }
         btnSaveDashboardLayout.setOnClickListener { saveDashboardLayout() }
         btnResetDashboardLayout.setOnClickListener { resetDashboardLayout() }
-        btnFullFnoBacktest.setOnClickListener { startActivity(Intent(this, FullFnoBacktestActivity::class.java)) }
         
         btnConnectBroker.setOnClickListener { connectAngelOne() }; btnDisconnectBroker.setOnClickListener { disconnectAngelOne() }
         btnEnableRealTrading.setOnClickListener { confirmEnableRealTrading() }; btnDisableRealTrading.setOnClickListener { disableRealTrading() }; btnKillSwitch.setOnClickListener { triggerKillSwitch() }
@@ -149,7 +146,6 @@ class MainActivity : AppCompatActivity() {
         tvIndexOverview.visibility = if (cbShowMarket.isChecked) visible else hidden
         tvAlertCenter.visibility = if (cbShowAlerts.isChecked) visible else hidden
         btnStrategies.visibility = if (cbShowStrategy.isChecked) visible else hidden
-        btnFullFnoBacktest.visibility = if (cbShowStrategy.isChecked) visible else hidden
         btnResultsJournal.visibility = if (cbShowResults.isChecked) visible else hidden
     }
     private fun loadMarketOverview() = lifecycleScope.launch(Dispatchers.IO) {
