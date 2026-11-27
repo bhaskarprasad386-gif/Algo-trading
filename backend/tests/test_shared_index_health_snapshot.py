@@ -125,7 +125,7 @@ def test_runner_health_ready_when_illiquid_options_are_stale_but_both_sides_are_
         groups[f"{underlying}:option"] = {
             "count": 62, "fresh_count": 8, "stale_count": 54,
             "ce_count": 31, "pe_count": 31,
-            "ce_fresh_count": 4, "pe_fresh_count": 4,
+            "ce_fresh_count": 20, "pe_fresh_count": 20,
         }
 
     class FakeState:
@@ -144,7 +144,7 @@ def test_runner_health_ready_when_illiquid_options_are_stale_but_both_sides_are_
     assert snapshot["live_data_ready"] is True
     assert snapshot["readiness"]["core_market_data_fresh"] is True
     assert snapshot["readiness"]["option_activity_fresh"] is True
-    assert snapshot["readiness"]["option_side_freshness"]["BANKNIFTY"]["CE"]["fresh"] == 4
+    assert snapshot["readiness"]["option_side_freshness"]["BANKNIFTY"]["CE"]["fresh"] == 20
 
 
 def test_runner_health_not_ready_when_one_core_future_is_stale_or_option_side_silent() -> None:
@@ -156,11 +156,11 @@ def test_runner_health_not_ready_when_one_core_future_is_stale_or_option_side_si
         groups[f"{underlying}:future"] = {"count": 1, "fresh_count": 1}
         groups[f"{underlying}:option"] = {
             "count": 62, "fresh_count": 10, "ce_count": 31, "pe_count": 31,
-            "ce_fresh_count": 10, "pe_fresh_count": 0,
+            "ce_fresh_count": 20, "pe_fresh_count": 0,
         }
     result = _readiness_from_groups(running=True, bootstrap_done=True, universe_complete=True, feed_groups=groups)
     assert result["live_data_ready"] is False
-    groups["BANKNIFTY:option"]["pe_fresh_count"] = 1
+    groups["BANKNIFTY:option"]["pe_fresh_count"] = 16
     groups["NIFTY:future"]["fresh_count"] = 0
     result = _readiness_from_groups(running=True, bootstrap_done=True, universe_complete=True, feed_groups=groups)
     assert result["live_data_ready"] is False
