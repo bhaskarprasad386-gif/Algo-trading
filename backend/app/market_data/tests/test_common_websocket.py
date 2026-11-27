@@ -2782,6 +2782,8 @@ def test_socket_operation_worker_start_failure_releases_inflight_reservation(mon
     assert manager._socket_operation_workers == {}
     assert manager._socket_operation_events == {}
     assert manager._socket_operation_worker_failures == 1
+    assert manager._failure_recovery_pending_groups == {group}
+    assert manager._failure_recovery_pending_versions[group] == 1
 
     # The failed spawn must not poison the shard's next operation admission.
     manager._run_socket_operation_bounded(
