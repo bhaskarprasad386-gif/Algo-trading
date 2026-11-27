@@ -129,3 +129,26 @@ def test_explicit_monthly_expiry_selects_matching_future_not_nearest_unmatched_f
     )
     assert selected.expiry == "26NOV2026"
     assert {item.token for item in selected.subscriptions} == {"10", "20", "21"}
+
+
+def test_synthetic_selector_rejects_retired_commodity_class():
+    try:
+        select_synthetic_contracts(
+            _master([]), underlying="GOLD", instrument_class="COMMODITY", atm_strike=100.0
+        )
+    except ValueError as exc:
+        assert "STOCK and INDEX" in str(exc)
+    else:
+        raise AssertionError("commodity subscriptions must be rejected")
+
+
+def test_synthetic_selector_rejects_mcx_exchange_override():
+    try:
+        select_synthetic_contracts(
+            _master([]), underlying="NIFTY", instrument_class="INDEX",
+            atm_strike=25550.0, exchange="MCX",
+        )
+    except ValueError as exc:
+        assert "NFO and BFO" in str(exc)
+    else:
+        raise AssertionError("MCX exchange must be rejected")
