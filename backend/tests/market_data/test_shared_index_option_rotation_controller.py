@@ -20,7 +20,7 @@ class FakeClock:
 
 def _rows(expiry="03DEC2026"):
     rows = []
-    for underlying, base, step, count in (("NIFTY", 21750, 50, 31), ("BANKNIFTY", 48000, 100, 31)):
+    for underlying, base, step, count in (("NIFTY", 21250, 50, 31), ("BANKNIFTY", 48000, 100, 31)):
         for index in range(count):
             strike = base + index * step
             for side in ("CE", "PE"):
@@ -49,7 +49,7 @@ def test_controller_initial_spot_tick_only_anchors_and_threshold_rotates():
 def test_controller_resolver_failure_keeps_existing_subscriptions_untouched():
     lifecycle = StubLifecycle()
     controller = SharedIndexOptionRotationController(lifecycle=lifecycle,
-        instrument_rows=lambda: [], expiry_for=lambda _: "26NOV2026",
+        instrument_rows=lambda: [], expiry_for=lambda _: "03DEC2026",
         thresholds={"NIFTY":50})
     assert not controller.on_record(_spot("NIFTY", 22000))
     assert not controller.on_record(_spot("NIFTY", 22050))
