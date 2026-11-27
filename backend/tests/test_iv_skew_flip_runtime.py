@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 from pathlib import Path
+
+import pytest
 from zoneinfo import ZoneInfo
 
 from app.scanner.iv_skew_flip.runtime import CHAIN_CONFIGS
@@ -352,30 +354,19 @@ def test_runtime_refresh_worker_retries_after_transient_refresh_error(monkeypatc
     assert "RUNTIME" not in runtime._last_error
 
 
-def test_runtime_does_not_close_application_owned_shared_feed_manager():
-    class SharedManager:
-        def __init__(self):
-            self.close_calls = 0
-
+def test_runtime_rejects_direct_feed_manager_injection():
+    class Manager:
         def close(self):
-            self.close_calls += 1
+            raise AssertionError("IV runtime must never close a direct manager")
 
-        def snapshot(self):
-            return {"status": "LIVE", "socket_count": 1}
-
-    manager = SharedManager()
-    runtime = IVSkewFlipRuntime(
-        instrument_master=FakeMaster([]),
-        spot_feed=FakeSpotFeed(),
-        feed_manager=manager,
-        close_feed_manager=False,
-        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
-    )
-
-    result = runtime.stop()
-
-    assert result["status"] == "STOPPED"
-    assert manager.close_calls == 0
+    with pytest.raises(ValueError, match="SharedIndexMarketDataRunner"):
+        IVSkewFlipRuntime(
+            instrument_master=FakeMaster([]),
+            spot_feed=FakeSpotFeed(),
+            feed_manager=Manager(),
+            close_feed_manager=False,
+            clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+        )
 
 
 def test_runtime_stop_preserves_worker_reference_while_telegram_thread_is_alive():
@@ -777,50 +768,23 @@ def test_runtime_uses_stale_spot_only_for_universe_then_recovers_on_fresh_tick(m
 
 
 
-def test_production_feed_manager_injection_isolates_all_iv_consumers_on_one_mode_three_socket():
-    from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
+def test_runtime_without_shared_runner_uses_only_noop_transports():
+    from app.scanner.iv_skew_flip.runtime import _DisabledIVMarketDataTransport
 
-    class Manager:
-        def snapshot(self):
-            return {"subscriptions": 0, "socket_groups": 0}
-
-        def close(self):
-            self.closed = True
-
-    manager = Manager()
     runtime = IVSkewFlipRuntime(
         instrument_master=FakeMaster([]),
-        feed_manager=manager,
         clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
     )
 
-    assert isinstance(runtime.spot_feed.feed, CommonStrategyMarketFeed)
-    assert runtime.spot_feed.feed.manager is manager
-    assert runtime.spot_feed.feed.mode == 3
-
-    assert isinstance(runtime.future_feed.feed, CommonStrategyMarketFeed)
-    assert runtime.future_feed.feed.manager is manager
-    assert runtime.future_feed.feed.mode == 3
-
+    assert isinstance(runtime.spot_feed.feed, _DisabledIVMarketDataTransport)
+    assert runtime.future_feed.snapshot()["status"] == "DISABLED_BY_SCOPE"
     option_feed = runtime.option_feed_factory("NIFTY_WEEKLY")
-    assert option_feed.feed.manager is manager
-    assert option_feed.feed.mode == 3
-
+    assert isinstance(option_feed.feed, _DisabledIVMarketDataTransport)
     equity_feed = runtime.equity_feed_factory()
-    assert equity_feed.feed.manager is manager
-    assert equity_feed.feed.mode == 3
+    assert isinstance(equity_feed.feed, _DisabledIVMarketDataTransport)
+    assert runtime.snapshot()["market_data_connection"]["isolation"] == "SHARED_RUNNER_REQUIRED"
 
-    snapshot = runtime.snapshot()
-    assert snapshot["market_data_connection"]["isolation"] == "SHARED_PROCESS_MANAGER"
-    assert snapshot["market_data_connection"]["manager_owner"] == "APPLICATION"
-    assert snapshot["market_data_connection"]["socket_mode"] == 3
-    assert snapshot["market_data_connection"]["global_socket_limit"] == 3
-    assert snapshot["market_data_connection"]["owns_manager"] is False
-
-    stopped = runtime.stop()
-    assert stopped["status"] == "STOPPED"
-    assert not getattr(manager, "closed", False)
-
+    assert runtime.stop()["status"] == "STOPPED"
 
 
 def test_nifty_weekly_and_banknifty_monthly_keep_tomorrows_expiry_then_roll_after_close(monkeypatch):
@@ -1062,7 +1026,6 @@ def test_runtime_attaches_to_shared_index_runner_without_owning_feed_lifecycle()
     manager = Manager()
     runtime = IVSkewFlipRuntime(
         instrument_master=FakeMaster([]),
-        feed_manager=manager,
         shared_runner=shared_runner,
         clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
     )
@@ -1079,7 +1042,6 @@ def test_runtime_attaches_to_shared_index_runner_without_owning_feed_lifecycle()
 
     stopped = runtime.stop()
     assert stopped["status"] == "STOPPED"
-    assert manager.close_calls == 0
     assert shared_runner.stop_calls == 0
 
 def test_shared_runner_expiry_selection_rolls_banknifty_monthly_only_after_close():
