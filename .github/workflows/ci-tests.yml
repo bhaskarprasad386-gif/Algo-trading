@@ -15,7 +15,6 @@ jobs:
       PYTHONPATH: backend
       DATABASE_URL: "sqlite:///:memory:"
       LIVE_SYNTHETIC_DATA_ENABLED: "false"
-      LIVE_BOX_SPREAD_DATA_ENABLED: "false"
       LIVE_MARKET_DATA_PERSISTENCE_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
@@ -81,7 +80,6 @@ jobs:
           IV_TEST_POSTGRES_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/iv_basket_test"
           # CI must not start broker-backed live collectors; those are exercised by dedicated integration/runtime checks.
           LIVE_SYNTHETIC_DATA_ENABLED: "false"
-          LIVE_BOX_SPREAD_DATA_ENABLED: "false"
           LIVE_MARKET_DATA_PERSISTENCE_ENABLED: "false"
         run: >-
           python -m pytest backend/tests -q --tb=short -r fE
@@ -91,41 +89,6 @@ jobs:
           --ignore=backend/tests/test_historical_arbitrage_catalog_e2e.py
           --ignore=backend/tests/test_historical_catalog_replay.py
           --ignore=backend/tests/test_historical_arbitrage_service.py
-          --ignore-glob='backend/tests/test_box_spread_alert*.py'
-          --ignore-glob='backend/tests/test_box_spread_contract_resolver.py'
-          --ignore-glob='backend/tests/test_box_spread_depth_shadow*.py'
-          --ignore-glob='backend/tests/test_box_spread_diagnostics.py'
-          --ignore-glob='backend/tests/test_box_spread_edge*.py'
-          --ignore-glob='backend/tests/test_box_spread_entry_edge.py'
-          --ignore-glob='backend/tests/test_box_spread_expiry.py'
-          --ignore-glob='backend/tests/test_box_spread_index_selection_safety.py'
-          --ignore-glob='backend/tests/test_box_spread_instrument_cache.py'
-          --ignore-glob='backend/tests/test_box_spread_live_depth_shadow*.py'
-          --ignore-glob='backend/tests/test_box_spread_live_scanner.py'
-          --ignore-glob='backend/tests/test_box_spread_paper_audit_events.py'
-          --ignore-glob='backend/tests/test_box_spread_paper_crash_boundaries.py'
-          --ignore-glob='backend/tests/test_box_spread_paper_depth*.py'
-          --ignore-glob='backend/tests/test_box_spread_paper_engine.py'
-          --ignore-glob='backend/tests/test_box_spread_paper_ledger.py'
-          --ignore-glob='backend/tests/test_box_spread_paper_postgres_concurrency.py'
-          --ignore-glob='backend/tests/test_box_spread_paper_restart_safety.py'
-          --ignore-glob='backend/tests/test_box_spread_paper_routes.py'
-          --ignore-glob='backend/tests/test_box_spread_paper_rules.py'
-          --ignore-glob='backend/tests/test_box_spread_paper_schema_startup.py'
-          --ignore-glob='backend/tests/test_box_spread_publication_gate.py'
-          --ignore-glob='backend/tests/test_box_spread_runner_supervisor.py'
-          --ignore-glob='backend/tests/test_box_spread_snapshot_pipeline.py'
-          --ignore-glob='backend/tests/test_box_spread_subscriptions.py'
-          --ignore-glob='backend/tests/test_box_spread_top15_universe.py'
-          --ignore-glob='backend/tests/test_box_spread_universe.py'
-          --ignore-glob='backend/tests/test_dashboard_batch6_box_spread.py'
-          --ignore-glob='backend/tests/test_live_box_spread_pipeline_staging.py'
-          --ignore-glob='backend/tests/test_live_box_spread_routes.py'
-          --ignore-glob='backend/tests/test_live_box_spread_runner*.py'
-          --ignore-glob='backend/tests/test_live_box_spread_scanner.py'
-          --ignore-glob='backend/tests/test_live_box_spread_snapshot_routes.py'
-          --ignore-glob='backend/tests/test_phase_d_box_spread.py'
-          --ignore-glob='backend/tests/test_recover_latest_box_spread_master_artifact.py'
           --ignore-glob='backend/tests/test_dashboard_batch5_synthetic.py'
           --ignore-glob='backend/tests/test_live_synthetic*.py'
           --ignore-glob='backend/tests/test_phase_e_synthetic_cash_carry.py'
