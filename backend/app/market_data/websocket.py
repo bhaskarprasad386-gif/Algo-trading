@@ -235,7 +235,15 @@ def _connect_sdk_socket_with_verified_tls(socket: Any) -> None:
 
     worker = Thread(target=run_transport, name="angel-ws-transport", daemon=True)
     socket._transport_thread = worker
-    worker.start()
+    try:
+        worker.start()
+    except Exception:
+        # A failed start never enters run_transport/finally. Remove the
+        # unstarted reference so close/reconnect diagnostics do not mistake it
+        # for an owned transport worker or attempt to join it.
+        if getattr(socket, "_transport_thread", None) is worker:
+            socket._transport_thread = None
+        raise
     timeout = max(1.0, float(getattr(socket, "_connect_handshake_timeout_seconds", 15.0)))
     if not ready.wait(timeout=timeout):
         _close_sdk_connection_bounded(socket, phase="handshake-timeout")

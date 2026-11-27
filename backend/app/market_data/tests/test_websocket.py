@@ -839,3 +839,34 @@ def test_ping_pong_timeout_is_forwarded_as_transport_failure(monkeypatch):
         raise AssertionError("heartbeat timeout must fail the transport handshake")
 
     assert forwarded == ["ping/pong timed out"]
+
+
+def test_sdk_transport_worker_start_failure_clears_unstarted_reference(monkeypatch):
+    class BrokenThread:
+        def __init__(self, *args, **kwargs):
+            self.name = kwargs.get("name")
+
+        def start(self):
+            raise RuntimeError("thread quota exhausted")
+
+    class FakeWebSocketApp:
+        def __init__(self, url, **kwargs):
+            self.callbacks = kwargs
+
+    monkeypatch.setattr(websocket_module.websocket_client, "WebSocketApp", FakeWebSocketApp)
+    monkeypatch.setattr(websocket_module, "Thread", BrokenThread)
+    sdk_socket = SimpleNamespace(
+        ROOT_URI="wss://smartapisocket.angelone.in/smart-stream",
+        auth_token="jwt", api_key="api-key", client_code="client", feed_token="feed",
+        _on_open=lambda *_: None, _on_error=lambda *_: None, _on_close=lambda *_: None,
+        _on_data=lambda *_: None, _on_ping=lambda *_: None, _on_pong=lambda *_: None,
+    )
+
+    try:
+        websocket_module._connect_sdk_socket_with_verified_tls(sdk_socket)
+    except RuntimeError as exc:
+        assert "thread quota exhausted" in str(exc)
+    else:
+        raise AssertionError("transport thread startup failure must propagate")
+
+    assert sdk_socket._transport_thread is None
