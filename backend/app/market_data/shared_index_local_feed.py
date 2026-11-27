@@ -74,6 +74,8 @@ class SharedIndexRunnerLocalFeedManager:
                 self._queue.put_nowait(record)
                 return True
             except Full:
+                with self._lock:
+                    self._queue_dropped += 1
                 return False
 
     def register_normalized_callback(self, consumer: str, callback: Callable[[Any], None]) -> None:
@@ -190,7 +192,7 @@ class SharedIndexRunnerLocalFeedManager:
             timestamp_ns = getattr(record, "timestamp_ns", 0)
             state = getattr(self.runner, "state", None)
             max_age_ns = getattr(state, "max_age_ns", 5_000_000_000)
-            age_ns = time_ns() - timestamp_ns if isinstance(timestamp_ns, int) else max_age_ns + 1
+            age_ns = time_ns() - timestamp_ns if isinstance(timestamp_ns, int) and not isinstance(timestamp_ns, bool) else max_age_ns + 1
             if age_ns > max_age_ns or age_ns < -1_000_000_000:
                 with self._lock:
                     self._stale_dropped += 1
