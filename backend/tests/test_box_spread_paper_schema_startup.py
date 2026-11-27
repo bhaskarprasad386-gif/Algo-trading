@@ -1,19 +1,16 @@
-"""Regression tests for the additive SQLAlchemy schema creation used at API startup."""
+"""Retired paper schema is preserved when present but is not a startup dependency."""
 
 from sqlalchemy import create_engine, text
 
 from app.core.database import Base
 from app import models as _models  # noqa: F401
-from app.scanner import box_spread_paper_ledger as _paper_models  # noqa: F401
 
 
-def test_startup_create_all_adds_paper_tables_without_touching_existing_rows(tmp_path):
-    """Mirror main.py's Base.metadata.create_all against an isolated SQLite DB."""
+def test_startup_schema_creation_preserves_existing_paper_rows_without_requiring_paper_models(tmp_path):
     database_path = tmp_path / "startup-schema.db"
     engine = create_engine(f"sqlite:///{database_path}", connect_args={"timeout": 5})
 
     try:
-        # Existing production tables and data must survive create_all unchanged.
         with engine.begin() as connection:
             connection.execute(
                 text(
@@ -24,35 +21,33 @@ def test_startup_create_all_adds_paper_tables_without_touching_existing_rows(tmp
             connection.execute(
                 text("INSERT INTO existing_business_data (id, value) VALUES (1, 'preserve-me')")
             )
+            # Simulate an older deployment. Retirement must not drop or rewrite
+            # these tables/rows, but main.py no longer imports their ORM models.
+            connection.execute(
+                text(
+                    "CREATE TABLE box_spread_paper_trades "
+                    "(id INTEGER PRIMARY KEY, status VARCHAR(24) NOT NULL)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO box_spread_paper_trades (id, status) "
+                    "VALUES (7, 'CLOSED')"
+                )
+            )
 
         Base.metadata.create_all(bind=engine)
 
         with engine.connect() as connection:
-            tables = {
-                row[0]
-                for row in connection.execute(
-                    text("SELECT name FROM sqlite_master WHERE type='table'")
-                )
-            }
-            assert {
-                "box_spread_paper_accounts",
-                "box_spread_paper_trades",
-                "box_spread_paper_entry_claims",
-                "box_spread_paper_audit_events",
-                "box_spread_paper_ledger_entries",
-            }.issubset(tables)
-
-            paper_columns = {
-                row[1] for row in connection.execute(text("PRAGMA table_info(box_spread_paper_trades)"))
-            }
-            assert "entry_spot_price" in paper_columns
-
             row = connection.execute(
                 text("SELECT id, value FROM existing_business_data WHERE id = 1")
             ).one()
             assert tuple(row) == (1, "preserve-me")
+            paper_row = connection.execute(
+                text("SELECT id, status FROM box_spread_paper_trades WHERE id = 7")
+            ).one()
+            assert tuple(paper_row) == (7, "CLOSED")
 
-        # Startup may run more than once; schema creation must remain idempotent.
         Base.metadata.create_all(bind=engine)
     finally:
         engine.dispose()
