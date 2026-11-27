@@ -3,23 +3,26 @@ from pathlib import Path
 ANDROID_ROOT = Path(__file__).resolve().parents[2] / "mobile" / "android"
 API_SERVICE = ANDROID_ROOT / "app" / "src" / "main" / "java" / "com" / "algotrading" / "app" / "ApiService.kt"
 MAIN_ACTIVITY = ANDROID_ROOT / "app" / "src" / "main" / "java" / "com" / "algotrading" / "app" / "MainActivity.kt"
-AUTO_ROUTES = Path(__file__).resolve().parents[1] / "app" / "scanner" / "auto_routes.py"
+FULL_FNO_ACTIVITY = ANDROID_ROOT / "app" / "src" / "main" / "java" / "com" / "algotrading" / "app" / "FullFnoBacktestActivity.kt"
 
-def test_android_cash_future_executable_contract_matches_backend():
+
+def test_android_client_has_no_cash_future_scanner_api_or_home_controls():
     api = API_SERVICE.read_text(encoding="utf-8")
-    backend = AUTO_ROUTES.read_text(encoding="utf-8")
-    assert 'GET("/api/v1/scanner/cash-future/live/fast")' in api
-    for field in ("symbols_requested", "scanned_observations", "opportunity_count", "data", "errors", "filters"):
-        assert f'"{field}"' in backend
-    for field in ("symbol", "cash_ask", "future_bid", "gap", "gap_pct", "net_gap", "net_profit", "lifecycle", "rank_score"):
-        assert f"val {field}:" in api
+    home = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    assert "cashFuture" not in api
+    assert "LiveCashFutureSignal" not in api
+    assert "cash-future" not in home.lower()
+    assert "disableCashFutureScanner" not in home
+    assert "btnRunScanner" not in home
+    assert "btnBoxSpread" in home
 
-def test_android_cash_future_screen_displays_scanner_opportunities_without_paper_execution():
-    body = MAIN_ACTIVITY.read_text(encoding="utf-8")
-    assert "response.data" in body
-    assert ".sortedWith(compareByDescending<LiveCashFutureSignal> { it.executable }" in body
-    assert "lastExecutableOpportunity = executable" in body
-    assert "openScannerDetail(lastExecutableOpportunity)" in body
-    assert "btnScannerPaperExecute" not in body
-    assert "paperEntry(" not in body
-    assert "paperExit(" not in body
+
+def test_android_keeps_only_box_spread_live_scanner_and_full_fno_history():
+    api = API_SERVICE.read_text(encoding="utf-8")
+    home = MAIN_ACTIVITY.read_text(encoding="utf-8")
+    full_fno = FULL_FNO_ACTIVITY.read_text(encoding="utf-8")
+    assert 'GET("/api/v1/scanner/box-spread/live")' in api
+    assert "BoxSpreadActivity" in home
+    assert "startFullFnoJob()" in full_fno
+    assert "cashFutureReplay(" not in full_fno
+    assert "calendarSpreadHistoricalReplay(" not in api
