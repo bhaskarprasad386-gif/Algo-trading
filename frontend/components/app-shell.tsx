@@ -25,6 +25,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     : null;
   const [mobileOpen, setMobileOpen] = useState(false);
   const { theme, setTheme } = useTheme();
+  const retiredScannerPage = pathname === "/scanner" ||
+    pathname.startsWith("/strategies/calendar-spread") ||
+    pathname.startsWith("/strategies/box-spread") ||
+    pathname.startsWith("/strategies/synthetic-arbitrage");
+  if (retiredScannerPage) {
+    return <main className="grid min-h-[100dvh] place-items-center theme-bg theme-text"><section className="rounded-2xl border theme-border theme-surface p-8 text-center"><h1 className="text-lg font-bold">Page unavailable</h1><p className="mt-2 text-sm theme-muted">This scanner has been retired.</p><Link href="/" className="mt-5 inline-block text-sm font-semibold theme-accent">Return to Dashboard</Link></section></main>;
+  }
 
   return (
     <div className="min-h-screen min-h-[100dvh] theme-bg theme-text">
