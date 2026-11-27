@@ -117,8 +117,6 @@ provider_quote_parity_store: SQLiteQuoteParityStore | None = None
 provider_quote_parity_worker: BoundedQuoteParityWorker | None = None
 provider_readiness_bridge = ProviderReadinessBridge()
 early_impulse_observer.configure_readiness(provider_readiness_bridge)
-_provider_readiness_observer_lock = threading.Lock()
-_provider_readiness_observer_manager_id: int | None = None
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
 _iv_skew_flip_runtime_lock = threading.RLock()
 live_cash_future_scanner = LiveCashFutureScanner()
