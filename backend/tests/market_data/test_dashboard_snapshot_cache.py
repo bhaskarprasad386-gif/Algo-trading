@@ -122,3 +122,35 @@ def test_refresh_thread_start_failure_does_not_leave_cache_stuck(monkeypatch):
     assert cache._refreshing is False
     assert cache._refresh_done.is_set()
     assert cache._refresh_errors == 1
+
+
+def test_snapshot_deepcopy_does_not_hold_cache_lock(monkeypatch):
+    import app.market_data.dashboard_snapshot_cache as module
+
+    cache = BoundedSnapshotCache(ttl_seconds=10, max_stale_seconds=20)
+    cache.get(lambda: {"value": 11})
+    original_deepcopy = module.deepcopy
+    copying, release = Event(), Event()
+    results = []
+
+    def blocked_deepcopy(value):
+        copying.set()
+        assert release.wait(2)
+        return original_deepcopy(value)
+
+    monkeypatch.setattr(module, "deepcopy", blocked_deepcopy)
+    reader = Thread(target=lambda: results.append(cache.get(lambda: {"value": 12})))
+    reader.start()
+    assert copying.wait(1)
+
+    # A second request/cache operation can acquire the state lock while the
+    # first request recursively copies its already-captured immutable snapshot.
+    acquired = cache._lock.acquire(timeout=0.5)
+    assert acquired is True
+    if acquired:
+        cache._lock.release()
+
+    release.set()
+    reader.join(timeout=2)
+    assert not reader.is_alive()
+    assert results[0]["value"] == 11
