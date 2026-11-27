@@ -6,12 +6,13 @@ from app.scanner import page_push_websocket as push
 
 def test_page_channels_cover_all_scanner_pages():
     expected = {
+        "box-spread",
         "iv-skew-flip",
         "credit-butterfly-condor-weekly",
         "credit-butterfly-condor-monthly",
         "weekly-swing",
     }
-    retired = {"weekly-swing", "synthetic-arbitrage", "calendar-spread", "iv-skew-flip"}
+    retired = {"cash-future", "calendar-spread", "synthetic-arbitrage"}
     assert push.PAGE_CHANNELS == expected
     assert push.PAGE_CHANNELS.isdisjoint(retired)
 
