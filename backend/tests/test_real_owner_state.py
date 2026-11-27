@@ -6,7 +6,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.brokers.real_owner_state import account_fingerprint, claim_authenticated_account, disable_owner_trading, reconcile_owner_state_on_startup
 from app.core.database import Base
-from app.models import BoxSpreadRealOwnerState
+from app.models import RealTradingOwnerState
 
 TEST_SECRET = "test-secret-key-that-is-long-enough-for-owner-state"
 
@@ -72,7 +72,7 @@ def test_different_account_is_rejected_without_overwriting_owner_binding(db):
 
     assert raised.value.status_code == 409
     db.expire_all()
-    persisted = db.query(BoxSpreadRealOwnerState).one()
+    persisted = db.query(RealTradingOwnerState).one()
     assert persisted.id == original.id
     assert persisted.account_fingerprint == account_fingerprint("angel_one", "CLIENT123")
 
@@ -102,7 +102,7 @@ def test_concurrent_first_claim_cannot_replace_persisted_owner(db, monkeypatch):
         # this request observed an empty table but before its commit.
         db.rollback()
         db.add(
-            BoxSpreadRealOwnerState(
+            RealTradingOwnerState(
                 owner_key="box-spread-real-owner",
                 broker_name="angel_one",
                 account_fingerprint=account_fingerprint("angel_one", "CLIENT123"),
@@ -121,7 +121,7 @@ def test_concurrent_first_claim_cannot_replace_persisted_owner(db, monkeypatch):
 
     assert raised.value.status_code == 409
     db.expire_all()
-    persisted = db.query(BoxSpreadRealOwnerState).one()
+    persisted = db.query(RealTradingOwnerState).one()
     assert persisted.account_fingerprint == account_fingerprint("angel_one", "CLIENT123")
     assert persisted.real_trading_enabled is False
     assert persisted.kill_switch is True
@@ -164,7 +164,7 @@ def test_startup_reconciliation_clears_stale_connection_and_disarms(db):
     assert reconcile_owner_state_on_startup(db) is True
 
     db.expire_all()
-    persisted = db.query(BoxSpreadRealOwnerState).one()
+    persisted = db.query(RealTradingOwnerState).one()
     assert persisted.id == state.id
     assert persisted.connected is False
     assert persisted.real_trading_enabled is False
@@ -173,7 +173,7 @@ def test_startup_reconciliation_clears_stale_connection_and_disarms(db):
 
 def test_startup_reconciliation_does_not_create_unclaimed_owner(db):
     assert reconcile_owner_state_on_startup(db) is False
-    assert db.query(BoxSpreadRealOwnerState).count() == 0
+    assert db.query(RealTradingOwnerState).count() == 0
 
 
 
@@ -249,7 +249,7 @@ def test_single_owner_rejects_same_client_identity_under_a_different_broker(db):
 
     assert raised.value.status_code == 409
     db.expire_all()
-    persisted = db.query(BoxSpreadRealOwnerState).one()
+    persisted = db.query(RealTradingOwnerState).one()
     assert persisted.id == original.id
     assert persisted.broker_name == "angel_one"
     assert persisted.account_fingerprint == account_fingerprint("angel_one", "CLIENT123")
@@ -265,7 +265,7 @@ def test_single_owner_rejects_cross_broker_switch_even_when_account_ids_differ(d
 
     assert raised.value.status_code == 409
     db.expire_all()
-    persisted = db.query(BoxSpreadRealOwnerState).one()
+    persisted = db.query(RealTradingOwnerState).one()
     assert persisted.id == original.id
     assert persisted.broker_name == "fyers"
     assert persisted.account_fingerprint == account_fingerprint("fyers", "FY12345")
@@ -285,7 +285,7 @@ def test_disconnect_provider_failure_still_clears_local_and_durable_state(db, mo
             raise RuntimeError("provider logout unavailable")
 
     claim_authenticated_account(db, "angel_one", "CLIENT123")
-    set_state = db.query(BoxSpreadRealOwnerState).one()
+    set_state = db.query(RealTradingOwnerState).one()
     set_state.connected = True
     db.commit()
 
@@ -307,7 +307,7 @@ def test_disconnect_provider_failure_still_clears_local_and_durable_state(db, mo
     assert trading_safety.get(7).real_trading_enabled is False
     assert trading_safety.get(7).kill_switch is True
     db.expire_all()
-    persisted = db.query(BoxSpreadRealOwnerState).one()
+    persisted = db.query(RealTradingOwnerState).one()
     assert persisted.connected is False
     assert persisted.real_trading_enabled is False
     assert persisted.kill_switch is True
@@ -367,7 +367,7 @@ def test_reconnect_old_provider_logout_failure_keeps_new_session_consistent_and_
     assert trading_safety.get(7).real_trading_enabled is False
     assert trading_safety.get(7).kill_switch is True
     db.expire_all()
-    persisted = db.query(BoxSpreadRealOwnerState).one()
+    persisted = db.query(RealTradingOwnerState).one()
     assert persisted.connected is True
     assert persisted.real_trading_enabled is False
     assert persisted.kill_switch is True
