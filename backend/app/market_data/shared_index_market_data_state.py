@@ -25,7 +25,7 @@ class SharedIndexMarketDataState:
         self._latest: dict[str, Any] = {}
         # Secondary indexes avoid rebuilding the full enriched snapshot for IV.
         self._latest_by_token: dict[str, dict[str, Any]] = {}
-        self._latest_by_underlying_type: dict[tuple[str, str], Any] = {}
+        self._latest_by_underlying_type: dict[tuple[str, str], dict[str, Any]] = {}
         # Once the runner publishes its owned universe, late ticks for retired
         # contracts are rejected instead of repopulating the cache after rotation.
         self._allowed_keys: set[str] | None = None
@@ -74,7 +74,7 @@ class SharedIndexMarketDataState:
             underlying = str(getattr(record, "underlying", "") or "").strip().upper()
             kind = str(getattr(getattr(record, "instrument_type", None), "value", "") or "").lower()
             if underlying and kind == "index":
-                self._latest_by_underlying_type[(underlying, kind)] = record
+                self._latest_by_underlying_type.setdefault((underlying, kind), {})[key] = record
             cutoff = ts - 5_000_000_000
             if record.oi is not None:
                 history = self._oi_history.setdefault(key, deque(maxlen=self.MAX_OI_HISTORY))
@@ -149,8 +149,12 @@ class SharedIndexMarketDataState:
                                 self._latest_by_token.pop(token, None)
                     underlying = str(getattr(retired, "underlying", "") or "").strip().upper()
                     kind = str(getattr(getattr(retired, "instrument_type", None), "value", "") or "").lower()
-                    if underlying and kind and self._latest_by_underlying_type.get((underlying, kind)) is retired:
-                        self._latest_by_underlying_type.pop((underlying, kind), None)
+                    if underlying and kind:
+                        indexed_records = self._latest_by_underlying_type.get((underlying, kind))
+                        if indexed_records is not None:
+                            indexed_records.pop(key, None)
+                            if not indexed_records:
+                                self._latest_by_underlying_type.pop((underlying, kind), None)
                 # Retired contracts must not leave replayable quotes in the shared cache.
                 get_shared_market_data_cache().delete(key)
                 self._oi_history.pop(key, None)
@@ -187,8 +191,9 @@ class SharedIndexMarketDataState:
         symbols = tuple(dict.fromkeys(str(item).strip().upper() for item in underlyings if str(item).strip()))
         with self._lock:
             records = tuple(
-                record for symbol in symbols
-                if (record := self._latest_by_underlying_type.get((symbol, kind))) is not None
+                max(indexed_records.values(), key=lambda record: record.timestamp_ns)
+                for symbol in symbols
+                if (indexed_records := self._latest_by_underlying_type.get((symbol, kind)))
             )
         return tuple(record.as_dict() for record in records)
 
