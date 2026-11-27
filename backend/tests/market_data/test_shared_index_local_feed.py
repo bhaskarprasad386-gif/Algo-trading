@@ -163,6 +163,8 @@ def test_local_feed_rejects_instruments_not_owned_by_shared_runner():
                 assert "currently owned by SharedIndexMarketDataRunner" in str(exc)
             else:
                 raise AssertionError("unowned instrument subscription must fail closed")
+            assert manager.snapshot()["consumer_count"] == 0
+            assert manager.registry.get(descriptor.key) is None
         finally:
             feed.stop()
     finally:
