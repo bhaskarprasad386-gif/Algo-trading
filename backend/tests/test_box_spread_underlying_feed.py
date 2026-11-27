@@ -166,7 +166,7 @@ def test_underlying_feed_retains_unresolved_target_and_recovers_token():
 
 
 def test_run_forever_starts_common_feed_without_descriptor_token_attribute(monkeypatch):
-    from app.market_data import live_synthetic_underlying as module
+    from app.market_data import box_spread_underlying_feed as module
 
     holder = {}
     original_descriptor = module.CommonStrategyMarketFeed.descriptor
@@ -207,7 +207,7 @@ def test_run_forever_starts_common_feed_without_descriptor_token_attribute(monke
     assert download_calls == [False]
 
 def test_underlying_feed_clears_old_subscription_when_all_tokens_become_unresolvable(monkeypatch):
-    from app.market_data import live_synthetic_underlying as module
+    from app.market_data import box_spread_underlying_feed as module
 
     master = InstrumentMaster()
     master.instruments = [
@@ -268,7 +268,7 @@ def test_underlying_feed_maps_shared_canonical_symbol_back_to_configured_underly
 
     # The cash-future consumer may have registered this shared NSE token as
     # RELIANCE-EQ first, so the normalized record's display symbol is not the
-    # underlying key that the synthetic ATM tracker expects.
+    # underlying key that the Box Spread ATM tracker expects.
     descriptor = feed._descriptors()[0]
     timestamp_ns = time_ns()
     record = MarketDataRecord(
