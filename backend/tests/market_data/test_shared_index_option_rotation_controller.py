@@ -18,7 +18,7 @@ class FakeClock:
 
 
 
-def _rows(expiry="26NOV2026"):
+def _rows(expiry="03DEC2026"):
     rows = []
     for underlying, base, step, count in (("NIFTY", 21750, 50, 31), ("BANKNIFTY", 48000, 100, 31)):
         for index in range(count):
@@ -36,7 +36,7 @@ def test_controller_initial_spot_tick_only_anchors_and_threshold_rotates():
     clock = FakeClock()
     lifecycle = StubLifecycle()
     controller = SharedIndexOptionRotationController(lifecycle=lifecycle,
-        instrument_rows=_rows, expiry_for=lambda _: "26NOV2026",
+        instrument_rows=_rows, expiry_for=lambda _: "03DEC2026",
         thresholds={"NIFTY":50}, cooldown_seconds=1, clock=clock)
     assert not controller.on_record(_spot("NIFTY", 22000))
     assert controller.on_record(_spot("NIFTY", 22050))
