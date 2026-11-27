@@ -349,7 +349,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible {
  <section class="grid hero-grid">
   <div class="card" data-widget-id="market" data-widget="market">
    <div class="card-head"><div><h2>Market Overview</h2><div class="sub">NSE • BSE • backend/config driven</div></div><span class="view" onclick="loadMarketOverview()">Refresh</span></div>
-   <div class="market-tabs"><button class="tab active" data-market-tab="indices" onclick="setMarketTab('indices')">Indices</button><button class="tab" data-market-tab="commodities" onclick="setMarketTab('commodities')">Commodities</button><button class="tab" data-market-tab="fo" onclick="setMarketTab('fo')">F&amp;O Universe</button></div>
+   <div class="market-tabs"><button class="tab active" data-market-tab="indices" onclick="setMarketTab('indices')">Indices</button><button class="tab" data-market-tab="fo" onclick="setMarketTab('fo')">F&amp;O Universe</button></div>
    <div class="market-cards" id="homeMarketTiles">
     <div class="market-tile"><div class="sym">NIFTY 50</div><div class="ltp">—</div><div class="chg">Waiting for live quote</div></div>
     <div class="market-tile"><div class="sym">BANKNIFTY</div><div class="ltp">—</div><div class="chg">Waiting for live quote</div></div>
@@ -655,7 +655,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible {
 const DASHBOARD_WIDGET_KEY='algo.dashboard.widgets.v1';
 const DASHBOARD_DEFAULT_WIDGETS={market:true,alerts:true,scanner:true,strategy:true,results:true,terminal:true};
 let refreshTimer=null;
-let liveSnapshot={indices:[],commodities:[]};
+let liveSnapshot={indices:[]};
 let alertEvents=[];
 let alertTab='active';
 let savedAlerts=JSON.parse(localStorage.getItem('algo.dashboard.alerts.v1')||'[]');
