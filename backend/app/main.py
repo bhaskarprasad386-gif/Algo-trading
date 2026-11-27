@@ -637,10 +637,6 @@ def root():
     return {"message": "Algo Trading Platform is running", "environment": settings.environment, "version": "0.1.0"}
 
 
-class SyntheticUniverseSelection(BaseModel):
-    selection: str
-
-
 def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
     """Summarize NSE/NFO tick freshness without allowing unrelated exchanges to mask gaps."""
     raw_ages = common_feed.get("last_exchange_tick_received_age_seconds_by_exchange_type")
