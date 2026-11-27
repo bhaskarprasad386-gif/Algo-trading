@@ -1,72 +1,75 @@
 from pathlib import Path
 
 
-def test_retired_historical_routes_are_not_mounted_or_advertised():
-    source = Path(__file__).parents[1].joinpath("app", "main.py").read_text(encoding="utf-8")
-    assert "app.include_router(scanner_router)" not in source
-    assert "app.include_router(auto_scanner_router)" not in source
-    assert "app.include_router(monthly_results_router)" not in source
-    assert "app.include_router(cash_future_strategy_router)" not in source
-    assert "app.include_router(calendar_spread_strategy_router)" not in source
-    assert "CashFutureDownloadManager" not in source
-    assert '"id": "cash-future"' not in source
-    assert '"id": "calendar-spread"' not in source
-    assert '"id": "synthetic-future-cash-carry"' not in source
+def test_cash_future_calendar_and_synthetic_live_apis_are_not_mounted():
+    root = Path(__file__).parents[1]
+    main = (root / "app" / "main.py").read_text(encoding="utf-8")
+    shell = (root.parent / "frontend" / "components" / "app-shell.tsx").read_text(encoding="utf-8")
+    dashboard = (root.parent / "frontend" / "app" / "page.tsx").read_text(encoding="utf-8")
+
+    for retired in ("cash-future", "calendar-spread", "synthetic-arbitrage", "synthetic-future-cash-carry"):
+        assert f'"id": "{retired}"' not in main
+        assert f'"{retired}"' not in shell
+        assert f'"{retired}"' not in dashboard
+    for retired_router in ("scanner_router", "auto_scanner_router", "monthly_results_router", "cash_future_strategy_router", "calendar_spread_strategy_router"):
+        assert f"app.include_router({retired_router})" not in main
+    assert "CashFutureDownloadManager" not in main
 
 
-def test_box_spread_and_full_fno_workspaces_remain():
-    source = Path(__file__).parents[1].joinpath("app", "main.py").read_text(encoding="utf-8")
-    assert '"id": "box-spread"' in source
-    assert '"id": "full-fno"' in source
-    assert "app.include_router(live_box_spread_router)" in source
-    assert "app.include_router(box_spread_paper_router)" not in source
-    assert "app.include_router(box_spread_paper_private_ws_router)" not in source
-    assert "app.include_router(box_spread_paper_rule_router)" not in source
-    assert "app.include_router(page_push_websocket_router)" in source
+def test_box_spread_and_paper_trading_are_fully_retired():
+    root = Path(__file__).parents[1]
+    main = (root / "app" / "main.py").read_text(encoding="utf-8")
+    page_push = (root / "app" / "scanner" / "page_push_websocket.py").read_text(encoding="utf-8")
+    shell = (root.parent / "frontend" / "components" / "app-shell.tsx").read_text(encoding="utf-8")
+    dashboard = (root.parent / "frontend" / "app" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "box_spread" not in main.lower()
+    assert "box-spread" not in shell
+    assert "box_spread" not in dashboard.lower()
+    assert "box-spread" not in page_push
+    assert "BoxSpread" not in main
+    assert "LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED" not in main
+    assert not (root.parent / "frontend" / "app" / "strategies" / "box-spread").exists()
+    assert not (root.parent / "frontend" / "app" / "strategies" / "box-spread-paper").exists()
 
 
-def test_generic_backtest_run_results_and_market_replay_remain():
-    source = Path(__file__).parents[1].joinpath("app", "main.py").read_text(encoding="utf-8")
-    assert "app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))" in source
-    assert "app.include_router(create_download_status_router(backtest_status_store))" in source
-    assert "app.include_router(create_universal_result_router(universal_result_service))" in source
+def test_common_broker_websocket_is_exclusively_owned_by_shared_index_runner():
+    root = Path(__file__).parents[1]
+    feed_source = (root / "app" / "market_data" / "common_strategy_feed.py").read_text(encoding="utf-8")
+    runner_source = (root / "app" / "market_data" / "shared_index_market_data_runner.py").read_text(encoding="utf-8")
+    main = (root / "app" / "main.py").read_text(encoding="utf-8")
+
+    assert "class SharedIndexOnlyWebSocketManager" in feed_source
+    assert '"shared-index-market-data:spot"' in feed_source
+    assert '"shared-index-market-data:options"' in feed_source
+    assert '"shared-index-market-data:futures"' in feed_source
+    assert "LOCKED = (\"NIFTY\", \"BANKNIFTY\")" in runner_source
+    assert "shared_index_market_data_runner = SharedIndexMarketDataRunner" in main
+    assert "_shared_index_market_data_recovery_loop()" in main
+    assert "box_shared_feed_manager" not in main
+    assert "LiveBoxSpreadRunner" not in main
+    assert "CommonWebSocketManager(" not in main
+    assert "MarketDataWebSocket(" not in main
 
 
-def test_only_shared_index_runner_is_admitted_to_production_websocket():
-    source = Path(__file__).parents[1].joinpath("app", "main.py").read_text(encoding="utf-8")
-    feed_source = Path(__file__).parents[1].joinpath(
-        "app", "market_data", "common_strategy_feed.py"
-    ).read_text(encoding="utf-8")
+def test_iv_scanner_reads_shared_runner_without_owning_broker_subscriptions():
+    root = Path(__file__).parents[1]
+    main = (root / "app" / "main.py").read_text(encoding="utf-8")
+    runtime = (root / "app" / "scanner" / "iv_skew_flip" / "runtime.py").read_text(encoding="utf-8")
+    adapters = (root / "app" / "scanner" / "iv_skew_flip" / "shared_runner_feed.py").read_text(encoding="utf-8")
 
-    assert "LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = False" in source
-    assert "box_shared_feed_manager.attach()" in source
-    assert "SharedIndexRunnerLocalFeedManager" in source
-    assert "_shared_index_market_data_recovery_loop()" in source
-    assert "_cash_future_history_loop())" not in source
-    assert "_live_cash_future_loop())" not in source
-    assert "_live_calendar_spread_loop())" not in source
-    assert "_live_synthetic_loop())" not in source
-    assert "SharedIndexOnlyWebSocketManager" in feed_source
-    assert "SharedIndexMarketDataRunner (NIFTY/BANKNIFTY)" in feed_source
-    assert "CommonWebSocketManager(" not in source
-    assert "MarketDataWebSocket(" not in source
-    assert "shared_common_manager()" not in source
-    assert "SharedIndexRunnerLocalFeedManager(shared_index_market_data_runner)" in source
-    assert "box_shared_feed_manager.attach()" in source
-    assert "shared_feed_manager=box_shared_feed_manager" in source
-    assert "ShoonyaMarketDataSupervisor(" not in source
-    assert "SHOONYA_MARKET_DATA_ENABLED and shoonya_market_data_supervisor" not in source
-    assert "shoonya_market_data_supervisor" not in source
-    market_routes = Path(__file__).parents[1].joinpath("app", "market_data", "routes.py").read_text(encoding="utf-8")
-    assert "/shoonya/subscriptions" not in market_routes
-    assert "/shoonya-health" not in market_routes
-    assert "ShoonyaSubscriptionRequest" not in market_routes
-    assert "/api/v1/market-data/live-cash-future/health" not in source
-    runtime_start = source.index("def market_data_runtime_health")
-    runtime_end = source.index("def runtime_diagnostic_errors", runtime_start)
-    runtime_health = source[runtime_start:runtime_end]
-    assert "register_normalized_observer" not in runtime_health
-    assert "register_transport_observer" not in runtime_health
-    assert '"cash_future"' not in runtime_health
-    assert '"calendar_spread"' not in runtime_health
-    assert '"synthetic_arbitrage"' not in runtime_health
+    assert "shared_runner=shared_index_market_data_runner" in main
+    assert "IVSharedRunnerSpotFeedAdapter" in runtime
+    assert "IVSharedRunnerOptionFeedAdapter" in runtime
+    assert "owns_subscriptions": False" in adapters
+    assert "shared-index-market-data" in adapters
+    assert "CommonStrategyMarketFeed(" not in main
+    assert "MarketDataWebSocket(" not in main
+
+
+def test_generic_historical_replay_routes_remain_independent():
+    root = Path(__file__).parents[1]
+    main = (root / "app" / "main.py").read_text(encoding="utf-8")
+    assert "app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))" in main
+    assert "app.include_router(create_download_status_router(backtest_status_store))" in main
+    assert "app.include_router(create_universal_result_router(universal_result_service))" in main
