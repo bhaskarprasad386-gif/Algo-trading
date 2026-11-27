@@ -57,7 +57,7 @@ def test_legacy_notify_user_is_notification_only(monkeypatch):
 
     user = SimpleNamespace(id=7, mobile_number="+919999999999", alerts_enabled=True, whatsapp_alerts_enabled=True, email_alerts_enabled=False)
     event = AlertEvent(
-        strategy_id="cash-future",
+        strategy_id="iv-skew-flip",
         event_id="LEGACY-NOTIFY-NO-PAPER",
         symbol="ABC",
         timestamp_ns=3_000_000_000,
