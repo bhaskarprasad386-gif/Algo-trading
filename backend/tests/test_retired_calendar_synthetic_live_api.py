@@ -137,7 +137,9 @@ def test_retired_full_fno_paper_backtest_has_no_android_entrypoint_or_api():
 def test_iv_runtime_has_no_direct_websocket_fallbacks():
     root = Path(__file__).parents[1]
     runtime = (root / "app" / "scanner" / "iv_skew_flip" / "runtime.py").read_text(encoding="utf-8")
+    package_init = (root / "app" / "scanner" / "iv_skew_flip" / "__init__.py").read_text(encoding="utf-8")
 
+    assert "future_feed" not in package_init
     assert "CommonStrategyMarketFeed(" not in runtime
     assert "future_feed:" not in runtime
     assert not (root / "app" / "scanner" / "iv_skew_flip" / "future_feed.py").exists()
