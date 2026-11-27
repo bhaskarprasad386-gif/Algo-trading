@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from app.main import DASHBOARD_FILE, dashboard
+import pytest
+from fastapi import HTTPException
+
+from app.main import dashboard
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -9,14 +12,9 @@ ANDROID_MAIN = ROOT / "mobile" / "android" / "app" / "src" / "main" / "java" / "
 
 
 def test_phase12_web_android_alignment():
-    body = dashboard().body.decode("utf-8")
-    assert "PHASE 12 • PLATFORM NAVIGATION" in body
-    assert 'id="responsiveQuickNav"' in body
-    assert "WEB • FULL TABLES" in body
-    assert "ANDROID • COMPACT CARDS" in body
-    assert "SAME API / DATA" in body
-    assert "Live broker orders: OFF" in body
-    assert "Paper Portfolio" not in body
+    with pytest.raises(HTTPException) as exc:
+        dashboard()
+    assert exc.value.status_code == 404
 
     layout = ANDROID_LAYOUT.read_text()
     assert "PHASE 12 • MOBILE NAVIGATION" in layout
@@ -33,11 +31,9 @@ def test_phase12_web_android_alignment():
 
 
 def test_phase13_final_expansion_layer_is_present_on_both_surfaces():
-    body = dashboard().body.decode("utf-8")
-    assert "PHASE 13 • EXPANSION CENTER" in body
-    for label in ("INDICES &amp; EXCHANGES", "COMMODITIES &amp; CURRENCY", "STRATEGIES &amp; SCANNERS", "DATA SOURCES", "ANALYTICS &amp; CHARTS", "NOTIFICATIONS", "BROKER INTEGRATIONS", "USER LAYOUTS"):
-        assert label in body
-    assert "Real broker routing remains OFF." in body
+    with pytest.raises(HTTPException) as exc:
+        dashboard()
+    assert exc.value.status_code == 404
 
     layout = ANDROID_LAYOUT.read_text()
     assert "PHASE 13 • EXPANSION CENTER" in layout
