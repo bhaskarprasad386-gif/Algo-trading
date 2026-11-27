@@ -5,21 +5,17 @@ MAIN_ACTIVITY = Path(__file__).parents[2] / "mobile" / "android" / "app" / "src"
 LAYOUT = Path(__file__).parents[2] / "mobile" / "android" / "app" / "src" / "main" / "res" / "layout" / "activity_main.xml"
 
 
-def test_android_scanner_auto_refresh_controls():
+def test_android_cash_future_scanner_is_disabled_without_auto_refresh():
     body = MAIN_ACTIVITY.read_text(encoding="utf-8")
     layout = LAYOUT.read_text(encoding="utf-8")
 
     assert 'id="@+id/cbScannerAutoRefresh"' in layout
     assert 'id="@+id/etScannerRefreshSeconds"' in layout
     assert 'text="30"' in layout
-    assert "coerceIn(10L, 300L)" in body
-    assert "scannerRefreshHandler.postDelayed(scannerRefreshRunnable, seconds * 1000L)" in body
-    assert "scannerRefreshHandler.removeCallbacks(scannerRefreshRunnable)" in body
-    assert "scheduleScannerRefresh()" in body
-    assert "cbScannerAutoRefresh.setOnCheckedChangeListener" in body
-    condition = "if (!cbScannerAutoRefresh.isChecked || btnRunScanner.isEnabled.not())"
-    equivalent_condition = "if (!cbScannerAutoRefresh.isChecked || !btnRunScanner.isEnabled)"
-    assert condition in body or equivalent_condition in body
-    marker = condition if condition in body else equivalent_condition
-    assert "return" in body.split(marker, 1)[1]
-    assert "scheduleScannerRefresh()" in body.split("finally", 1)[1]
+    assert "disableCashFutureScanner()" in body
+    assert "cbScannerAutoRefresh.isEnabled = false" in body
+    assert "etScannerRefreshSeconds.isEnabled = false" in body
+    assert "Cash-Future scanner is disabled" in body
+    assert "runCashFutureScanner" not in body
+    assert "scannerRefreshHandler.postDelayed" not in body
+    assert "scannerRefreshRunnable" not in body
