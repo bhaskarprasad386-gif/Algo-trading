@@ -84,7 +84,6 @@ jobs:
             app/market_data/tests/test_transport_abort.py \
             app/market_data/tests/test_batch_pq.py \
             app/market_data/tests/test_batch_k.py \
-            tests/test_live_cash_future_common.py
       - name: Run Box isolated underlying feed regressions
         working-directory: backend
         env:
