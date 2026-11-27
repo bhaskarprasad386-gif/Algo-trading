@@ -518,7 +518,7 @@ class SharedIndexMarketDataRunner:
                 group = feed_groups.get(underlying + ":" + kind, {})
                 counts[underlying][kind] = int(group.get("count", 0))
         universe_complete = counts == expected
-        all_records_fresh = int(state.get("instrument_count", 0)) == 52 and int(state.get("fresh_count", 0)) == 52
+        all_records_fresh = int(state.get("instrument_count", 0)) == 128 and int(state.get("fresh_count", 0)) == 128
         live_data_ready = running and bootstrap_done and universe_complete and all_records_fresh
         return {
             "runner": "shared-index-market-data",
@@ -633,7 +633,7 @@ class SharedIndexMarketDataRunner:
             per_underlying[underlying] == expected_by_underlying[underlying]
             for underlying in LOCKED
         )
-        all_records_fresh = len(enriched_records) == 52 and all(
+        all_records_fresh = len(enriched_records) == 128 and all(
             record.get("fresh") for record in enriched_records
         )
         live_data_ready = running and bootstrap_done and universe_complete and all_records_fresh
