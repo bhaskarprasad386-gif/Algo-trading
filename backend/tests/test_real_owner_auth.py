@@ -58,7 +58,7 @@ def test_owner_guard_rejects_missing_and_invalid_tokens(monkeypatch):
 
 
 @pytest.mark.parametrize("claims", [
-    {"sub": "box-spread-paper-owner", "scope": "box-spread-paper"},
+    {"sub": "paper-trading-owner", "scope": "paper-trading"},
     {"sub": "another-user", "scope": "real-trading-owner"},
 ])
 def test_owner_guard_rejects_other_subjects_and_scopes(monkeypatch, claims):
