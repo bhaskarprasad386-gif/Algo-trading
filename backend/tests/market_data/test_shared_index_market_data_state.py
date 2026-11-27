@@ -357,3 +357,26 @@ def test_publish_callback_error_does_not_drop_tick_or_break_state():
     assert snap["instrument_count"] == 1
     assert snap["publish_callback_errors"] == 1
     assert state.latest("NSE:NSE:publish-error") is not None
+
+
+def test_token_index_is_scoped_to_exchange_and_segment_and_retires_independently():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    cash = MarketDataRecord(
+        instrument=InstrumentKey("NSE", "NSE", "shared-token"), symbol="NIFTY",
+        instrument_type=InstrumentType.INDEX, timestamp_ns=now,
+        ltp=25000.0, underlying="NIFTY",
+    )
+    derivative = MarketDataRecord(
+        instrument=InstrumentKey("NFO", "NFO", "shared-token"), symbol="NIFTY-FUT",
+        instrument_type=InstrumentType.FUTURE, timestamp_ns=now + 1,
+        ltp=25010.0, underlying="NIFTY", expiry="2026-12-31",
+    )
+    assert state.on_record(cash) and state.on_record(derivative)
+    assert len(state.latest_records_for_tokens(("shared-token",))) == 2
+    nfo = state.latest_records_for_tokens(("shared-token",), exchange="NFO", segment="NFO")
+    assert len(nfo) == 1 and nfo[0]["symbol"] == "NIFTY-FUT"
+    assert state.retain_instruments((cash.instrument,)) == 1
+    assert state.latest_records_for_tokens(("shared-token",), exchange="NFO", segment="NFO") == ()
+    nse = state.latest_records_for_tokens(("shared-token",), exchange="NSE", segment="NSE")
+    assert len(nse) == 1 and nse[0]["symbol"] == "NIFTY"
