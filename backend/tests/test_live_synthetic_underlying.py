@@ -183,7 +183,7 @@ def test_run_forever_starts_common_feed_without_descriptor_token_attribute(monke
     class FakeFeed:
         descriptor = staticmethod(original_descriptor)
 
-        def __init__(self, consumer, *, auth):
+        def __init__(self, consumer, *, auth, manager=None):
             self.started = []
 
         def start(self, descriptors, callback):
