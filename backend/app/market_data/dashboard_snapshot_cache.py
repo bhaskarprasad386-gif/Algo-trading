@@ -53,8 +53,11 @@ class BoundedSnapshotCache:
     def _refresh(self, factory: Callable[[], Any]) -> Any:
         try:
             value = factory()
+            # Build the isolated published value before taking the state lock;
+            # readers only ever observe a fully copied snapshot.
+            snapshot = deepcopy(value)
             with self._lock:
-                self._value = deepcopy(value)
+                self._value = snapshot
                 self._refreshed_at = monotonic()
                 self._refresh_count += 1
                 self._last_refresh_error = None
