@@ -180,4 +180,4 @@ def test_cash_future_page_push_snapshot_short_circuits_disabled_scanner():
     guard = source.index("if not settings.LIVE_CASH_FUTURE_DATA_ENABLED")
     scanner_call = source.index("live_cash_future_scanner.health()")
     assert guard < scanner_call
-    assert '"status": "DISABLED"' in source
+    assert "'status': 'DISABLED'" in source
