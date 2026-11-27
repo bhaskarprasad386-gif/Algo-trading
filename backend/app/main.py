@@ -42,6 +42,8 @@ from app.algo.auth import AngelOneAuth
 from app.market_data.client import MarketDataClient
 from app.market_data.dashboard_snapshot_cache import cached_snapshot
 from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
+from app.market_data.common_websocket import CommonWebSocketManager
+from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS, BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
 from app.market_data.box_spread_runner_supervisor import BoxSpreadRunnerSupervisor
 from app.market_data.instruments import InstrumentMaster
@@ -93,7 +95,14 @@ install_iv_basket_immutability_guards(engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 shared_index_market_data_runner = SharedIndexMarketDataRunner(instrument_master=instrument_master)
-# Box Spread is retired: no manager, adapter, subscription, or runner is created.
+# Keep the existing Box Spread scanner isolated on its own broker manager.
+# It never registers consumers or subscriptions on the Shared Runner manager.
+box_market_data_auth = AngelOneAuth()
+box_isolated_feed_manager = CommonWebSocketManager(
+    socket_factory=lambda: MarketDataWebSocket(auth=box_market_data_auth, auto_reconnect=False),
+    async_callback_dispatch=True,
+)
+# Box Spread scanner remains enabled on its isolated broker manager.
 configure_shared_index_runner_snapshot(shared_index_market_data_runner.snapshot)
 configure_shared_index_runner_health_snapshot(shared_index_market_data_runner.health_snapshot)
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
