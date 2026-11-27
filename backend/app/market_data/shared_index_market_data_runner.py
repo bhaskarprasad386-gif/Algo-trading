@@ -50,8 +50,11 @@ def _readiness_from_groups(*, running: bool, bootstrap_done: bool,
             "CE": {"fresh": int(group.get("ce_fresh_count", 0)), "total": int(group.get("ce_count", 0))},
             "PE": {"fresh": int(group.get("pe_fresh_count", 0)), "total": int(group.get("pe_count", 0))},
         }
+    # Require at least half of each CE/PE side to be fresh. This tolerates
+    # illiquid wings while preventing a single live contract from declaring a
+    # mostly stale option universe ready.
     option_activity = all(
-        side["total"] > 0 and side["fresh"] > 0
+        side["total"] > 0 and side["fresh"] >= (side["total"] + 1) // 2
         for sides in option_sides.values() for side in sides.values()
     )
     ready = bool(running and bootstrap_done and universe_complete and core_fresh and option_activity)
@@ -60,7 +63,7 @@ def _readiness_from_groups(*, running: bool, bootstrap_done: bool,
         "core_market_data_fresh": core_fresh,
         "option_activity_fresh": option_activity,
         "option_side_freshness": option_sides,
-        "readiness_policy": "CORE_SPOT_FUTURE_HARD_FRESHNESS_PLUS_ONE_FRESH_CE_AND_PE_PER_UNDERLYING",
+        "readiness_policy": "CORE_SPOT_FUTURE_HARD_FRESHNESS_PLUS_50_PERCENT_FRESHNESS_PER_OPTION_SIDE",
     }
 
 
