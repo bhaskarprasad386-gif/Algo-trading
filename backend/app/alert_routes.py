@@ -9,15 +9,10 @@ from app.models import AlertRule, AlertContact, User
 
 router = APIRouter(prefix="/api/v1/alerts", tags=["Alerts"])
 
-STRATEGIES = {"cash-future","calendar-spread","synthetic-future-cash-carry","box-spread"}
+STRATEGIES = {"box-spread"}
 ALERT_METRICS = {"gap","gross_profit","net_profit","volume","oi","iv","premium","spread_value"}
 ALERT_OPERATORS = {">=", ">", "<=", "<", "="}
-ALERT_STRATEGY_METRICS = {
-    "cash-future": {"gap", "gross_profit", "net_profit"},
-    "calendar-spread": {"gap", "gross_profit"},
-    "synthetic-future-cash-carry": {"gap", "gross_profit"},
-    "box-spread": {"gap", "gross_profit"},
-}
+ALERT_STRATEGY_METRICS = {"box-spread": {"gap", "gross_profit"}}
 
 def _validate_strategy_metric(strategy: str, metric: str) -> None:
     if metric not in ALERT_STRATEGY_METRICS.get(strategy, set()):
@@ -74,7 +69,7 @@ def _rule_payload(r: AlertRule) -> dict:
 @router.get("/config")
 def get_config(db: Session = Depends(get_db)):
     uid = current_user_id(db)
-    rules = db.query(AlertRule).filter(AlertRule.user_id == uid).order_by(AlertRule.priority.desc(), AlertRule.id.asc()).all()
+    rules = db.query(AlertRule).filter(AlertRule.user_id == uid, AlertRule.strategy_id.in_(STRATEGIES)).order_by(AlertRule.priority.desc(), AlertRule.id.asc()).all()
     user = db.query(User).filter(User.id == uid).first()
     if user is None:
         raise HTTPException(status_code=404, detail="user not found")
@@ -93,18 +88,10 @@ def get_alert_status(db: Session = Depends(get_db)):
     active_rules = db.query(AlertRule).filter(
         AlertRule.user_id == uid, AlertRule.enabled.is_(True)
     ).count()
-    from app.models import (
-        LiveCashFutureAlertHistory,
-        LiveCalendarSpreadAlertHistory,
-        LiveSyntheticAlertHistory,
-        LiveBoxSpreadAlertHistory,
-    )
-    history_models = {
-        "cash-future": LiveCashFutureAlertHistory,
-        "calendar-spread": LiveCalendarSpreadAlertHistory,
-        "synthetic-future-cash-carry": LiveSyntheticAlertHistory,
-        "box-spread": LiveBoxSpreadAlertHistory,
-    }
+    # Retired strategy history rows remain archived in their tables; only
+    # the active Box Spread alert stream is exposed by this endpoint.
+    from app.models import LiveBoxSpreadAlertHistory
+    history_models = {"box-spread": LiveBoxSpreadAlertHistory}
     by_strategy = {}
     for strategy, model in history_models.items():
         by_strategy[strategy] = db.query(model).filter(model.observed_at >= cutoff).count()
