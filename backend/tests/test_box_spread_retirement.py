@@ -27,6 +27,26 @@ def test_box_spread_has_no_production_runtime_or_feed_owner():
         assert retired_runtime_symbol not in source
     assert '"id": "box-spread"' not in source
     assert "box_spread" not in source
+    assert not (ROOT / "app" / "market_data" / "box_spread_expiry.py").exists()
+    assert not (ROOT / "app" / "market_data" / "live_box_spread_runner.py").exists()
+    assert not (ROOT / "app" / "scanner" / "live_box_spread_routes.py").exists()
+    assert not (ROOT / "app" / "scanner" / "live_box_spread_websocket.py").exists()
+    assert not (ROOT / "app" / "scanner" / "box_spread_paper_ledger.py").exists()
+
+    shared_runner = (ROOT / "app" / "market_data" / "shared_index_market_data_runner.py").read_text(encoding="utf-8")
+    assert "box_spread" not in shared_runner
+    assert "from .shared_index_expiry import classify_index_expiry_dates" in shared_runner
+
+    config = (ROOT / "app" / "core" / "config.py").read_text(encoding="utf-8")
+    assert "BOX_SPREAD" not in config
+    init_db = (ROOT / "app" / "core" / "init_db.py").read_text(encoding="utf-8")
+    assert "box_spread_paper_ledger" not in init_db
+    migrations = (ROOT / "app" / "core" / "schema_migrations.py").read_text(encoding="utf-8")
+    assert "box_spread" not in migrations
+
+    systemd = (REPO / "deploy" / "algo-trading.service").read_text(encoding="utf-8")
+    assert "BOX_SPREAD" not in systemd
+    assert "box_spread_pending" not in systemd
 
 
 def test_box_spread_and_retired_scanners_have_no_public_channels_or_alerts():
