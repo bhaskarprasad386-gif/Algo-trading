@@ -24,8 +24,6 @@ from app.core.database import engine
 router = APIRouter(tags=["page-push"])
 PAGE_CHANNELS = frozenset({
     "iv-skew-flip",
-    "credit-butterfly-condor-weekly",
-    "credit-butterfly-condor-monthly",
     "weekly-swing",
 })
 QUEUE_SIZE = 32
