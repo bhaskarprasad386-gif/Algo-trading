@@ -24,9 +24,9 @@ def test_gamma_blast_requires_oi_drop_and_premium_rise():
     prior = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 1, 100, oi=100000, token="N1")
     current = OptionQuote("NIFTY", "2026-11-12", 22000, "CE", 2, 112, oi=90000, token="N1")
     signal = evaluate_gamma_blast(current, prior)
-    assert signal.status == "WAITING"
-    assert signal.direction is None
-    assert "local IV calculation is disabled" in signal.reason
+    assert signal.status == "SIGNAL"
+    assert signal.direction == "BULLISH"
+    assert "OI down" in signal.reason
 
 @pytest.mark.parametrize(
     "field,value",
@@ -81,11 +81,12 @@ def test_iv_skew_generates_bullish_signal_from_synthetic_chain():
     assert "local IV calculation is disabled" in signal.reason
 
 
-def test_iv_flip_detects_confirmed_atm_crossover():
+def test_iv_flip_fails_closed_when_local_iv_calculation_is_disabled():
     quotes, now, now_ns, config = _synthetic_chain()
     signal = evaluate_flip(quotes, 22000, now, now_ns, config, previous_atm_diff=-0.20)
-    assert signal.status == "SIGNAL"
-    assert signal.direction == "BULLISH"
+    assert signal.status == "WAITING"
+    assert signal.direction is None
+    assert "local IV calculation is disabled" in signal.reason
 
 
 def test_iv_flip_without_prior_opposite_side_does_not_signal():
