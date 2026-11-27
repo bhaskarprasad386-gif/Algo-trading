@@ -101,7 +101,6 @@ print("IV control persistence failure scenarios passed")
             "BACKTEST_CONTRACT_DB": str(tmp_path / "contract.sqlite3"),
             "BACKTEST_RESULT_LEDGER_DB": str(tmp_path / "result.sqlite3"),
             "BACKTEST_CONTRACT_MASTER_AUTO_SYNC": "false",
-            "CASH_FUTURE_HISTORY_ENABLED": "false",
         }
     )
     completed = subprocess.run(
