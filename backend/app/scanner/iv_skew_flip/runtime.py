@@ -24,7 +24,6 @@ from app.models.iv_signal_event import IVSignalEvent
 from .engine import (DEFAULT_CONFIGS, ScannerConfig, OptionQuote, Signal, evaluate_skew, evaluate_flip, evaluate_gamma_blast, confluence)
 from .early_move import IVEarlyMoveDetector
 from .basis import BasisHistory, calculate_basis, resolve_index_future_contracts
-from .future_feed import IVIndexFutureFeedAdapter
 from .equity_feed import IVWeightedEquityFeedAdapter, WeightedEquity
 from .equity_pressure import ComponentSample, ComponentWeight, EquityComponentPressure
 from .feed import IVSkewFlipFeedAdapter
@@ -132,7 +131,6 @@ class IVSkewFlipRuntime:
         equity_baskets: dict[str, tuple[WeightedEquity, ...]] | None = None,
         equity_feed_factory: Callable[[], IVWeightedEquityFeedAdapter] | None = None,
         equity_pressure_unavailable_reason: str | None = None,
-        future_feed: IVIndexFutureFeedAdapter | None = None,
         feed_manager: Any | None = None,
         shared_runner: Any | None = None,
         close_feed_manager: bool = False,
@@ -159,7 +157,7 @@ class IVSkewFlipRuntime:
                 clock_ns=clock_ns,
                 persist_last_price=False,
             )
-        self.future_feed = future_feed or _DisabledIVFutureContextFeed()
+        self.future_feed = _DisabledIVFutureContextFeed()
         self._future_contracts: tuple[Any, ...] = ()
         self._basis_histories: dict[str, BasisHistory] = {}
         self._basis_analysis: dict[str, dict[str, Any]] = {}
