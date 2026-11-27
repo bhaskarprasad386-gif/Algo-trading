@@ -674,7 +674,10 @@ def test_manager_shutdown_serializes_with_inflight_recovery_and_closes_replaceme
         assert not shutdown_thread.is_alive(), "shutdown deadlocked with recovery"
         assert failures == []
         assert recovery_results == [1]
-        assert len(LifecycleSocket.instances) == 2
+        # Shutdown closes admission before recovery can create a replacement.
+        # The original socket is the only instance and must be fully retired.
+        assert len(LifecycleSocket.instances) == 1
+        assert LifecycleSocket.instances[0] is original_socket
         assert all(item.closed and not item.connected for item in LifecycleSocket.instances)
         final = manager.snapshot()
         assert final["socket_groups"] == 0
