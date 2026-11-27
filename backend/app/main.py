@@ -37,7 +37,6 @@ from app.models.iv_option_observation import IVOptionObservation
 from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent, IVEarlyEntryCooldown  # noqa: F401 - register durable IV early-entry alert tables
 from app.models.iv_early_entry_notification import IVEarlyEntryNotificationOutbox  # noqa: F401 - register alert notification outbox
 from app.models.iv_constituent_basket_version import IVConstituentBasketVersion  # noqa: F401 - register isolated IV basket history table
-from app.algo.auth import AngelOneAuth
 from app.market_data.client import MarketDataClient
 from app.market_data.dashboard_snapshot_cache import cached_snapshot
 from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
@@ -270,7 +269,6 @@ async def lifespan(app: FastAPI):
             iv_skew_flip_runtime = None
         # Signal blocking worker threads before cancelling their asyncio wrappers.
         # This makes to_thread(run_forever) unwind promptly during service stop.
-        _signal_live_runner_shutdown()
         if _dashboard_snapshot_task is not None:
             _dashboard_snapshot_task.cancel()
         if _event_loop_lag_task is not None:
@@ -555,86 +553,6 @@ _iv_option_snapshot_task: asyncio.Task | None = None
 _weekly_swing_refresh_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None
 IST = ZoneInfo("Asia/Kolkata")
-def _signal_live_runner_shutdown() -> None:
-    """Signal worker-thread runners before cancelling their asyncio wrappers.
-
-    The live runners execute blocking run_forever() methods through
-    asyncio.to_thread(). Cancelling the asyncio task does not itself stop the
-    worker thread. Set each runner's interrupt event first so run_forever() can
-    unwind and perform its normal cleanup instead of reaching systemd's
-    30-second stop deadline.
-    """
-    for runner in (live_box_spread_runner,):
-        if runner is None:
-            continue
-        stop_event = getattr(runner, "stop_event", None)
-        if stop_event is not None:
-            stop_event.set()
-            continue
-        stop_requested = getattr(runner, "_stop_requested", None)
-        if stop_requested is not None:
-            stop_requested.set()
-            continue
-        app_logger.warning("Live runner has no interrupt event during shutdown: %s", type(runner).__name__)
-
-
-
-def _stop_live_runner_nonblocking(runner, *, name: str) -> None:
-    """Request runner shutdown without blocking the asyncio event loop.
-
-    Runner stop paths also close shared broker sockets and can legitimately take
-    longer than the systemd 30-second service deadline. The runner's interrupt
-    event is set synchronously by stop(); potentially blocking cleanup runs in a
-    daemon thread so application shutdown can finish promptly.
-    """
-    threading.Thread(target=runner.stop, name=name, daemon=True).start()
-
-
-async def _run_live_runner_in_daemon_thread(
-    runner, *, name: str, error_holder: list[BaseException] | None = None,
-    stop_on_exit: bool = True,
-) -> None:
-    """Run a blocking market runner in a daemon thread.
-
-    When requested, capture worker-thread exceptions so the async supervisor can
-    retry instead of treating a dead worker as a normal stop. Supervisors that
-    need to distinguish unexpected worker exit from requested shutdown can defer
-    stop() to their own finally block with stop_on_exit=False.
-    """
-    def _target() -> None:
-        try:
-            runner.run_forever()
-        except BaseException as exc:
-            runtime_diagnostics.record(
-                component="Scanner Runner" if "runner" in name.lower() else "Runtime",
-                severity="CRITICAL" if isinstance(exc, (SystemExit, KeyboardInterrupt)) else "ERROR",
-                error_type=type(exc).__name__,
-                message=str(exc) or repr(exc),
-                context={"worker": name},
-            )
-            if error_holder is not None:
-                error_holder.append(exc)
-            else:
-                raise
-
-    worker = threading.Thread(target=_target, name=name, daemon=True)
-    # Expose the actual worker lifecycle to runner health snapshots. A clear
-    # stop event alone does not prove the worker thread is still alive.
-    try:
-        setattr(runner, "_runner_worker", worker)
-    except Exception:
-        pass
-    worker.start()
-    try:
-        while worker.is_alive():
-            await asyncio.sleep(0.25)
-        if error_holder:
-            raise error_holder[0]
-    finally:
-        if stop_on_exit:
-            _stop_live_runner_nonblocking(runner, name=f"{name}-stop")
-
-
 def _sync_contract_master_snapshot(database_path: str, snapshot_date):
     catalog = ContractMasterCatalog(database_path)
     try:
@@ -722,8 +640,6 @@ def root():
 class SyntheticUniverseSelection(BaseModel):
     selection: str
 
-
-# Box Spread index-selection endpoints are retired with the strategy.
 
 def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
     """Summarize NSE/NFO tick freshness without allowing unrelated exchanges to mask gaps."""
@@ -846,7 +762,7 @@ def _start_iv_skew_flip_runtime(*, iv_instruments=None):
         # Install the IV-owned instrument snapshot before validating basket tokens.
         # Previously validation ran before runtime.start() downloaded that snapshot,
         # so a valid basket could be marked unavailable against an empty/stale master.
-        # This downloader is isolated and never reads or mutates the Box Spread cache.
+        # This downloader owns the IV instrument snapshot independently.
         if iv_instruments is None:
             iv_instruments = download_iv_instruments(instrument_master)
         # Heavyweight pressure is a separately controlled, optional signal family.
