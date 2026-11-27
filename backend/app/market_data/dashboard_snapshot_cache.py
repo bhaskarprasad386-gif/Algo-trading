@@ -117,39 +117,34 @@ class BoundedSnapshotCache:
             if age is not None and age <= self.ttl_seconds:
                 value = self._value
                 metadata = self._metadata(now=now, stale=False)
-                # _value is replaced, never mutated, by _refresh. Capture its
-                # reference and metadata under lock, then perform the expensive
-                # recursive copy after releasing the lock.
-                pass
+                cold_refresh = False
             else:
-                value = None
-                metadata = None
-
-            has_usable_stale = (
-                self._value is not None
-                and age is not None
-                and age <= self.max_stale_seconds
-            )
-            if has_usable_stale:
-                if not self._refreshing:
-                    try:
+                has_usable_stale = (
+                    self._value is not None
+                    and age is not None
+                    and age <= self.max_stale_seconds
+                )
+                if has_usable_stale:
+                    if not self._refreshing:
+                        try:
+                            self._start_refresh_locked(factory)
+                        except Exception:
+                            # Stale-while-refresh is explicitly best effort.
+                            pass
+                    value = self._value
+                    metadata = self._metadata(now=now, stale=True)
+                    cold_refresh = False
+                else:
+                    value = None
+                    metadata = None
+                    cold_refresh = True
+                    if not self._refreshing:
                         self._start_refresh_locked(factory)
-                    except Exception:
-                        # Stale-while-refresh is explicitly best effort.
-                        pass
-                value = self._value
-                metadata = self._metadata(now=now, stale=True)
-            else:
-                value = None
-                metadata = None
 
-            if has_usable_stale:
-                # Keep the lock only for cache state and single-flight control.
-                pass
-            elif not self._refreshing:
-                self._start_refresh_locked(factory)
-
-        if value is not None:
+        # The published cache value is never mutated after assignment. Keeping
+        # a local reference makes it safe to deepcopy outside _lock while a
+        # refresh atomically replaces the cache with its next complete value.
+        if not cold_refresh:
             return self._copy_with_metadata(value, metadata)
 
         # Cold and hard-expired refreshes run off-request in one worker. A
