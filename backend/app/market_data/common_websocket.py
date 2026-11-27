@@ -217,7 +217,7 @@ class CommonWebSocketManager:
         # Highest valid exchange timestamp observed across normalized instruments.
         # Arrival order is not timestamp order, so older ticks must not regress freshness.
         self._latest_tick_timestamp_ns: int | None = None
-        # A fresh MCX/BFO tick must never make the NSE/NFO feed look healthy.
+        # A fresh BFO tick must never make the NSE/NFO feed look healthy.
         # Track source timestamps independently for each Angel exchange type.
         self._latest_tick_timestamp_ns_by_exchange_type: dict[int, int] = {}
         self._latest_tick_timestamp_ns_by_group_exchange: dict[tuple[SocketGroup, int], int] = {}
