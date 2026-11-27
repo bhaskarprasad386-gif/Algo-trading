@@ -1,4 +1,4 @@
-"""Source-backed live ATM tracker for synthetic scanning.
+"""Source-backed ATM tracker for the retained Box Spread scanner.
 
 The tracker only derives ATM from observed underlying prices and a concrete
 strike set from the Angel One instrument master. It never invents a strike.
