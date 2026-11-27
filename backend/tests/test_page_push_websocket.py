@@ -112,9 +112,7 @@ def test_reactivating_existing_channel_does_not_enqueue_recovery(monkeypatch):
     first = queue.get_nowait()
     assert first["event"] == "SNAPSHOT_REQUIRED"
     push._set_channels(queue, frozenset({"iv-skew-flip", "iv-skew-flip"}))
-    second = queue.get_nowait()
-    assert second["page"] == "iv-skew-flip"
-    assert second["event"] == "SNAPSHOT_REQUIRED"
+    push._set_channels(queue, frozenset({"iv-skew-flip"}))
     assert queue.empty()
 
 
@@ -128,15 +126,15 @@ def test_channel_activation_queue_overflow_marks_all_active_pages_for_resync(mon
     assert first["event"] == "SNAPSHOT_REQUIRED"
     queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 10})
     queue.put_nowait({"page": "iv-skew-flip", "event": "PATCH", "sequence": 11})
-    push._set_channels(queue, frozenset({"iv-skew-flip", "iv-skew-flip"}))
+    push._set_channels(queue, frozenset({"iv-skew-flip", "weekly-swing"}))
     markers = [queue.get_nowait(), queue.get_nowait()]
-    assert {frame["page"] for frame in markers} == {"iv-skew-flip", "iv-skew-flip"}
+    assert {frame["page"] for frame in markers} == {"iv-skew-flip", "weekly-swing"}
     assert all(frame["event"] == "SNAPSHOT_REQUIRED" for frame in markers)
 
 def test_snapshot_provider_is_read_only_and_page_scoped():
     observed = []
     push.configure_snapshot_provider(
-        "credit-butterfly-condor-weekly",
+        "iv-skew-flip",
         lambda: observed.append("read") or {"rows": []},
     )
     assert push._snapshot("credit-butterfly-condor-weekly") == {"rows": []}
@@ -162,7 +160,7 @@ def test_missing_snapshot_provider_is_not_an_authoritative_empty_snapshot():
 
 
 def test_non_object_snapshot_provider_is_not_authoritative(monkeypatch):
-    page = "credit-butterfly-condor-monthly"
+    page = "weekly-swing"
     push.configure_snapshot_provider(page, lambda: [])
     assert push._snapshot(page) == {"snapshot_status": "UNAVAILABLE"}
     push.configure_snapshot_provider(page, None)
