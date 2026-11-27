@@ -102,36 +102,8 @@ def implied_volatility(
     option_type: str, spot: float, strike: float, years: float, premium: float,
     rate: float = 0.065, dividend_yield: float = 0.0,
 ) -> float | None:
-    """Return annualized IV as a decimal; reject prices outside BS bounds."""
-    values = (spot, strike, years, premium, rate, dividend_yield)
-    if not all(isfinite(float(v)) for v in values) or min(spot, strike, years, premium) <= 0:
-        return None
-    kind = option_type.strip().upper()
-    if kind == "CE":
-        lower = max(0.0, spot * exp(-dividend_yield * years) - strike * exp(-rate * years))
-        upper = spot * exp(-dividend_yield * years)
-    elif kind == "PE":
-        lower = max(0.0, strike * exp(-rate * years) - spot * exp(-dividend_yield * years))
-        upper = strike * exp(-rate * years)
-    else:
-        return None
-    if premium < lower - 1e-8 or premium >= upper:
-        return None
-    lo, hi = 1e-5, 5.0
-    try:
-        if black_scholes_price(kind, spot, strike, years, hi, rate, dividend_yield) < premium:
-            return None
-        for _ in range(80):
-            mid = (lo + hi) / 2.0
-            model = black_scholes_price(kind, spot, strike, years, mid, rate, dividend_yield)
-            if model < premium:
-                lo = mid
-            else:
-                hi = mid
-        return (lo + hi) / 2.0
-    except (ValueError, OverflowError, ZeroDivisionError):
-        return None
-
+    """Local IV inversion is deliberately disabled; use broker-native IV only."""
+    return None
 
 def _expiry_years(expiry: str, now: datetime) -> float | None:
     """Expiry is valued to 15:30 IST; caller must supply an aware IST datetime."""
@@ -170,13 +142,8 @@ def _fresh(quote: OptionQuote, now_ns: int, max_age_seconds: float) -> bool:
 
 
 def _iv(quote: OptionQuote, spot: float, years: float, config: ScannerConfig) -> float | None:
-    mark = quote.mark
-    if mark is None:
-        return None
-    return implied_volatility(
-        quote.option_type, spot, quote.strike, years, mark,
-        config.risk_free_rate, config.dividend_yield,
-    )
+    """Never derive IV from local option marks."""
+    return None
 
 
 def evaluate_skew(
