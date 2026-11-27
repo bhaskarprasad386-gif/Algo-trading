@@ -41,11 +41,16 @@ test("Box Spread removed sections and mounts while scanner/history remain", asyn
   assert.equal(page.includes("BoxSpreadPostMarketHistory"), true);
 });
 
-test("Synthetic page no longer mounts trace panels but keeps scanner workspace", async () => {
-  const page = await read("app/strategies/synthetic-arbitrage/page.tsx");
-  assert.equal(page.includes("SyntheticTracePanel"), false);
-  assert.equal(await exists("components/synthetic-trace-panel.tsx"), false);
-  assert.equal(page.includes("StrategyWorkspace slug=\"synthetic-arbitrage\""), true);
+test("retired Synthetic, Calendar and Cash-Future scanner pages are deleted", async () => {
+  for (const path of [
+    "app/strategies/synthetic-arbitrage/page.tsx",
+    "app/strategies/calendar-spread/page.tsx",
+    "app/scanner/page.tsx",
+  ]) assert.equal(await exists(path), false, path + " must not be routable");
+  const shell = await read("components/app-shell.tsx");
+  for (const href of ["/scanner", "/strategies/synthetic-arbitrage", "/strategies/calendar-spread"]) {
+    assert.equal(shell.includes(href), false, href + " must not be navigable");
+  }
 });
 
 test("shared pair monitor and alert/diagnostic sections are excluded only on requested scanner pages", async () => {
@@ -62,16 +67,12 @@ test("shared pair monitor and alert/diagnostic sections are excluded only on req
 });
 
 
-test("PR #712 Cash Future page removals are actually absent from rendered UI", async () => {
-  const page = await read("app/scanner/page.tsx");
-  for (const section of [
-    "Live Pair Monitor & Diagnostics",
-    "Scanner safety boundary",
-  ]) assert.equal(page.includes(section), false, section + " must not render on Cash Future scanner");
-  assert.equal(page.includes("Post-Market Pair History"), true, "saved pair history must remain on Cash Future page");
-  assert.equal(page.includes("filteredPairHistory.map"), true, "saved pair history rows must remain rendered");
-  // Keep the main Cash Future opportunity scanner mounted.
-  assert.equal(page.includes("filteredRows.map((row"), true);
+test("Cash-Future scanner is fully removed from the web route and navigation", async () => {
+  assert.equal(await exists("app/scanner/page.tsx"), false);
+  const shell = await read("components/app-shell.tsx");
+  assert.equal(shell.includes('href: "/scanner"'), false);
+  const dashboard = await read("app/page.tsx");
+  assert.equal(dashboard.includes('name: "Cash Future"'), false);
 });
 
 
