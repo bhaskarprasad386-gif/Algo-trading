@@ -157,6 +157,9 @@ _live_synthetic_universe_status = {
 live_box_spread_latest_results: tuple = ()
 live_box_spread_runner: LiveBoxSpreadRunner | None = None
 live_box_spread_supervisor: BoxSpreadRunnerSupervisor | None = None
+# Keep Box's legacy per-strategy feed adapters off until they consume the
+# SharedIndexMarketDataRunner's published records through a local adapter.
+LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = True
 BOX_SPREAD_INDEX_SELECTION_LOCK = threading.Lock()
 BOX_SPREAD_INDEX_PRESETS = {
     "ALL": ("NIFTY", "BANKNIFTY"),
