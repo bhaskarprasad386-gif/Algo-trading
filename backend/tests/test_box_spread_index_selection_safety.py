@@ -157,7 +157,7 @@ def test_box_spread_index_universe_and_presets_are_locked_to_nifty_and_banknifty
     assert set(main.BOX_SPREAD_INDEX_PRESETS["NIFTY_BANKNIFTY"]) == {"NIFTY", "BANKNIFTY"}
 
 
-def test_box_spread_target_builder_uses_only_selected_indices_and_correct_exchange_segments():
+def test_box_spread_target_builder_uses_only_selected_indices_and_correct_exchange_segments(monkeypatch):
     from types import SimpleNamespace
 
     expiry = "31DEC2099"
@@ -179,6 +179,15 @@ def test_box_spread_target_builder_uses_only_selected_indices_and_correct_exchan
         {"exch_seg": "NFO", "instrumenttype": "OPTSTK", "name": "BANKNIFTY", "expiry": expiry},
     ])
     master = SimpleNamespace(instruments=instruments)
+    from datetime import date
+    parsed_expiry = date(2099, 12, 31)
+    monkeypatch.setattr(
+        main,
+        "classify_index_expiry_dates",
+        lambda symbol, dates: {
+            parsed_expiry: "WEEKLY" if symbol == "NIFTY" else "MONTHLY"
+        },
+    )
 
     targets, _ = main._box_spread_targets_from_master(master, ["NIFTY", "BANKNIFTY"])
 
