@@ -839,3 +839,34 @@ def test_ping_pong_timeout_is_forwarded_as_transport_failure(monkeypatch):
         raise AssertionError("heartbeat timeout must fail the transport handshake")
 
     assert forwarded == ["ping/pong timed out"]
+
+
+def test_initial_subscribe_worker_start_failure_fails_closed(monkeypatch):
+    monkeypatch.setattr(websocket_module, "SmartWebSocketV2", FakeSocket)
+
+    class BrokenThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("thread quota exhausted")
+
+    monkeypatch.setattr(websocket_module, "Thread", BrokenThread)
+    client = MarketDataWebSocket(auth=make_auth(), auto_reconnect=False)
+    failures = []
+
+    # Build the SDK socket before replacing the worker constructor so the
+    # test isolates only the initial-subscribe worker admission path.
+    monkeypatch.setattr(websocket_module, "Thread", __import__("threading").Thread)
+    socket = client._build_socket()
+    client.websocket = socket
+    client.exchange_type = 1
+    client.tokens = ["101"]
+    client.on_failure = failures.append
+    monkeypatch.setattr(websocket_module, "Thread", BrokenThread)
+
+    client._subscribe_initial_bounded(socket)
+
+    assert client.health["initial_subscribe_success"] is False
+    assert client.health["subscription_response_state"] == "SEND_FAILED"
+    assert failures and "thread quota exhausted" in failures[0]
