@@ -251,21 +251,21 @@ def test_market_overview_reuses_quote_batch_between_dashboard_polls(monkeypatch)
     monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
     monkeypatch.setattr("app.market_data.client.MarketDataClient", FakeClient)
     monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
-    monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: True)
 
     first = routes.get_market_overview()
-    assert len(calls) == 3
-    assert all(row["status"] == "LIVE" for row in first["indices"] + first["commodities"])
+    assert len(calls) == 2
+    assert "commodities" not in first
+    assert all(row["status"] == "LIVE" for row in first["indices"])
 
     # Simulate the browser's next 5-second poll while forcing only the outer
     # dashboard snapshot to refresh. The broker quote batch remains reusable.
     routes.get_market_overview.snapshot_cache.clear()
     second = routes.get_market_overview()
 
-    assert len(calls) == 3
-    assert len(resolutions) == 10
+    assert len(calls) == 2
+    assert len(resolutions) == 6
     assert second["indices"][0]["quote_cache_age_seconds"] is not None
-    assert all(row["status"] == "LIVE" for row in second["indices"] + second["commodities"])
+    assert all(row["status"] == "LIVE" for row in second["indices"])
 
 
 def test_market_overview_uses_bounded_stale_quotes_after_broker_refresh_failure(monkeypatch):
@@ -297,7 +297,8 @@ def test_market_overview_uses_bounded_stale_quotes_after_broker_refresh_failure(
     monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: True)
 
     first = routes.get_market_overview()
-    assert all(row["status"] == "LIVE" for row in first["indices"] + first["commodities"])
+    assert "commodities" not in first
+    assert all(row["status"] == "LIVE" for row in first["indices"])
 
     with routes._OVERVIEW_QUOTE_CACHE_LOCK:
         for key, (refreshed_at, quotes) in tuple(routes._OVERVIEW_QUOTE_CACHE.items()):
@@ -309,11 +310,11 @@ def test_market_overview_uses_bounded_stale_quotes_after_broker_refresh_failure(
     client.fail = True
 
     second = routes.get_market_overview()
-    assert all(row["status"] == "STALE" for row in second["indices"] + second["commodities"])
+    assert all(row["status"] == "STALE" for row in second["indices"])
     assert any("stale quote snapshot used" in item["error"] for item in second["errors"])
     assert all(
         row["quote_cache_age_seconds"] > routes._OVERVIEW_QUOTE_CACHE_TTL_SECONDS
-        for row in second["indices"] + second["commodities"]
+        for row in second["indices"]
     )
 
 
@@ -338,16 +339,17 @@ def test_market_overview_backs_off_repeated_quote_failures(monkeypatch):
     monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: True)
 
     first = routes.get_market_overview()
-    assert len(calls) == 3
-    assert all(row["status"] == "NO_QUOTE" for row in first["indices"] + first["commodities"])
+    assert len(calls) == 2
+    assert "commodities" not in first
+    assert all(row["status"] == "NO_QUOTE" for row in first["indices"])
 
     routes.get_market_overview.snapshot_cache.clear()
     second = routes.get_market_overview()
 
     # Recent failures are negatively cached briefly so a 5-second browser poll
     # cannot hammer a broker endpoint that is already unavailable/rate-limited.
-    assert len(calls) == 3
-    assert all(row["status"] == "NO_QUOTE" for row in second["indices"] + second["commodities"])
+    assert len(calls) == 2
+    assert all(row["status"] == "NO_QUOTE" for row in second["indices"])
 
 
 
