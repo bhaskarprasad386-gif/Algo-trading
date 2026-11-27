@@ -9,9 +9,11 @@ class _Manager:
     def __init__(self, snapshot):
         self.state = dict(snapshot)
         self.close_calls = 0
+        self._closed = False
 
     def close(self):
         self.close_calls += 1
+        self._closed = True
 
     def snapshot(self):
         return dict(self.state)
