@@ -85,10 +85,6 @@ from app.scanner.iv_skew_flip.instruments import download_iv_instruments
 from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
 from app.scanner.iv_skew_flip.validation import SignalEvent, load_persisted_forward_outcomes, summarize_forward_outcomes, summarize_walk_forward_by_date
 from app.models.iv_signal_event import IVSignalEvent
-from app.scanner.box_spread_paper_routes import router as box_spread_paper_router, build_paper_market_snapshot, build_paper_private_snapshot
-from app.scanner.box_spread_paper_websocket import router as box_spread_paper_private_ws_router, configure_snapshot_provider as configure_paper_private_ws_snapshot, configure_market_snapshot_provider as configure_paper_market_ws_snapshot, publish_paper_update
-from app.scanner.box_spread_paper_ledger import BoxSpreadPaperTradeRecord, BoxSpreadPaperLedgerEntry
-from app.scanner.box_spread_paper_rule_routes import router as box_spread_paper_rule_router
 from app.scanner.live_box_spread_websocket import router as live_box_spread_websocket_router, publish as publish_live_box_spread_opportunities, configure as configure_live_box_spread_websocket, configure_spot_provider as configure_live_box_spread_websocket_spot, configure_depth_provider as configure_live_box_spread_websocket_depth, _page_snapshot as box_opportunity_page_snapshot, set_expiry_types as set_live_box_websocket_expiry_types
 from app.scanner.page_push_websocket import router as page_push_websocket_router, configure_snapshot_provider as configure_page_push_snapshot, publish_page_update
 from app.scanner.early_impulse_routes import router as early_impulse_router
@@ -107,7 +103,6 @@ from app.backtesting.contract_master_sync import DailyContractMasterSync
 from app.backtesting.universal_factory import create_universal_ledger
 from app.backtesting.universal_result_routes import create_universal_result_router
 from app.backtesting.universal_result_service import UniversalResultService
-from app.scanner import box_spread_paper_ledger as _box_spread_paper_ledger_models  # noqa: F401
 
 run_schema_migrations()
 Base.metadata.create_all(bind=engine)
@@ -161,7 +156,7 @@ live_box_spread_runner: LiveBoxSpreadRunner | None = None
 live_box_spread_supervisor: BoxSpreadRunnerSupervisor | None = None
 # Box adapters consume only the local fan-out of SharedIndexMarketDataRunner records.
 # They never create additional broker subscriptions or sockets.
-LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = False
+LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = True
 BOX_SPREAD_INDEX_SELECTION_LOCK = threading.Lock()
 BOX_SPREAD_INDEX_PRESETS = {
     "ALL": ("NIFTY", "BANKNIFTY"),
@@ -555,8 +550,6 @@ def _scanner_page_push_runtime_health(runner_name, runner):
 
 
 configure_page_push_snapshot("cash-future", _cash_future_page_push_snapshot)
-configure_paper_private_ws_snapshot(build_paper_private_snapshot)
-configure_paper_market_ws_snapshot(build_paper_market_snapshot)
 
 async def _shared_index_market_data_recovery_loop() -> None:
     """Start the data-only shared index runner and retry transient master/feed failures."""
@@ -843,9 +836,6 @@ app.include_router(alert_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))
 app.include_router(live_box_spread_router)
-app.include_router(box_spread_paper_router)
-app.include_router(box_spread_paper_private_ws_router)
-app.include_router(box_spread_paper_rule_router)
 app.include_router(live_box_spread_websocket_router)
 app.include_router(page_push_websocket_router)
 app.include_router(intelligence_router)
@@ -1972,7 +1962,6 @@ def _update_live_box_spread_results(results: tuple) -> None:
         try:
             page_snapshot = _box_page_push_snapshot()
             publish_page_update("box-spread", "PATCH", page_snapshot)
-            publish_paper_update("MARKET_DATA_CHANGED")
         except Exception:
             pass
     _publish_credit_butterfly_condor_pages()
@@ -2157,67 +2146,19 @@ def get_box_spread_index_selection():
     }
 
 
-def _box_spread_open_paper_symbols():
-    """Return indices with any non-flat paper position across the single-owner ledger.
-
-    A deselected index must keep receiving quotes until every paper leg is flat.
-    Read failures are allowed to propagate so the caller can fail closed.
-    """
-    open_symbols = set()
-    with SessionLocal() as db:
-        trades = db.query(BoxSpreadPaperTradeRecord).filter(
-            BoxSpreadPaperTradeRecord.status.notin_(("CLOSED", "CANCELLED"))
-        ).all()
-        for trade in trades:
-            entries = db.query(BoxSpreadPaperLedgerEntry).filter(
-                BoxSpreadPaperLedgerEntry.account_key == trade.account_key,
-                BoxSpreadPaperLedgerEntry.trade_id == trade.id,
-            ).all()
-            signed_by_role = {}
-            for entry in entries:
-                role = str(entry.role or "").strip().upper()
-                if role not in {"LOW_CE", "HIGH_CE", "HIGH_PE", "LOW_PE"}:
-                    continue
-                signed_by_role[role] = signed_by_role.get(role, 0) + (
-                    int(entry.quantity) if str(entry.action).upper() == "BUY" else -int(entry.quantity)
-                )
-            if any(quantity != 0 for quantity in signed_by_role.values()):
-                open_symbols.add(str(trade.underlying or "").strip().upper())
-    return open_symbols
-
-
 def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionRequest):
     global live_box_spread_latest_results
     try:
         selected = _normalize_box_spread_index_symbols(payload.symbols)
         weekly_only = tuple(sorted({str(item or "").strip().upper() for item in (payload.weekly_only_symbols or []) if str(item or "").strip()}))
-        if set(weekly_only) - {"NIFTY", "SENSEX"} or set(weekly_only) - set(selected):
-            raise ValueError("weekly-only mode is valid only for selected NIFTY/SENSEX")
+        if set(weekly_only) - {"NIFTY"} or set(weekly_only) - set(selected):
+            raise ValueError("weekly-only mode is valid only for selected NIFTY")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"message": str(exc)}) from exc
 
     current_selection = set(_get_box_spread_index_selection())
     current_weekly_only = set(_get_box_spread_weekly_only_symbols())
     removed_symbols = current_selection - set(selected)
-    if removed_symbols:
-        try:
-            open_symbols = _box_spread_open_paper_symbols()
-        except Exception as exc:
-            app_logger.exception("Unable to verify open Box Spread paper positions before index deselection")
-            raise HTTPException(
-                status_code=503,
-                detail={"message": "Could not verify open paper positions. Index selection was not changed; retry after the paper ledger is available."},
-            ) from exc
-        blocked_symbols = sorted(removed_symbols & open_symbols)
-        if blocked_symbols:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "message": "Cannot deselect an index while its Box Spread paper position is still open. Close or settle every leg first.",
-                    "blocked_indices": blocked_symbols,
-                },
-            )
-
     runner = live_box_spread_runner
     supervisor = live_box_spread_supervisor
     if supervisor is not None and supervisor.snapshot().get("handoff_in_progress"):
