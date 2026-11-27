@@ -25,7 +25,7 @@ def _collector():
     )
 
 
-def test_synthetic_subscription_rejects_invalid_instrument_class():
+def test_box_spread_subscription_rejects_invalid_instrument_class():
     try:
         BoxSpreadOptionFutureRecorder(
             ":memory:",
@@ -37,7 +37,7 @@ def test_synthetic_subscription_rejects_invalid_instrument_class():
         raise AssertionError("expected invalid instrument class rejection")
 
 
-def test_synthetic_subscription_accepts_commodity():
+def test_box_spread_subscription_accepts_commodity():
     collector = BoxSpreadOptionFutureRecorder(
         ":memory:",
         [BoxSpreadSubscription(5, "MCX1", "GOLD26OCTFUT", "GOLD", "COMMODITY")],
@@ -45,7 +45,7 @@ def test_synthetic_subscription_accepts_commodity():
     assert collector.subscriptions[0].instrument_class == "COMMODITY"
 
 
-def test_synthetic_subscription_deduplicates_exchange_token():
+def test_box_spread_subscription_deduplicates_exchange_token():
     subscriptions = [
         BoxSpreadSubscription(2, "1", "NIFTYFUT", "NIFTY", "INDEX"),
         BoxSpreadSubscription(2, "1", "NIFTYFUT", "NIFTY", "INDEX"),
@@ -103,7 +103,7 @@ def test_normalize_rejects_invalid_or_non_positive_quote_levels_to_none():
 
 
 def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_bucket(tmp_path, monkeypatch):
-    from app.market_data import live_synthetic_stream as stream
+    from app.market_data import box_spread_market_data as stream
     from time import time_ns
 
     # Generate timestamps when the fake socket connects, not during test
@@ -111,7 +111,7 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
     base_timestamp = None
 
     collector = BoxSpreadOptionFutureRecorder(
-        str(tmp_path / "synthetic.db"),
+        str(tmp_path / "box_spread.db"),
         [BoxSpreadSubscription(
             2, "101", "NIFTY30SEP26CE", "NIFTY", "INDEX",
             "30SEP2026", "CE", 100.0, 75,
@@ -172,7 +172,7 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
 
     from app.backtesting.historical_catalog import HistoricalCatalog
 
-    catalog = DailyMarketDataShardCatalog(str(tmp_path / "synthetic.db"))
+    catalog = DailyMarketDataShardCatalog(str(tmp_path / "box_spread.db"))
     try:
         records = catalog.records(
             source=collector.SOURCE,
@@ -191,13 +191,13 @@ def test_stream_persists_previous_second_when_bucket_advances_and_flushes_final_
 
 
 def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypatch):
-    from app.market_data import live_synthetic_stream as stream
+    from app.market_data import box_spread_market_data as stream
     from time import time_ns
 
     base_timestamp = (time_ns() // 1_000_000_000 - 3) * 1_000_000_000 + 50_000_000
 
     collector = BoxSpreadOptionFutureRecorder(
-        str(tmp_path / "synthetic.db"),
+        str(tmp_path / "box_spread.db"),
         [
             BoxSpreadSubscription(2, "101", "NIFTY30SEP26CE", "NIFTY", "INDEX", "30SEP2026", "CE", 100.0, 75),
             BoxSpreadSubscription(2, "102", "NIFTY30SEP26PE", "NIFTY", "INDEX", "30SEP2026", "PE", 100.0, 75),
@@ -270,7 +270,7 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
 
     from app.backtesting.historical_catalog import HistoricalCatalog
 
-    catalog = DailyMarketDataShardCatalog(str(tmp_path / "synthetic.db"))
+    catalog = DailyMarketDataShardCatalog(str(tmp_path / "box_spread.db"))
     try:
         ce = catalog.records(
             source=collector.SOURCE,
@@ -298,13 +298,13 @@ def test_stream_keeps_second_buckets_independent_per_contract(tmp_path, monkeypa
 
 
 def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
-    from app.market_data import live_synthetic_stream as stream
+    from app.market_data import box_spread_market_data as stream
     from time import time_ns
 
     base_timestamp = (time_ns() // 1_000_000_000 - 3) * 1_000_000_000 + 50_000_000
 
     collector = BoxSpreadOptionFutureRecorder(
-        str(tmp_path / "synthetic.db"),
+        str(tmp_path / "box_spread.db"),
         [BoxSpreadSubscription(
             2, "101", "NIFTY30SEP26CE", "NIFTY", "INDEX",
             "30SEP2026", "CE", 100.0, 75,
@@ -377,7 +377,7 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
 
     from app.backtesting.historical_catalog import HistoricalCatalog
 
-    catalog = DailyMarketDataShardCatalog(str(tmp_path / "synthetic.db"))
+    catalog = DailyMarketDataShardCatalog(str(tmp_path / "box_spread.db"))
     try:
         records = catalog.records(
             source=collector.SOURCE,
@@ -396,10 +396,10 @@ def test_stream_keeps_latest_tick_within_the_same_second(tmp_path, monkeypatch):
 
 
 def test_stream_ignores_unsubscribed_tokens_without_persisting(tmp_path, monkeypatch):
-    from app.market_data import live_synthetic_stream as stream
+    from app.market_data import box_spread_market_data as stream
 
     collector = BoxSpreadOptionFutureRecorder(
-        str(tmp_path / "synthetic.db"),
+        str(tmp_path / "box_spread.db"),
         [BoxSpreadSubscription(
             2, "101", "NIFTY30SEP26CE", "NIFTY", "INDEX",
             "30SEP2026", "CE", 100.0, 75,
@@ -445,7 +445,7 @@ def test_stream_ignores_unsubscribed_tokens_without_persisting(tmp_path, monkeyp
 
     from app.backtesting.historical_catalog import HistoricalCatalog
 
-    catalog = DailyMarketDataShardCatalog(str(tmp_path / "synthetic.db"))
+    catalog = DailyMarketDataShardCatalog(str(tmp_path / "box_spread.db"))
     try:
         records = catalog.records(
             source=collector.SOURCE,
@@ -467,7 +467,7 @@ def test_market_open_closes_at_regular_1530_session_boundary():
 
 def test_emit_logs_scanner_callback_failure_without_propagating(monkeypatch):
     from types import SimpleNamespace
-    from app.market_data import live_synthetic_stream as stream
+    from app.market_data import box_spread_market_data as stream
 
     collector = _collector()
     errors = []
@@ -490,7 +490,7 @@ def test_emit_logs_scanner_callback_failure_without_propagating(monkeypatch):
 
 def test_recorder_run_forever_logs_unexpected_session_errors(monkeypatch):
     from types import SimpleNamespace
-    from app.market_data import live_synthetic_stream as stream
+    from app.market_data import box_spread_market_data as stream
 
     collector = _collector()
     errors = []
@@ -554,8 +554,8 @@ def test_recorder_does_not_flush_old_quote_as_live():
     assert collector.snapshot()["stale_buffer_discards"] == 1
 
 
-def test_synthetic_fallback_socket_disables_private_reconnect(monkeypatch):
-    from app.market_data import live_synthetic_stream as stream
+def test_box_spread_fallback_socket_disables_private_reconnect(monkeypatch):
+    from app.market_data import box_spread_market_data as stream
 
     collector = _collector()
     monkeypatch.setattr(settings, "LIVE_MARKET_DATA_PERSISTENCE_ENABLED", False)
