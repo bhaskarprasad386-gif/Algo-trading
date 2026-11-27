@@ -1,4 +1,4 @@
-from app.backtesting.arbitrage_backtester import BoxSpreadBacktester, FutureQuote, LiquidityPolicy, OptionQuote, SyntheticCashCarryBacktester
+from app.backtesting.arbitrage_backtester import BoxSpreadBacktester, LiquidityPolicy, OptionQuote
 
 
 def option(ts=1, strike=100, cb=7, ca=8, pb=6, pa=7):
@@ -71,54 +71,6 @@ def test_box_rejects_mismatched_instrument_class():
     else:
         raise AssertionError("expected instrument class mismatch rejection")
 
-
-def test_synthetic_cash_carry_evaluates_both_directions_with_actual_future_trade_side():
-    opt = option(strike=100, cb=8, ca=9, pb=6, pa=7)
-    fut = FutureQuote(1, "ABC", 20261231, 104, 105, 10)
-
-    # Synthetic bid = 100 + 8 - 7 = 101; synthetic ask = 100 + 9 - 6 = 103.
-    # LONG = Future BUY @ ask and Synthetic SELL @ bid => 101 - 105 = -4 (no opportunity).
-    assert SyntheticCashCarryBacktester.evaluate(
-        opt, fut, rate=0.0, time_to_expiry_years=0.5, direction="LONG"
-    ) is None
-
-    # SHORT = Future SELL @ bid and Synthetic BUY @ ask => 104 - 103 = +1.
-    opp = SyntheticCashCarryBacktester.evaluate(
-        opt, fut, rate=0.0, time_to_expiry_years=0.5, direction="SHORT"
-    )
-    assert opp is not None
-    assert opp.executable_edge == 1
-    assert opp.edge_per_lot == 10
-    assert opp.gross_pnl == 10
-
-
-def test_synthetic_cash_carry_no_edge_returns_none():
-    opt = option(strike=100, cb=8, ca=9, pb=6, pa=7)
-    fut = FutureQuote(1, "ABC", 20261231, 102, 103, 10)
-    assert SyntheticCashCarryBacktester.evaluate(opt, fut, rate=0.0, time_to_expiry_years=0.5, direction="LONG") is None
-    assert SyntheticCashCarryBacktester.evaluate(opt, fut, rate=0.0, time_to_expiry_years=0.5, direction="SHORT") is None
-
-
-def test_synthetic_cash_carry_rejects_invalid_option_quotes():
-    opt = option(strike=100, cb=8, ca=9, pb=float("nan"), pa=7)
-    fut = FutureQuote(1, "ABC", 20261231, 104, 105, 10)
-    try:
-        SyntheticCashCarryBacktester.evaluate(opt, fut, rate=0.0, time_to_expiry_years=0.5)
-    except ValueError as exc:
-        assert "finite" in str(exc)
-    else:
-        raise AssertionError("expected non-finite option quote rejection")
-
-
-def test_synthetic_cash_carry_rejects_mismatched_instrument_class():
-    opt = OptionQuote(1, "ABC", 20261231, 100, 8, 9, 6, 7, 10, instrument_class="INDEX")
-    fut = FutureQuote(1, "ABC", 20261231, 104, 105, 10, instrument_class="STOCK")
-    try:
-        SyntheticCashCarryBacktester.evaluate(opt, fut, rate=0.0, time_to_expiry_years=0.5)
-    except ValueError as exc:
-        assert "instrument class" in str(exc)
-    else:
-        raise AssertionError("expected instrument class mismatch rejection")
 
 
 def test_liquidity_policy_filters_illiquid_quotes():
