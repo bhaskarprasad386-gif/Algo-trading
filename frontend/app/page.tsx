@@ -310,7 +310,8 @@ export default function HomePage() {
         const age = body?.runtime_feed?.age_seconds;
         setFeedAge(age == null || !Number.isFinite(Number(age)) ? null : Number(age));
         const freshness = body?.runtime_feed?.exchange_freshness;
-        const sampledAtMs = Date.now();
+        const checkedAtMs = typeof body?.checked_at === "string" ? new Date(body.checked_at).getTime() : NaN;
+        const sampledAtMs = Number.isFinite(checkedAtMs) ? checkedAtMs : Date.now();
         const nextExchangeSamples: Record<string, { timestampNs: number | null; ageSeconds: number | null; sampledAtMs: number }> = {};
         for (const exchange of ["NSE", "NFO"]) {
           const item = freshness?.[exchange];
