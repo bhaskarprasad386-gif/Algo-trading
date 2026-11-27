@@ -628,3 +628,31 @@ def test_dispatcher_only_selects_currently_subscribed_channels(monkeypatch):
     assert push._active_subscribed_pages() == frozenset({"iv-skew-flip", "iv-skew-flip"})
     monkeypatch.setattr(push, "_subscribers", {(queue, frozenset())})
     assert push._active_subscribed_pages() == frozenset()
+
+
+def test_origin_normalization_treats_implicit_and_explicit_default_ports_equally():
+    assert push._normalize_origin("https://82.41.67.22") == ("https", "82.41.67.22", 443)
+    assert push._normalize_origin("https://82.41.67.22:443/") == ("https", "82.41.67.22", 443)
+    assert push._normalize_origin("http://localhost") == ("http", "localhost", 80)
+
+
+def test_origin_normalization_rejects_malformed_or_non_origin_urls():
+    for value in (
+        "https://user:pass@example.com",
+        "https://example.com/path",
+        "https://example.com?token=x",
+        "https://example.com:99999",
+        "javascript://example.com",
+        "https://",
+    ):
+        assert push._normalize_origin(value) is None
+
+
+def test_configured_origin_matches_implicit_default_port(monkeypatch):
+    class FakeWebSocket:
+        headers = {"origin": "https://82.41.67.22"}
+
+    monkeypatch.setenv("SCANNER_PAGE_WS_ALLOWED_ORIGINS", "https://82.41.67.22:443/")
+    assert push._origin_allowed(FakeWebSocket()) is True
+    monkeypatch.setenv("SCANNER_PAGE_WS_ALLOWED_ORIGINS", "https://82.41.67.22:8443")
+    assert push._origin_allowed(FakeWebSocket()) is False
