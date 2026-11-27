@@ -2618,13 +2618,6 @@ class CommonWebSocketManager:
                     for group, (generation, adapter) in self._callback_adapters.items()
                     if self._socket_generation.get(group) == generation
                 },
-                # This bounded owner/kind map is small (one entry per registered
-                # consumer) and makes slow consumers diagnosable without the
-                # much larger subscription roster in the mobile health response.
-                "consumer_callback_metrics": {
-                    owner: {kind: dict(metrics) for kind, metrics in kinds.items()}
-                    for owner, kinds in self._consumer_callback_metrics.items()
-                },
                 "delivery_errors": self._delivery_errors,
                 "missing_callback_routes": self._missing_callback_routes,
                 "missing_descriptor_records": self._missing_descriptor_records,
@@ -2832,6 +2825,10 @@ class CommonWebSocketManager:
             return {
                 "subscriptions": len(self.registry.subscriptions()),
                 "subscription_roster": subscription_roster,
+                "consumer_callback_metrics": {
+                    owner: {kind: dict(metrics) for kind, metrics in kinds.items()}
+                    for owner, kinds in self._consumer_callback_metrics.items()
+                },
                 "raw_frames_by_instrument": dict(sorted(self._raw_frames_by_instrument.items())),
                 "active_instruments": len(self.registry.active_keys()),
                 "socket_groups": len(sockets),
