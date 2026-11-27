@@ -27,13 +27,12 @@ from app.market_data.live_exchange_calendar import SUPPORTED_YEARS, any_exchange
 IST = ZoneInfo("Asia/Kolkata")
 SOURCE = "angelone-calendar-live-1s"
 TIMEFRAME = "1s"
-EXCHANGE_TYPES = {"NFO": 2, "BFO": 4, "MCX": 5}
+EXCHANGE_TYPES = {"NFO": 2, "BFO": 4}
 INSTRUMENT_TYPES = {
     "FUTIDX": "INDEX_FUTURE",
     "INDEX_FUTURE": "INDEX_FUTURE",
     "FUTSTK": "STOCK_FUTURE",
     "STOCK_FUTURE": "STOCK_FUTURE",
-    "FUTCOM": "COMMODITY_FUTURE",
 }
 
 
