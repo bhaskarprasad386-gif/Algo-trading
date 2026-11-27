@@ -153,6 +153,7 @@ def test_retired_strategy_models_and_full_fno_backtest_are_not_registered_or_imp
         "scanner/synchronized_replay.py", "scanner/routes.py",
         "backtesting/monthly_results_routes.py", "backtesting/routes.py",
         "scanner/result_chunk_store.py", "market_data/historical_sync_jobs.py",
+        "backtest/result_store.py", "models/backtest_job_result_chunk.py",
     ):
         assert not (root / "app" / retired_path).exists()
 
