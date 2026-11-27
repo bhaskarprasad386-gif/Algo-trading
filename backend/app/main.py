@@ -156,7 +156,7 @@ live_box_spread_runner: LiveBoxSpreadRunner | None = None
 live_box_spread_supervisor: BoxSpreadRunnerSupervisor | None = None
 # Box adapters consume only the local fan-out of SharedIndexMarketDataRunner records.
 # They never create additional broker subscriptions or sockets.
-LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = True
+LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = False
 BOX_SPREAD_INDEX_SELECTION_LOCK = threading.Lock()
 BOX_SPREAD_INDEX_PRESETS = {
     "ALL": ("NIFTY", "BANKNIFTY"),
@@ -296,18 +296,16 @@ def _box_spread_targets_from_master(master, symbols, weekly_only_symbols=()):
         expiries = [(day, found[day], classifications.get(day, "UNKNOWN")) for day in dates]
         weekly = next((item for item in expiries if item[2] == "WEEKLY"), None)
         monthly = next((item for item in expiries if item[2] == "MONTHLY"), None)
-        selected_expiries = []
-        if symbol in weekly_only:
-            # Explicit weekly-only means monthly contracts must never be subscribed.
-            if weekly:
-                selected_expiries.append(weekly)
-        else:
-            if weekly:
-                selected_expiries.append(weekly)
-            if monthly and (not weekly or monthly[0] != weekly[0]):
-                selected_expiries.append(monthly)
-            if not selected_expiries and expiries:
-                selected_expiries.append(expiries[0])
+        # The Shared Index Runner owns exactly one expiry family per index:
+        # NIFTY weekly and BANKNIFTY monthly. Box must consume that same
+        # published contract set; adding a second expiry would create a
+        # subscription that the shared runner never owns.
+        required_expiry_type = "WEEKLY" if symbol == "NIFTY" else "MONTHLY"
+        selected_expiry = next(
+            (item for item in expiries if item[2] == required_expiry_type),
+            None,
+        )
+        selected_expiries = [selected_expiry] if selected_expiry is not None else []
         if selected_expiries:
             targets.extend(
                 BoxSpreadLiveTarget(symbol, "INDEX", expiry=item[1], weekly_only=symbol in weekly_only)
@@ -2158,7 +2156,6 @@ def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionReque
 
     current_selection = set(_get_box_spread_index_selection())
     current_weekly_only = set(_get_box_spread_weekly_only_symbols())
-    removed_symbols = current_selection - set(selected)
     runner = live_box_spread_runner
     supervisor = live_box_spread_supervisor
     if supervisor is not None and supervisor.snapshot().get("handoff_in_progress"):
