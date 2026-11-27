@@ -504,29 +504,6 @@ configure_weekly_swing_page_push(
     lambda payload: publish_page_update("weekly-swing", "PATCH", payload)
 )
 configure_page_push_snapshot("box-spread", _box_page_push_snapshot)
-def _cash_future_page_push_snapshot():
-    # The REST live APIs and runner are disabled by configuration. Reconnect
-    # snapshots must not invoke the dormant scanner's ranking/pair aggregation.
-    if not settings.LIVE_CASH_FUTURE_DATA_ENABLED:
-        return {
-            "status": "DISABLED",
-            "rows": [],
-            "pairs": [],
-            "stats": {"status": "DISABLED"},
-            "scan_at": None,
-            "runner": None,
-        }
-    stats = live_cash_future_scanner.health()
-    return {
-        "status": "LIVE",
-        "rows": live_cash_future_scanner.snapshot(max_age_seconds=5.0, limit=500),
-        "pairs": live_cash_future_scanner.pair_snapshot(max_age_seconds=120.0, limit=500),
-        "stats": stats,
-        "scan_at": stats.get("last_observation_at"),
-        "runner": None if live_cash_future_runner is None else live_cash_future_runner.snapshot(),
-    }
-
-
 def _scanner_page_push_runtime_health(runner_name, runner):
     """Read-only feed and runner health included in scanner reconnect/live frames."""
     try:
@@ -1081,37 +1058,6 @@ def _market_is_open(now: datetime) -> bool:
     return now.weekday() < 5 and MARKET_OPEN <= now.time() <= MARKET_CLOSE
 
 
-async def _cash_future_history_loop() -> None:
-    interval = _collector_interval()
-    app_logger.info(f"Cash-Future history collector started: {interval}s interval")
-    while True:
-        try:
-            now_ist = datetime.now(IST)
-            if _market_is_open(now_ist):
-                symbols = _collector_symbols()
-                if not symbols:
-                    app_logger.warning("Cash-Future history collector has no active symbols")
-                else:
-                    collector = CashFutureHistoryCollector(symbols)
-                    db = SessionLocal()
-                    try:
-                        result = await asyncio.to_thread(collector.collect, db)
-                        app_logger.info(
-                            f"Cash-Future history cycle complete: {len(result['collected'])} observations, "
-                            f"{len(result['errors'])} errors"
-                        )
-                    finally:
-                        db.close()
-            else:
-                app_logger.debug("Cash-Future history collector sleeping outside NSE market hours")
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            app_logger.error(f"Cash-Future history cycle failed: {exc}")
-        await asyncio.sleep(interval)
-
-
-
 def _stop_live_runner_nonblocking(runner, *, name: str) -> None:
     """Request runner shutdown without blocking the asyncio event loop.
 
@@ -1170,66 +1116,6 @@ async def _run_live_runner_in_daemon_thread(
 
 _last_cash_future_page_push_at = 0.0
 
-
-def _publish_cash_future_page_update(*, force: bool = False) -> None:
-    global _last_cash_future_page_push_at
-    now = time_module.monotonic()
-    if not force and now - _last_cash_future_page_push_at < 0.5:
-        return
-    _last_cash_future_page_push_at = now
-    try:
-        publish_page_update("cash-future", "SNAPSHOT", _cash_future_page_push_snapshot())
-    except Exception as exc:
-        app_logger.warning("Cash-Future page push skipped: {}", exc)
-
-
-def _observe_cash_future_payload(payload):
-    result = live_cash_future_scanner.observe(payload, session_factory=SessionLocal)
-    _publish_cash_future_page_update()
-    return result
-
-
-async def _live_cash_future_loop() -> None:
-    """Supervise the live scanner feed with bounded exponential retry backoff."""
-    global live_cash_future_runner
-    retry_delay = 5.0
-    max_retry_delay = 60.0
-    while True:
-        runner = LiveCashFutureCommonRunner(
-            settings.BACKTEST_DATA_DB,
-            instrument_master=instrument_master,
-            on_payload=_observe_cash_future_payload,
-        )
-        live_cash_future_runner = runner
-        try:
-            worker_errors: list[BaseException] = []
-            await _run_live_runner_in_daemon_thread(
-                runner,
-                name="live-cash-future-runner",
-                error_holder=worker_errors,
-            )
-            if not runner.stop_event.is_set():
-                app_logger.warning(
-                    "Live Cash-Future runner exited unexpectedly; retrying in {:.1f}s",
-                    retry_delay,
-                )
-                await asyncio.sleep(retry_delay)
-                retry_delay = min(max_retry_delay, retry_delay * 2.0)
-            else:
-                return
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            app_logger.error(
-                "Live Cash-Future runner failed; retrying in {:.1f}s: {}",
-                retry_delay, exc,
-            )
-            await asyncio.sleep(retry_delay)
-            retry_delay = min(max_retry_delay, retry_delay * 2.0)
-        finally:
-            _stop_live_runner_nonblocking(runner, name="live-cash-future-final-stop")
-            if live_cash_future_runner is runner:
-                live_cash_future_runner = None
 
 async def _live_synthetic_loop() -> None:
     """Supervise the synthetic live runner with bounded retry backoff."""
