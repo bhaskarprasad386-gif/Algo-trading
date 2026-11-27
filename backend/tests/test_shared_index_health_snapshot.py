@@ -80,3 +80,16 @@ def test_runner_health_snapshot_is_lightweight_and_reports_ready_universe() -> N
     assert snapshot["feed_health_by_group"]["BANKNIFTY:option"]["count"] == 62
     assert "records" not in snapshot
     assert "option_flow_aggregates" not in snapshot
+
+def test_runner_instrument_rows_snapshot_is_copy_only_and_does_not_trigger_download() -> None:
+    runner = object.__new__(SharedIndexMarketDataRunner)
+    runner._lock = RLock()
+    runner._rows = ({"symbol": "NIFTY", "token": "99926000"},)
+
+    snapshot = runner.instrument_rows_snapshot()
+    assert snapshot == ({"symbol": "NIFTY", "token": "99926000"},)
+    assert snapshot[0] is not runner._rows[0]
+
+    snapshot[0]["symbol"] = "MUTATED"
+    assert runner._rows[0]["symbol"] == "NIFTY"
+
