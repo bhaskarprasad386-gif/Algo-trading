@@ -585,6 +585,18 @@ class SharedIndexMarketDataRunner:
     def latest(self, instrument_key: str):
         return self.state.latest(instrument_key)
 
+    def readiness_snapshot(self) -> dict:
+        """Return lock-only readiness flags for hot-path consumers.
+
+        This deliberately avoids state/lifecycle/registry traversal. It is not a
+        substitute for the detailed health snapshot exposed to diagnostics.
+        """
+        with self._lock:
+            return {
+                "enabled": self._running,
+                "initial_option_bootstrap_done": self._bootstrap_options_done,
+            }
+
     def health_snapshot(self) -> dict:
         """Return lightweight runner health without decorating/calculating IV records."""
         with self._lock:
