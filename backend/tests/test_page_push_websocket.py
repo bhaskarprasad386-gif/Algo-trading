@@ -610,3 +610,27 @@ def test_rejected_page_push_origin_logs_safe_authority_including_port(caplog):
     assert "scheme='https' host='untrusted.example' port=8443" in caplog.text
     assert "do-not-log" not in caplog.text
     assert "/path" not in caplog.text
+
+
+def test_journal_retention_prunes_amortized_without_offset_scan():
+    assert push._journal_prune_cutoff(9_999) is None
+    assert push._journal_prune_cutoff(10_000) is None
+    assert push._journal_prune_cutoff(10_099) is None
+    assert push._journal_prune_cutoff(10_100) == 100
+    assert push._journal_prune_cutoff(10_200) == 200
+
+
+def test_journal_has_composite_page_sequence_index():
+    indexed_columns = {
+        tuple(column.name for column in index.columns)
+        for index in push.events.indexes
+    }
+    assert ("page", "page_sequence") in indexed_columns
+
+
+def test_dispatcher_only_selects_currently_subscribed_channels(monkeypatch):
+    queue = asyncio.Queue(maxsize=push.QUEUE_SIZE)
+    monkeypatch.setattr(push, "_subscribers", {(queue, frozenset({"iv-skew-flip", "box-spread"}))})
+    assert push._active_subscribed_pages() == frozenset({"iv-skew-flip", "box-spread"})
+    monkeypatch.setattr(push, "_subscribers", {(queue, frozenset())})
+    assert push._active_subscribed_pages() == frozenset()
