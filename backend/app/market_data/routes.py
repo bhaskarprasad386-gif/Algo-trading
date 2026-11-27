@@ -31,7 +31,6 @@ _OVERVIEW_QUOTE_FAILURES: dict[tuple[str, tuple[str, ...]], tuple[float, str]] =
 _OVERVIEW_INSTRUMENT_CACHE: dict[tuple[str, str, str], tuple[float, str]] = {}
 _OVERVIEW_INSTRUMENT_CACHE_LOCK = Lock()
 _OVERVIEW_INSTRUMENT_CACHE_TTL_SECONDS = 900.0
-_live_cash_future_runner_snapshot_provider = None
 _shoonya_snapshot_provider = None
 _shoonya_supervisor_provider = None
 _shared_index_runner_snapshot_provider = None
@@ -41,12 +40,6 @@ _shared_index_runner_health_provider = None
 _LIVE_PERSISTED_SUMMARY_CACHE = BoundedPersistedSummaryCache(
     ttl_seconds=60.0, max_stale_seconds=300.0, max_entries=4
 )
-
-
-def configure_live_cash_future_runner_snapshot(provider) -> None:
-    """Configure the process-local Cash-Future common runner snapshot provider."""
-    global _live_cash_future_runner_snapshot_provider
-    _live_cash_future_runner_snapshot_provider = provider
 
 
 def configure_shoonya_snapshot(provider) -> None:
@@ -494,17 +487,12 @@ def get_common_feed_health():
     from app.market_data.common_strategy_feed import shared_common_manager_snapshot
 
     snapshot = shared_common_manager_snapshot()
-    runner_snapshot = (
-        _live_cash_future_runner_snapshot_provider()
-        if _live_cash_future_runner_snapshot_provider is not None
-        else None
-    )
     return {
         "status": "success",
         "initialized": snapshot is not None,
         "raw_market_data_persistence": bool(settings.LIVE_MARKET_DATA_PERSISTENCE_ENABLED),
         "live_orders": "OFF",
-        "cash_future_runner": runner_snapshot,
+        "cash_future_runner": None,  # retired scanner; retain response key for older clients
         "feed": snapshot or {
             "subscriptions": 0,
             "active_instruments": 0,
