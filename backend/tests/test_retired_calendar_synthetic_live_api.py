@@ -14,6 +14,8 @@ def test_cash_future_calendar_and_synthetic_live_apis_are_not_mounted():
     for retired_router in ("scanner_router", "auto_scanner_router", "monthly_results_router", "cash_future_strategy_router", "calendar_spread_strategy_router", "full_fno_router"):
         assert f"app.include_router({retired_router})" not in main
     assert "CashFutureDownloadManager" not in main
+    assert "app.scanner.backtest_jobs" not in main
+    assert "recover_interrupted_jobs" not in main
 
 
 def test_box_spread_and_paper_trading_are_fully_retired():
