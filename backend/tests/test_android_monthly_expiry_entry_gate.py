@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ANDROID_ACTIVITY = (
     Path(__file__).resolve().parents[2]
     / "mobile"
@@ -16,23 +15,11 @@ ANDROID_ACTIVITY = (
 )
 
 
-def test_expiry_day_blocks_new_entry_but_keeps_graph_and_next():
+def test_full_fno_android_screen_has_no_retired_cash_future_builder_or_replay():
     source = ANDROID_ACTIVITY.read_text(encoding="utf-8")
-
-    assert 'val expiryDay = item.is_expiry_day' in source
-    assert 'text = if (expiryDay) "NO TRADE" else "BUILD"' in source
-    assert 'isEnabled = !expiryDay' in source
-    assert 'text = "GRAPH"' in source
-    assert 'text = "NEXT"' in source
-    assert 'loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "CURRENT", item.contract_month, item.gap_high_timestamp)' in source
-    assert 'loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "NEAR", null, null)' in source
-
-
-def test_expiry_day_is_a_new_entry_gate_not_a_position_history_delete():
-    source = ANDROID_ACTIVITY.read_text(encoding="utf-8")
-
-    # Expiry handling is presentation/build gating only; the historical row,
-    # graph and next-contract actions remain available for an existing trade.
-    assert 'Historical ranking retained • execution disabled' in source
-    assert 'loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "CURRENT"' in source
-    assert 'loadCashFutureReplay(item.gap_high_date, item.symbol, "1m", "NEAR", null, null)' in source
+    assert "startFullFnoJob()" in source
+    assert "fullFnoResults(" in source
+    assert "cashFutureReplay(" not in source
+    assert "CashFutureStrategyBuilderView" not in source
+    assert "DailyGapCalendar" not in source
+    assert "Historical ranking retained" not in source
