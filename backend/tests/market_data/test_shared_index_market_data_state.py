@@ -380,3 +380,26 @@ def test_token_index_is_scoped_to_exchange_and_segment_and_retires_independently
     assert state.latest_records_for_tokens(("shared-token",), exchange="NFO", segment="NFO") == ()
     nse = state.latest_records_for_tokens(("shared-token",), exchange="NSE", segment="NSE")
     assert len(nse) == 1 and nse[0]["symbol"] == "NIFTY"
+
+
+
+def test_underlying_index_keeps_newest_active_spot_when_one_identity_retires():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    now = time_ns()
+    older = MarketDataRecord(
+        instrument=InstrumentKey("NSE", "NSE", "nifty-spot-old"), symbol="NIFTY-OLD",
+        instrument_type=InstrumentType.INDEX, timestamp_ns=now,
+        ltp=25000.0, underlying="NIFTY",
+    )
+    newer = MarketDataRecord(
+        instrument=InstrumentKey("NSE", "NSE", "nifty-spot-new"), symbol="NIFTY",
+        instrument_type=InstrumentType.INDEX, timestamp_ns=now + 1,
+        ltp=25001.0, underlying="NIFTY",
+    )
+    assert state.on_record(older) and state.on_record(newer)
+    rows = state.latest_records_for_instruments("index", ("NIFTY",))
+    assert len(rows) == 1 and rows[0]["token"] == "nifty-spot-new"
+
+    assert state.retain_instruments((older.instrument,)) == 1
+    rows = state.latest_records_for_instruments("index", ("NIFTY",))
+    assert len(rows) == 1 and rows[0]["token"] == "nifty-spot-old"
