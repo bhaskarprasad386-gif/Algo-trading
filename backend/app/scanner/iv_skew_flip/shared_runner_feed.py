@@ -7,6 +7,7 @@ sampling, persistence and signal calculations on IV-owned workers.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from math import isfinite
 from threading import RLock
 from time import time_ns
 from typing import Any, Callable
@@ -353,6 +354,17 @@ class IVSharedRunnerOptionFeedAdapter:
         expected = len(requested)
         fresh = len(fresh_tokens)
         missing_tokens = sorted(requested - fresh_tokens)
+        two_sided_quote_tokens = set()
+        for token in fresh_tokens:
+            row = latest[token]
+            bid, ask = row.get("bid"), row.get("ask")
+            if (
+                isinstance(bid, (int, float)) and not isinstance(bid, bool)
+                and isinstance(ask, (int, float)) and not isinstance(ask, bool)
+                and isfinite(float(bid)) and isfinite(float(ask))
+                and float(bid) > 0 and float(ask) >= float(bid)
+            ):
+                two_sided_quote_tokens.add(token)
         status = "STOPPED" if not started else "LIVE" if fresh == expected else "PARTIAL" if fresh else "WAITING_FOR_TICKS" if not latest else "STALE"
         return {
             "status": status,
@@ -362,6 +374,9 @@ class IVSharedRunnerOptionFeedAdapter:
             "expected_contracts": expected,
             "fresh_contracts": fresh,
             "missing_contracts": len(missing_tokens),
+            "two_sided_quote_contracts": len(two_sided_quote_tokens),
+            "fresh_without_two_sided_quote": len(fresh_tokens - two_sided_quote_tokens),
+            "quote_quality_status": "TWO_SIDED_QUOTES_AVAILABLE" if two_sided_quote_tokens else "NO_TWO_SIDED_QUOTES",
             "missing_tokens": missing_tokens,
             "atm_strike": universe.atm_strike,
             "strikes": list(universe.strikes),
