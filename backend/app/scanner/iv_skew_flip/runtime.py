@@ -27,7 +27,6 @@ from .basis import BasisHistory, calculate_basis, resolve_index_future_contracts
 from .equity_feed import IVWeightedEquityFeedAdapter, WeightedEquity
 from .equity_pressure import ComponentSample, ComponentWeight, EquityComponentPressure
 from .feed import IVSkewFlipFeedAdapter
-from .instruments import download_iv_instruments
 from .sampler import IVOneSecondSampler
 from .spot_feed import IVSpotFeedAdapter
 from .shared_runner_feed import IVSharedRunnerOptionFeedAdapter, IVSharedRunnerSpotFeedAdapter
@@ -272,7 +271,10 @@ class IVSkewFlipRuntime:
             if self._started:
                 return self.snapshot()
         if instruments is None:
-            instruments = download_iv_instruments(self.instrument_master)
+            rows_snapshot = getattr(self.shared_runner, "instrument_rows_snapshot", None)
+            if not callable(rows_snapshot):
+                raise RuntimeError("SHARED_RUNNER_REQUIRED: IV cannot prepare an independent instrument master")
+            instruments = rows_snapshot()
         if not instruments:
             raise RuntimeError("Angel One instrument master is empty")
         rows = {
