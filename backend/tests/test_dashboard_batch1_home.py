@@ -1,48 +1,24 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-WEB = ROOT / "web" / "dashboard" / "index.html"
+HOME = ROOT / "frontend" / "app" / "page.tsx"
+SHELL = ROOT / "frontend" / "components" / "app-shell.tsx"
 
 
-def test_batch1_home_command_center_contract():
-    ui = WEB.read_text(encoding="utf-8")
-    for marker in (
-        "Home / Command Center",
-        "Market Overview",
-        "Custom Alerts",
-        "Live Scanner",
-        "Strategy Opportunities",
-        "Recent Alerts",
-        "Live Market Chart",
-        "System Status",
-        "Live Data Quality Center",
-        "mobile",
-        "bottom-nav",
-        "DASHBOARD_WIDGET_KEY",
-        "saveDashboardWidgets",
-        "resetDashboardWidgets",
-        "/api/v1/market-data/overview",
-        "/api/v1/market-data/live-health",
-        "/api/v1/scanner/cash-future/live/fast",
-        "/ws/dashboard",
-        "connectDashboardWebSocket",
-        "WS CONNECTED",
-        "Live broker orders: OFF",
-    ):
-        assert marker in ui
+def test_current_home_is_nifty_banknifty_and_box_spread_only():
+    ui = HOME.read_text(encoding="utf-8")
+    shell = SHELL.read_text(encoding="utf-8")
+    assert 'const markets = ["NIFTY", "BANKNIFTY"]' in ui
+    assert "Box Spread" in ui
+    assert "/strategies/box-spread" in shell
+    for retired in ("Cash-Future", "Calendar Spread", "Synthetic Arbitrage", "Paper Trading"):
+        assert retired not in ui
+        assert retired not in shell
 
 
-def test_batch1_home_has_backend_strategy_workspace_contract():
-    ui = WEB.read_text(encoding="utf-8")
-    assert "/api/v1/app/strategies" in ui
-    assert "/api/v1/app/strategies/'+encodeURIComponent(id)+'/workspace" in ui
-    assert "OPEN WORKSPACE" in ui or "Workspace contracts" in ui
-    for strategy in ("cash-future", "calendar-spread", "synthetic-future-cash-carry", "box-spread"):
-        assert strategy in ui
-
-
-def test_batch1_home_has_no_paper_execution_contract():
-    ui = WEB.read_text(encoding="utf-8")
-    assert "Paper Portfolio" not in ui
-    assert "/api/v1/execution/paper/" not in ui
-    assert "/api/v1/live-paper/" not in ui
+def test_current_home_uses_shared_market_overview_without_retired_scanner_routes():
+    ui = HOME.read_text(encoding="utf-8")
+    assert "/api/v1/market-data/overview" in ui
+    assert "/api/v1/scanner/cash-future" not in ui
+    assert "/api/v1/scanner/calendar-spread" not in ui
+    assert "/api/v1/scanner/synthetic" not in ui
