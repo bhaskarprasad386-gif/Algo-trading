@@ -310,3 +310,50 @@ def test_sdk_close_retires_transport_even_when_sdk_close_returns_quickly():
     assert low_level.abort_called is True
     assert low_level.shutdown_called is True
     assert not transport.is_alive()
+
+
+def test_sdk_close_worker_start_failure_falls_back_to_low_level_shutdown(monkeypatch):
+    from threading import Event, Thread
+
+    release = Event()
+
+    class LowLevelSocket:
+        def __init__(self):
+            self.abort_called = False
+            self.shutdown_called = False
+
+        def abort(self):
+            self.abort_called = True
+
+        def shutdown(self):
+            self.shutdown_called = True
+            release.set()
+
+    low_level = LowLevelSocket()
+    transport = Thread(target=lambda: release.wait(timeout=5.0), daemon=True)
+    transport.start()
+    sdk_socket = SimpleNamespace(
+        wsapp=SimpleNamespace(sock=low_level),
+        _transport_thread=transport,
+        close_connection=lambda: (_ for _ in ()).throw(
+            AssertionError("SDK close must not run on the caller thread")
+        ),
+    )
+
+    class BrokenThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("thread quota exhausted")
+
+    monkeypatch.setattr(websocket_module, "Thread", BrokenThread)
+
+    closed = _close_sdk_connection_bounded(
+        sdk_socket, phase="test-close-worker-start-failure", timeout_seconds=0.05
+    )
+
+    assert closed is True
+    assert low_level.abort_called is True
+    assert low_level.shutdown_called is True
+    assert not transport.is_alive()
