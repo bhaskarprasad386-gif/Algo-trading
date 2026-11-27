@@ -213,3 +213,15 @@ def test_iv_has_no_independent_instrument_master_recovery_job_or_script():
     assert "download_iv_instruments" not in main
     assert "download_iv_instruments" not in runtime
     assert "instrument_rows_snapshot" in runtime
+
+
+def test_next_vps_bootstrap_removes_retired_iv_master_recovery_timer_and_secret():
+    root = Path(__file__).parents[1]
+    repository = root.parent
+    bootstrap = (repository / "deploy" / "bootstrap-vps.sh").read_text(encoding="utf-8")
+
+    assert "algo-trading-master-recovery.timer" in bootstrap
+    assert "algo-trading-master-recovery.service" in bootstrap
+    assert "/etc/algo-trading/master-recovery.env" in bootstrap
+    assert "rm -f /etc/algo-trading/master-recovery.env" in bootstrap
+    assert not (root / "scripts" / "install_master_recovery_timer.sh").exists()
