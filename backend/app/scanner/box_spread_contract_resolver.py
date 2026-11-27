@@ -2,7 +2,7 @@
 
 This module is deliberately standalone: it does not start feeds, place orders,
 write snapshots, or call the live Box Spread scanner. Contract identity comes
-only from concrete SyntheticSubscription records selected by the existing
+only from concrete BoxSpreadSubscription records selected by the existing
 Box Spread subscription builder; token/symbol values are never guessed.
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Iterable
 
-from app.market_data.live_synthetic_stream import SyntheticSubscription
+from app.market_data.box_spread_market_data import BoxSpreadSubscription
 
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
@@ -90,7 +90,7 @@ def _positive_lot_size(value: object, *, field: str) -> int:
     if isinstance(value, bool):
         raise BoxSpreadContractResolutionError(f"{field} must be a positive integer")
     try:
-        number = int(value)  # SyntheticSubscription lot_size is already an integer.
+        number = int(value)  # BoxSpreadSubscription lot_size is already an integer.
     except (TypeError, ValueError, OverflowError):
         raise BoxSpreadContractResolutionError(f"{field} must be a positive integer") from None
     if number <= 0 or str(value).strip() not in {str(number), f"{number}.0"}:
@@ -100,7 +100,7 @@ def _positive_lot_size(value: object, *, field: str) -> int:
 
 def resolve_box_spread_contracts(
     *,
-    subscriptions: Iterable[SyntheticSubscription],
+    subscriptions: Iterable[BoxSpreadSubscription],
     underlying: str,
     instrument_class: str,
     expiry: str | date | datetime,
@@ -142,7 +142,7 @@ def resolve_box_spread_contracts(
 
     # First isolate the requested chain/expiry/strikes. Unrelated subscriptions
     # (including other underlyings and expiries) are allowed in a shared registry.
-    matches: dict[tuple[str, Decimal], list[SyntheticSubscription]] = {
+    matches: dict[tuple[str, Decimal], list[BoxSpreadSubscription]] = {
         key: [] for key in required
     }
     for item in subscriptions:
