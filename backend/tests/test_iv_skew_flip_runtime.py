@@ -1166,3 +1166,21 @@ def test_broker_snapshot_readiness_waits_for_each_chain_and_spot_independently()
     runtime._stopping = False
     runtime._started = False
     assert runtime.broker_snapshot_ready("BANKNIFTY_MONTHLY") is False
+
+
+def test_production_iv_runtime_uses_bounded_three_second_refresh_cadence():
+    import ast
+
+    main_path = Path(__file__).resolve().parents[1] / "app" / "main.py"
+    tree = ast.parse(main_path.read_text(encoding="utf-8"))
+    constructor = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "IVSkewFlipRuntime"
+    )
+    refresh = next(
+        keyword.value for keyword in constructor.keywords
+        if keyword.arg == "refresh_seconds"
+    )
+    assert isinstance(refresh, ast.Constant) and refresh.value == 3.0
