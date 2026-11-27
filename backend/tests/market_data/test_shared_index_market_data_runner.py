@@ -121,7 +121,7 @@ def test_future_rollover_rotates_to_new_listed_expiry_and_updates_state():
     runner.stop()
 
 
-def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
+def test_live_runner_bootstraps_spot_and_124_options_after_first_spot_tick():
     rows = _rows()
     manager = RunnerManager()
     runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=manager)
@@ -139,7 +139,7 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
         instrument_type=InstrumentType.INDEX, timestamp_ns=__import__("time").time_ns(),
         ltp=48000.0, underlying="BANKNIFTY",
     ))
-    assert len(manager.registry.active_keys()) == 52
+    assert len(manager.registry.active_keys()) == 128
     assert runner.snapshot()["lifecycle"]["options_active"] is True
     assert runner.snapshot()["lifecycle"]["futures_active"] is True
     assert runner.snapshot()["futures_expiries"] == {"NIFTY": "2026-11-26", "BANKNIFTY": "2026-12-24"}
@@ -147,8 +147,8 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
                          if manager.registry.get(key).instrument_type == "option"]
     nifty_strikes = sorted({d.strike for d in option_descriptors if d.underlying == "NIFTY"})
     bank_strikes = sorted({d.strike for d in option_descriptors if d.underlying == "BANKNIFTY"})
-    assert len(nifty_strikes) == 13 and nifty_strikes[6] == 22000
-    assert len(bank_strikes) == 11 and bank_strikes[5] == 48000
+    assert len(nifty_strikes) == 31 and nifty_strikes[15] == 22000
+    assert len(bank_strikes) == 11 and bank_strikes[5] == 124000
     assert runner.snapshot()["state"]["fresh_count"] == 2
     assert runner.snapshot()["live_data_ready"] is False
     futures_consumer = runner.lifecycle.FUTURES_CONSUMER
@@ -183,10 +183,10 @@ def test_live_runner_bootstraps_spot_and_48_options_after_first_spot_tick():
     assert snap["universe_coverage"]["complete"] is True
     assert snap["universe_coverage"]["counts"] == {"index": 2, "future": 2, "option": 48}
     assert snap["universe_coverage"]["per_underlying"]["NIFTY"] == {
-        "index": 1, "future": 1, "option": 26, "CE": 13, "PE": 13,
+        "index": 1, "future": 1, "option": 62, "CE": 31, "PE": 31,
     }
     assert snap["universe_coverage"]["per_underlying"]["BANKNIFTY"] == {
-        "index": 1, "future": 1, "option": 22, "CE": 11, "PE": 11,
+        "index": 1, "future": 1, "option": 62, "CE": 31, "PE": 31,
     }
     assert snap["all_records_fresh"] is True
     # A same-sized or partial state must not pass readiness if its contract
