@@ -163,16 +163,20 @@ BOX_SPREAD_INDEX_PRESETS = {
     "NIFTY_SENSEX": ("NIFTY", "SENSEX"),
     "NIFTY_SENSEX_BANKNIFTY": ("NIFTY", "SENSEX", "BANKNIFTY"),
 }
-BOX_SPREAD_DEFAULT_INDEX_SELECTION = ("NIFTY", "BANKNIFTY", "MIDCPNIFTY", "SENSEX")
+BOX_SPREAD_LIVE_INDEX_UNIVERSE = frozenset({"NIFTY", "BANKNIFTY"})
+BOX_SPREAD_DEFAULT_INDEX_SELECTION = ("NIFTY", "BANKNIFTY")
 
 
 def _normalize_box_spread_index_symbols(symbols):
     if not isinstance(symbols, (list, tuple, set, frozenset)):
         raise ValueError("symbols must be a non-empty list")
     normalized = tuple(sorted({str(item or "").strip().upper() for item in symbols if str(item or "").strip()}))
-    unsupported = sorted(set(normalized) - set(OPTION_STRATEGY_INDEX_SYMBOLS))
+    unsupported = sorted(set(normalized) - BOX_SPREAD_LIVE_INDEX_UNIVERSE)
     if unsupported:
-        raise ValueError(f"unsupported Box Spread indices: {', '.join(unsupported)}")
+        raise ValueError(
+            "Box Spread live data is locked to NIFTY and BANKNIFTY; "
+            f"unsupported indices: {', '.join(unsupported)}"
+        )
     if not normalized:
         raise ValueError("select at least one Box Spread index")
     return normalized
@@ -212,7 +216,7 @@ def _get_box_spread_weekly_only_symbols():
                 return ()
             payload = _read_box_spread_selection_payload(saved.symbols_json)
             weekly = _normalize_box_spread_index_symbols(payload["weekly_only_symbols"]) if payload.get("weekly_only_symbols") else ()
-            return tuple(symbol for symbol in weekly if symbol in {"NIFTY", "SENSEX"})
+            return tuple(symbol for symbol in weekly if symbol == "NIFTY")
     except Exception as exc:
         app_logger.exception("Box Spread expiry selection read failed; refusing to broaden the live subscription universe")
         raise RuntimeError("Box Spread expiry selection is unavailable; live subscriptions are paused until it can be read") from exc
@@ -221,9 +225,9 @@ def _get_box_spread_weekly_only_symbols():
 def _save_box_spread_index_selection(symbols, weekly_only_symbols=()):
     normalized = _normalize_box_spread_index_symbols(symbols)
     weekly = tuple(sorted({str(item or "").strip().upper() for item in weekly_only_symbols if str(item or "").strip()}))
-    unsupported_weekly = sorted(set(weekly) - {"NIFTY", "SENSEX"})
+    unsupported_weekly = sorted(set(weekly) - {"NIFTY"})
     if unsupported_weekly:
-        raise ValueError(f"weekly-only mode is supported only for NIFTY and SENSEX: {', '.join(unsupported_weekly)}")
+        raise ValueError(f"weekly-only mode is supported only for NIFTY: {', '.join(unsupported_weekly)}")
     if set(weekly) - set(normalized):
         raise ValueError("weekly-only indices must also be included in selected indices")
     payload = {"symbols": list(normalized), "weekly_only_symbols": list(weekly)}
@@ -246,8 +250,8 @@ def _box_spread_targets_from_master(master, symbols, weekly_only_symbols=()):
         if symbol not in BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
     )
     weekly_only = set(weekly_only_symbols or ())
-    if weekly_only - {"NIFTY", "SENSEX"} or weekly_only - set(selected):
-        raise ValueError("weekly-only mode is valid only for selected NIFTY/SENSEX")
+    if weekly_only - {"NIFTY"} or weekly_only - set(selected):
+        raise ValueError("weekly-only mode is valid only for selected NIFTY")
     today = datetime.now(IST).date()
     targets = []
     expiry_types = {}
@@ -690,14 +694,6 @@ async def lifespan(app: FastAPI):
         _iv_option_snapshot_task = asyncio.create_task(_iv_option_snapshot_daily_loop())
     if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
-    if _collector_enabled() and _history_collector_task is None:
-        _history_collector_task = asyncio.create_task(_cash_future_history_loop())
-    if settings.LIVE_CASH_FUTURE_DATA_ENABLED and _live_cash_future_task is None:
-        _live_cash_future_task = asyncio.create_task(_live_cash_future_loop())
-    if settings.LIVE_CALENDAR_SPREAD_DATA_ENABLED and _live_calendar_spread_task is None:
-        _live_calendar_spread_task = asyncio.create_task(_live_calendar_spread_loop())
-    if not LIVE_SYNTHETIC_RUNNER_FORCE_DISABLED and settings.LIVE_SYNTHETIC_DATA_ENABLED and _live_synthetic_task is None:
-        _live_synthetic_task = asyncio.create_task(_live_synthetic_loop())
     # Box Spread is temporarily excluded from the shared Angel One socket budget.
     # Keep its routes/history intact, but do not create any Box-owned live subscriptions.
     if not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED and settings.LIVE_BOX_SPREAD_DATA_ENABLED and _live_box_spread_task is None:
