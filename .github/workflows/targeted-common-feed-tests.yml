@@ -12,7 +12,7 @@ on:
       - "backend/app/market_data/provider_readiness_bridge.py"
       - "backend/app/market_data/shoonya_websocket.py"
       - "backend/app/market_data/tests/**"
-      - "backend/tests/test_live_synthetic_underlying.py"
+      - "backend/tests/test_box_spread_underlying_feed.py"
       - "backend/tests/test_provider_readiness.py"
       - "backend/tests/test_provider_readiness_bridge.py"
       - "backend/tests/test_shoonya_market_data.py"
@@ -28,7 +28,7 @@ on:
       - "backend/app/market_data/provider_readiness_bridge.py"
       - "backend/app/market_data/shoonya_websocket.py"
       - "backend/app/market_data/tests/**"
-      - "backend/tests/test_live_synthetic_underlying.py"
+      - "backend/tests/test_box_spread_underlying_feed.py"
       - "backend/tests/test_provider_readiness.py"
       - "backend/tests/test_provider_readiness_bridge.py"
       - "backend/tests/test_shoonya_market_data.py"
@@ -71,7 +71,9 @@ jobs:
           python -m py_compile app/market_data/provider_readiness_bridge.py
           python -m py_compile app/market_data/shoonya_websocket.py
           python -m py_compile app/market_data/normalizer.py
-          python -m py_compile app/market_data/live_synthetic_underlying.py
+          python -m py_compile app/market_data/box_spread_atm.py
+          python -m py_compile app/market_data/box_spread_underlying_feed.py
+          python -m py_compile app/market_data/box_spread_market_data.py
       - name: Run targeted common feed tests
         working-directory: backend
         env:
@@ -90,7 +92,7 @@ jobs:
           PYTHONPATH: ..
         run: |
           python -m pytest -q \
-            tests/test_live_synthetic_underlying.py
+            tests/test_box_spread_underlying_feed.py
       - name: Run dual-broker readiness lifecycle regressions
         working-directory: backend
         env:
