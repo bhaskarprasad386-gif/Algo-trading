@@ -499,7 +499,6 @@ def test_runtime_start_retains_partially_registered_spot_feed_when_rollback_fail
         + make_rows("NIFTY", "26NOV2026", 100, 10)
         + make_rows("BANKNIFTY", "26NOV2026", 200, 10)
     )
-    monkeypatch.setattr(runtime_module, "download_iv_instruments", lambda master: rows)
 
     class PartiallyFailingSpotFeed(FakeSpotFeed):
         def __init__(self):
