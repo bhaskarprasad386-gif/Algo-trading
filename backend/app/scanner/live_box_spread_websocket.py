@@ -241,6 +241,4 @@ def _page_snapshot():
     return {"opportunities": rows}
 
 
-# The shared page gateway reads this getter on subscribe/resync. It does not
-# start a runner or broker feed and uses the same quote validation as this WS.
-configure_snapshot_provider("box-spread", _page_snapshot)
+# Retired Box Spread no longer registers a shared page-push channel.
