@@ -114,9 +114,6 @@ _iv_skew_flip_runtime_lock = threading.RLock()
 live_box_spread_latest_results: tuple = ()
 live_box_spread_runner: LiveBoxSpreadRunner | None = None
 live_box_spread_supervisor: BoxSpreadRunnerSupervisor | None = None
-# Box Spread adapters use only the dedicated Box-owned broker manager.
-# No Box callback or subscription is registered on SharedIndexMarketDataRunner.
-LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = True
 BOX_SPREAD_INDEX_SELECTION_LOCK = threading.Lock()
 BOX_SPREAD_INDEX_PRESETS = {
     "ALL": ("NIFTY", "BANKNIFTY"),
@@ -624,9 +621,10 @@ async def lifespan(app: FastAPI):
     # Shared Runner's already-published option records without extra API traffic.
     if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
-    # Box Spread consumes only records published by SharedIndexMarketDataRunner.
-    # Its local fan-out has no broker socket or independent subscription path.
-    # Box Spread is retired; never schedule its runner, regardless of config.
+    # Preserve the existing Box Spread live scanner on its dedicated broker
+    # manager. It must not attach to or fan out from the Shared Runner.
+    if settings.LIVE_BOX_SPREAD_DATA_ENABLED and not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED and _live_box_spread_task is None:
+        _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
 
     _dashboard_snapshot_task = asyncio.create_task(_dashboard_snapshot_publisher_loop())
     _event_loop_lag_task = asyncio.create_task(event_loop_lag_monitor.run())
@@ -670,6 +668,10 @@ async def lifespan(app: FastAPI):
             for result in results:
                 if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
                     app_logger.error("Background task shutdown failed: %s", result)
+        try:
+            box_isolated_feed_manager.close()
+        except Exception:
+            app_logger.exception("Box isolated feed manager shutdown failed")
         # Broker adapters own authenticated provider sessions in process memory.
         # Drain them before shutdown completes; failures are logged per provider
         # and must not prevent the remaining sessions or market-data runners closing.
@@ -926,7 +928,7 @@ _iv_option_snapshot_task: asyncio.Task | None = None
 _weekly_swing_refresh_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None
 IST = ZoneInfo("Asia/Kolkata")
-# Box adapters consume the Shared Runner's published NIFTY/BANKNIFTY records only.
+# Box Spread uses its own isolated broker manager; the Shared Runner never receives Box subscriptions.
 LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = False
 _live_box_spread_task: asyncio.Task | None = None
 
