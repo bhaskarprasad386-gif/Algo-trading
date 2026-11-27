@@ -451,6 +451,7 @@ class LiveBoxSpreadRunner:
         today = datetime.now().date()
         strikes = {}
         selected_expiries = {}
+        locked_expiry_unavailable = set()
         for target in self.targets:
             wanted = target.expiry
             symbol = target.underlying.strip().upper()
@@ -458,6 +459,7 @@ class LiveBoxSpreadRunner:
                 # A missing locked expiry must not be replaced by a different
                 # expiry family inferred from the option/futures master.
                 strikes.setdefault(symbol, ())
+                locked_expiry_unavailable.add(symbol)
                 continue
             if wanted is None and symbol in WEEKLY_EXPIRY_PRIORITY_SYMBOLS and not getattr(target, "weekly_only", False):
                 expected_segment = "BFO" if target.instrument_class == "INDEX" and target.underlying in BSE_INDEX_SYMBOLS else "NFO"
@@ -532,11 +534,19 @@ class LiveBoxSpreadRunner:
                 ready_targets = tuple(target for target in self.targets if atms.get(target.underlying) is not None)
                 ready_symbols = sorted({target.underlying for target in ready_targets})
                 waiting_symbols = sorted(set(symbols) - set(ready_symbols))
+                initial_unavailable = [
+                    {"symbol": symbol, "reason": "LOCKED_EXPIRY_UNAVAILABLE"}
+                    for symbol in sorted(locked_expiry_unavailable)
+                ]
                 self._readiness = {
-                    "state": "ready" if ready_targets else "waiting_for_underlying_ticks",
+                    "state": (
+                        "waiting_for_locked_expiry"
+                        if locked_expiry_unavailable
+                        else "ready" if ready_targets else "waiting_for_underlying_ticks"
+                    ),
                     "ready_symbols": ready_symbols,
                     "waiting_symbols": waiting_symbols,
-                    "unavailable_symbols": [],
+                    "unavailable_symbols": initial_unavailable,
                     "selected_expiries": dict(selected_expiries),
                     "contract_expiries": {},
                     "subscription_counts": {},
@@ -547,7 +557,7 @@ class LiveBoxSpreadRunner:
                     sleep(.25)
                     continue
                 subs=[]
-                unavailable_symbols = []
+                unavailable_symbols = list(initial_unavailable)
                 contract_expiries = {}
                 subscription_counts = {}
                 for target in ready_targets:
