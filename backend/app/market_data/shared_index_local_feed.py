@@ -85,6 +85,16 @@ class SharedIndexRunnerLocalFeedManager:
         items = tuple(keys or ())
         if not name or not items:
             raise ValueError("consumer and instrument keys are required")
+        state = getattr(self.runner, "state", None)
+        allows = getattr(state, "is_instrument_allowed", None)
+        if not callable(allows):
+            raise TypeError("Shared Runner state does not expose active instrument ownership")
+        rejected = [key.value for key in items if not allows(key)]
+        if rejected:
+            raise PermissionError(
+                "local strategy consumers may subscribe only to instruments currently owned "
+                f"by SharedIndexMarketDataRunner; rejected={rejected[:8]}"
+            )
         with self._lock:
             if self._closed:
                 raise RuntimeError("shared runner local feed manager is closed")
