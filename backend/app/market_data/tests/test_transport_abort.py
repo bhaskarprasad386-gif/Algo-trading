@@ -275,3 +275,38 @@ def test_sdk_close_falls_back_to_shutdown_when_abort_is_noop_and_sdk_clears_sock
     assert low_level.abort_called is True
     assert low_level.shutdown_called is True
     assert not transport.is_alive()
+
+
+
+def test_sdk_close_retires_transport_even_when_sdk_close_returns_quickly():
+    release_transport = Event()
+
+    class NoopAbortSocket:
+        def __init__(self):
+            self.abort_called = False
+            self.shutdown_called = False
+
+        def abort(self):
+            self.abort_called = True
+
+        def shutdown(self):
+            self.shutdown_called = True
+            release_transport.set()
+
+    low_level = NoopAbortSocket()
+    transport = Thread(target=lambda: release_transport.wait(timeout=5.0), daemon=True)
+    transport.start()
+    sdk_socket = SimpleNamespace(
+        wsapp=SimpleNamespace(sock=low_level),
+        _transport_thread=transport,
+        close_connection=lambda: None,
+    )
+
+    closed = _close_sdk_connection_bounded(
+        sdk_socket, phase="test-fast-sdk-close-live-transport", timeout_seconds=0.05
+    )
+
+    assert closed is True
+    assert low_level.abort_called is True
+    assert low_level.shutdown_called is True
+    assert not transport.is_alive()
