@@ -448,6 +448,18 @@ def test_stale_master_refresh_failure_cannot_pollute_restarted_runner_epoch():
 
 
 
+def test_readiness_snapshot_is_lock_only_and_reports_lifecycle_flags():
+    runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(_rows()), manager=RunnerManager())
+    runner._running = True
+    runner._bootstrap_options_done = True
+    assert runner.readiness_snapshot() == {
+        "enabled": True,
+        "initial_option_bootstrap_done": True,
+    }
+    runner._running = False
+    assert runner.readiness_snapshot()["enabled"] is False
+
+
 def test_futures_rollover_is_serialized_with_runner_stop():
 
 def test_futures_rollover_selection_is_cached_for_market_date(monkeypatch):
