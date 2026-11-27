@@ -144,47 +144,6 @@ def _run_schema_migrations(connection) -> None:
                 if name not in position_columns:
                     connection.execute(text(f"ALTER TABLE positions ADD COLUMN {name} {definition}"))
 
-        if "backtest_jobs" not in account_tables:
-            connection.execute(text(f"""
-                CREATE TABLE backtest_jobs (
-                    id {generated_id_type} PRIMARY KEY,
-                    job_id VARCHAR(64) NOT NULL UNIQUE,
-                    status VARCHAR(16) NOT NULL DEFAULT 'queued',
-                    symbol VARCHAR(128) NOT NULL,
-                    contract_month VARCHAR(64) NOT NULL,
-                    requested_days INTEGER NOT NULL,
-                    progress_pct FLOAT NOT NULL DEFAULT 0.0,
-                    symbols_processed INTEGER NOT NULL DEFAULT 0,
-                    symbols_total INTEGER NOT NULL DEFAULT 0,
-                    message TEXT,
-                    result_json TEXT,
-                    config_json TEXT,
-                    created_at {datetime_type},
-                    updated_at {datetime_type}
-                )
-            """))
-            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_status ON backtest_jobs (status)"))
-            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_job_id ON backtest_jobs (job_id)"))
-            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_jobs_symbol ON backtest_jobs (symbol)"))
-        else:
-            job_columns = {column["name"] for column in inspect(connection).get_columns("backtest_jobs")}
-            if "config_json" not in job_columns:
-                connection.execute(text("ALTER TABLE backtest_jobs ADD COLUMN config_json TEXT"))
-
-        if "backtest_job_result_chunks" not in account_tables:
-            connection.execute(text(f"""
-                CREATE TABLE backtest_job_result_chunks (
-                    id {generated_id_type} PRIMARY KEY,
-                    job_id VARCHAR(64) NOT NULL,
-                    sequence INTEGER NOT NULL,
-                    symbol VARCHAR(128) NOT NULL,
-                    result_json TEXT NOT NULL,
-                    created_at {datetime_type}
-                )
-            """))
-        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_backtest_job_result_chunk ON backtest_job_result_chunks (job_id, sequence)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_backtest_job_result_chunks_job ON backtest_job_result_chunks (job_id, sequence)"))
-
         if "password_reset_tokens" not in account_tables:
             connection.execute(text(f"""
                 CREATE TABLE password_reset_tokens (
