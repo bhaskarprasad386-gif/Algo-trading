@@ -201,7 +201,7 @@ async def _iv_scanner_recovery_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _dashboard_snapshot_task, _event_loop_lag_task
-    global _history_collector_task, _contract_master_sync_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, _shared_index_runner_task
+    global _contract_master_sync_task, _weekly_swing_refresh_task, _iv_scanner_recovery_task, iv_skew_flip_runtime, _shared_index_runner_task
     global provider_quote_parity_store, provider_quote_parity_worker
     app_logger.info(f"{settings.app_name} started successfully in {settings.environment} mode")
     if settings.PROVIDER_QUOTE_PARITY_ENABLED:
@@ -270,7 +270,7 @@ async def lifespan(app: FastAPI):
             _dashboard_snapshot_task.cancel()
         if _event_loop_lag_task is not None:
             _event_loop_lag_task.cancel()
-        for task in (_dashboard_snapshot_task, _event_loop_lag_task, _history_collector_task, _contract_master_sync_task, _weekly_swing_refresh_task, _iv_option_snapshot_task, _iv_scanner_recovery_task, _shared_index_runner_task):
+        for task in (_dashboard_snapshot_task, _event_loop_lag_task, _contract_master_sync_task, _weekly_swing_refresh_task, _iv_scanner_recovery_task, _shared_index_runner_task):
             if task is not None:
                 task.cancel()
         shutdown_tasks = tuple(
@@ -278,10 +278,8 @@ async def lifespan(app: FastAPI):
             for task in (
                 _dashboard_snapshot_task,
                 _event_loop_lag_task,
-                _history_collector_task,
                 _contract_master_sync_task,
                 _weekly_swing_refresh_task,
-                _iv_option_snapshot_task,
                 _iv_scanner_recovery_task,
                 _shared_index_runner_task,
             )
@@ -302,10 +300,8 @@ async def lifespan(app: FastAPI):
             app_logger.error("Broker session shutdown failed for %s: %s", broker_name, error)
         _dashboard_snapshot_task = None
         _event_loop_lag_task = None
-        _history_collector_task = None
         _contract_master_sync_task = None
         _weekly_swing_refresh_task = None
-        _iv_option_snapshot_task = None
         _iv_scanner_recovery_task = None
         _shared_index_runner_task = None
         parity_worker_stopped = True
@@ -542,10 +538,8 @@ async def dashboard_websocket(websocket: WebSocket):
             pass
 
 
-_history_collector_task: asyncio.Task | None = None
 _iv_scanner_recovery_task: asyncio.Task | None = None
 _shared_index_runner_task: asyncio.Task | None = None
-_iv_option_snapshot_task: asyncio.Task | None = None
 _weekly_swing_refresh_task: asyncio.Task | None = None
 _contract_master_sync_task: asyncio.Task | None = None
 IST = ZoneInfo("Asia/Kolkata")
