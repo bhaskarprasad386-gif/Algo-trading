@@ -60,7 +60,7 @@ class StrategyRegistryActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val items = ApiService.retrofitService.appStrategies().strategies
-                    .filter { it.enabled && it.screen !in setOf("box_spread", "full_fno") }
+                    .filter { it.enabled }
                 withContext(Dispatchers.Main) {
                     statusView.text = "Backend registry • ${items.size} enabled strategies • refresh 30s"
                     listView.removeAllViews()
