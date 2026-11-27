@@ -178,7 +178,7 @@ def test_live_runner_bootstraps_spot_and_124_options_after_first_spot_tick():
     snap = runner.snapshot()
     assert snap["state"]["instrument_count"] == 128
     assert snap["live_data_ready"] is True
-    assert len(snap["records"]) == 52
+    assert len(snap["records"]) == 128
     assert all(row["feed_age_seconds"] >= 0 and row["fresh"] for row in snap["records"])
     assert snap["universe_coverage"]["complete"] is True
     assert snap["universe_coverage"]["counts"] == {"index": 2, "future": 2, "option": 124}
