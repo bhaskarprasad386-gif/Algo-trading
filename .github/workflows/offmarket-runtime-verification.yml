@@ -7,8 +7,8 @@ on:
       - '.github/workflows/offmarket-runtime-verification.yml'
       - 'backend/tests/test_off_market_runtime_verification.py'
       - 'backend/app/market_data/common_strategy_feed.py'
-      - 'backend/app/market_data/live_box_spread_runner.py'
-      - 'backend/app/scanner/butterfly_condor_shadow.py'
+      - 'backend/app/market_data/shared_index_market_data_runner.py'
+      - 'backend/app/market_data/shared_index_expiry.py'
   schedule:
     # 18:45 IST on weekdays: after the NSE/BSE cash and derivatives session.
     - cron: "15 13 * * 1-5"
@@ -62,8 +62,6 @@ jobs:
           curl -fsS --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/health -o /tmp/offmarket-health.json
           curl -fsS --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/live-health -o /tmp/offmarket-live-health.json
           curl -fsS --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/common-feed-health -o /tmp/offmarket-common-feed.json
-          curl -fsS --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/scanner/box-spread/live -o /tmp/offmarket-box-live.json
-          curl -fsS --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/scanner/box-spread/diagnostics -o /tmp/offmarket-box-diagnostics.json
           curl -fsS --connect-timeout 2 --max-time 8 http://127.0.0.1:8000/api/v1/market-data/shoonya-health -o /tmp/offmarket-shoonya.json
 
           python3 - <<'PY'
@@ -76,8 +74,6 @@ jobs:
           health = load("health")
           live = load("live-health")
           common = load("common-feed")
-          box_live = load("box-live")
-          box_diag = load("box-diagnostics")
           shoonya = load("shoonya")
 
           assert health.get("status") == "ok", f"application health is not ok: {health}"
@@ -108,18 +104,6 @@ jobs:
               "authentication": (feed.get("normalized_observer_authentication") or {}).get("state", "UNKNOWN"),
           }, sort_keys=True))
 
-          assert box_live.get("strategy") == "box-spread", "Box live endpoint strategy mismatch"
-          assert str(box_live.get("mode") or "").lower() == "paper-safe", "Box live endpoint is not paper-safe"
-          assert isinstance(box_live.get("data"), list), "Box live data is not a list"
-          assert box_diag.get("strategy") == "box-spread", "Box diagnostics strategy mismatch"
-          assert str(box_diag.get("status") or "").lower() in {"available", "waiting"}, "Box diagnostics status invalid"
-          assert isinstance(box_diag.get("counts", {}), dict), "Box diagnostic counters malformed"
-          last_scan = box_diag.get("last_scan")
-          assert last_scan is None or isinstance(last_scan, dict), "Box last_scan must be an object or null"
-          print("BOX_ENDPOINT_CONTRACTS=PASS")
-          print("BOX_OFFMARKET_STATE=" + str(box_diag.get("status", "UNKNOWN")).upper())
-          print("BOX_LAST_SCAN=" + ("PRESENT" if last_scan else "NOT_YET_SCANNED"))
-
           assert shoonya.get("enabled") is False, "Shoonya is expected to remain disabled in this verification profile"
           assert shoonya.get("mode") == "shadow_only", "Shoonya mode must remain shadow_only"
           assert shoonya.get("order_routing_enabled") is False, "Shoonya order routing must remain disabled"
@@ -128,29 +112,6 @@ jobs:
           print("SHOONYA_STRATEGY_FANOUT=OFF")
           print("OFFMARKET_RUNTIME_RESULT=PASS")
           PY
-
-          if git cat-file -e HEAD:backend/app/scanner/butterfly_condor_shadow.py 2>/dev/null; then
-            PYTHONPATH=backend python3 - <<'PY'
-          from time import time_ns
-          from app.scanner.butterfly_condor_shadow import evaluate_butterfly_condor_snapshot
-
-          result = evaluate_butterfly_condor_snapshot({
-              "quotes": {"captured_at_ns": time_ns(), "groups": []},
-              "depth": {"records": []},
-          })
-          assert result.get("source") == "box-spread-shared-snapshot"
-          assert result.get("read_only") is True
-          assert result.get("execution_mode") == "SHADOW_ONLY"
-          assert result.get("order_routing_enabled") is False
-          assert result.get("result_count") == 0
-          print("BUTTERFLY_CONDOR_SHADOW_RUNTIME=PASS")
-          print("BUTTERFLY_CONDOR_ORDER_ROUTING=OFF")
-          PY
-            echo "SHADOW_DEPLOYMENT_READINESS=MODULE_PRESENT"
-          else
-            echo "BUTTERFLY_CONDOR_SHADOW_RUNTIME=NOT_DEPLOYED"
-            echo "SHADOW_DEPLOYMENT_READINESS=BLOCKED_MODULE_NOT_IN_DEPLOYED_CHECKOUT"
-          fi
 
           if integrity="$(timeout 15s sqlite3 -batch -noheader backend/algo_trading.db "PRAGMA quick_check(1);" 2>&1)"; then
             if [[ "$integrity" != "ok" ]]; then
@@ -197,7 +158,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pytest pytest-timeout
-      - name: Run off-market replay and Box readiness contracts
+      - name: Run off-market and shared-feed contracts
         working-directory: backend
         run: |
           PYTHONPATH=. pytest -q tests/test_off_market_runtime_verification.py app/market_data/tests/test_common_strategy_feed_warm_start.py
