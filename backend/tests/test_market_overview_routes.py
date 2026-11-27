@@ -191,7 +191,7 @@ def test_live_data_health_exposes_common_feed_recovery_telemetry(monkeypatch):
     assert runtime_feed["recovery_attempts"] == 4
 
 
-def test_live_data_health_does_not_use_fresh_mcx_tick_to_mask_stale_nse_nfo(monkeypatch):
+def test_live_data_health_does_not_use_fresh_bse_tick_to_mask_stale_nse_nfo(monkeypatch):
     import time
 
     class FakeCommonManager:
@@ -202,15 +202,15 @@ def test_live_data_health_does_not_use_fresh_mcx_tick_to_mask_stale_nse_nfo(monk
                 "connected_groups": ["3:0"],
                 "disconnected_groups": [],
                 "ticks_received": 100,
-                # A global/MCX timestamp is fresh, but the scanner-critical
+                # A global/BSE timestamp is fresh, but the scanner-critical
                 # NSE and NFO exchanges have not produced fresh ticks.
                 "latest_tick_timestamp_ns": now_ns,
                 "latest_tick_timestamp_ns_by_exchange_type": {
-                    "5": now_ns,
+                    "3": now_ns,
                     "1": now_ns - 60_000_000_000,
                     "2": now_ns - 60_000_000_000,
                 },
-                "last_tick": {"exchange_type": 5, "timestamp_ns": now_ns},
+                "last_tick": {"exchange_type": 3, "timestamp_ns": now_ns},
             }
 
     monkeypatch.setattr(
@@ -294,7 +294,6 @@ def test_market_overview_uses_bounded_stale_quotes_after_broker_refresh_failure(
     monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
     monkeypatch.setattr("app.market_data.client.MarketDataClient", lambda: client)
     monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
-    monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: True)
 
     first = routes.get_market_overview()
     assert "commodities" not in first
