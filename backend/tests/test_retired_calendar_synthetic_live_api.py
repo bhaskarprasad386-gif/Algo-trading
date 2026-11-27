@@ -45,6 +45,17 @@ def test_box_spread_and_paper_trading_are_fully_retired():
         assert "BoxSpread" not in source
         assert "box_spread" not in source.lower()
         assert "box-spread" not in source.lower()
+    retired_android_terms = (
+        "BoxSpread", "box_spread", "box-spread", "PaperTrading", "paper-trading",
+        "CashFuture", "cash-future", "CalendarSpread", "calendar-spread",
+        "SyntheticFuture", "SyntheticArbitrage", "synthetic-future", "synthetic-arbitrage",
+        "FullFno", "full-fno",
+    )
+    for source_path in mobile.rglob("*"):
+        if source_path.is_file() and source_path.suffix.lower() in {".kt", ".java", ".xml"}:
+            source = source_path.read_text(encoding="utf-8")
+            for term in retired_android_terms:
+                assert term not in source, f"{source_path.relative_to(mobile)} still references {term}"
 
 
 def test_common_broker_websocket_is_exclusively_owned_by_shared_index_runner():
