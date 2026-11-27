@@ -1829,12 +1829,12 @@ def test_recovery_does_not_recycle_connected_socket_when_primary_frames_arrive_w
         manager.close()
 
 
-def test_exchange_freshness_snapshot_does_not_hide_stale_nse_nfo_behind_mcx():
+def test_exchange_freshness_snapshot_does_not_hide_stale_nse_nfo_behind_bse():
     registry = InstrumentRegistry()
     items = [
         descriptor("101", "NSE", "EQ"),
         descriptor("202", "NFO", "DERIVATIVES"),
-        descriptor("303", "MCX", "COMMODITY"),
+        descriptor("303", "BSE", "EQ"),
     ]
     registry.register_many(items)
     manager = CommonWebSocketManager(registry, socket_factory=FakeSocket)
@@ -1847,15 +1847,15 @@ def test_exchange_freshness_snapshot_does_not_hide_stale_nse_nfo_behind_mcx():
         manager._latest_tick_timestamp_ns_by_exchange_type.update({
             1: now_ns - 60_000_000_000,
             2: now_ns - 60_000_000_000,
-            5: now_ns,
+            3: now_ns,
         })
         manager._latest_tick_timestamp_ns_by_group_exchange.update({
             (group, 1): now_ns - 60_000_000_000,
             (group, 2): now_ns - 60_000_000_000,
-            (group, 5): now_ns,
+            (group, 3): now_ns,
         })
         # Model per-exchange transport silence explicitly: the shared shard
-        # still receives MCX frames, while its NSE/NFO subscriptions are silent.
+        # still receives BSE frames, while its NSE/NFO subscriptions are silent.
         now = time.monotonic()
         manager._last_raw_frame_at_by_exchange_type.update({
             (group, 1): now - 60.0,
@@ -1868,10 +1868,10 @@ def test_exchange_freshness_snapshot_does_not_hide_stale_nse_nfo_behind_mcx():
         ages = snapshot["last_exchange_tick_age_seconds_by_exchange_type"]
         assert ages["1"] >= 59
         assert ages["2"] >= 59
-        assert ages["5"] < 5
+        assert ages["3"] < 5
 
-        # Recent raw frames from MCX must not prevent recovery of a shard whose
-        # subscribed NSE/NFO exchanges have both stopped producing fresh ticks.
+        # Recent raw frames from another supported exchange must not prevent
+        # recovery when subscribed NSE/NFO exchanges stop producing fresh ticks.
         manager._silent_feed_timeout_seconds = 30.0
         recovered = manager.recover_disconnected(
             min_age_seconds=0.0, silent_age_seconds=30.0
