@@ -18,7 +18,8 @@ class SharedIndexRunnerLocalFeedManager:
             raise ValueError("queue_capacity must be a positive integer")
         self.runner = runner
         self.registry = InstrumentRegistry()
-        self._queue: Queue[Any] = Queue(maxsize=int(queue_capacity))
+        self._queue_capacity = int(queue_capacity)
+        self._queue: Queue[Any] = Queue(maxsize=self._queue_capacity)
         self._lock = RLock()
         self._dispatch_lock = Lock()
         self._callbacks: dict[str, Callable[[Any], None]] = {}
@@ -36,7 +37,10 @@ class SharedIndexRunnerLocalFeedManager:
         """Route the runner's already-accepted records into the bounded queue."""
         with self._lock:
             if self._closed:
-                raise RuntimeError("shared runner local feed manager is closed")
+                self._queue = Queue(maxsize=self._queue_capacity)
+                self._thread = None
+                self._closed = False
+                self._attached = False
             if self._attached:
                 return
             state = getattr(self.runner, "state", None)
@@ -198,6 +202,7 @@ class SharedIndexRunnerLocalFeedManager:
             if self._closed:
                 return
             self._closed = True
+            self._attached = False
             local_keys = tuple(self._keys.values())
             self._owners.clear()
             self._keys.clear()
