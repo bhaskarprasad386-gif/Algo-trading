@@ -435,35 +435,16 @@ def test_select_nearest_option_expiry_returns_none_without_options():
     assert expiry is None
 
 
-def test_runner_preserves_unresolved_targets_for_token_recovery(monkeypatch):
-    from app.market_data.live_synthetic_runner import LiveSyntheticRunner, SyntheticLiveTarget
+def test_runner_rejects_retired_commodity_targets():
+    import pytest
 
-    class Feed:
-        def _tokens(self):
-            # An unresolved symbol is still present as a key, but has no token.
-            return {"NIFTY": "26000", "COPPER": ""}
-
-    targets = [
-        SyntheticLiveTarget("NIFTY", "INDEX", "26NOV2026"),
-        SyntheticLiveTarget("COPPER", "COMMODITY", "26NOV2026"),
-    ]
-    runner = LiveSyntheticRunner(
-        ":memory:", targets, allowed_stock_symbols=frozenset()
-    )
-    monkeypatch.setattr(runner, "_atm_tracker", object())
-    monkeypatch.setattr(
-        "app.market_data.live_synthetic_runner.LiveSyntheticUnderlyingFeed",
-        lambda *a, **k: Feed(),
-    )
-
-    feed = runner._ensure_underlying_feed()
-
-    assert feed is not None
-    # Token readiness must not destructively remove a target; token mappings
-    # can recover on a later instrument-master refresh.
-    assert [x.underlying for x in runner.targets] == ["NIFTY", "COPPER"]
-
-
+    with pytest.raises(ValueError, match="unsupported synthetic target classes"):
+        LiveSyntheticRunner(
+            ":memory:",
+            [SyntheticLiveTarget("COPPER", "COMMODITY", None, "26NOV2026")],
+            allowed_stock_symbols=frozenset(),
+            instrument_master=_master(),
+        )
 def test_runner_exposes_supervisor_stop_event_alias():
     runner = LiveSyntheticRunner(
         ":memory:",
