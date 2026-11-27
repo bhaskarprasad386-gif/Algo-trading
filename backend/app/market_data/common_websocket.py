@@ -2767,10 +2767,6 @@ class CommonWebSocketManager:
                 retired["close_start_pending"] = False
                 retired["close_worker_alive"] = bool(worker.is_alive())
                 retired["last_observed_at"] = time.time()
-        with self._lock:
-            current = self._retired_transport_close_pending.get(key)
-            if current is not None:
-                current["worker"] = worker
         record["worker"] = worker
         self._watch_retired_transport(
             worker, group=record["group"], generation=record["generation"],
@@ -2904,8 +2900,16 @@ class CommonWebSocketManager:
                     if not isinstance(health, dict) or health.get("transport_thread_alive") is not True:
                         break
         worker = Thread(target=_close, name="common-ws-close", daemon=True)
+        # Only start failure is retryable. Once start succeeds, never queue a
+        # duplicate close merely because the bounded join itself is interrupted.
         worker.start()
-        worker.join(timeout=max(0.1, float(timeout)))
+        try:
+            worker.join(timeout=max(0.1, float(timeout)))
+        except Exception as exc:
+            app_logger.warning(
+                "Common feed close worker join failed; watcher retains retirement fence "
+                f"group={f'{group.mode}:{group.shard}' if group is not None else 'unknown'}: {exc}"
+            )
         if worker.is_alive():
             app_logger.error(
                 "Common feed socket close timed out "
