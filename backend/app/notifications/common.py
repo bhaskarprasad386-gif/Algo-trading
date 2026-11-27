@@ -98,7 +98,7 @@ def _valid_alert_rule(rule) -> bool:
     """Fail closed if persisted alert/risk configuration is malformed."""
     try:
         import math
-        strategy_metrics = {"box-spread": {"gap", "gross_profit"}}
+        strategy_metrics = {}
         metric = str(getattr(rule, "metric", "gross_profit")).strip().lower()
         operator = str(getattr(rule, "operator", ">=")).strip()
         threshold = float(getattr(rule, "threshold", 0.0))
