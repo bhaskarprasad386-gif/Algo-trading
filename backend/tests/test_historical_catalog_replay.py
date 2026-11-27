@@ -12,9 +12,9 @@ def test_catalog_replay_joins_only_exact_complete_timestamps():
         HistoricalRecord("test", "NFO:FUT", "1m", 1, {"bid": 109, "ask": 110}),
         HistoricalRecord("test", "NFO:FUT", "1m", 3, {"bid": 111, "ask": 112}),
     ])
-    events = list(HistoricalCatalogEventReplay(catalog).events((CatalogReplayLeg("cash_future", "test", "NSE:ABC", "1m"), CatalogReplayLeg("future", "test", "NFO:FUT", "1m")), start_ns=1, end_ns=3))
+    events = list(HistoricalCatalogEventReplay(catalog).events((CatalogReplayLeg("spot", "test", "NSE:ABC", "1m"), CatalogReplayLeg("future", "test", "NFO:FUT", "1m")), start_ns=1, end_ns=3))
     assert [event["timestamp_ns"] for event in events] == [1]
-    assert events[0]["cash_future"]["ask"] == 100
+    assert events[0]["spot"]["ask"] == 100
     assert events[0]["future"]["bid"] == 109
 
 
@@ -25,11 +25,11 @@ def test_catalog_replay_preserves_exact_leg_identity():
         HistoricalRecord("test", "NFO:FUT-20260924", "1m", 1, {"bid": 109, "ask": 110}, sequence=29),
     ])
     legs = (
-        CatalogReplayLeg("cash_future", "test", "NSE:ABC", "1m"),
+        CatalogReplayLeg("spot", "test", "NSE:ABC", "1m"),
         CatalogReplayLeg("future", "test", "NFO:FUT-20260924", "1m"),
     )
     event = next(HistoricalCatalogEventReplay(catalog).events(legs, start_ns=1, end_ns=1))
-    assert event["__replay_legs__"]["cash_future"] == {
+    assert event["__replay_legs__"]["spot"] == {
         "source": "test",
         "instrument": "NSE:ABC",
         "timeframe": "1m",
