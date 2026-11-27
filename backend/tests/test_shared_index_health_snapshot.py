@@ -37,6 +37,8 @@ def test_state_snapshot_groups_freshness_by_index_and_instrument_family() -> Non
     assert groups["BANKNIFTY:future"]["fresh_count"] == 1
     assert snapshot["instrument_count"] == 3
     assert snapshot["fresh_count"] == 2
+    assert groups["NIFTY:option"]["ce_count"] == 0
+    assert groups["NIFTY:option"]["pe_count"] == 0
 
 
 def test_runner_health_snapshot_is_lightweight_and_reports_ready_universe() -> None:
