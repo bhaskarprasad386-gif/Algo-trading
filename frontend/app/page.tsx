@@ -8,7 +8,6 @@ import { appConfig, getDashboardWsUrl } from "@/lib/config";
 
 const markets = ["NIFTY", "BANKNIFTY"];
 const strategies = [
-  { name: "Box Spread", detail: "NIFTY / BANKNIFTY • Live Options Scanner", href: "/strategies/box-spread", icon: Gauge },
 ];
 
 export default function HomePage() {
