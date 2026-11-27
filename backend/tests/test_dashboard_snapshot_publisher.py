@@ -151,7 +151,7 @@ def test_dashboard_publisher_records_the_measured_dispatch_wait():
     )
 
 
-def test_dashboard_payload_gates_disabled_scanner_snapshot_work():
+def test_retired_scanner_snapshots_are_hard_disabled():
     main_path = Path(__file__).resolve().parents[1] / "app" / "main.py"
     tree = ast.parse(main_path.read_text(encoding="utf-8"))
     payload = next(
@@ -159,25 +159,21 @@ def test_dashboard_payload_gates_disabled_scanner_snapshot_work():
         if isinstance(node, ast.FunctionDef)
         and node.name == "_build_dashboard_snapshot_payload"
     )
-    source = ast.unparse(payload)
-    assert "if cash_future_enabled else []" in source
-    assert "if calendar_enabled else []" in source
-    assert "if synthetic_enabled else ()" in source
-    assert "if box_enabled else ()" in source
-    assert "LIVE_CASH_FUTURE_DATA_ENABLED" in source
-    assert "LIVE_CALENDAR_SPREAD_DATA_ENABLED" in source
+    disabled = {
+        node.targets[0].id: node.value.value
+        for node in payload.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, bool)
+        and node.targets[0].id.endswith("_enabled")
+    }
+    assert disabled == {
+        "cash_future_enabled": False,
+        "calendar_enabled": False,
+        "synthetic_enabled": False,
+        "box_enabled": False,
+    }
 
 
-def test_cash_future_page_push_snapshot_short_circuits_disabled_scanner():
-    main_path = Path(__file__).resolve().parents[1] / "app" / "main.py"
-    tree = ast.parse(main_path.read_text(encoding="utf-8"))
-    function = next(
-        node for node in tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_cash_future_page_push_snapshot"
-    )
-    source = ast.unparse(function)
-    guard = source.index("if not settings.LIVE_CASH_FUTURE_DATA_ENABLED")
-    scanner_call = source.index("live_cash_future_scanner.health()")
-    assert guard < scanner_call
-    assert "'status': 'DISABLED'" in source
