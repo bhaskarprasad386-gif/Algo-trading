@@ -25,7 +25,6 @@ from app.core.database import engine
 router = APIRouter(tags=["page-push"])
 PAGE_CHANNELS = frozenset({
     "cash-future",
-    "box-spread",
     "calendar-spread",
     "synthetic-arbitrage",
     "iv-skew-flip",
