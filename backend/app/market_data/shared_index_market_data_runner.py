@@ -510,7 +510,7 @@ class SharedIndexMarketDataRunner:
             for symbol, record in spot_records.items()
         }
         feed_groups = state.get("feed_health_by_group", {})
-        expected = {"NIFTY": {"index": 1, "future": 1, "option": 26}, "BANKNIFTY": {"index": 1, "future": 1, "option": 22}}
+        expected = {"NIFTY": {"index": 1, "future": 1, "option": 62}, "BANKNIFTY": {"index": 1, "future": 1, "option": 62}}
         counts = {}
         for underlying, required in expected.items():
             counts[underlying] = {}
@@ -625,10 +625,10 @@ class SharedIndexMarketDataRunner:
                 if side in {"CE", "PE"}:
                     per_underlying[underlying][side] += 1
         expected_by_underlying = {
-            "NIFTY": {"index": 1, "future": 1, "option": 26, "CE": 13, "PE": 13},
-            "BANKNIFTY": {"index": 1, "future": 1, "option": 22, "CE": 11, "PE": 11},
+            "NIFTY": {"index": 1, "future": 1, "option": 62, "CE": 31, "PE": 31},
+            "BANKNIFTY": {"index": 1, "future": 1, "option": 62, "CE": 31, "PE": 31},
         }
-        universe_complete = type_counts == {"index": 2, "future": 2, "option": 48}
+        universe_complete = type_counts == {"index": 2, "future": 2, "option": 124}
         universe_complete = universe_complete and all(
             per_underlying[underlying] == expected_by_underlying[underlying]
             for underlying in LOCKED
