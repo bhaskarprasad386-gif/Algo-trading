@@ -72,9 +72,37 @@ class SharedIndexOnlyWebSocketManager(CommonWebSocketManager):
                     f"{underlying} options are restricted to {required_expiry_type} expiry"
                 )
 
+    def register_callback(self, consumer: str, callback) -> None:
+        self.validate_consumer(consumer)
+        return super().register_callback(consumer, callback)
+
+    def unregister_callback(self, consumer: str) -> None:
+        self.validate_consumer(consumer)
+        return super().unregister_callback(consumer)
+
     def register_normalized_callback(self, consumer: str, callback) -> None:
         self.validate_consumer(consumer)
         return super().register_normalized_callback(consumer, callback)
+
+    def unregister_normalized_callback(self, consumer: str) -> None:
+        self.validate_consumer(consumer)
+        return super().unregister_normalized_callback(consumer)
+
+    def register_normalized_observer(self, consumer: str, callback) -> None:
+        self.validate_consumer(consumer)
+        return super().register_normalized_observer(consumer, callback)
+
+    def unregister_normalized_observer(self, consumer: str) -> None:
+        self.validate_consumer(consumer)
+        return super().unregister_normalized_observer(consumer)
+
+    def register_transport_observer(self, consumer: str, callback) -> None:
+        self.validate_consumer(consumer)
+        return super().register_transport_observer(consumer, callback)
+
+    def unregister_transport_observer(self, consumer: str) -> None:
+        self.validate_consumer(consumer)
+        return super().unregister_transport_observer(consumer)
 
     def subscribe(self, consumer: str, keys, mode: int = 1):
         self.validate_consumer(consumer)
