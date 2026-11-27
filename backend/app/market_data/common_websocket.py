@@ -2587,8 +2587,7 @@ class CommonWebSocketManager:
                 "snapshot_kind": "health-lite",
                 "details_omitted": [
                     "subscription_roster", "raw_frames_by_instrument",
-                    "socket_token_set_mismatches", "consumer_callback_metrics",
-                    "retired_worker_details",
+                    "socket_token_set_mismatches", "retired_worker_details",
                 ],
                 "subscriptions": len(subscriptions),
                 "active_instruments": len(subscriptions),
@@ -2618,6 +2617,13 @@ class CommonWebSocketManager:
                     f"{group.mode}:{group.shard}": adapter.snapshot()
                     for group, (generation, adapter) in self._callback_adapters.items()
                     if self._socket_generation.get(group) == generation
+                },
+                # This bounded owner/kind map is small (one entry per registered
+                # consumer) and makes slow consumers diagnosable without the
+                # much larger subscription roster in the mobile health response.
+                "consumer_callback_metrics": {
+                    owner: {kind: dict(metrics) for kind, metrics in kinds.items()}
+                    for owner, kinds in self._consumer_callback_metrics.items()
                 },
                 "delivery_errors": self._delivery_errors,
                 "missing_callback_routes": self._missing_callback_routes,
