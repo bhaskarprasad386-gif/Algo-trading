@@ -130,3 +130,15 @@ def test_retired_full_fno_paper_backtest_has_no_android_entrypoint_or_api():
         assert "full-fno" not in source
     assert not (mobile / "java" / "com" / "algotrading" / "app" / "FullFnoBacktestActivity.kt").exists()
     assert not (mobile / "res" / "layout" / "activity_full_fno_backtest.xml").exists()
+
+
+def test_iv_runtime_has_no_direct_websocket_fallbacks():
+    root = Path(__file__).parents[1]
+    runtime = (root / "app" / "scanner" / "iv_skew_flip" / "runtime.py").read_text(encoding="utf-8")
+
+    assert "CommonStrategyMarketFeed(" not in runtime
+    assert "IVSharedRunnerSpotFeedAdapter" in runtime
+    assert "IVSharedRunnerOptionFeedAdapter" in runtime
+    assert "_DisabledIVMarketDataTransport" in runtime
+    assert "SHARED_RUNNER_REQUIRED" in runtime
+    assert "cannot accept a direct feed manager" in runtime
