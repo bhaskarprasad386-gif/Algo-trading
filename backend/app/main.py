@@ -169,7 +169,14 @@ async def _iv_scanner_recovery_loop() -> None:
         if retry_delay:
             await asyncio.sleep(retry_delay)
         try:
-            if not _get_iv_scanner_enabled():
+            # This persisted control read performs synchronous SQLAlchemy I/O.
+            # Keep pool checkout/query latency off the ASGI event loop so a
+            # saturated database cannot stall liveness, WebSockets, or feed tasks.
+            iv_scanner_enabled = await run_blocking_daemon(
+                _get_iv_scanner_enabled,
+                thread_name="iv-scanner-control-state-read",
+            )
+            if not iv_scanner_enabled:
                 retry_delay = 5.0
                 continue
             with _iv_skew_flip_runtime_lock:
