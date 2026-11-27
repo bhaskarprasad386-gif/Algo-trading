@@ -23,6 +23,7 @@ class SharedIndexRunnerLocalFeedManager:
         self._dispatch_lock = Lock()
         self._callbacks: dict[str, Callable[[Any], None]] = {}
         self._owners: dict[str, set[str]] = {}
+        self._keys: dict[str, Any] = {}
         self._last_timestamp: dict[tuple[str, str], int] = {}
         self._closed = False
         self._attached = False
@@ -84,6 +85,7 @@ class SharedIndexRunnerLocalFeedManager:
                 raise RuntimeError("shared runner local feed manager is closed")
             for key in items:
                 self.registry.subscribe(name, key, mode)
+                self._keys[key.value] = key
                 self._owners.setdefault(key.value, set()).add(name)
             self._ensure_worker_locked()
         return self.registry.subscriptions()
@@ -99,7 +101,10 @@ class SharedIndexRunnerLocalFeedManager:
                     owners.discard(name)
                     if not owners:
                         self._owners.pop(key.value, None)
-            self.registry.unregister_many(targets)
+                        self._keys.pop(key.value, None)
+            self.registry.unregister_many(
+                key for key in targets if key.value not in self._owners
+            )
 
     def clear_consumer(self, consumer: str) -> None:
         name = str(consumer or "").strip()
@@ -116,13 +121,12 @@ class SharedIndexRunnerLocalFeedManager:
                     if not consumers:
                         self._owners.pop(key, None)
                         self._last_timestamp.pop((name, key), None)
+                        local_key = self._keys.pop(key, None)
+                        if local_key is not None:
+                            self.registry.unregister_many((local_key,))
             for identity in tuple(self._last_timestamp):
                 if identity[0] == name:
                     self._last_timestamp.pop(identity, None)
-            self.registry.unregister_many(
-                key for key in self.registry.active_keys()
-                if key.value not in self._owners
-            )
 
     def _ensure_worker_locked(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -193,13 +197,15 @@ class SharedIndexRunnerLocalFeedManager:
             if self._closed:
                 return
             self._closed = True
+            local_keys = tuple(self._keys.values())
             self._owners.clear()
+            self._keys.clear()
             self._callbacks.clear()
             self._last_timestamp.clear()
             for subscription in self.registry.subscriptions():
                 for name in subscription.consumers:
                     self.registry.clear_consumer(name)
-            self.registry.unregister_many(self.registry.active_keys())
+            self.registry.unregister_many(local_keys)
             thread = self._thread
         # The queue is bounded; shutdown must not block behind a saturated queue.
         try:
