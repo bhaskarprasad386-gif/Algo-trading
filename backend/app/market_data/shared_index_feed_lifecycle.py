@@ -67,7 +67,7 @@ class SharedIndexFeedLifecycle:
     @staticmethod
     def _validate_locked_options(items: tuple[InstrumentDescriptor, ...]) -> None:
         """Fail closed unless the exact locked symmetric CE/PE strike grids exist."""
-        expected = {"NIFTY": 13, "BANKNIFTY": 11}
+        expected = {"NIFTY": 31, "BANKNIFTY": 31}
         by_underlying: dict[str, list[InstrumentDescriptor]] = {name: [] for name in expected}
         for descriptor in items:
             if descriptor.underlying not in expected:
