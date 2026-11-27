@@ -19,7 +19,7 @@ from .shared_cache import get_shared_market_data_cache
 
 _EXCHANGE_SEGMENTS = {
     "NSE": "NSE", "NFO": "NFO", "BSE": "BSE",
-    "BFO": "BFO", "MCX": "MCX", "NCDEX": "NCDEX",
+    "BFO": "BFO", "NCDEX": "NCDEX",
 }
 _SHARED_LOCK = Lock()
 _SHARED_MANAGER: CommonWebSocketManager | None = None
