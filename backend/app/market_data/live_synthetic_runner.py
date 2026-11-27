@@ -39,14 +39,15 @@ def select_nearest_option_expiry(
 ) -> str | None:
     """Return the nearest non-expired real option expiry for a target."""
     cls = instrument_class.strip().upper()
-    segment = "MCX" if cls == "COMMODITY" else (
+    if cls not in {"STOCK", "INDEX"}:
+        raise ValueError("synthetic runner supports only STOCK and INDEX")
+    segment = (
         "BFO" if cls == "INDEX" and underlying.strip().upper() in {"SENSEX", "BANKEX"}
         else "NFO"
     )
     instrument_types = {
         "STOCK": frozenset({"OPTSTK"}),
         "INDEX": frozenset({"OPTIDX"}),
-        "COMMODITY": frozenset({"OPTFUT"}),
     }[cls]
     candidates: list[tuple[object, str]] = []
     for row in instruments:
@@ -178,6 +179,9 @@ class LiveSyntheticRunner:
         self.targets = tuple(targets)
         if not self.targets:
             raise ValueError("at least one live synthetic target is required")
+        unsupported = sorted({str(target.instrument_class).strip().upper() for target in self.targets} - {"STOCK", "INDEX"})
+        if unsupported:
+            raise ValueError(f"unsupported synthetic target classes: {unsupported}")
         self.stock_universe_provider = stock_universe_provider
         self.allowed_stock_symbols = frozenset(
             str(symbol).strip().upper()
@@ -238,17 +242,13 @@ class LiveSyntheticRunner:
                 continue
             cls = target.instrument_class.strip().upper()
             exchange_segment = (
-                "MCX" if cls == "COMMODITY"
-                else (
-                    "BFO"
+                "BFO"
                     if cls == "INDEX" and target.underlying.strip().upper() in {"SENSEX", "BANKEX"}
                     else "NFO"
-                )
             )
             instrument_types = {
                 "STOCK": frozenset({"OPTSTK"}),
                 "INDEX": frozenset({"OPTIDX"}),
-                "COMMODITY": frozenset({"OPTFUT"}),
             }[cls]
             result.update(
                 concrete_strikes_from_master(
@@ -279,13 +279,10 @@ class LiveSyntheticRunner:
                     "class": target.instrument_class.strip().upper(),
                     "expiry": target.expiry,
                     "segment": (
-                        "MCX" if target.instrument_class.strip().upper() == "COMMODITY"
-                        else (
-                            "BFO"
+                        "BFO"
                             if target.instrument_class.strip().upper() == "INDEX"
                             and target.underlying.strip().upper() in {"SENSEX", "BANKEX"}
                             else "NFO"
-                        )
                     ),
                 }
                 for target in self.targets
@@ -436,7 +433,7 @@ class LiveSyntheticRunner:
                     "BFO"
                     if target.instrument_class.strip().upper() == "INDEX"
                     and symbol in {"SENSEX", "BANKEX"}
-                    else ("MCX" if target.instrument_class.strip().upper() == "COMMODITY" else "NFO")
+                    else "NFO"
                 ),
                 "complete_pair_count": 0,
             }
