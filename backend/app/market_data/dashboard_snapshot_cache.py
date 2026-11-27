@@ -42,18 +42,22 @@ class BoundedSnapshotCache:
             "refresh_errors": self._refresh_errors,
         }
 
-    def _copy_with_metadata(self, *, stale: bool) -> Any:
-        now = monotonic()
-        value = deepcopy(self._value)
-        if isinstance(value, dict):
-            value["_snapshot_cache"] = self._metadata(now=now, stale=stale)
-        return value
+    @staticmethod
+    def _copy_with_metadata(value: Any, metadata: dict[str, Any]) -> Any:
+        """Copy a captured immutable-by-convention value after releasing _lock."""
+        snapshot = deepcopy(value)
+        if isinstance(snapshot, dict):
+            snapshot["_snapshot_cache"] = metadata
+        return snapshot
 
     def _refresh(self, factory: Callable[[], Any]) -> Any:
         try:
             value = factory()
+            # Build the isolated published value before taking the state lock;
+            # readers only ever observe a fully copied snapshot.
+            snapshot = deepcopy(value)
             with self._lock:
-                self._value = deepcopy(value)
+                self._value = snapshot
                 self._refreshed_at = monotonic()
                 self._refresh_count += 1
                 self._last_refresh_error = None
@@ -114,24 +118,37 @@ class BoundedSnapshotCache:
         with self._lock:
             age = None if self._refreshed_at is None else max(0.0, now - self._refreshed_at)
             if age is not None and age <= self.ttl_seconds:
-                return self._copy_with_metadata(stale=False)
-
-            has_usable_stale = (
-                self._value is not None
-                and age is not None
-                and age <= self.max_stale_seconds
-            )
-            if has_usable_stale:
-                if not self._refreshing:
-                    try:
+                value = self._value
+                metadata = self._metadata(now=now, stale=False)
+                cold_refresh = False
+            else:
+                has_usable_stale = (
+                    self._value is not None
+                    and age is not None
+                    and age <= self.max_stale_seconds
+                )
+                if has_usable_stale:
+                    if not self._refreshing:
+                        try:
+                            self._start_refresh_locked(factory)
+                        except Exception:
+                            # Stale-while-refresh is explicitly best effort.
+                            pass
+                    value = self._value
+                    metadata = self._metadata(now=now, stale=True)
+                    cold_refresh = False
+                else:
+                    value = None
+                    metadata = None
+                    cold_refresh = True
+                    if not self._refreshing:
                         self._start_refresh_locked(factory)
-                    except Exception:
-                        # Stale-while-refresh is explicitly best effort.
-                        pass
-                return self._copy_with_metadata(stale=True)
 
-            if not self._refreshing:
-                self._start_refresh_locked(factory)
+        # The published cache value is never mutated after assignment. Keeping
+        # a local reference makes it safe to deepcopy outside _lock while a
+        # refresh atomically replaces the cache with its next complete value.
+        if not cold_refresh:
+            return self._copy_with_metadata(value, metadata)
 
         # Cold and hard-expired refreshes run off-request in one worker. A
         # slow shard scan/provider call can no longer pin a request thread
@@ -140,10 +157,18 @@ class BoundedSnapshotCache:
         with self._lock:
             age = None if self._refreshed_at is None else max(0.0, monotonic() - self._refreshed_at)
             if self._value is not None and age is not None and age <= self.max_stale_seconds:
-                return self._copy_with_metadata(stale=age > self.ttl_seconds)
-            if finished and self._last_refresh_error is not None:
+                value = self._value
+                metadata = self._metadata(
+                    now=monotonic(), stale=age > self.ttl_seconds
+                )
+            else:
+                value = None
+                metadata = None
+            if value is None and finished and self._last_refresh_error is not None:
                 raise self._last_refresh_error
-            raise TimeoutError("dashboard snapshot refresh did not finish within its bound")
+            if value is None:
+                raise TimeoutError("dashboard snapshot refresh did not finish within its bound")
+        return self._copy_with_metadata(value, metadata)
 
 
 def cached_snapshot(*, ttl_seconds: float, max_stale_seconds: float):
