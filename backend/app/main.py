@@ -42,7 +42,8 @@ from app.algo.auth import AngelOneAuth
 from app.market_data.client import MarketDataClient
 from app.market_data.dashboard_snapshot_cache import cached_snapshot
 from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
-from app.market_data.shared_index_local_feed import SharedIndexRunnerLocalFeedManager
+from app.market_data.common_websocket import CommonWebSocketManager
+from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS, BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
 from app.market_data.box_spread_runner_supervisor import BoxSpreadRunnerSupervisor
 from app.market_data.instruments import InstrumentMaster
@@ -95,10 +96,14 @@ install_iv_basket_immutability_guards(engine)
 instrument_master = InstrumentMaster()
 shared_index_market_data_runner = SharedIndexMarketDataRunner(instrument_master=instrument_master)
 # Box Spread uses a dedicated broker manager, separate from the Shared Runner.
-# Box Spread is a local consumer of the Shared Runner's published records.
-# This manager has no broker socket factory and cannot create another connection.
-box_shared_feed_manager = SharedIndexRunnerLocalFeedManager(shared_index_market_data_runner)
-box_shared_feed_manager.attach()
+# Box Spread uses a dedicated broker manager, separate from the Shared Runner.
+# Box Spread owns a distinct broker-feed manager and never registers on
+# the Shared Runner's NIFTY/BANKNIFTY-only manager.
+box_market_data_auth = AngelOneAuth()
+box_isolated_feed_manager = CommonWebSocketManager(
+    socket_factory=lambda: MarketDataWebSocket(auth=box_market_data_auth, auto_reconnect=False),
+    async_callback_dispatch=True,
+)
 configure_shared_index_runner_snapshot(shared_index_market_data_runner.snapshot)
 configure_shared_index_runner_health_snapshot(shared_index_market_data_runner.health_snapshot)
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
@@ -667,7 +672,7 @@ async def lifespan(app: FastAPI):
                 if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
                     app_logger.error("Background task shutdown failed: %s", result)
         try:
-            box_shared_feed_manager.close()
+            box_isolated_feed_manager.close()
         except Exception:
             app_logger.exception("Shared Runner local Box Spread fan-out shutdown failed")
         # Broker adapters own authenticated provider sessions in process memory.
@@ -1129,7 +1134,7 @@ async def _live_box_spread_loop() -> None:
                 auth=AngelOneAuth(),
                 on_results=lambda results: _update_live_box_spread_results(results),
                     on_spot_price=_publish_box_spot_page_update,
-                shared_feed_manager=box_shared_feed_manager,
+                shared_feed_manager=box_isolated_feed_manager,
             )
             live_box_spread_runner = runner
             worker, worker_errors = _start_box_spread_runner_worker(runner)
@@ -1146,7 +1151,7 @@ async def _live_box_spread_loop() -> None:
                     consumer_namespace=f"box-stage-{uuid.uuid4().hex[:12]}",
                     publish_enabled=False,
                     publication_gate=runner.publication_gate,
-                    shared_feed_manager=box_shared_feed_manager,
+                    shared_feed_manager=box_isolated_feed_manager,
                 )
 
             def set_active_runner(active_runner):
