@@ -8,16 +8,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
-SUPPORTED_SEGMENTS = frozenset({"NFO", "BFO", "MCX"})
-VENUE_BY_SEGMENT = {"NFO": "NSE", "BFO": "BSE", "MCX": "MCX"}
+SUPPORTED_SEGMENTS = frozenset({"NFO", "BFO"})
+VENUE_BY_SEGMENT = {"NFO": "NSE", "BFO": "BSE"}
 INSTRUMENT_CLASS_BY_TYPE = {
     "OPTSTK": "STOCK",
     "OPTIDX": "INDEX",
     "FUTSTK": "STOCK",
     "FUTIDX": "INDEX",
-    "OPTFUT": "COMMODITY",
-    "FUTCOM": "COMMODITY",
-    "OPTCOM": "COMMODITY",
 }
 
 
