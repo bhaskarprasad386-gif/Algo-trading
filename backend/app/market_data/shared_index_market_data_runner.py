@@ -29,17 +29,17 @@ EXPECTED_FEED_GROUPS = {
 }
 
 
-def _lifecycle_universe_complete(
-    lifecycle: dict[str, Any], feed_groups: dict[str, dict] | None = None,
-) -> bool:
-    """Require complete subscription ownership and complete observed contract composition."""
-    subscriptions_complete = bool(
+def _lifecycle_universe_complete(lifecycle: dict[str, Any]) -> bool:
+    """Confirm subscription ownership without requiring every illiquid option to tick."""
+    return bool(
         lifecycle.get("spot_active") is True and int(lifecycle.get("spot_instruments", 0)) == 2
         and lifecycle.get("futures_active") is True and int(lifecycle.get("futures_instruments", 0)) == 2
         and lifecycle.get("options_active") is True and int(lifecycle.get("options_instruments", 0)) == 124
     )
-    if not subscriptions_complete or feed_groups is None:
-        return subscriptions_complete
+
+
+def _observed_universe_complete(feed_groups: dict[str, dict]) -> bool:
+    """Report whether the observed state contains the full expected contract composition."""
     for underlying in LOCKED:
         if int(feed_groups.get(f"{underlying}:index", {}).get("count", 0)) != 1:
             return False
@@ -594,7 +594,7 @@ class SharedIndexMarketDataRunner:
             for kind in ("index", "future", "option"):
                 group = feed_groups.get(underlying + ":" + kind, {})
                 counts[underlying][kind] = int(group.get("count", 0))
-        universe_complete = _lifecycle_universe_complete(lifecycle, feed_groups)
+        universe_complete = _lifecycle_universe_complete(lifecycle)
         all_records_fresh = int(state.get("instrument_count", 0)) == 128 and int(state.get("fresh_count", 0)) == 128
         readiness = _readiness_from_groups(
             running=running, bootstrap_done=bootstrap_done,
@@ -611,7 +611,7 @@ class SharedIndexMarketDataRunner:
             "lifecycle": lifecycle,
             "latest_spots": latest_spots,
             "feed_health_by_group": feed_groups,
-            "universe_coverage": {"counts": counts, "complete": universe_complete},
+            "universe_coverage": {"counts": counts, "complete": _observed_universe_complete(feed_groups)},
             "all_records_fresh": all_records_fresh,
             "live_data_ready": live_data_ready,
             "readiness": readiness,
