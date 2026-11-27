@@ -13,13 +13,6 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
     SECRET_KEY: str = ""
-    # Dedicated single-owner password for the isolated Box Spread paper ledger.
-    # Empty means paper-trading authentication is disabled (fail closed).
-    BOX_SPREAD_PAPER_PASSWORD: str = ""
-    # Only trust X-Forwarded-For when the socket peer is in this explicit CIDR allowlist.
-    BOX_SPREAD_PAPER_TRUSTED_PROXY_CIDRS: str = ""
-    # Exact browser origins allowed to open the private paper WebSocket (comma-separated).
-    BOX_SPREAD_PAPER_WS_ALLOWED_ORIGINS: str = ""
     DATABASE_URL: str = "sqlite:///./algo_trading.db"
 
     # Trading safety limits
@@ -91,13 +84,6 @@ class Settings(BaseSettings):
     LIVE_SYNTHETIC_CARRY_RATE: float = 0.055
     LIVE_SYNTHETIC_FEES_PER_UNIT: float = 1.0
     LIVE_SYNTHETIC_RESULT_RETENTION_DAYS: int = 90
-    LIVE_BOX_SPREAD_DATA_ENABLED: bool = False
-    # Dedicated Box Spread five-level depth feed is required for executable live paper opportunities.
-    LIVE_BOX_SPREAD_DEPTH_SHADOW_ENABLED: bool = True
-    # Require at least two common whole lots across all four option legs.
-    LIVE_BOX_SPREAD_MIN_EXECUTABLE_LOTS: int = 2
-    LIVE_BOX_SPREAD_MIN_ARBITRAGE_POINTS: float = 0.0
-    LIVE_BOX_SPREAD_RESULT_RETENTION_DAYS: int = 90
     LIVE_CASH_FUTURE_ALERT_MIN_GAP_PCT: float = 0.0
     # Restrict the 1-second Cash-Future feed to a configured universe; empty means all active F&O stock futures.
     LIVE_CASH_FUTURE_SYMBOLS: str = ""
