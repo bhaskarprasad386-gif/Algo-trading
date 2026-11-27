@@ -3372,6 +3372,8 @@ class CommonWebSocketManager:
                 self._recovery_thread = None
                 socket_items = list(self._sockets.items())
                 callback_adapters = list(self._callback_adapters.items())
+                pending_callback_retirements = list(self._callback_retirement_start_pending.values())
+                self._callback_retirement_start_pending.clear()
                 self._callback_adapters.clear()
                 self._sockets.clear()
                 self._socket_tokens.clear()
@@ -3396,6 +3398,12 @@ class CommonWebSocketManager:
         # a callback may legitimately request subscription changes during shutdown.
         for group, (generation, adapter) in callback_adapters:
             self._stop_retired_callback_adapter(adapter, group, generation)
+        # A failed worker start may have left adapters outside the active map.
+        # Shutdown gets one final bounded stop attempt after the supervisor exits.
+        for record in pending_callback_retirements:
+            self._stop_retired_callback_adapter(
+                record["adapter"], record["group"], record["generation"]
+            )
         # Wait briefly for in-flight SDK subscription mutations before closing
         # their sockets. Avoid racing close() against subscribe/unsubscribe calls.
         shutdown_operation_wait_seconds = 1.0
