@@ -2697,3 +2697,56 @@ def test_raw_callback_latency_metrics_preserve_shared_callable_deduplication():
         assert metrics["duration_total_ns"] >= metrics["duration_max_ns"] >= 0
     finally:
         manager.close()
+
+
+def test_shutdown_fence_prevents_socket_created_during_reconcile_from_being_admitted():
+    registry = InstrumentRegistry()
+    item = descriptor("shutdown-race-991")
+    registry.register(item)
+    entered_factory = Event()
+    release_factory = Event()
+    created = []
+
+    class BlockingSocket(FakeSocket):
+        def __init__(self):
+            super().__init__()
+            created.append(self)
+
+    def socket_factory():
+        entered_factory.set()
+        assert release_factory.wait(timeout=2.0)
+        return BlockingSocket()
+
+    manager = CommonWebSocketManager(registry, socket_factory=socket_factory)
+    subscribe_errors = []
+
+    def subscribe():
+        try:
+            manager.subscribe("shutdown-race", [item.key])
+        except Exception as exc:
+            subscribe_errors.append(exc)
+
+    subscribe_thread = Thread(target=subscribe)
+    subscribe_thread.start()
+    assert entered_factory.wait(timeout=1.0)
+
+    close_thread = Thread(target=manager.close)
+    close_thread.start()
+    # close() must publish the admission fence without waiting for the
+    # in-flight reconcile lock to become available.
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        with manager._lock:
+            if manager._closed:
+                break
+        time.sleep(0.005)
+    with manager._lock:
+        assert manager._closed is True
+
+    release_factory.set()
+    subscribe_thread.join(timeout=2.0)
+    close_thread.join(timeout=3.0)
+    assert not subscribe_thread.is_alive()
+    assert not close_thread.is_alive()
+    assert created and created[0].closed is True
+    assert manager.snapshot()["socket_groups"] == 0
