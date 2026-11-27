@@ -20,7 +20,7 @@ class FakeClock:
 
 def _rows(expiry="26NOV2026"):
     rows = []
-    for underlying, base, step, count in (("NIFTY", 21750, 50, 13), ("BANKNIFTY", 48000, 100, 11)):
+    for underlying, base, step, count in (("NIFTY", 21750, 50, 31), ("BANKNIFTY", 48000, 100, 31)):
         for index in range(count):
             strike = base + index * step
             for side in ("CE", "PE"):
@@ -41,7 +41,7 @@ def test_controller_initial_spot_tick_only_anchors_and_threshold_rotates():
     assert not controller.on_record(_spot("NIFTY", 22000))
     assert controller.on_record(_spot("NIFTY", 22050))
     assert len(lifecycle.rotations) == 1
-    assert len(lifecycle.rotations[0]) == 26
+    assert len(lifecycle.rotations[0]) == 62
     assert controller.snapshot()["rotation_successes"] == 1
 
 
