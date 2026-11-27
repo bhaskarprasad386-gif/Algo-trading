@@ -561,7 +561,18 @@ class MarketDataWebSocket:
             finally:
                 completed.set()
 
-        Thread(target=_subscribe, name="angel-ws-initial-subscribe", daemon=True).start()
+        subscribe_worker = Thread(
+            target=_subscribe,
+            name="angel-ws-initial-subscribe",
+            daemon=True,
+        )
+        try:
+            subscribe_worker.start()
+        except Exception as exc:
+            # The SDK send body never ran, so route startup failure through
+            # the same fail-closed subscription recovery path as send errors.
+            failure["exception"] = exc
+            completed.set()
         finished = completed.wait(timeout=max(0.01, self._socket_operation_timeout_seconds))
         error = failure.get("exception")
         if finished and error is None:
