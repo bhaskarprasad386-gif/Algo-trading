@@ -460,8 +460,6 @@ def test_readiness_snapshot_is_lock_only_and_reports_lifecycle_flags():
     assert runner.readiness_snapshot()["enabled"] is False
 
 
-def test_futures_rollover_is_serialized_with_runner_stop():
-
 def test_futures_rollover_selection_is_cached_for_market_date(monkeypatch):
     rows = _rows()
     runner = SharedIndexMarketDataRunner(instrument_master=FakeMaster(rows), manager=RunnerManager())
