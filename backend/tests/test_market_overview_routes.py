@@ -25,34 +25,27 @@ def reset_dashboard_route_caches():
 
 
 
-def test_common_feed_health_reuses_bounded_runner_snapshot(monkeypatch):
+def test_common_feed_health_excludes_retired_cash_future_runner(monkeypatch):
     from app.core.config import settings
 
     feed_reads = []
-    runner_reads = []
 
     def feed_snapshot():
         feed_reads.append(1)
         return {"snapshot_kind": "health-lite", "ticks_received": 42}
 
-    def runner_snapshot():
-        runner_reads.append(1)
-        return {"status": "RUNNING", "updates": 17}
-
     monkeypatch.setattr(
         "app.market_data.common_strategy_feed.shared_common_manager_snapshot",
         feed_snapshot,
     )
-    monkeypatch.setattr(routes, "_live_cash_future_runner_snapshot_provider", runner_snapshot)
     monkeypatch.setattr(settings, "LIVE_MARKET_DATA_PERSISTENCE_ENABLED", False)
 
     first = routes.get_common_feed_health()
     second = routes.get_common_feed_health()
 
     assert first["feed"]["snapshot_kind"] == "health-lite"
-    assert second["cash_future_runner"]["updates"] == 17
+    assert second["cash_future_runner"] is None
     assert len(feed_reads) == 1
-    assert len(runner_reads) == 1
     assert second["_snapshot_cache"]["age_seconds"] >= 0
 
 def test_market_overview_fetches_only_nse_bse_indices(monkeypatch):
