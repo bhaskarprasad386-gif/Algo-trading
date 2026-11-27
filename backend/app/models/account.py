@@ -22,6 +22,5 @@ class TradingAccount(Base):
     initial_balance_source = Column(String(32), nullable=False, default="BOOTSTRAP")
     realized_pnl = Column(Float, nullable=False, default=0.0)
     is_active = Column(Boolean, default=True, nullable=False)
-    box_spread_auto_lots = Column(Integer, nullable=False, default=1)
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
