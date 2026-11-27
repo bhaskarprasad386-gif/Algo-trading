@@ -1000,7 +1000,6 @@ LIVE_SYNTHETIC_RUNNER_FORCE_DISABLED = True
 # Box adapters consume the Shared Runner's published NIFTY/BANKNIFTY records only.
 LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = False
 _live_box_spread_task: asyncio.Task | None = None
-MARKET_OPEN = time(9, 15)
 
 
 def _signal_live_runner_shutdown() -> None:
