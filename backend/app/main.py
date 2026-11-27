@@ -2120,38 +2120,6 @@ def app_update():
 
 STRATEGY_WORKSPACES = [
     {
-        "id": "cash-future", "name": "Cash–Future", "version": "1", "enabled": True,
-        "screen": "cash_future_scanner", "data_mode": "LIVE 1s",
-        "execution_mode": "SCANNER ONLY", "live_orders": False,
-        "capabilities": ["LIVE DATA", "SCANNER", "HISTORICAL", "BACKDATE", "BACKTEST", "REPLAY", "RESULTS"],
-        "live_route": "/api/v1/scanner/cash-future/live/fast",
-        "workspace_route": "/api/v1/backtesting/cash-future/strategy-run"
-    },
-    {
-        "id": "calendar-spread", "name": "Calendar Spread", "version": "1", "enabled": True,
-        "screen": "calendar_spread", "data_mode": "LIVE 1s",
-        "execution_mode": "SCANNER ONLY", "live_orders": False,
-        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "RESULTS"],
-        "live_route": "/api/v1/scanner/calendar-spread/live",
-        "workspace_route": "/api/v1/backtesting/calendar-spread"
-    },
-    {
-        "id": "synthetic-future-cash-carry", "name": "Synthetic Future / Cash Carry", "version": "1", "enabled": True,
-        "screen": "synthetic_cash_carry", "data_mode": "LIVE",
-        "execution_mode": "SCANNER ONLY", "live_orders": False,
-        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "RESULTS"],
-        "live_route": "/api/v1/scanner/synthetic-cash-carry/live",
-        "workspace_route": "/api/v1/backtesting/cash-future/strategy-run"
-    },
-    {
-        "id": "box-spread", "name": "Box Spread", "version": "1", "enabled": True,
-        "screen": "box_spread", "data_mode": "LIVE",
-        "execution_mode": "SCANNER ONLY", "live_orders": False,
-        "capabilities": ["LIVE DATA", "SCANNER", "BACKTEST", "RESULTS"],
-        "live_route": "/api/v1/scanner/box-spread/live",
-        "workspace_route": "/api/v1/backtesting/cash-future/strategy-run"
-    },
-    {
         "id": "full-fno", "name": "Full F&O Backtest", "version": "1", "enabled": True,
         "screen": "full_fno", "data_mode": "ACCUMULATED LIVE",
         "execution_mode": "BACKTEST ONLY", "live_orders": False,
