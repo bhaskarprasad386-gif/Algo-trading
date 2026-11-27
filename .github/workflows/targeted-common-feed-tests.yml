@@ -27,7 +27,6 @@ on:
       - "backend/app/market_data/provider_readiness_bridge.py"
       - "backend/app/market_data/shoonya_websocket.py"
       - "backend/app/market_data/tests/**"
-      - "backend/tests/test_box_spread_underlying_feed.py"
       - "backend/tests/test_provider_readiness.py"
       - "backend/tests/test_provider_readiness_bridge.py"
       - "backend/tests/test_shoonya_market_data.py"
