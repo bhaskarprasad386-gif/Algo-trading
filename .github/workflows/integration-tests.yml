@@ -3,8 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    # Also validate stacked Box Spread PRs targeting the Batch 0 integration branch.
-    branches: [main, feature/box-spread-manual-index-selection-batch-0]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -39,8 +38,7 @@ jobs:
           LIVE_CASH_FUTURE_DATA_ENABLED: "false"
           LIVE_CALENDAR_SPREAD_DATA_ENABLED: "false"
           LIVE_SYNTHETIC_DATA_ENABLED: "false"
-          LIVE_BOX_SPREAD_DATA_ENABLED: "false"
-          LIVE_MARKET_DATA_PERSISTENCE_ENABLED: "false"
+              LIVE_MARKET_DATA_PERSISTENCE_ENABLED: "false"
           LIVE_CASH_FUTURE_DAILY_SHARDS_ENABLED: "false"
         run: >
           python -m pytest -q --tb=short -r fE
@@ -185,39 +183,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  box-master-shutdown-regression:
-    name: Box Spread Master Shutdown and Cache Regression
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      SECRET_KEY: ci-test-secret-key-not-for-production
-      PYTHONPATH: backend
-      DATABASE_URL: "sqlite:///:memory:"
-      BOX_SPREAD_INSTRUMENT_MASTER_CACHE_PATH: ${{ github.workspace }}/.ci-box-spread-test-cache.json
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-          python-version: "3.11"
-      - name: Install backend dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
-          pip install pytest pytest-timeout
-      - name: Compile changed modules
-        run: |
-          python -m py_compile backend/app/main.py
-          python -m py_compile backend/app/core/daemon_worker.py
-          python -m py_compile backend/app/market_data/box_spread_instrument_cache.py
-          python -m py_compile backend/scripts/recover_box_spread_master_artifact.py
-      - name: Run Box Spread cache and daemon cancellation regressions
-        run: |
-          python -m pytest -q --tb=short --timeout=30 --timeout-method=thread \
-            backend/tests/test_box_spread_instrument_cache.py \
-            backend/tests/test_daemon_worker.py
-
   instrument-master-transport:
     name: Instrument Master Transport Regression
     runs-on: ubuntu-latest
@@ -246,10 +211,8 @@ jobs:
           python -m py_compile backend/app/instruments/manager.py
           python -m py_compile backend/app/market_data/instruments.py
           python -m py_compile backend/app/scanner/iv_skew_flip/instruments.py
-          python -m py_compile backend/scripts/recover_box_spread_master_artifact.py
           python -m py_compile backend/scripts/recover_iv_master_artifact.py
           python -m py_compile backend/scripts/recover_latest_master_artifacts.py
-          python -m py_compile backend/scripts/recover_latest_box_spread_master_artifact.py
           bash -n backend/scripts/diagnose_angelone_tls_path.sh
           bash -n backend/scripts/install_master_recovery_timer.sh
       - name: Run instrument-master regression suite
@@ -257,6 +220,4 @@ jobs:
           python -m pytest -q --tb=short \
             backend/tests/test_master_transport.py \
             backend/tests/test_instrument_master_concurrency.py \
-            backend/tests/test_box_spread_instrument_cache.py \
             backend/tests/test_iv_skew_flip_instruments.py \
-            backend/tests/test_recover_latest_box_spread_master_artifact.py
