@@ -42,8 +42,6 @@ from app.algo.auth import AngelOneAuth
 from app.market_data.client import MarketDataClient
 from app.market_data.dashboard_snapshot_cache import cached_snapshot
 from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
-from app.market_data.common_websocket import CommonWebSocketManager
-from app.market_data.websocket import MarketDataWebSocket
 from app.market_data.live_box_spread_runner import LiveBoxSpreadRunner, BoxSpreadLiveTarget, INDEX_EDGE_THRESHOLDS, BOX_SPREAD_EXCLUDED_INDEX_SYMBOLS
 from app.market_data.box_spread_runner_supervisor import BoxSpreadRunnerSupervisor
 from app.market_data.instruments import InstrumentMaster
@@ -95,15 +93,7 @@ install_iv_basket_immutability_guards(engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 shared_index_market_data_runner = SharedIndexMarketDataRunner(instrument_master=instrument_master)
-# Box Spread uses a dedicated broker manager, separate from the Shared Runner.
-# Box Spread uses a dedicated broker manager, separate from the Shared Runner.
-# Box Spread owns a distinct broker-feed manager and never registers on
-# the Shared Runner's NIFTY/BANKNIFTY-only manager.
-box_market_data_auth = AngelOneAuth()
-box_isolated_feed_manager = CommonWebSocketManager(
-    socket_factory=lambda: MarketDataWebSocket(auth=box_market_data_auth, auto_reconnect=False),
-    async_callback_dispatch=True,
-)
+# Box Spread is retired: no manager, adapter, subscription, or runner is created.
 configure_shared_index_runner_snapshot(shared_index_market_data_runner.snapshot)
 configure_shared_index_runner_health_snapshot(shared_index_market_data_runner.health_snapshot)
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
@@ -117,7 +107,7 @@ live_box_spread_runner: LiveBoxSpreadRunner | None = None
 live_box_spread_supervisor: BoxSpreadRunnerSupervisor | None = None
 # Box Spread adapters use only the dedicated Box-owned broker manager.
 # No Box callback or subscription is registered on SharedIndexMarketDataRunner.
-LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = False
+LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED = True
 BOX_SPREAD_INDEX_SELECTION_LOCK = threading.Lock()
 BOX_SPREAD_INDEX_PRESETS = {
     "ALL": ("NIFTY", "BANKNIFTY"),
@@ -627,8 +617,8 @@ async def lifespan(app: FastAPI):
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
     # Box Spread consumes only records published by SharedIndexMarketDataRunner.
     # Its local fan-out has no broker socket or independent subscription path.
-    if not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED and settings.LIVE_BOX_SPREAD_DATA_ENABLED and _live_box_spread_task is None:
-        _live_box_spread_task = asyncio.create_task(_live_box_spread_loop())
+    # Box Spread is retired; never schedule its runner, regardless of config.
+
     _dashboard_snapshot_task = asyncio.create_task(_dashboard_snapshot_publisher_loop())
     _event_loop_lag_task = asyncio.create_task(event_loop_lag_monitor.run())
     try:
@@ -671,10 +661,6 @@ async def lifespan(app: FastAPI):
             for result in results:
                 if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
                     app_logger.error("Background task shutdown failed: %s", result)
-        try:
-            box_isolated_feed_manager.close()
-        except Exception:
-            app_logger.exception("Shared Runner local Box Spread fan-out shutdown failed")
         # Broker adapters own authenticated provider sessions in process memory.
         # Drain them before shutdown completes; failures are logged per provider
         # and must not prevent the remaining sessions or market-data runners closing.
@@ -748,8 +734,6 @@ app.include_router(full_fno_router)
 app.include_router(alert_router)
 if settings.BACKTESTING_ENABLED:
     app.include_router(create_replay_router(settings.BACKTEST_DATA_DB))
-app.include_router(live_box_spread_router)
-app.include_router(live_box_spread_websocket_router)
 app.include_router(page_push_websocket_router)
 app.include_router(intelligence_router)
 app.include_router(early_impulse_router)
@@ -787,26 +771,12 @@ _dashboard_stream_telemetry = DashboardStreamTelemetry()
 
 def _build_dashboard_snapshot_payload() -> dict:
     """Publish the retained Box Spread read model only; retired scanners are absent."""
-    box_enabled = bool(
-        not LIVE_BOX_SPREAD_RUNNER_FORCE_DISABLED
-        and settings.LIVE_BOX_SPREAD_DATA_ENABLED
-    )
-    box_snapshot = live_box_spread_latest_results if box_enabled else ()
-
-    timestamp_ns = None
-    if box_snapshot:
-        first = box_snapshot[0]
-        timestamp_ns = getattr(first, "timestamp_ns", None)
-        if timestamp_ns is None:
-            timestamp_ns = getattr(getattr(first, "option", None), "timestamp_ns", None)
-
     return {
         "type": "dashboard_snapshot",
         "timestamp": datetime.now(IST).isoformat(),
         "integration": {
             "transport": "server-websocket",
             "broker_socket_per_browser": False,
-            "box_spread": {"count": len(box_snapshot), "timestamp_ns": timestamp_ns},
         },
         "live_orders": "OFF",
     }
@@ -1513,134 +1483,7 @@ class SyntheticUniverseSelection(BaseModel):
     selection: str
 
 
-class BoxSpreadIndexSelectionRequest(BaseModel):
-    symbols: list[str]
-    weekly_only_symbols: list[str] | None = None
-
-
-@app.get("/api/v1/scanner/box-spread/index-selection")
-def get_box_spread_index_selection():
-    selected = _get_box_spread_index_selection()
-    weekly_only = _get_box_spread_weekly_only_symbols()
-    runner = live_box_spread_runner
-    runtime = runner.snapshot() if runner is not None else {"running": False, "readiness": {"state": "runner_stopped"}}
-    runtime["supervisor"] = live_box_spread_supervisor.snapshot() if live_box_spread_supervisor is not None else {"handoff": {"state": "not_running"}}
-    return {
-        "status": "success",
-        "symbols": list(selected),
-        "weekly_only_symbols": list(weekly_only),
-        "available_indices": sorted(BOX_SPREAD_LIVE_INDEX_UNIVERSE),
-        "presets": {key: list(value) for key, value in BOX_SPREAD_INDEX_PRESETS.items()},
-        "runtime": runtime,
-    }
-
-
-def _set_box_spread_index_selection_locked(payload: BoxSpreadIndexSelectionRequest):
-    global live_box_spread_latest_results
-    try:
-        selected = _normalize_box_spread_index_symbols(payload.symbols)
-        weekly_only = tuple(sorted({str(item or "").strip().upper() for item in (payload.weekly_only_symbols or []) if str(item or "").strip()}))
-        if set(weekly_only) - {"NIFTY"} or set(weekly_only) - set(selected):
-            raise ValueError("weekly-only mode is valid only for selected NIFTY")
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail={"message": str(exc)}) from exc
-
-    current_selection = set(_get_box_spread_index_selection())
-    current_weekly_only = set(_get_box_spread_weekly_only_symbols())
-    runner = live_box_spread_runner
-    supervisor = live_box_spread_supervisor
-    if supervisor is not None and supervisor.snapshot().get("handoff_in_progress"):
-        raise HTTPException(
-            status_code=409,
-            detail={"message": "A Box Spread feed handoff is already staging. Wait for it to finish before changing the index selection again."},
-        )
-    prepared_targets = None
-    prepared_expiry_types = None
-    previous_expiry_types = None
-    if runner is not None and not runner.stop_event.is_set():
-        if supervisor is None:
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "message": "Safe Box Spread handoff supervisor is not ready. Selection was not changed; retry shortly.",
-                },
-            )
-        try:
-            # Validate both selections against the same loaded instrument master.
-            prepared_targets, prepared_expiry_types = _box_spread_targets_from_master(runner.master, selected, weekly_only)
-            _previous_targets, previous_expiry_types = _box_spread_targets_from_master(runner.master, current_selection, current_weekly_only)
-        except (ValueError, TypeError) as exc:
-            raise HTTPException(status_code=409, detail={"message": f"Index selection validation failed; previous feed remains active: {exc}"}) from exc
-
-    saved = _save_box_spread_index_selection(selected, weekly_only)
-    switch = {"status": "SAVED", "restart_requested": False, "symbols": list(saved)}
-    if runner is not None and prepared_targets is not None:
-        if supervisor is not None:
-            try:
-                def rollback_failed_handoff():
-                    _save_box_spread_index_selection(current_selection, current_weekly_only)
-                    if previous_expiry_types is not None:
-                        set_live_box_expiry_types(previous_expiry_types)
-                        set_live_box_websocket_expiry_types(previous_expiry_types)
-
-                switch = supervisor.request_handoff(
-                    prepared_targets,
-                    on_failed=rollback_failed_handoff,
-                )
-            except Exception as exc:
-                app_logger.exception("Unable to start staged Box Spread runner; restoring previous selection")
-                try:
-                    _save_box_spread_index_selection(current_selection, current_weekly_only)
-                except Exception:
-                    app_logger.exception("CRITICAL: failed to restore Box Spread selection after staging startup failure")
-                raise HTTPException(
-                    status_code=503,
-                    detail={"message": "New Box Spread feed could not be staged. Previous live runner remains active; retry after checking feed capacity."},
-                ) from exc
-            if switch.get("state") != "STAGING":
-                try:
-                    _save_box_spread_index_selection(current_selection, current_weekly_only)
-                except Exception:
-                    app_logger.exception("CRITICAL: failed to restore Box Spread selection after rejected handoff")
-                raise HTTPException(
-                    status_code=409,
-                    detail={"message": "Box Spread handoff was not accepted; previous selection has been restored. Retry after the current handoff finishes."},
-                )
-            switch["restart_requested"] = True
-        # Expiry routing is updated by on_active only after the candidate
-        # is fully ready and publisher ownership has transferred.
-
-    result = {
-        "status": "success",
-        "symbols": list(saved),
-        "weekly_only_symbols": list(weekly_only),
-        "switch": switch,
-        "message": "Selection saved. Only selected Box Spread indices will be subscribed after the safe session handoff.",
-    }
-    # Saved selection is public scanner configuration, not account/ledger data.
-    # Broadcast only after persistence and any staged handoff were accepted.
-    try:
-        supervisor_snapshot = (
-            live_box_spread_supervisor.snapshot()
-            if live_box_spread_supervisor is not None
-            else {"active_symbols": [], "handoff": {"state": "not_running"}}
-        )
-        publish_page_update("box-spread", "PATCH", {
-            "index_selection": {"symbols": list(saved), "weekly_only_symbols": list(weekly_only)},
-            "index_selection_runtime": supervisor_snapshot,
-        })
-    except Exception as exc:
-        app_logger.warning("Unable to push saved Box Spread index selection: {}", exc)
-    return result
-
-
-@app.post("/api/v1/scanner/box-spread/index-selection")
-def set_box_spread_index_selection(payload: BoxSpreadIndexSelectionRequest):
-    # Serialize validation, persistence and staged-runner reservation so two
-    # concurrent UI saves cannot persist a selection that was never staged.
-    with BOX_SPREAD_INDEX_SELECTION_LOCK:
-        return _set_box_spread_index_selection_locked(payload)
-
+# Box Spread index-selection endpoints are retired with the strategy.
 
 def _summarize_primary_exchange_feed(common_feed: dict) -> dict:
     """Summarize NSE/NFO tick freshness without allowing unrelated exchanges to mask gaps."""
@@ -1699,8 +1542,6 @@ def market_data_runtime_health():
     common_feed = dict(common_feed)
     common_feed["owner"] = "SharedIndexMarketDataRunner"
     common_feed["universe"] = ["NIFTY", "BANKNIFTY"]
-    box_runner = live_box_spread_runner
-    box_snapshot = None if box_runner is None else box_runner.snapshot()
     return {
         "status": "ok",
         "server_timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
@@ -1709,11 +1550,9 @@ def market_data_runtime_health():
         "dashboard_stream": _dashboard_stream_telemetry.snapshot(),
         "runners": {
             "shared_index_market_data": runner_snapshot,
-            "box_spread": box_snapshot,
         },
-        "scanner": {
-            "strategy": "box-spread",
-            "opportunities": len(live_box_spread_latest_results),
+        "retired_strategies": {
+            "box_spread": {"status": "DISABLED", "feed": "NONE", "runner": "NONE"},
         },
         "live_orders": "OFF",
     }
