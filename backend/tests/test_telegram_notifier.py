@@ -20,7 +20,7 @@ def test_alert_dispatch_routes_to_enabled_telegram_contact_and_respects_master(d
     user = User(id=9301, email="telegram-alert@example.com", hashed_password="x", alerts_enabled=True)
     db_session.add(user)
     db_session.add(AlertRule(
-        user_id=9301, strategy_id="box-spread", metric="gross_profit",
+        user_id=9301, strategy_id="iv-skew-flip", metric="gross_profit",
         operator=">=", threshold=100, min_gross_profit=0,
         mobile_number="919000000000", whatsapp_enabled=False, enabled=True,
     ))
@@ -38,7 +38,7 @@ def test_alert_dispatch_routes_to_enabled_telegram_contact_and_respects_master(d
     sent = []
     monkeypatch.setattr(service._telegram, "send_text", lambda chat_id, msg: sent.append((chat_id, msg)) or True)
 
-    event = AlertEvent("box-spread", "telegram-event", "ABC", 1_000_000_000, "telegram alert", metadata={"gross_profit": 500})
+    event = AlertEvent("iv-skew-flip", "telegram-event", "ABC", 1_000_000_000, "telegram alert", metadata={"gross_profit": 500})
     assert service.dispatch(db_session, event) == 1
     assert sent == [("123456789", "telegram alert")]
 
@@ -46,7 +46,7 @@ def test_alert_dispatch_routes_to_enabled_telegram_contact_and_respects_master(d
     db_session.commit()
     sent.clear()
     assert service.dispatch(db_session, AlertEvent(
-        "box-spread", "telegram-blocked", "ABC", 2_000_000_000, "blocked", metadata={"gross_profit": 500}
+        "iv-skew-flip", "telegram-blocked", "ABC", 2_000_000_000, "blocked", metadata={"gross_profit": 500}
     )) == 0
     assert sent == []
 
@@ -55,7 +55,7 @@ def test_alert_dispatch_cooldown_applies_across_distinct_event_timestamps(db_ses
     user = User(id=9302, email="telegram-cooldown@example.com", hashed_password="x", alerts_enabled=True)
     db_session.add(user)
     db_session.add(AlertRule(
-        user_id=9302, strategy_id="box-spread", metric="gross_profit",
+        user_id=9302, strategy_id="iv-skew-flip", metric="gross_profit",
         operator=">=", threshold=100, min_gross_profit=0, cooldown_seconds=60,
         mobile_number="919333333333", whatsapp_enabled=False, enabled=True,
     ))
@@ -71,10 +71,10 @@ def test_alert_dispatch_cooldown_applies_across_distinct_event_timestamps(db_ses
 
     assert service.dispatch(
         db_session,
-        AlertEvent("box-spread", "same-logical-event", "ABC", 100_000_000_000, "first", metadata={"gross_profit": 500}),
+        AlertEvent("iv-skew-flip", "same-logical-event", "ABC", 100_000_000_000, "first", metadata={"gross_profit": 500}),
     ) == 1
     assert service.dispatch(
         db_session,
-        AlertEvent("box-spread", "same-logical-event", "ABC", 101_000_000_000, "within cooldown", metadata={"gross_profit": 500}),
+        AlertEvent("iv-skew-flip", "same-logical-event", "ABC", 101_000_000_000, "within cooldown", metadata={"gross_profit": 500}),
     ) == 0
     assert sent == [("111222333", "first")]
