@@ -1185,3 +1185,27 @@ def test_production_iv_runtime_uses_bounded_three_second_refresh_cadence():
         if keyword.arg == "refresh_seconds"
     )
     assert isinstance(refresh, ast.Constant) and refresh.value == 3.0
+
+def test_production_shared_runner_mode_uses_read_only_adapters_without_direct_manager():
+    from app.scanner.iv_skew_flip.shared_runner_feed import (
+        IVSharedRunnerOptionFeedAdapter,
+        IVSharedRunnerSpotFeedAdapter,
+    )
+
+    class SharedRunner:
+        def health_snapshot(self):
+            return {"enabled": True, "initial_option_bootstrap_done": True}
+
+    runner = SharedRunner()
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        shared_runner=runner,
+        feed_manager=None,
+    )
+
+    assert runtime.feed_manager is None
+    assert isinstance(runtime.spot_feed, IVSharedRunnerSpotFeedAdapter)
+    assert isinstance(
+        runtime.option_feed_factory("NIFTY_WEEKLY"),
+        IVSharedRunnerOptionFeedAdapter,
+    )
