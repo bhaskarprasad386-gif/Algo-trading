@@ -51,3 +51,7 @@ def test_only_shared_index_runner_is_admitted_to_production_websocket():
     assert "ShoonyaMarketDataSupervisor(" not in source
     assert "SHOONYA_MARKET_DATA_ENABLED and shoonya_market_data_supervisor" not in source
     assert "shoonya_market_data_supervisor" not in source
+    market_routes = Path(__file__).parents[1].joinpath("app", "market_data", "routes.py").read_text(encoding="utf-8")
+    assert "/shoonya/subscriptions" not in market_routes
+    assert "/shoonya-health" not in market_routes
+    assert "ShoonyaSubscriptionRequest" not in market_routes
