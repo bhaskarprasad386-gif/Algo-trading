@@ -16,6 +16,8 @@ def test_cash_future_calendar_and_synthetic_live_apis_are_not_mounted():
     assert "CashFutureDownloadManager" not in main
     assert "app.scanner.backtest_jobs" not in main
     assert "recover_interrupted_jobs" not in main
+    assert "_history_collector_task" not in main
+    assert "_iv_option_snapshot_task" not in main
 
 
 def test_box_spread_and_paper_trading_are_fully_retired():
