@@ -202,28 +202,6 @@ def _run_schema_migrations(connection) -> None:
 
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_mobile_number ON users (mobile_number)"))
-        if "live_cash_future_alert_history" in account_tables:
-            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_cf_alert_identity ON live_cash_future_alert_history (symbol, contract_month, timestamp_ns, event)"))
-        if "live_synthetic_alert_history" not in account_tables:
-            connection.execute(text(f"""
-                CREATE TABLE live_synthetic_alert_history (
-                    id {generated_id_type} PRIMARY KEY,
-                    observed_at {datetime_type} NOT NULL,
-                    timestamp_ns BIGINT NOT NULL,
-                    symbol VARCHAR(128) NOT NULL,
-                    instrument_class VARCHAR(16) NOT NULL,
-                    expiry INTEGER NOT NULL,
-                    strike FLOAT NOT NULL,
-                    direction VARCHAR(8) NOT NULL,
-                    executable_edge FLOAT NOT NULL,
-                    edge_per_lot FLOAT NOT NULL,
-                    gross_pnl FLOAT NOT NULL,
-                    lot_size INTEGER NOT NULL
-                )
-            """))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_live_syn_alert_observed_at ON live_synthetic_alert_history (observed_at)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_live_syn_alert_symbol ON live_synthetic_alert_history (symbol, observed_at)"))
-        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_live_syn_alert_identity ON live_synthetic_alert_history (symbol, expiry, timestamp_ns, strike, direction)"))
         # Durable IV observations are isolated from all other scanner histories.
         # Source-time uniqueness makes retries idempotent across sampler restarts.
         # PostgreSQL needs SERIAL for generated integer primary keys; SQLite
