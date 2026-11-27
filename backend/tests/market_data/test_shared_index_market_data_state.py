@@ -15,6 +15,13 @@ def _record(token, ts=None):
 
 
 def test_state_accepts_fresh_ticks_and_reports_freshness():
+    state = SharedIndexMarketDataState(max_age_seconds=5)
+    assert state.on_record(_record("spot1"))
+    snap = state.snapshot()
+    assert snap["instrument_count"] == 1
+    assert snap["fresh_count"] == 1
+    assert snap["feed_fresh"] is True
+
 
 def test_indexed_raw_accessors_return_only_requested_latest_records():
     state = SharedIndexMarketDataState(max_age_seconds=5)
@@ -36,12 +43,6 @@ def test_indexed_raw_accessors_return_only_requested_latest_records():
     assert state.latest_records_for_tokens(("spot-bank",)) == ()
     assert state.latest_records_for_instruments("index", ("BANKNIFTY",)) == ()
 
-    state = SharedIndexMarketDataState(max_age_seconds=5)
-    assert state.on_record(_record("spot1"))
-    snap = state.snapshot()
-    assert snap["instrument_count"] == 1
-    assert snap["fresh_count"] == 1
-    assert snap["feed_fresh"] is True
 
 
 
