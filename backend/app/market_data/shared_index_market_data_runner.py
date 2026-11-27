@@ -17,7 +17,7 @@ from .shared_index_option_rotation_controller import SharedIndexOptionRotationCo
 from .shared_index_option_selection import select_locked_index_options
 from .shared_index_spot_resolver import resolve_locked_index_spot_descriptors
 from .shared_index_option_selection import _parse_expiry
-from .box_spread_expiry import classify_index_expiry_dates
+from .shared_index_expiry import classify_index_expiry_dates
 from .shared_index_derived_iv import SharedIndexDerivedIV
 
 
