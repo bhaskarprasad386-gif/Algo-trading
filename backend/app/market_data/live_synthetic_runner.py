@@ -323,18 +323,12 @@ class LiveSyntheticRunner:
             for target in self.targets
             if target.instrument_class.strip().upper() == "INDEX"
         )
-        commodity_symbols = frozenset(
-            target.underlying.strip().upper()
-            for target in self.targets
-            if target.instrument_class.strip().upper() == "COMMODITY"
-        )
         feed = LiveSyntheticUnderlyingFeed(
             symbols,
             tracker=self._atm_tracker,
             instrument_master=self.instrument_master,
             auth=self.auth,
             index_symbols=index_symbols,
-            commodity_symbols=commodity_symbols,
         )
         # Do not resolve tokens synchronously here. The feed worker owns
         # resolution/retry and exposes per-symbol diagnostics after its first
