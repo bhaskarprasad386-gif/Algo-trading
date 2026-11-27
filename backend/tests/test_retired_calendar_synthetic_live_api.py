@@ -196,6 +196,11 @@ def test_iv_has_no_independent_instrument_master_recovery_job_or_script():
     assert not (repository / ".github" / "workflows" / "iv-master-cache.yml").exists()
     assert not (root / "scripts" / "recover_iv_master_artifact.py").exists()
     assert not (root / "scripts" / "recover_latest_master_artifacts.py").exists()
+    integration_workflow = (repository / ".github" / "workflows" / "integration-tests.yml").read_text(encoding="utf-8")
+    assert "iv-independent-master-network" not in integration_workflow
+    assert "IV_INSTRUMENT_MASTER_CACHE_PATH" not in integration_workflow
+    assert "iv-instrument-master-validated" not in integration_workflow
+    assert "test_iv_skew_flip_instruments.py" not in integration_workflow
 
     main = (root / "app" / "main.py").read_text(encoding="utf-8")
     runtime = (root / "app" / "scanner" / "iv_skew_flip" / "runtime.py").read_text(encoding="utf-8")
