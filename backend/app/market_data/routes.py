@@ -87,7 +87,7 @@ class ShoonyaInstrumentInput(BaseModel):
         exchange = self.exchange.strip().upper()
         segment = self.segment.strip().upper()
         instrument_type = self.instrument_type.strip().lower()
-        if exchange not in {"NSE", "NFO", "BSE", "BFO", "MCX", "NCDEX"}:
+        if exchange not in {"NSE", "NFO", "BSE", "BFO", "NCDEX"}:
             raise ValueError("unsupported Shoonya exchange")
         if instrument_type not in {"equity", "index", "future", "option", "commodity"}:
             raise ValueError("unsupported instrument_type")
