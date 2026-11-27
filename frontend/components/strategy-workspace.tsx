@@ -1844,7 +1844,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       {slug !== "box-spread" && (
       <div className="grid gap-4 xl:grid-cols-3">
         {!["calendar-spread", "synthetic-arbitrage"].includes(slug) && (<Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><Bell className="h-4 w-4 theme-accent" /> Strategy Alerts</div><p className="mt-2 text-xs leading-5 theme-muted">Scanner-wide alerts remain separate from live opportunity rendering.</p><Link href="/custom-alert" className="mt-3 inline-flex text-xs font-semibold theme-accent">Open alerts →</Link></Card>)}
-        {!["scanner", "calendar-spread", "synthetic-arbitrage"].includes(slug) && (<Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner Safety Boundary</div><p className="mt-2 text-xs leading-5 theme-muted">This workspace reads live scanner output only. Broker orders remain OFF and no paper execution logic is changed.</p></Card>)}
+        {!["scanner", "calendar-spread", "synthetic-arbitrage"].includes(slug) && (<Card className="theme-border theme-surface p-4"><div className="flex items-center gap-2 text-sm font-semibold theme-text"><ShieldCheck className="h-4 w-4 theme-success" /> Scanner Safety Boundary</div><p className="mt-2 text-xs leading-5 theme-muted">This workspace reads live scanner output only. It has no order execution or simulated trading controls.</p></Card>)}
 
 
       </div>
