@@ -25,6 +25,8 @@ export default function HomePage() {
   const [lastDashboardMessageAt, setLastDashboardMessageAt] = useState<number | null>(null);
   const [feedStatus, setFeedStatus] = useState<"checking" | "live" | "stale" | "no-data" | "closed" | "error">("checking");
   const [feedAge, setFeedAge] = useState<number | null>(null);
+  const [feedClockNow, setFeedClockNow] = useState(() => Date.now());
+  const [exchangeTickSamples, setExchangeTickSamples] = useState<Record<string, { timestampNs: number | null; ageSeconds: number | null; sampledAtMs: number }>>({});
   const [runtime, setRuntime] = useState<{ticks: number; runtimeStartedAt: number | null; activeInstruments: number; socketGroups: number; connectedGroups: number; connectedGroupNames: string[]; requiredSocketGroups: string[]; requiredSocketGroupCount: number | null; missingSocketGroups: string[]; disconnectedGroups: string[]; maxSocketSessions: number; lastConnectFailure: any; lastSocketFailure: any; retiredTransportCount: number; brokerCooldownRemaining: number; failureRecoveryGroups: string[]; transportCloseTimedOutGroups: string[]; socketHealthByGroup: Record<string, any>; consumers: string[]; deliveryErrors: number; normalizerErrors: number; runners: Record<string, {running: boolean; detail: string; updates: number; payloads: number; instruments: number}>}>({ticks: 0, runtimeStartedAt: null, activeInstruments: 0, socketGroups: 0, connectedGroups: 0, connectedGroupNames: [], requiredSocketGroups: [], requiredSocketGroupCount: null, missingSocketGroups: [], disconnectedGroups: [], maxSocketSessions: 3, lastConnectFailure: null, lastSocketFailure: null, retiredTransportCount: 0, brokerCooldownRemaining: 0, failureRecoveryGroups: [], transportCloseTimedOutGroups: [], socketHealthByGroup: {}, consumers: [], deliveryErrors: 0, normalizerErrors: 0, runners: {}});
   const healthFailureCountRef = useRef(0);
   const lastReadinessCheckAtRef = useRef(0);
@@ -274,6 +276,11 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    const timer = window.setInterval(() => setFeedClockNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
     const loadFeedHealth = async () => {
@@ -302,6 +309,22 @@ export default function HomePage() {
         );
         const age = body?.runtime_feed?.age_seconds;
         setFeedAge(age == null || !Number.isFinite(Number(age)) ? null : Number(age));
+        const freshness = body?.runtime_feed?.exchange_freshness;
+        const sampledAtMs = Date.now();
+        const nextExchangeSamples: Record<string, { timestampNs: number | null; ageSeconds: number | null; sampledAtMs: number }> = {};
+        for (const exchange of ["NSE", "NFO"]) {
+          const item = freshness?.[exchange];
+          const rawTimestamp = item?.latest_tick_timestamp_ns;
+          const rawAge = item?.age_seconds;
+          const timestampNs = rawTimestamp == null ? null : Number(rawTimestamp);
+          const ageSeconds = rawAge == null ? null : Number(rawAge);
+          nextExchangeSamples[exchange] = {
+            timestampNs: timestampNs != null && Number.isFinite(timestampNs) && timestampNs > 0 ? timestampNs : null,
+            ageSeconds: ageSeconds != null && Number.isFinite(ageSeconds) && ageSeconds >= 0 ? ageSeconds : null,
+            sampledAtMs,
+          };
+        }
+        setExchangeTickSamples(nextExchangeSamples);
         if (session === "CLOSED") setFeedStatus("closed");
         else if (session !== "OPEN") setFeedStatus("no-data");
         else if (status === "LIVE" && age != null && Number.isFinite(Number(age)) && Number(age) >= 0 && Number(age) <= 5) setFeedStatus("live");
@@ -700,6 +723,19 @@ export default function HomePage() {
 
           <div className="rounded-2xl border theme-border theme-surface-2 p-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">Shared Runner Feed Health • Source Identified</div><div className="text-[9px] theme-subtle">Freshness threshold: 5 seconds</div></div>
+            <div className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {(["NSE", "NFO"] as const).map((exchange) => {
+                const sample = exchangeTickSamples[exchange];
+                const age = sample?.ageSeconds == null ? null : sample.ageSeconds + Math.max(0, feedClockNow - sample.sampledAtMs) / 1000;
+                const tickMs = sample?.timestampNs == null ? null : sample.timestampNs / 1_000_000;
+                const validTime = tickMs != null && Number.isFinite(tickMs) && tickMs > 0 && tickMs <= feedClockNow + 5000;
+                const status = age == null ? "NO TICK SAMPLE" : age <= 5 ? "FRESH" : "STALE";
+                return <div key={exchange} className="min-w-0 rounded-xl border theme-border p-3">
+                  <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold">{exchange} • LAST SOURCE TICK</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (status === "FRESH" ? "theme-success-bg theme-success" : status === "STALE" ? "theme-danger-bg theme-danger" : "theme-warning-bg theme-warning")}>{status}</span></div>
+                  <div className="mt-1 text-[10px] tabular-nums theme-muted">{validTime ? new Date(tickMs!).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata" }) + " IST" : "Timestamp unavailable"} • age {age == null ? "—" : age.toFixed(1) + "s"}</div>
+                </div>;
+              })}
+            </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {sharedFeedCards.map((feed) => {
                 const good = feed.status === "FRESH";
