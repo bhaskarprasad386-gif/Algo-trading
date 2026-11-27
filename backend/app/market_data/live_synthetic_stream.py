@@ -20,7 +20,6 @@ from app.market_data.ingestion import BoundedMarketDataIngestor
 from app.backtesting.historical_catalog import HistoricalRecord
 from app.market_data.persistence import DailySQLiteMarketDataRepository
 from app.market_data.websocket import MarketDataWebSocket
-from app.market_data.common_websocket import CommonWebSocketManager
 
 IST = ZoneInfo("Asia/Kolkata")
 OPEN = time(9, 15)
@@ -59,7 +58,7 @@ class LiveSyntheticOptionFutureRecorder:
         batch_size: int = 256,
         poll_seconds: float = 0.25,
         on_observation: Callable[[dict[str, Any]], None] | None = None,
-        manager: CommonWebSocketManager | None = None,
+        manager: Any | None = None,
         consumer: str = "synthetic-options",
     ) -> None:
         if not subscriptions:
