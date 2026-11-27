@@ -486,7 +486,6 @@ configure_page_push_snapshot("weekly-swing", nifty200_scan_status)
 configure_weekly_swing_page_push(
     lambda payload: publish_page_update("weekly-swing", "PATCH", payload)
 )
-configure_page_push_snapshot("box-spread", _box_page_push_snapshot)
 def _cash_future_page_push_snapshot():
     # The REST live APIs and runner are disabled by configuration. Reconnect
     # snapshots must not invoke the dormant scanner's ranking/pair aggregation.
@@ -552,8 +551,6 @@ def _synthetic_page_push_snapshot():
     }
 
 
-configure_page_push_snapshot("cash-future", _cash_future_page_push_snapshot)
-configure_page_push_snapshot("calendar-spread", _calendar_spread_page_push_snapshot)
 def _synthetic_page_push_recovery_snapshot():
     # Durable trace rows are loaded only for subscribe/reconnect recovery, not
     # on each market-data push.
@@ -567,7 +564,6 @@ def _synthetic_page_push_recovery_snapshot():
     return payload
 
 
-configure_page_push_snapshot("synthetic-arbitrage", _synthetic_page_push_recovery_snapshot)
 configure_paper_private_ws_snapshot(build_paper_private_snapshot)
 configure_paper_market_ws_snapshot(build_paper_market_snapshot)
 
