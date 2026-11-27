@@ -20,8 +20,6 @@ router = APIRouter(
 
 _CLOSED_OVERVIEW_CACHE: dict[str, dict] = {}
 _CLOSED_OVERVIEW_CACHE_LOCK = Lock()
-_OVERVIEW_HISTORICAL_CACHE: dict[tuple[str, str, str], tuple[float, float | None, float | None]] = {}
-_OVERVIEW_HISTORICAL_CACHE_LOCK = Lock()
 _OVERVIEW_QUOTE_CACHE: dict[tuple[str, tuple[str, ...]], tuple[float, dict[str, dict]]] = {}
 _OVERVIEW_QUOTE_CACHE_LOCK = Lock()
 _OVERVIEW_QUOTE_CACHE_TTL_SECONDS = 15.0
@@ -218,13 +216,6 @@ def _nse_market_is_open(now: datetime) -> bool:
 
 
 
-def _mcx_market_is_open(now: datetime) -> bool:
-    """Return scheduled MCX non-agri hours in India time; quote health is separate."""
-    current = now.astimezone(ZoneInfo("Asia/Kolkata")) if now.tzinfo else now.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
-    if current.weekday() >= 5:
-        return False
-    return time(9, 0) <= current.time() < time(23, 30)
-
 @router.get("/ltp")
 def get_ltp(
     exchange: str = Query(...),
@@ -304,7 +295,6 @@ def get_historical(
 ):
     """Get historical candle data."""
     from app.market_data.client import MarketDataClient
-    from app.market_data.historical import HistoricalDataClient
 
     try:
         app_logger.info(f"Historical request: {exchange} {symboltoken} {interval}")
@@ -632,7 +622,7 @@ def _overview_quote_batch(client, exchange: str, instruments: list[dict[str, str
 @router.get("/overview")
 @cached_snapshot(ttl_seconds=4.0, max_stale_seconds=30.0)
 def get_market_overview():
-    """Return a bounded live overview for configured NSE/BSE indices and MCX commodities."""
+    """Return a bounded live overview for configured NSE/BSE indices only."""
     from app.market_data.client import MarketDataClient
     from app.market_data.historical import HistoricalDataClient
     from app.market_data.instruments import InstrumentMaster
@@ -641,54 +631,17 @@ def get_market_overview():
         *(("NSE", symbol) for symbol in ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY")),
         *(("BSE", symbol) for symbol in ("SENSEX", "BANKEX")),
     ]
-    commodity_specs = [("MCX", symbol) for symbol in ("GOLD", "SILVER", "CRUDEOIL", "NATURALGAS")]
     master = InstrumentMaster()
     client = MarketDataClient()
-    historical_client = HistoricalDataClient(client)
     ist = ZoneInfo("Asia/Kolkata")
     now = datetime.now(ist)
     market_open = _nse_market_is_open(now)
-    mcx_market_open = _mcx_market_is_open(now)
     cache_key = now.date().isoformat()
-    if not market_open and not mcx_market_open:
+    if not market_open:
         with _CLOSED_OVERVIEW_CACHE_LOCK:
             cached = _CLOSED_OVERVIEW_CACHE.get(cache_key)
         if cached is not None:
             return cached
-
-    def last_trading_closes(exchange, token):
-        """Return a 15-minute cached historical close; it is not a live quote."""
-        now = datetime.now(ist)
-        cache_key = (now.date().isoformat(), exchange, str(token))
-        monotonic_now = __import__("time").monotonic()
-        with _OVERVIEW_HISTORICAL_CACHE_LOCK:
-            cached = _OVERVIEW_HISTORICAL_CACHE.get(cache_key)
-            if cached is not None and monotonic_now - cached[0] < 900.0:
-                return cached[1], cached[2]
-        from_date = (now - timedelta(days=10)).strftime("%Y-%m-%d 00:00")
-        to_date = now.strftime("%Y-%m-%d %H:%M")
-        response = historical_client.get_candles(
-            exchange=exchange,
-            symboltoken=token,
-            interval="ONE_DAY",
-            from_date=from_date,
-            to_date=to_date,
-        )
-        candles = response.get("data") or []
-        valid = [
-            row for row in candles
-            if isinstance(row, (list, tuple)) and len(row) >= 5 and row[4] is not None
-        ] if isinstance(candles, list) else []
-        latest = float(valid[-1][4]) if valid else None
-        prior = float(valid[-2][4]) if len(valid) >= 2 else latest
-        if latest is not None:
-            with _OVERVIEW_HISTORICAL_CACHE_LOCK:
-                _OVERVIEW_HISTORICAL_CACHE[cache_key] = (monotonic_now, latest, prior)
-                # Keep only the current date's bounded index universe.
-                for old_key in tuple(_OVERVIEW_HISTORICAL_CACHE):
-                    if old_key[0] != cache_key[0]:
-                        _OVERVIEW_HISTORICAL_CACHE.pop(old_key, None)
-        return latest, prior
 
     def resolve(specs):
         resolved = []
@@ -716,7 +669,7 @@ def get_market_overview():
         for exchange, instruments in by_exchange.items():
             try:
                 by_token = {}
-                exchange_open = market_open if exchange in {"NSE", "BSE"} else mcx_market_open
+                exchange_open = market_open
                 quote_age_seconds = None
                 quote_is_stale = False
                 if exchange_open:
@@ -730,26 +683,13 @@ def get_market_overview():
                         })
                 for item in instruments:
                     quote = by_token.get(item["symboltoken"], {})
-                    fallback_ltp = None
-                    fallback_previous = None
                     status = (
                         "STALE" if quote and quote_is_stale
                         else "LIVE" if quote
                         else "NO_QUOTE"
                     )
-                    if not exchange_open:
-                        try:
-                            fallback_ltp, fallback_previous = last_trading_closes(exchange, item["symboltoken"])
-                            if fallback_ltp is not None:
-                                status = "CLOSED_LAST_CLOSE"
-                        except Exception as fallback_exc:
-                            errors.append({
-                                "exchange": exchange,
-                                "symbol": item["symbol"],
-                                "error": f"last_close_fallback_failed: {fallback_exc}",
-                            })
-                    ltp = quote.get("ltp") if quote.get("ltp") is not None else fallback_ltp
-                    close = quote.get("close") if quote.get("close") is not None else fallback_previous
+                    ltp = quote.get("ltp")
+                    close = quote.get("close")
                     rows.append({"exchange": exchange, "symbol": item["symbol"], "token": item["symboltoken"],
                                  "ltp": ltp, "open": quote.get("open"), "high": quote.get("high"),
                                  "low": quote.get("low"), "close": close, "change_percent": quote.get("percentChange"),
@@ -763,16 +703,13 @@ def get_market_overview():
         return rows, errors
 
     indices, index_errors = fetch(index_specs)
-    commodities, commodity_errors = fetch(commodity_specs)
     result = {
         "status": "success",
         "mode": "live",
         "market_session": "OPEN" if market_open else "CLOSED",
         "nse_market_session": "OPEN" if market_open else "CLOSED",
-        "mcx_market_session": "OPEN" if mcx_market_open else "CLOSED",
         "indices": indices,
-        "commodities": commodities,
-        "errors": index_errors + commodity_errors,
+        "errors": index_errors,
     }
     if not market_open and not mcx_market_open:
         with _CLOSED_OVERVIEW_CACHE_LOCK:
