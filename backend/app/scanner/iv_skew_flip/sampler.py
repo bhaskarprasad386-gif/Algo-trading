@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 from app.models.iv_option_observation import IVOptionObservation
 
-from .engine import DEFAULT_CONFIGS, OptionQuote, ScannerConfig, _expiry_years, implied_volatility
+from .engine import DEFAULT_CONFIGS, OptionQuote, ScannerConfig, _expiry_years
 
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -203,12 +203,9 @@ class IVOneSecondSampler:
                     token=row.token, underlying=row.underlying, expiry=row.expiry,
                     strike=row.strike, option_type=row.option_type, sampled_at_ns=row.sampled_at_ns,
                     source_timestamp_ns=row.source_timestamp_ns, spot_timestamp_ns=row.spot_timestamp_ns,
-                    spot_price=row.spot_price, oi=row.oi, mark=row.mark, ltp=row.ltp, iv=row.iv,
+                    spot_price=row.spot_price, oi=row.oi, mark=row.mark, ltp=row.ltp, iv=None,  # Historical locally solved IV is intentionally not restored.
                     oi_timestamp_ns=getattr(row, "oi_timestamp_ns", None),
-                    iv_input=(
-                        "BID_ASK_MIDPOINT" if row.bid is not None and row.ask is not None
-                        else "LTP" if row.ltp is not None else None
-                    ),
+                    iv_input=None,
                     bid=row.bid, ask=row.ask, volume=row.volume,
                 )
 
@@ -257,7 +254,8 @@ class IVOneSecondSampler:
                     "spot_timestamp_ns": item.spot_timestamp_ns,
                     "spot_price": getattr(item, "spot_price", None),
                     "sampled_at_ns": item.sampled_at_ns,
-                    "iv": item.iv,
+                    "iv": None,
+                    "iv_source": "DISABLED",
                     "oi": item.oi,
                     "oi_timestamp_ns": item.oi_timestamp_ns,
                     "bid": item.bid,
@@ -410,10 +408,8 @@ class IVOneSecondSampler:
             ):
                 continue
             mark = quote.mark
-            iv = None if mark is None else implied_volatility(
-                quote.option_type, spot_value.price, quote.strike, years, mark,
-                self.config.risk_free_rate, self.config.dividend_yield,
-            )
+            # Local Black-Scholes IV inversion is disabled. Keep quote/OI sampling only.
+            iv = None
             sample = OptionMetricSample(
                 token=quote.token, underlying=quote.underlying, expiry=quote.expiry,
                 strike=quote.strike, option_type=quote.option_type,
@@ -424,16 +420,7 @@ class IVOneSecondSampler:
                 mark=mark,
                 ltp=quote.ltp if quote.ltp is not None and isfinite(quote.ltp) and quote.ltp > 0 else None,
                 iv=None if iv is None else round(iv * 100.0, 4),
-                iv_input=(
-                    "BID_ASK_MIDPOINT"
-                    if quote.bid is not None and quote.ask is not None
-                    and isfinite(quote.bid) and isfinite(quote.ask)
-                    and 0 < quote.bid <= quote.ask
-                    and (quote.ask - quote.bid) * 100.0 / ((quote.ask + quote.bid) / 2.0) <= 8.0
-                    else "LTP" if mark is not None and quote.ltp is not None
-                    and isfinite(quote.ltp) and quote.ltp > 0
-                    else None
-                ),
+                iv_input=None,
                 bid=quote.bid if quote.bid is not None and isfinite(quote.bid) and quote.bid > 0 else None,
                 ask=quote.ask if quote.ask is not None and isfinite(quote.ask) and quote.ask > 0 else None,
                 volume=quote.volume if isinstance(quote.volume, int) and not isinstance(quote.volume, bool) and quote.volume >= 0 else None,
@@ -682,13 +669,6 @@ class IVOneSecondSampler:
             }
             display_by_token = dict(self._last_display)
             display_by_token.update({item.token: item for item in live_samples})
-            for token, last_good in self._last_valid_iv.items():
-                current = display_by_token.get(token)
-                if current is None:
-                    display_by_token[token] = last_good
-                elif current.iv is None:
-                    from dataclasses import replace
-                    display_by_token[token] = replace(current, iv=last_good.iv, iv_input=last_good.iv_input)
             samples = tuple(display_by_token.values())
             history_sizes = {token: len(rows) for token, rows in self._history.items()}
             sampled_at = self._last_sampled_at_ns
@@ -730,9 +710,9 @@ class IVOneSecondSampler:
                 ),
                 "iv": item.iv,
                 "iv_unit": "PERCENT",
-                "iv_live": item.token in live_iv_tokens,
-                "iv_status": "LIVE" if item.token in live_iv_tokens else "LAST",
-                "iv_input": item.iv_input,
+                "iv_live": False,
+                "iv_status": "DISABLED",
+                "iv_input": None,
                 "mark": item.mark,
                 "ltp": item.ltp,
                 "source_timestamp_ns": item.source_timestamp_ns,
@@ -742,7 +722,7 @@ class IVOneSecondSampler:
                 "change_interval_seconds": changes.get(item.token, {}).get("interval_seconds"),
                 "oi_change_1s": changes.get(item.token, {}).get("oi_change"),
                 "oi_change_pct_1s": changes.get(item.token, {}).get("oi_change_pct"),
-                "iv_change_1s": changes.get(item.token, {}).get("iv_change"),
+                "iv_change_1s": None,
                 "ltp_change_1s": changes.get(item.token, {}).get("ltp_change"),
                 "ltp_change_pct_1s": changes.get(item.token, {}).get("ltp_change_pct"),
             }
@@ -756,9 +736,10 @@ class IVOneSecondSampler:
             "oi_live_count": len(live_oi_tokens),
             "oi_stale_count": len(stale_oi_tokens),
             "oi_missing_count": sum(item.oi is None or item.oi_timestamp_ns is None for item in live_samples),
-            "iv_live_count": len(live_iv_tokens),
+            "iv_live_count": 0,
+            "iv_calculation": "DISABLED",
             "oi_values": {item.token: item.oi for item in samples},
-            "iv_values": {item.token: item.iv for item in samples},
+            "iv_values": {item.token: None for item in samples},
             "live_metrics": live_metrics,
             # The legacy early-move detector consumes metric dictionaries.
             # Keep its IV fields bound to raw current-cycle observations too;
