@@ -24,7 +24,7 @@ class SharedIndexMarketDataState:
         self._lock = RLock()
         self._latest: dict[str, Any] = {}
         # Secondary indexes avoid rebuilding the full enriched snapshot for IV.
-        self._latest_by_token: dict[str, Any] = {}
+        self._latest_by_token: dict[str, dict[str, Any]] = {}
         self._latest_by_underlying_type: dict[tuple[str, str], Any] = {}
         # Once the runner publishes its owned universe, late ticks for retired
         # contracts are rejected instead of repopulating the cache after rotation.
@@ -68,7 +68,9 @@ class SharedIndexMarketDataState:
             self._latest[key] = record
             token = str(getattr(getattr(record, "instrument", None), "token", "") or "")
             if token:
-                self._latest_by_token[token] = record
+                # Broker tokens are only unique within an exchange/segment.
+                # Preserve full identity so NSE/NFO collisions cannot cross-match.
+                self._latest_by_token.setdefault(token, {})[key] = record
             underlying = str(getattr(record, "underlying", "") or "").strip().upper()
             kind = str(getattr(getattr(record, "instrument_type", None), "value", "") or "").lower()
             if underlying and kind == "index":
@@ -139,8 +141,12 @@ class SharedIndexMarketDataState:
                 retired = self._latest.pop(key, None)
                 if retired is not None:
                     token = str(getattr(getattr(retired, "instrument", None), "token", "") or "")
-                    if token and self._latest_by_token.get(token) is retired:
-                        self._latest_by_token.pop(token, None)
+                    if token:
+                        token_records = self._latest_by_token.get(token)
+                        if token_records is not None:
+                            token_records.pop(key, None)
+                            if not token_records:
+                                self._latest_by_token.pop(token, None)
                     underlying = str(getattr(retired, "underlying", "") or "").strip().upper()
                     kind = str(getattr(getattr(retired, "instrument_type", None), "value", "") or "").lower()
                     if underlying and kind and self._latest_by_underlying_type.get((underlying, kind)) is retired:
@@ -154,11 +160,25 @@ class SharedIndexMarketDataState:
 
 
 
-    def latest_records_for_tokens(self, tokens) -> tuple[dict[str, Any], ...]:
-        """Return raw latest records for requested broker tokens via the token index."""
+    def latest_records_for_tokens(
+        self, tokens, *, exchange: str | None = None, segment: str | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        """Return raw latest records by token, optionally constrained to venue identity.
+
+        Broker tokens are not globally unique; callers resolving a specific
+        instrument universe must pass its exchange and segment.
+        """
         requested = tuple(dict.fromkeys(str(token) for token in tokens if str(token)))
+        wanted_exchange = str(exchange or "").strip().upper()
+        wanted_segment = str(segment or "").strip().upper()
         with self._lock:
-            records = tuple(self._latest_by_token[token] for token in requested if token in self._latest_by_token)
+            records = tuple(
+                record
+                for token in requested
+                for record in self._latest_by_token.get(token, {}).values()
+                if (not wanted_exchange or record.instrument.exchange.strip().upper() == wanted_exchange)
+                and (not wanted_segment or record.instrument.segment.strip().upper() == wanted_segment)
+            )
         return tuple(record.as_dict() for record in records)
 
     def latest_records_for_instruments(self, instrument_type: str, underlyings) -> tuple[dict[str, Any], ...]:
