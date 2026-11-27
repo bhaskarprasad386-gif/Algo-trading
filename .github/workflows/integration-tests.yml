@@ -112,7 +112,6 @@ jobs:
           python -m py_compile backend/app/instruments/manager.py
           python -m py_compile backend/app/market_data/instruments.py
           bash -n backend/scripts/diagnose_angelone_tls_path.sh
-          bash -n backend/scripts/install_master_recovery_timer.sh
       - name: Run instrument-master regression suite
         run: |
           python -m pytest -q --tb=short \
