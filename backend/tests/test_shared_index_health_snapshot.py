@@ -59,6 +59,11 @@ def test_runner_health_snapshot_is_lightweight_and_reports_ready_universe() -> N
     for underlying, option_count in (("NIFTY", 62), ("BANKNIFTY", 62)):
         for kind, count in (("index", 1), ("future", 1), ("option", option_count)):
             groups[underlying + ":" + kind] = {"count": count, "fresh_count": count, "stale_count": 0, "max_age_seconds": 0.1}
+            if kind == "option":
+                groups[underlying + ":" + kind].update({
+                    "ce_count": 31, "pe_count": 31,
+                    "ce_fresh_count": 31, "pe_fresh_count": 31,
+                })
 
     class FakeState:
         def snapshot(self):
