@@ -9,10 +9,10 @@ from app.models import AlertRule, AlertContact, User
 
 router = APIRouter(prefix="/api/v1/alerts", tags=["Alerts"])
 
-STRATEGIES = {"box-spread"}
+STRATEGIES = set()
 ALERT_METRICS = {"gap","gross_profit","net_profit","volume","oi","iv","premium","spread_value"}
 ALERT_OPERATORS = {">=", ">", "<=", "<", "="}
-ALERT_STRATEGY_METRICS = {"box-spread": {"gap", "gross_profit"}}
+ALERT_STRATEGY_METRICS = {}
 
 def _validate_strategy_metric(strategy: str, metric: str) -> None:
     if metric not in ALERT_STRATEGY_METRICS.get(strategy, set()):
