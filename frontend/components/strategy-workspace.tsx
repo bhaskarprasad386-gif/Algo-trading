@@ -1004,7 +1004,6 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       indexSelectionRequestSequence.current += 1;
       setSavedIndexSymbols([]);
       setIndexSelectionDraft([]);
-      setWeeklyOnlyDraft([]);
       setActiveIndexSymbols([]);
       setIndexHandoffState("UNKNOWN");
       setIndexSelectionLoading(false);
@@ -1025,7 +1024,6 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
       && draftSymbols.length === previousSymbols.length
       && draftSymbols.every((symbol, index) => symbol === previousSymbols[index]);
     setSavedIndexSymbols(nextSymbols);
-    setSavedWeeklyOnlySymbols([]);
     if (draftIsClean) {
       setIndexSelectionDraft(nextSymbols);
       setWeeklyOnlyDraft([]);
@@ -1610,7 +1608,7 @@ export function StrategyWorkspace({ slug }: { slug: keyof typeof configs }) {
             <p className="mt-2 text-[10px] theme-muted">LIVE तभी दिखेगा जब index subscribed हो और उसका spot tick 5 seconds के अंदर मिला हो। पुराना feed handoff के दौरान ACTIVE रह सकता है।</p>
           </div>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="space-y-1"><p className="text-[11px] theme-muted">Saved: {savedIndexSymbols.length ? savedIndexSymbols.join(" · ") : "Loading…"}</p><p className="text-[11px] theme-muted">Weekly Only: {savedWeeklyOnlySymbols.length ? savedWeeklyOnlySymbols.join(" · ") : "None"} · Other selected indices use available standard expiries.</p><p className="text-[11px] font-bold theme-text">Actually active: {activeIndexSymbols.length ? activeIndexSymbols.join(" · ") : "No active runner reported"}</p><p className="text-[10px] theme-muted">Feed handoff: {indexHandoffState}</p></div>
+            <div className="space-y-1"><p className="text-[11px] theme-muted">Saved: {savedIndexSymbols.length ? savedIndexSymbols.join(" · ") : "Loading…"}</p><p className="text-[11px] theme-muted">Expiry routing: NIFTY weekly · BANKNIFTY monthly.</p><p className="text-[11px] font-bold theme-text">Actually active: {activeIndexSymbols.length ? activeIndexSymbols.join(" · ") : "No active runner reported"}</p><p className="text-[10px] theme-muted">Feed handoff: {indexHandoffState}</p></div>
             <button type="button" disabled={indexSelectionSaving || indexSelectionLoading || indexSelectionDraft.length === 0 || (indexSelectionDraft.length === savedIndexSymbols.length && indexSelectionDraft.every(symbol => savedIndexSymbols.includes(symbol)))} onClick={() => void saveIndexSelection()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border theme-border theme-accent-bg px-4 text-xs font-extrabold theme-text disabled:cursor-not-allowed disabled:opacity-50">
               {indexSelectionSaving ? "SAVING / SWITCHING…" : "Save & Apply Selection"}
             </button>
