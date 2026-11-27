@@ -55,49 +55,39 @@ def test_common_feed_health_reuses_bounded_runner_snapshot(monkeypatch):
     assert len(runner_reads) == 1
     assert second["_snapshot_cache"]["age_seconds"] >= 0
 
-def test_market_overview_returns_index_and_commodity_groups(monkeypatch):
+def test_market_overview_fetches_only_nse_bse_indices(monkeypatch):
+    calls = []
+
     class FakeMaster:
         def get_instrument(self, symbol, exchange):
+            calls.append(("resolve", exchange, symbol))
             return {"token": f"{exchange}-{symbol}"}
 
         def resolve_index_instrument(self, symbol, exchange):
+            calls.append(("resolve", exchange, symbol))
             return {"token": f"{exchange}-{symbol}"}
 
     class FakeClient:
         def quote_many(self, exchange, instruments):
-            return {
-                "data": {
-                    "fetched": [
-                        {
-                            "symbolToken": item["symboltoken"],
-                            "ltp": 100.0,
-                            "open": 99.0,
-                            "high": 105.0,
-                            "low": 95.0,
-                            "close": 98.0,
-                            "percentChange": 2.04,
-                            "tradeVolume": 1000,
-                            "opnInterest": 500,
-                            "depth": {"buy": [{"price": 99.9}], "sell": [{"price": 100.1}]},
-                        }
-                        for item in instruments
-                    ]
-                }
-            }
+            calls.append(("quote", exchange, tuple(x["symboltoken"] for x in instruments)))
+            return {"data": {"fetched": [
+                {"symbolToken": item["symboltoken"], "ltp": 100.0, "close": 98.0}
+                for item in instruments
+            ]}}
 
     monkeypatch.setattr("app.market_data.instruments.InstrumentMaster", FakeMaster)
     monkeypatch.setattr("app.market_data.client.MarketDataClient", FakeClient)
     monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: True)
-    monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: True)
 
     result = routes.get_market_overview()
 
     assert result["status"] == "success"
     assert result["nse_market_session"] == "OPEN"
-    assert result["mcx_market_session"] == "OPEN"
     assert {row["symbol"] for row in result["indices"]} >= {"NIFTY", "BANKNIFTY", "SENSEX"}
-    assert {row["symbol"] for row in result["commodities"]} >= {"GOLD", "SILVER", "CRUDEOIL", "NATURALGAS"}
-    assert all(row["status"] == "LIVE" for row in result["indices"] + result["commodities"])
+    assert "commodities" not in result
+    assert "mcx_market_session" not in result
+    assert all(exchange in {"NSE", "BSE"} for kind, exchange, *_ in calls if kind == "quote")
+    assert not any("MCX" in str(call) for call in calls)
     assert result["errors"] == []
 
 
@@ -128,7 +118,6 @@ def test_closed_market_overview_labels_historical_close_not_live_quote(monkeypat
     monkeypatch.setattr("app.market_data.client.MarketDataClient", FakeClient)
     monkeypatch.setattr("app.market_data.historical.HistoricalDataClient", FakeHistoricalDataClient)
     monkeypatch.setattr(routes, "_nse_market_is_open", lambda now: False)
-    monkeypatch.setattr(routes, "_mcx_market_is_open", lambda now: False)
 
     result = routes.get_market_overview()
 
