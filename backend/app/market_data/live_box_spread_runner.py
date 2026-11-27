@@ -9,9 +9,9 @@ from app.backtesting.arbitrage_scan_policy import ScanPolicy
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.common_strategy_feed import CommonStrategyMarketFeed
 from app.market_data.box_spread_instrument_cache import download_box_spread_instruments
-from app.market_data.live_synthetic_stream import LiveSyntheticOptionFutureRecorder
-from app.market_data.live_synthetic_underlying import LiveSyntheticUnderlyingFeed
-from app.market_data.live_synthetic_atm import LiveSyntheticAtmTracker, concrete_strikes_from_master
+from app.market_data.box_spread_market_data import BoxSpreadOptionFutureRecorder
+from app.market_data.box_spread_underlying_feed import BoxSpreadUnderlyingFeed
+from app.market_data.box_spread_atm import BoxSpreadAtmTracker, box_spread_strikes_from_master
 from app.market_data.box_spread_subscriptions import select_box_contracts
 from app.scanner.live_box_spread_scanner import LiveBoxSpreadScanner
 from app.scanner.live_box_spread_pipeline import LiveBoxSpreadPipeline
@@ -503,7 +503,7 @@ class LiveBoxSpreadRunner:
                 selected_expiries.setdefault(symbol_key, [])
                 if wanted not in selected_expiries[symbol_key]:
                     selected_expiries[symbol_key].append(wanted)
-                expiry_strikes = concrete_strikes_from_master(
+                expiry_strikes = box_spread_strikes_from_master(
                     self.master.instruments,
                     symbols=(target.underlying,),
                     expiry=wanted,
@@ -519,9 +519,9 @@ class LiveBoxSpreadRunner:
         # ATM readiness while preserving source-backed spot snapshots.
         for symbol in symbols:
             strikes.setdefault(symbol.strip().upper(), ())
-        self.tracker=LiveSyntheticAtmTracker(strikes_by_symbol=strikes)
+        self.tracker=BoxSpreadAtmTracker(strikes_by_symbol=strikes)
         index_symbols=frozenset(t.underlying for t in self.targets if t.instrument_class=="INDEX")
-        self.feed=LiveSyntheticUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,on_price=self._spot_publish_callback,index_symbols=index_symbols,consumer=f"{self.consumer_namespace}-underlyings",refresh_instrument_master=False,manager=self.shared_feed_manager)
+        self.feed=BoxSpreadUnderlyingFeed(symbols,tracker=self.tracker,instrument_master=self.master,auth=self.auth,on_price=self._spot_publish_callback,index_symbols=index_symbols,consumer=f"{self.consumer_namespace}-underlyings",refresh_instrument_master=False,manager=self.shared_feed_manager)
         self._feed_thread = Thread(target=self.feed.run_forever,daemon=True,name="box-underlying-feed")
         self._feed_thread.start()
         try:
@@ -730,7 +730,7 @@ class LiveBoxSpreadRunner:
                 # Fail closed: never start an L1-only live opportunity publisher.
                 depth_descriptors = self._depth_shadow_descriptors(subs)
                 self.depth_shadow.start(depth_descriptors)
-                self.recorder=LiveSyntheticOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,manager=self.shared_feed_manager,consumer=f"{self.consumer_namespace}-options")
+                self.recorder=BoxSpreadOptionFutureRecorder(self.data_db,subs,auth=self.auth,on_observation=observe,manager=self.shared_feed_manager,consumer=f"{self.consumer_namespace}-options")
                 recorder = self.recorder
                 recorder_thread = Thread(target=recorder.run_forever, daemon=True, name="box-option-recorder")
                 recorder_thread.start()
