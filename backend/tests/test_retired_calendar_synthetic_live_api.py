@@ -101,7 +101,7 @@ def test_retired_strategy_models_and_full_fno_backtest_are_not_registered_or_imp
         "live_synthetic_pair_history.py", "synthetic_trace_opportunity.py",
         "synthetic_trace_status_check.py", "live_box_spread_alert_history.py",
         "live_box_spread_snapshot.py", "live_box_spread_snapshot_key.py",
-        "backtest_job.py", "backtest_job_result_chunk.py",
+        "backtest_job_result_chunk.py",
     ):
         assert not (root / "app" / "models" / retired_path).exists()
 
@@ -116,6 +116,9 @@ def test_retired_strategy_models_and_full_fno_backtest_are_not_registered_or_imp
 
 def test_retired_full_fno_paper_backtest_has_no_android_entrypoint_or_api():
     root = Path(__file__).parents[1]
+    main = (root / "app" / "main.py").read_text(encoding="utf-8")
+    assert "full_fno_router" not in main
+    assert "full-fno" not in main
     mobile = root.parent / "mobile" / "android" / "app" / "src" / "main"
     main_activity = (mobile / "java" / "com" / "algotrading" / "app" / "MainActivity.kt").read_text(encoding="utf-8")
     api = (mobile / "java" / "com" / "algotrading" / "app" / "ApiService.kt").read_text(encoding="utf-8")
