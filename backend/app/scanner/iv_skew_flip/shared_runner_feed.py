@@ -282,7 +282,7 @@ class IVSharedRunnerOptionFeedAdapter:
         latest: dict[str, dict[str, Any]] = {}
         state = self.shared_runner.state
         indexed = getattr(state, "latest_records_for_tokens", None)
-        rows = indexed(expected) if callable(indexed) else state.records_snapshot()
+        rows = indexed(expected, exchange="NFO", segment="NFO") if callable(indexed) else state.records_snapshot()
         for row in rows:
             token = str(row.get("token") or "")
             contract = expected.get(token)
