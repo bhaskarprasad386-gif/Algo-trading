@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from app.backtesting.arbitrage_scan_policy import ScanPolicy
 from app.market_data.instruments import InstrumentMaster
-from app.market_data.live_synthetic_stream import SyntheticSubscription
+from app.market_data.box_spread_market_data import BoxSpreadSubscription
 
 BSE_INDEX_SYMBOLS = frozenset({"SENSEX", "BANKEX"})
 
@@ -19,7 +19,7 @@ def _strike(value): return float(value) / 100.0
 
 @dataclass(frozen=True)
 class BoxContractSelection:
-    subscriptions: tuple[SyntheticSubscription, ...]
+    subscriptions: tuple[BoxSpreadSubscription, ...]
     expiry: str
     atm_strike: float
 
@@ -78,7 +78,7 @@ def select_box_contracts(master: InstrumentMaster, *, underlying: str, instrumen
             if not item: continue
             token = str(item.get("token","")).strip()
             if not token: continue
-            subscriptions.append(SyntheticSubscription(
+            subscriptions.append(BoxSpreadSubscription(
                 exchange_type, token, str(item.get("symbol","")).strip(), symbol, cls,
                 str(item.get("expiry","")).strip(), suffix, strike,
                 int(float(item.get("lotsize",0) or 0)) or None
