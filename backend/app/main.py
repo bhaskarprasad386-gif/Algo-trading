@@ -231,8 +231,7 @@ async def lifespan(app: FastAPI):
     else:
         configure_provider_quote_parity_store(None)
         configure_provider_quote_parity_worker(None)
-    # Recovery is intentionally deferred until application startup so the schema
-    # migration module has no dependency on scanner/backtest job modules.
+    # Runtime startup no longer imports or recovers retired legacy strategy jobs.
     from app.brokers.real_owner_state import reconcile_owner_state_on_startup
     # Broker adapter sessions are process-local and are not restored across
     # restarts. Never trust a persisted connected flag after process startup.
@@ -251,9 +250,8 @@ async def lifespan(app: FastAPI):
         _iv_scanner_recovery_task = asyncio.create_task(_iv_scanner_recovery_loop())
     if _weekly_swing_refresh_task is None:
         _weekly_swing_refresh_task = asyncio.create_task(weekly_swing_daily_refresh_loop())
-    # Broker-native IV snapshots are not fetched independently. IV calculation
-    # and the legacy snapshot poller remain disabled until they can consume the
-    # Shared Runner's already-published option records without extra API traffic.
+    # IV market data is consumed exclusively from Shared Runner records; no
+    # independent broker snapshot poller or instrument-master download is started.
     if settings.BACKTESTING_ENABLED and settings.BACKTEST_CONTRACT_MASTER_AUTO_SYNC and _contract_master_sync_task is None:
         _contract_master_sync_task = asyncio.create_task(_contract_master_sync_loop())
     _dashboard_snapshot_task = asyncio.create_task(_dashboard_snapshot_publisher_loop())
