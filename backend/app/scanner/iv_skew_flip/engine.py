@@ -145,9 +145,11 @@ def _fresh(quote: OptionQuote, now_ns: int, max_age_seconds: float) -> bool:
     )
 
 
-def _iv(quote: OptionQuote, spot: float, years: float, config: ScannerConfig, now_ns: int) -> float | None:
+def _iv(quote: OptionQuote, spot: float, years: float, config: ScannerConfig, now_ns: int | None = None) -> float | None:
     """Accept only validated Angel One broker-native IV; local inversion is disabled."""
     value = quote.broker_iv
+    if now_ns is None:
+        return None
     if (
         quote.iv_source != "ANGEL_ONE"
         or isinstance(value, bool) or not isinstance(value, (int, float))
