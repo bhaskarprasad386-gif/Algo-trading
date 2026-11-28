@@ -953,17 +953,25 @@ def test_runtime_snapshot_requires_nonblank_telegram_credentials(monkeypatch):
         spot_feed=FakeSpotFeed(),
         clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
     )
-    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", False)
     monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "   ")
     monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
-    assert runtime.snapshot()["telegram_configured"] is False
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_CHAT_IDS", "")
+    snapshot = runtime.snapshot()
+    assert snapshot["telegram_alerts_enabled"] is True
+    assert snapshot["telegram_configuration"]["enabled"] is True
+    assert snapshot["telegram_configuration"]["configured"] is False
+    assert snapshot["telegram_configured"] is False
 
     monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "   ")
-    assert runtime.snapshot()["telegram_configured"] is False
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_CHAT_IDS", " 67890, 24680 ")
+    assert runtime.snapshot()["telegram_configured"] is True
+    assert runtime.snapshot()["telegram_configuration"]["chat_id_source"] == "TELEGRAM_ADMIN_CHAT_IDS"
 
     monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
     assert runtime.snapshot()["telegram_configured"] is True
+    assert runtime.snapshot()["telegram_configuration"]["chat_id_source"] == "TELEGRAM_CHAT_ID"
 
 
 
@@ -1077,7 +1085,7 @@ def test_banknifty_telegram_alert_is_identified_as_monthly_pilot(monkeypatch):
         captured["timeout"] = timeout
         return Response()
 
-    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", False)
     monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "test-chat")
     monkeypatch.setattr(runtime_module, "urlopen", fake_urlopen)
@@ -1513,3 +1521,62 @@ def test_early_move_withholds_alerts_when_selected_option_coverage_is_partial():
     assert alerts.calls == 0
     assert sampler.snapshot_calls == 0
     runtime.stop()
+
+
+def test_runtime_health_status_uses_worker_shared_runner_and_refresh_diagnostics():
+    class SharedRunner:
+        def __init__(self, ready=True):
+            self.ready = ready
+
+        def readiness_snapshot(self):
+            return {
+                "enabled": self.ready,
+                "initial_option_bootstrap_done": self.ready,
+            }
+
+    class Worker:
+        def __init__(self, alive=True):
+            self.alive = alive
+
+        def is_alive(self):
+            return self.alive
+
+    now_ns = 100_000_000_000
+
+    def build(*, ready=True, alive=True, refreshed=True, errors=None):
+        runtime = IVSkewFlipRuntime(
+            instrument_master=FakeMaster([]),
+            spot_feed=FakeSpotFeed(),
+            shared_runner=SharedRunner(ready),
+            clock_ns=lambda: now_ns,
+            clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+        )
+        runtime._started = True
+        runtime._thread = Worker(alive)
+        runtime._last_refresh_ns = now_ns if refreshed else None
+        runtime._last_error = dict(errors or {})
+        return runtime
+
+    waiting = build(ready=False)
+    assert waiting.snapshot()["health"]["status"] == "WAITING_FOR_SHARED_FEED"
+
+    starting = build(refreshed=False)
+    assert starting.snapshot()["health"]["status"] == "STARTING"
+
+    running = build()
+    health = running.snapshot()["health"]
+    assert health["status"] == "RUNNING"
+    assert health["worker_alive"] is True
+    assert health["shared_runner_ready"] is True
+    assert health["last_refresh_age_ms"] == 0
+
+    degraded = build(errors={"NIFTY_WEEKLY": "WAITING_FOR_SPOT"})
+    assert degraded.snapshot()["health"]["status"] == "DEGRADED"
+
+    crashed = build(alive=False)
+    assert crashed.snapshot()["health"]["status"] == "ERROR"
+
+    for runtime in (waiting, starting, running, degraded, crashed):
+        runtime._started = False
+        runtime._thread = None
+        runtime.stop()

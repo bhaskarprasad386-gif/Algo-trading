@@ -1030,11 +1030,20 @@ class IVSkewFlipRuntime:
         return snapshot
 
     @staticmethod
+    def _telegram_chat_id() -> str:
+        """Prefer the IV-specific destination; fall back to the existing Telegram admin allowlist."""
+        explicit = str(settings.TELEGRAM_CHAT_ID or "").strip()
+        if explicit:
+            return explicit
+        admin_ids = str(settings.TELEGRAM_ADMIN_CHAT_IDS or "").strip()
+        return next((item.strip() for item in admin_ids.split(",") if item.strip()), "")
+
+    @staticmethod
     def _telegram_sender(payload: dict[str, Any]) -> None:
         """Send one persisted IV alert through Telegram Bot API; no secrets enter logs."""
         token = str(settings.TELEGRAM_BOT_TOKEN or "").strip()
-        chat_id = str(settings.TELEGRAM_CHAT_ID or "").strip()
-        if not settings.TELEGRAM_ENABLED or not token or not chat_id:
+        chat_id = IVSkewFlipRuntime._telegram_chat_id()
+        if not token or not chat_id:
             raise RuntimeError("TELEGRAM_CONFIGURATION_MISSING")
         observed_ns = int(payload.get("observed_at_ns") or 0)
         observed = datetime.fromtimestamp(observed_ns / 1_000_000_000, tz=IST).strftime("%d-%b-%Y %H:%M:%S IST") if observed_ns else "—"
@@ -1134,9 +1143,8 @@ class IVSkewFlipRuntime:
 
     def _process_telegram_outbox(self, now_ns: int) -> None:
         configured = bool(
-            settings.TELEGRAM_ENABLED
-            and str(settings.TELEGRAM_BOT_TOKEN or "").strip()
-            and str(settings.TELEGRAM_CHAT_ID or "").strip()
+            str(settings.TELEGRAM_BOT_TOKEN or "").strip()
+            and bool(self._telegram_chat_id())
         )
         try:
             result = self._telegram_outbox.process_one(
@@ -1154,7 +1162,7 @@ class IVSkewFlipRuntime:
                 self._telegram_delivery = {
                     "status": "WAITING_CONFIG",
                     "last_attempt_ns": self._telegram_delivery.get("last_attempt_ns"),
-                    "last_error": "Set TELEGRAM_ENABLED, TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID",
+                    "last_error": "Telegram bot token or admin recipient is missing",
                 }
         except Exception as exc:
             # Delivery failures are isolated from the market-data and signal loop.
@@ -1226,6 +1234,8 @@ class IVSkewFlipRuntime:
         manager_snapshot = None
         with self._lock:
             started = self._started
+            stopping = self._stopping
+            worker = self._thread
             feeds = dict(self._option_feeds)
             samplers = dict(self._samplers)
             errors = dict(self._last_error)
@@ -1249,24 +1259,75 @@ class IVSkewFlipRuntime:
         # option_chains and indices to avoid duplicate work/inconsistent reads.
         feed_snapshots = {stream_id: feed.snapshot() for stream_id, feed in feeds.items()}
         sampler_snapshots = {stream_id: sampler.snapshot() for stream_id, sampler in samplers.items()}
+        runner_snapshot = (
+            self.shared_runner.readiness_snapshot()
+            if self.shared_runner is not None
+            and callable(getattr(self.shared_runner, "readiness_snapshot", None))
+            else (
+                self.shared_runner.health_snapshot()
+                if self.shared_runner is not None
+                and callable(getattr(self.shared_runner, "health_snapshot", None))
+                else None
+            )
+        )
+        worker_alive = bool(worker is not None and worker.is_alive())
+        refresh_age_ms = (
+            max(0.0, (self.clock_ns() - last_refresh) / 1_000_000)
+            if last_refresh is not None else None
+        )
+        runner_ready = bool(
+            isinstance(runner_snapshot, dict)
+            and runner_snapshot.get("enabled")
+            and runner_snapshot.get("initial_option_bootstrap_done")
+        )
+        refresh_stale = (
+            refresh_age_ms is not None
+            and refresh_age_ms > max(15_000.0, self.refresh_seconds * 4_000.0)
+        )
+        if stopping:
+            health_status = "STOPPING"
+            health_reason = "Runtime shutdown is in progress"
+        elif not started:
+            health_status = "STOPPED"
+            health_reason = "Runtime has not started"
+        elif not runner_ready:
+            health_status = "WAITING_FOR_SHARED_FEED"
+            health_reason = "Shared Runner or its initial option bootstrap is not ready"
+        elif not worker_alive:
+            health_status = "ERROR"
+            health_reason = "IV refresh worker is not alive"
+        elif last_refresh is None:
+            health_status = "STARTING"
+            health_reason = "Waiting for the first successful refresh"
+        elif refresh_stale:
+            health_status = "DEGRADED"
+            health_reason = "IV refresh heartbeat is stale"
+        elif errors.get("RUNTIME") or errors.get("CLEANUP"):
+            health_status = "DEGRADED"
+            health_reason = errors.get("RUNTIME") or errors.get("CLEANUP") or "Runtime diagnostic error"
+        elif any(errors.get(stream_id) for stream_id, _ in ACTIVE_CHAIN_CONFIGS):
+            health_status = "DEGRADED"
+            health_reason = "One or more active option chains have a refresh/feed issue"
+        else:
+            health_status = "RUNNING"
+            health_reason = "Refresh worker and Shared Runner are healthy"
+        health = {
+            "status": health_status,
+            "reason": health_reason,
+            "worker_alive": worker_alive,
+            "shared_runner_ready": runner_ready,
+            "last_refresh_age_ms": refresh_age_ms,
+            "degraded": health_status == "DEGRADED",
+        }
         return {
-            "status": "STOPPING" if self._stopping else ("RUNNING" if started else "STOPPED"),
+            "status": "STOPPING" if stopping else ("RUNNING" if started else "STOPPED"),
+            "health": health,
             "consumer": "iv-skew-flip",
             "orders_enabled": False,
             "market_data_connection": (
                 {
                     "isolation": "SHARED_INDEX_MARKET_DATA_RUNNER",
-                    "runner": (
-                        self.shared_runner.readiness_snapshot()
-                        if self.shared_runner is not None
-                        and callable(getattr(self.shared_runner, "readiness_snapshot", None))
-                        else (
-                            self.shared_runner.health_snapshot()
-                            if self.shared_runner is not None
-                            and callable(getattr(self.shared_runner, "health_snapshot", None))
-                            else None
-                        )
-                    ),
+                    "runner": runner_snapshot,
                     "manager_owner": "APPLICATION",
                     "manager": manager_snapshot,
                     "socket_mode": 3,
@@ -1293,7 +1354,23 @@ class IVSkewFlipRuntime:
             "early_entry_alerts": self._early_entry_alerts.snapshot("NIFTY"),
             "early_entry_alerts_by_underlying": self._early_entry_alerts.snapshot_all(),
             "telegram_delivery": dict(self._telegram_delivery),
-            "telegram_configured": bool(settings.TELEGRAM_ENABLED and str(settings.TELEGRAM_BOT_TOKEN or "").strip() and str(settings.TELEGRAM_CHAT_ID or "").strip()),
+            # Telegram alerting is an always-on runtime capability. Credentials
+            # control delivery readiness only; they never toggle the feature.
+            "telegram_alerts_enabled": True,
+            "telegram_configured": bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip() and self._telegram_chat_id()),
+            "telegram_configuration": {
+                "enabled": True,
+                "configured": bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip() and self._telegram_chat_id()),
+                "bot_token_present": bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip()),
+                "chat_id_present": bool(self._telegram_chat_id()),
+                "chat_id_source": "TELEGRAM_CHAT_ID" if str(settings.TELEGRAM_CHAT_ID or "").strip() else (
+                    "TELEGRAM_ADMIN_CHAT_IDS" if self._telegram_chat_id() else None
+                ),
+                "missing": [name for name, present in (
+                    ("TELEGRAM_BOT_TOKEN", bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip())),
+                    ("TELEGRAM_CHAT_ID_OR_TELEGRAM_ADMIN_CHAT_IDS", bool(self._telegram_chat_id())),
+                ) if not present],
+            },
             "equity_pressure": {
                 **equity_pressure,
                 "enabled": self.equity_pressure_enabled,

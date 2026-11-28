@@ -32,7 +32,7 @@ from app.models.broker_replay_eligibility_audit import BrokerReplayEligibilityAu
 from app.models.broker_order_event import BrokerOrderEventRecord  # noqa: F401 - register durable broker callback event table
 from app.models.execution_intent import ExecutionIntentRecord, ExecutionLegRecord, ExecutionIntentEventRecord, ExecutionFillRecord, ExecutionBrokerOrderRecord  # noqa: F401 - register durable execution and broker order identity tables
 from app.models.broker_reconciliation import BrokerReconciliationRecord  # noqa: F401 - register durable reconciliation evidence
-from app.models.iv_scanner_control import IVScannerControl
+from app.models.iv_scanner_control import IVScannerControl, IVScannerControlMigration
 from app.models.iv_option_observation import IVOptionObservation
 from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent, IVEarlyEntryCooldown  # noqa: F401 - register durable IV early-entry alert tables
 from app.models.iv_early_entry_notification import IVEarlyEntryNotificationOutbox  # noqa: F401 - register alert notification outbox
@@ -91,6 +91,7 @@ provider_quote_parity_worker: BoundedQuoteParityWorker | None = None
 provider_readiness_bridge = ProviderReadinessBridge()
 early_impulse_observer.configure_readiness(provider_readiness_bridge)
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
+_iv_default_on_migration_lock = threading.Lock()
 _iv_skew_flip_runtime_lock = threading.RLock()
 def _shared_runner_feed_snapshot() -> dict:
     """Read broker feed diagnostics from the sole Shared Runner owner."""
@@ -167,8 +168,7 @@ async def _iv_scanner_recovery_loop() -> None:
     """Retry a persisted IV Scanner ON state after transient startup failures.
 
     This loop never relaxes the
-    instrument snapshot freshness/integrity checks. An explicitly saved OFF
-    state is always respected.
+    instrument snapshot freshness/integrity checks. The IV scanner is permanently auto-enabled; no operator ON/OFF state exists.
     """
     retry_delay = 0.0
     max_retry_delay = 60.0
@@ -725,23 +725,30 @@ def runtime_diagnostic_errors(limit: int = 50):
 
 
 def _get_iv_scanner_enabled() -> bool:
-    """Default IV Scanner ON on first install; preserve an explicitly saved OFF."""
-    with SessionLocal() as db:
-        setting = db.get(IVScannerControl, 1)
-        return bool(setting.enabled) if setting is not None else True
-
-
-def _save_iv_scanner_enabled(enabled: bool) -> bool:
-    with SessionLocal() as db:
-        setting = db.get(IVScannerControl, 1)
-        if setting is None:
-            setting = IVScannerControl(id=1, enabled=bool(enabled))
-            db.add(setting)
-        else:
-            setting.enabled = bool(enabled)
-            setting.updated_at = datetime.now(timezone.utc)
-        db.commit()
-    return bool(enabled)
+    """IV scanner is always enabled; repair any legacy OFF row on read."""
+    with _iv_default_on_migration_lock:
+        with SessionLocal() as db:
+            marker = db.query(IVScannerControlMigration).filter_by(
+                migration_key="iv_scanner_default_on_2026_11"
+            ).one_or_none()
+            setting = db.get(IVScannerControl, 1)
+            changed = False
+            if setting is None:
+                setting = IVScannerControl(id=1, enabled=True)
+                db.add(setting)
+                changed = True
+            elif not setting.enabled:
+                setting.enabled = True
+                setting.updated_at = datetime.now(timezone.utc)
+                changed = True
+            if marker is None:
+                db.add(IVScannerControlMigration(
+                    id=1, migration_key="iv_scanner_default_on_2026_11"
+                ))
+                changed = True
+            if changed:
+                db.commit()
+            return True
 
 
 def _start_iv_skew_flip_runtime():
@@ -907,8 +914,12 @@ def iv_skew_flip_status():
     enabled = _get_iv_scanner_enabled()
     with _iv_skew_flip_runtime_lock:
         runtime = None if iv_skew_flip_runtime is None else iv_skew_flip_runtime.snapshot()
+    shared_runner = shared_index_market_data_runner.readiness_snapshot()
     return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
             "runner_status": runtime.get("status", "STOPPED") if runtime else "STOPPED",
+            "shared_runner": shared_runner,
+            "shared_runner_connected": bool(shared_runner.get("enabled")),
+            "shared_runner_ready": bool(shared_runner.get("enabled") and shared_runner.get("initial_option_bootstrap_done")),
             "runtime": runtime, "orders_enabled": False}
 
 
@@ -1341,69 +1352,27 @@ def iv_skew_flip_option_history(underlying: str = "NIFTY", expiry: str | None = 
 
 @app.post("/api/v1/scanner/iv-skew-flip/config")
 def save_iv_skew_flip_config(payload: dict):
-    enabled = payload.get("enabled")
-    if not isinstance(enabled, bool):
-        raise HTTPException(status_code=422, detail="enabled must be a boolean")
-    # Keep runtime transition and persisted desired state in one critical
-    # section; otherwise a racing OFF/ON request could leave them contradictory.
-    with _iv_skew_flip_runtime_lock:
-        if enabled:
-            # Persist ON first. If persistence fails, the runner is never
-            # started, so a database outage cannot leave an unsaved live runner.
-            try:
-                _save_iv_scanner_enabled(True)
-            except Exception as exc:
-                app_logger.exception("IV Scanner ON state could not be persisted")
-                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not started because ON state could not be saved.", "reason": type(exc).__name__}) from exc
-            try:
-                snapshot = _start_iv_skew_flip_runtime()
-            except Exception as exc:
-                # Compensate the desired state if backend startup fails.
-                try:
-                    _save_iv_scanner_enabled(False)
-                except Exception:
-                    app_logger.exception("IV Scanner failed to roll back persisted ON state after startup failure")
-                app_logger.exception("IV Scanner could not be enabled")
-                raise HTTPException(status_code=503, detail={"message": "IV Scanner ON save failed because backend runner did not start.", "reason": type(exc).__name__}) from exc
-        else:
-            # Persist OFF first. If the database is unavailable, leave the
-            # currently running scanner untouched rather than create a
-            # STOPPED runtime with a persisted ON state that restarts later.
-            try:
-                _save_iv_scanner_enabled(False)
-            except Exception as exc:
-                app_logger.exception("IV Scanner OFF state could not be persisted")
-                raise HTTPException(status_code=503, detail={"message": "IV Scanner was not stopped because OFF state could not be saved.", "reason": type(exc).__name__}) from exc
-            snapshot = _stop_iv_skew_flip_runtime()
-        return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
-                "runner_status": snapshot.get("status", "STOPPED"),
-                "runtime": snapshot, "orders_enabled": False}
+    """Manual runner controls are retired; IV starts and recovers automatically."""
+    raise HTTPException(
+        status_code=410,
+        detail="Manual IV Scanner ON/OFF controls are retired; the scanner runs in automatic mode.",
+    )
 
 
 @app.post("/api/v1/scanner/iv-skew-flip/start")
 def start_iv_skew_flip_scanner():
-    with _iv_skew_flip_runtime_lock:
-        try:
-            _save_iv_scanner_enabled(True)
-            try:
-                snapshot = _start_iv_skew_flip_runtime()
-            except Exception:
-                try:
-                    _save_iv_scanner_enabled(False)
-                except Exception:
-                    app_logger.exception("IV Scanner failed to roll back persisted ON state after startup failure")
-                raise
-            return snapshot
-        except Exception as exc:
-            app_logger.exception("IV Skew / IV Flip scanner startup failed")
-            raise HTTPException(status_code=503, detail={"message": "IV scanner could not start; verify Angel One session, shared feed and instrument master.", "reason": str(exc)}) from exc
+    raise HTTPException(
+        status_code=410,
+        detail="Manual IV Scanner start is retired; automatic startup owns the lifecycle.",
+    )
 
 
 @app.post("/api/v1/scanner/iv-skew-flip/stop")
 def stop_iv_skew_flip_scanner():
-    with _iv_skew_flip_runtime_lock:
-        _save_iv_scanner_enabled(False)
-        return _stop_iv_skew_flip_runtime()
+    raise HTTPException(
+        status_code=410,
+        detail="Manual IV Scanner stop is retired; the scanner runs in automatic mode.",
+    )
 
 
 @app.get("/api/v1/scanner/iv-skew-flip/validation")

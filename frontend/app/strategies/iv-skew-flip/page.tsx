@@ -31,9 +31,8 @@ type BasketRegistry = {
 };
 type Runtime = {
   status?: string;
-  desired_state?: "ON" | "OFF";
-  saved_enabled?: boolean;
-  runner_status?: "RUNNING" | "STOPPED";
+  health?: { status?: string; reason?: string; worker_alive?: boolean; shared_runner_ready?: boolean; last_refresh_age_ms?: number | null; degraded?: boolean };
+  market_data_connection?: { runner?: Row };
   refresh_seconds?: number;
   signal_evaluation_seconds?: number;
   spot_feed?: Row;
@@ -45,6 +44,7 @@ type Runtime = {
   index_future_feed?: Row;
   spot_future_basis?: Record<string, Row>;
   telegram_configured?: boolean;
+  telegram_configuration?: { enabled?: boolean; bot_token_present?: boolean; chat_id_present?: boolean; chat_id_source?: string | null; missing?: string[] };
   telegram_delivery?: Row;
   early_entry_alerts?: { alerts?: EarlyAlert[]; [key: string]: unknown };
   early_entry_alerts_by_underlying?: Record<string, Row>;
@@ -436,9 +436,6 @@ export default function IVSkewFlipPage() {
   const [snapshotBusy,setSnapshotBusy]=useState(false);
   const [snapshotNotice,setSnapshotNotice]=useState("");
   const [error,setError]=useState("");
-  const [selectedEnabled,setSelectedEnabled]=useState(false);
-  const [savedEnabled,setSavedEnabled]=useState(false);
-  const [settingDirty,setSettingDirty]=useState(false);
   const base=appConfig.apiBaseUrl.replace(/\/$/,"");
   const { data: pagePushData, status: pagePushStatus } = usePagePush("iv-skew-flip");
   const requestedExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
@@ -613,10 +610,7 @@ export default function IVSkewFlipPage() {
     const body=await response.json();
     if(requestSequence!==statusFetchSequenceRef.current)return;
     if(!response.ok) throw new Error(apiError(body,`Status HTTP ${response.status}`));
-    setRuntime(body.runtime??null);
-    setSelectedEnabled(body.saved_enabled===true);
-    setSavedEnabled(body.saved_enabled===true);
-    setSettingDirty(false);
+    setRuntime({...((body.runtime??{}) as Row),market_data_connection:{...((body.runtime?.market_data_connection??{}) as Row),runner:body.shared_runner??(body.runtime?.market_data_connection as Row|undefined)?.runner}});
   },[base]);
   useEffect(()=>{
     if(!pagePushData)return;
@@ -726,24 +720,7 @@ export default function IVSkewFlipPage() {
         if(String(pagePushData.__event??"").toUpperCase()!=="SNAPSHOT"&&alertAudioEnabled&&fresh.length)playEarlyAlertTone();
       }
     }
-    if(typeof pagePushData.saved_enabled==="boolean"){
-      setSavedEnabled(pagePushData.saved_enabled);
-      if(!settingDirty)setSelectedEnabled(pagePushData.saved_enabled);
-    }
-  },[pagePushData,settingDirty,alertAudioEnabled]);
-  async function saveRunnerSetting(){
-    setBusy(true);setError("");
-    try{
-      const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:selectedEnabled}),cache:"no-store"});
-      const body=await response.json();
-      if(!response.ok)throw new Error(apiError(body,"Could not save IV Scanner runner setting"));
-      setRuntime(body.runtime??null);
-      setSavedEnabled(body.saved_enabled===true);
-      setSelectedEnabled(body.saved_enabled===true);
-      setSettingDirty(false);
-    }catch(e){setError(e instanceof Error?e.message:"IV Scanner setting save failed");}
-    finally{setBusy(false);}
-  }
+  },[pagePushData,alertAudioEnabled]);
   async function fetchBrokerSnapshot(underlying: "NIFTY"|"BANKNIFTY" = "NIFTY"){
     const requestSequence=++brokerSnapshotSequenceRef.current;
     setSnapshotBusy(true);setSnapshotNotice("");setError("");
@@ -855,20 +832,16 @@ export default function IVSkewFlipPage() {
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={()=>void refresh().catch(e=>setError(String(e)))} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface px-3 py-2 text-sm"><RefreshCw size={15}/> Refresh</button>
         <button onClick={()=>void fetchBrokerSnapshot()} disabled={!running||snapshotBusy} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface px-3 py-2 text-sm font-bold disabled:opacity-50">{snapshotBusy?"Fetching broker…":"Fetch NIFTY Broker IV + Chain"}</button>
-        <div className="inline-flex rounded-xl border-2 border-slate-300 dark:border-slate-600 p-1" aria-label="IV Scanner desired runner state">
-          <button type="button" onClick={()=>{setSelectedEnabled(true);setSettingDirty(true);}} disabled={busy} aria-pressed={selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-bold ${selectedEnabled?"bg-emerald-600 text-white":"theme-muted"}`}>ON</button>
-          <button type="button" onClick={()=>{setSelectedEnabled(false);setSettingDirty(true);}} disabled={busy} aria-pressed={!selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-bold ${!selectedEnabled?"bg-rose-600 text-white":"theme-muted"}`}>OFF</button>
-        </div>
-        <button onClick={()=>void saveRunnerSetting()} disabled={busy||selectedEnabled===savedEnabled} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface px-4 py-2 text-sm font-bold disabled:opacity-50">{busy?"Saving…":"Save"}</button>
+        <span className="rounded-xl border-2 border-emerald-500/40 px-3 py-2 text-sm font-bold text-emerald-700">AUTO ON</span>
       </div>
     </header>
-    <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">{running?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {`Runner ${runtime?.runner_status??runtime?.status??"NOT STARTED"} • Saved ${savedEnabled?"ON":"OFF"}`}</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Orders OFF</span></div>
+      <section aria-label="System health" className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-3 space-y-2"><div className="flex flex-wrap gap-2 text-xs"><span title={runtime?.health?.reason??"Health diagnostics unavailable"} className={`rounded-full border-2 px-3 py-2 ${runtime?.health?.status==="RUNNING"?"border-emerald-500/50 text-emerald-700":runtime?.health?.status==="ERROR"?"border-rose-500/50 text-rose-700":"border-amber-500/50 text-amber-700"}`}>{runtime?.health?.status==="RUNNING"?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {`IV Runner ${runtime?.health?.status??"CHECKING"}`}{runtime?.health?.last_refresh_age_ms!=null?` • refresh ${age(runtime.health.last_refresh_age_ms)}`:""}</span><span title={runtime?.health?.reason??"Shared Runner readiness"} className={`rounded-full border-2 px-3 py-2 ${runtime?.health?.shared_runner_ready===true?"border-emerald-500/50 text-emerald-700":"border-amber-500/50 text-amber-700"}`}><Wifi size={13} className="inline"/> {`Shared Runner ${runtime?.health?.shared_runner_ready===true?"READY":runtime?.market_data_connection?.runner?.enabled===true?"BOOTSTRAPPING":"DISCONNECTED"}`}</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Orders OFF</span></div><p className="text-xs theme-muted" role="status">{runtime?.health?.reason??"Waiting for backend health diagnostics."} {runtime?.health?.worker_alive===true?"• IV worker alive":runtime?.health?.worker_alive===false?"• IV worker not alive":""}</p></section>
     <section aria-label="Scanner at a glance" className="grid grid-cols-2 gap-2 sm:grid-cols-4"><Metric label="NIFTY Spot" value={fmt(niftySpot.price)} sub={`Feed age ${age(niftySpot.age_ms)}`}/><Metric label="ATM Strike" value={fmt(liveFeed.atm_strike??nifty.option_feed?.atm_strike,0)} sub={`Expiry ${String(liveFeed.expiry??"—")}`}/><Metric label="Option Chain" value={String(liveFeed.status??"WAITING")} sub={`${fmt(liveNiftySampler.contracts_live??liveNiftySampler.live_contracts,0)} live contracts`}/><Metric label="IV Data" value={String(liveNiftySampler.status??"WAITING")} sub={`Live IV ${fmt(liveNiftySampler.iv_live_count,0)} • OI ${fmt(liveNiftySampler.oi_live_count,0)}`}/></section>
     <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 space-y-3" aria-live="polite">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h2 className="font-extrabold tracking-tight theme-text">NIFTY Weekly + BANKNIFTY Monthly Early-Entry Alerts</h2><p className="mt-1 text-xs theme-muted">Independent per-index history, cooldown and Telegram delivery • IV + volume momentum • OI wall rejection • live-data freshness guards • alert-only, no orders</p></div>
         <div className="flex items-center gap-2">
-          <span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-xs">{String(earlyAlertLive?.state??"WATCH")}</span><span className={`rounded-full border-2 px-2 py-1 text-xs font-bold ${runtime?.telegram_configured===true?"border-emerald-500/50 text-emerald-700":"border-amber-500/50 text-amber-700"}`}>Telegram {runtime?.telegram_configured===true?String((runtime.telegram_delivery as Row|undefined)?.status??"READY"):"NOT CONFIGURED"}</span>
+          <span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-xs">{String(earlyAlertLive?.state??"WATCH")}</span><span title={runtime?.telegram_configured===true?"Telegram credentials are present":`Missing: ${(runtime?.telegram_configuration?.missing??["TELEGRAM_BOT_TOKEN","TELEGRAM_ADMIN_CHAT_IDS"]).join(", ")}`} className={`rounded-full border-2 px-2 py-1 text-xs font-bold ${runtime?.telegram_configured===true?"border-emerald-500/50 text-emerald-700":"border-amber-500/50 text-amber-700"}`}>Telegram {runtime?.telegram_configured===true?`AUTO ON • ${String((runtime.telegram_delivery as Row|undefined)?.status??"READY")}`:"AUTO ON • CONFIG REQUIRED"}</span>
           <button type="button" onClick={()=>setAlertAudioEnabled(v=>!v)} className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs font-bold" aria-pressed={alertAudioEnabled}>{alertAudioEnabled?"Sound ON":"Sound OFF"}</button>
         </div>
       </div>
@@ -936,7 +909,6 @@ export default function IVSkewFlipPage() {
         <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-sm theme-text">BANKNIFTY Monthly Early-Entry Alerts</b><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-xs">{String(bankEarlyAlertLive?.state??"WATCH")}</span></div>
         <p className="text-xs theme-muted">BANKNIFTY-specific 100-point strike grid and strike-scaled consolidation / wall-distance gates. Pilot thresholds; validate forward outcomes before treating alerts as calibrated.</p>
         {earlyAlerts.find(row=>row.underlying==="BANKNIFTY"&&row.state==="EARLY_ENTRY") ? (()=>{const alert=earlyAlerts.find(row=>row.underlying==="BANKNIFTY"&&row.state==="EARLY_ENTRY")!;return <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm"><b className="text-emerald-700">BANKNIFTY EARLY ENTRY • {alert.direction}</b><div className="mt-1">{alert.strike} {alert.option_type} • Expiry {alert.expiry} • Spot {fmt(alert.spot)} • Premium {fmt(alert.premium)}</div><p className="mt-1 text-xs theme-muted">{alert.strategy.replaceAll("_"," ")} • {alert.reason}</p></div>;})() : <p className="text-xs theme-muted">{String(bankEarlyAlertLive?.reason??"No active BANKNIFTY early-entry alert. Waiting for complete fresh history and all validation gates.")}</p>}
-        <div className="text-xs theme-muted">Telegram {runtime?.telegram_configured===true?String((runtime.telegram_delivery as Row|undefined)?.status??"READY"):"NOT CONFIGURED"} • orders disabled</div>
       </div>
     </section>
     <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 space-y-3">
@@ -989,85 +961,9 @@ export default function IVSkewFlipPage() {
       </div>
       <p className="mt-3 text-[11px] theme-muted">Basis is informational context only. It does not independently generate or authorize a signal or order. If either quote is stale or timestamp skew exceeds the limit, the pair is withheld.</p>
     </section>
-    <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 shadow-sm">
-      <h2 className="font-bold theme-text">Early Move Monitor</h2>
-      <p className="mt-1 text-xs theme-muted">1-second refresh • rolling 10-second volume buckets • IV/premium/spot confluence. Alert-only; no orders.</p>
-      <div className="mt-3 grid gap-3 md:grid-cols-3">
-        {Object.entries(runtime?.early_move??{}).map(([key,value])=><div key={key} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 p-3">
-          <div className="flex items-center justify-between gap-2"><b className="text-sm">{key.replaceAll("_"," ")}</b><span className={`rounded-full px-2 py-1 text-xs font-bold ${value.state==="PRE_MOVE"?"bg-amber-500/15 text-amber-700":value.state==="CONFIRMED"?"bg-emerald-500/15 text-emerald-700":"theme-surface-2 theme-muted"}`}>{String(value.state??"WATCH")}</span></div>
-          <div className="mt-2 text-lg font-bold">{String(value.direction??"—")}</div>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-            <div><span className="theme-muted">Volume ratio</span><b className="block">{fmt(value.volume_ratio)}x</b></div>
-            <div><span className="theme-muted">Premium Δ</span><b className="block">{delta(value.premium_change_pct,"%")}</b></div>
-            <div><span className="theme-muted">IV Δ</span><b className="block">{delta(value.iv_change_points," pt",4)}</b></div>
-            <div><span className="theme-muted">Spot Δ 10s</span><b className="block">{delta(value.spot_change_pct,"%",4)}</b></div>
-          </div>
-          <p className="mt-2 text-xs theme-muted">{String(value.reason??"Waiting for fresh ticks")}</p>
-          <p className="mt-1 text-[10px] theme-muted">Baseline {String(value.baseline_status??"WARMING")} • contracts {fmt(value.contracts_confirming,0)}</p>
-        </div>)}
-      </div>
-    </section>
-    <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><h2 className="font-bold theme-text">NIFTY + BANKNIFTY Top 10 Heavyweight Pressure</h2><p className="mt-1 text-xs theme-muted">Dono indices ke independently ranked highest-weight 10 constituents • 5s / 10s / 30s weighted returns • no order execution</p></div>
-        <span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-1 text-xs font-bold">{String(runtime?.equity_pressure?.status ?? "DISABLED")}</span>
-      </div>
-      {Object.keys(runtime?.equity_pressure_by_underlying ?? {}).length > 0 ? (
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          {Object.entries(runtime?.equity_pressure_by_underlying ?? {}).map(([symbol, pressure]) => (
-            <div key={symbol} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 p-3">
-              <div className="flex items-center justify-between gap-2"><b className="text-sm theme-text">{symbol}</b><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-xs">{String(pressure.status ?? "WAITING")}</span></div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <Metric label="Feed" value={String((pressure.feed as Row | undefined)?.status ?? "WAITING")} />
-                <Metric label="Fresh Components" value={`${fmt(pressure.fresh_components,0)} / ${fmt(pressure.expected_components,0)}`} />
-                <Metric label="Weight Coverage" value={`${fmt(pressure.weight_coverage_pct)}%`} />
-                <Metric label="Direction" value={String(pressure.direction ?? "WAITING")} sub={pressure.signals_allowed === true ? "Timeframes agree" : "Directional output suppressed"} />
-              </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                {["5s","10s","30s"].map((windowKey)=>{const w=(pressure.windows as Row | undefined)?.[windowKey] as Row | undefined;return <div key={windowKey} className="rounded-lg border-2 border-slate-300 dark:border-slate-600 p-2"><div className="flex justify-between gap-2 text-xs"><b>{windowKey}</b><b>{String(w?.direction ?? "WAITING")}</b></div><div className="mt-2 text-[11px] theme-muted">Return <b className="theme-text">{delta(w?.weighted_return_pct,"% ",4)}</b></div><div className="mt-1 text-[11px] theme-muted">Coverage {fmt(w?.coverage_pct)}% • Advancing {fmt(w?.advancing_weight_pct)}%</div><div className="mt-2 text-[11px] theme-muted">Top: {Array.isArray(w?.top_contributors)?(w!.top_contributors as Row[]).slice(0,3).map(x=>String(x.symbol??"")).join(", ")||"—":"—"}</div></div>;})}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : runtime?.equity_pressure?.enabled !== true ? <p className="mt-3 text-sm theme-muted">{String(runtime?.equity_pressure?.reason ?? "NIFTY aur BANKNIFTY ke complete verified official weight baskets zaroori hain. Har index ke top 10 weights dynamically select honge; missing/stale basket par pressure safely unavailable rahega.")} No orders.</p> : <>
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Metric label="Feed" value={String((runtime.equity_pressure.feed as Row | undefined)?.status ?? "WAITING")} />
-          <Metric label="Fresh Components" value={`${fmt(runtime.equity_pressure.fresh_components,0)} / ${fmt(runtime.equity_pressure.expected_components,0)}`} />
-          <Metric label="Weight Coverage" value={`${fmt(runtime.equity_pressure.weight_coverage_pct)}%`} />
-          <Metric label="Direction" value={String(runtime.equity_pressure.direction ?? "WAITING")} sub={runtime.equity_pressure.signals_allowed === true ? "Timeframes agree" : "Directional output suppressed"} />
-        </div>
-        <div className="mt-3 grid gap-2 md:grid-cols-3">
-          {["5s","10s","30s"].map((windowKey)=>{const w=(runtime.equity_pressure?.windows as Row | undefined)?.[windowKey] as Row | undefined;return <div key={windowKey} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 p-3"><div className="flex justify-between gap-2 text-sm"><b>{windowKey}</b><b>{String(w?.direction ?? "WAITING")}</b></div><div className="mt-2 text-xs theme-muted">Weighted return <b className="theme-text">{delta(w?.weighted_return_pct,"% ",4)}</b></div><div className="mt-1 text-xs theme-muted">Coverage {fmt(w?.coverage_pct)}% • Advancing {fmt(w?.advancing_weight_pct)}%</div><div className="mt-2 text-xs theme-muted">Top contributors: {Array.isArray(w?.top_contributors)?(w!.top_contributors as Row[]).slice(0,3).map(x=>String(x.symbol??"")).join(", ")||"—":"—"}</div></div>;})}
-        </div>
-      </>}
-    </section>
-    <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><h2 className="font-bold theme-text">Official Index Weight Registry</h2><p className="mt-1 text-xs theme-muted">NIFTY and BANKNIFTY • read-only provenance and freshness • no automatic activation</p></div>
-        <span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-1 text-xs font-bold">As of {basketRegistry?.as_of ?? "—"}</span>
-      </div>
-      <div className="mt-3 grid gap-3 md:grid-cols-2">
-        {(["NIFTY","BANKNIFTY"] as const).map((symbol)=>{
-          const item=basketRegistry?.baskets?.[symbol]??{};
-          const verified=item.status==="VERIFIED_FRESH";
-          return <div key={symbol} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-sm theme-text">{symbol}</b><span className={`rounded-full px-2 py-1 text-xs font-bold ${verified?"bg-emerald-500/10 text-emerald-700":"bg-amber-500/10 text-amber-700"}`}>{item.status??"LOADING"}</span></div>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-              <div><span className="theme-muted">Effective date</span><b className="block theme-text">{item.effective_date??"—"}</b></div>
-              <div><span className="theme-muted">Age</span><b className="block theme-text">{item.age_days===undefined?"—":`${item.age_days} days`}</b></div>
-              <div><span className="theme-muted">Constituents</span><b className="block theme-text">{fmt(item.constituent_count,0)}</b></div>
-              <div><span className="theme-muted">Mapped tokens</span><b className="block theme-text">{fmt(item.mapped_token_count,0)}</b></div>
-              <div><span className="theme-muted">Weight total</span><b className="block theme-text">{item.weight_sum===undefined?"—":`${fmt(item.weight_sum,4)}%`}</b></div>
-              <div><span className="theme-muted">Pressure signals</span><b className="block text-rose-600">BLOCKED</b></div>
-            </div>
-            <p className="mt-3 text-[11px] theme-muted">{item.reason??(verified?"Basket passed stored-data integrity checks. Runtime activation remains separately disabled.":"No verified current basket available.")}</p>
-            {item.source_name&&<p className="mt-1 text-[11px] theme-muted">Source: {item.source_name}</p>}
-          </div>;
-        })}
-      </div>
-      <p className="mt-3 text-[11px] theme-muted">Registry max age {basketRegistry?.max_age_days??45} days • Activation {basketRegistry?.activation_enabled===true?"ON":"OFF"} • Signals {basketRegistry?.signals_allowed===true?"ALLOWED":"BLOCKED"}. A green verification state is provenance validation only; it does not turn on weighted pressure.</p>
-    </section>
-    <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 shadow-sm"><h2 className="font-bold theme-text">Live Signal Monitor</h2><p className="mt-1 text-xs theme-muted">Each expiry stream is evaluated independently. WAITING means required fresh quotes or history are not available; it is not a trade signal.</p><div className="mt-3 grid gap-2 sm:grid-cols-3">{Object.entries(runtime?.signals??{}).map(([key,value])=>{const finalSignal=value.confluence&&typeof value.confluence==="object"?value.confluence as Row:{};return <div key={key} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 p-3"><b className="text-sm">{key.replaceAll("_"," ")}</b><div className="mt-2 rounded-lg border-2 border-slate-300 dark:border-slate-600 bg-blue-500/5 p-2"><div className="flex justify-between gap-2 text-xs"><span className="font-bold">FINAL CONFLUENCE</span><b>{String(finalSignal.direction??"—")} • {String(finalSignal.status??"WAITING")}</b></div><p className="mt-1 text-[11px] theme-muted">{String(finalSignal.reason??"Waiting for independent confirmations")}</p><p className="mt-1 text-[10px] theme-muted">Signal gate: {value.signals_allowed===true?"ALLOWED":"BLOCKED"} • Data: {value.data_ready===true?"READY":"WAITING"}</p></div>{(Array.isArray(value.strategies)?value.strategies as Row[]:[]).map((s,i)=><div key={i} className="flex justify-between gap-2 border-t theme-border py-2 text-xs"><span>{String(s.strategy??"Signal")}</span><b>{String(s.direction??"—")} • {String(s.status??"WAITING")}</b></div>)}</div>})}</div></section>
-    <p className="text-xs theme-muted">Live data appears only after fresh Angel One ticks arrive. Select ON or OFF and press Save to control the backend runner. Runner status is reported by the backend; no broker orders are placed.</p>
+    
+    
+    
+    
   </main>;
 }
