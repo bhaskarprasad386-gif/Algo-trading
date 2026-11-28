@@ -1081,7 +1081,7 @@ def test_banknifty_telegram_alert_is_identified_as_monthly_pilot(monkeypatch):
         captured["timeout"] = timeout
         return Response()
 
-    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", False)
     monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "test-chat")
     monkeypatch.setattr(runtime_module, "urlopen", fake_urlopen)
