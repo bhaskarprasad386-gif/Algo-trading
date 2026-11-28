@@ -930,7 +930,7 @@ export default function IVSkewFlipPage() {
       <div className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs theme-muted">Expiry selection date: {String(bank.expiry_selection?.selection_date??"—")} • Selected: {String(bank.expiry_selection?.selected_expiry??"—")} • Master candidates: {Array.isArray(bank.expiry_selection?.available_expiries)?(bank.expiry_selection!.available_expiries as string[]).join(", "):"Waiting for instrument-master diagnostics"} • Contracts: {fmt(bank.universe_tokens,0)} • Last broker snapshot: {sampleTime(bankDurableHistory?.snapshot_at_ns)}</div>
       <OptionChain title="BANKNIFTY Monthly" chain={bank} spot={bankSpot} strikeRadius={5}/>
       <IndexOiVolumeChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" chain={bank} spot={bankSpot} strikeRadius={5}/>
-      <IndexSpotIvChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" history={bankChartHistory} spot={bankSpot} chain={bank} strikeRadius={3}/>
+      <IndexSpotIvChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" history={bankChartHistory} spot={bankSpot} chain={bank} strikeRadius={5}/>
       <SignalSummary title="BANKNIFTY" chain={bank} spot={bankSpot}/>
       <div className="rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface-2 p-3 space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-sm theme-text">BANKNIFTY Monthly Early-Entry Alerts</b><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-xs">{String(bankEarlyAlertLive?.state??"WATCH")}</span></div>
