@@ -34,6 +34,7 @@ type Runtime = {
   desired_state?: "ON" | "OFF";
   saved_enabled?: boolean;
   runner_status?: "RUNNING" | "STOPPED";
+  market_data_connection?: { runner?: Row };
   refresh_seconds?: number;
   signal_evaluation_seconds?: number;
   spot_feed?: Row;
