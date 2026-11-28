@@ -29,6 +29,7 @@ class SharedIndexControlWorker:
         self._last_duration_ms: float | None = None
         self._max_duration_ms = 0.0
         self._last_error: str | None = None
+        self._in_flight = False
 
     def start(self, generation: int) -> None:
         with self._lock:
@@ -38,6 +39,7 @@ class SharedIndexControlWorker:
             self._stop.clear()
             self._wakeup.clear()
             self._pending.clear()
+            self._in_flight = False
             self._generation = int(generation)
             thread = Thread(
                 target=self._run,
@@ -84,6 +86,8 @@ class SharedIndexControlWorker:
             if not batch or generation is None:
                 continue
             started = monotonic()
+            with self._lock:
+                self._in_flight = True
             try:
                 self._callback(batch, generation)
             except Exception as exc:
@@ -93,6 +97,7 @@ class SharedIndexControlWorker:
             finally:
                 elapsed_ms = max(0.0, (monotonic() - started) * 1000.0)
                 with self._lock:
+                    self._in_flight = False
                     self._batches += 1
                     self._records += len(batch)
                     self._last_duration_ms = round(elapsed_ms, 3)
@@ -122,6 +127,7 @@ class SharedIndexControlWorker:
                           else "STOPPING",
                 "pending_symbols": sorted(self._pending),
                 "pending_records": len(self._pending),
+                "in_flight": self._in_flight,
                 "mailbox_capacity": 2,
                 "coalesced_updates": self._coalesced,
                 "processed_batches": self._batches,
