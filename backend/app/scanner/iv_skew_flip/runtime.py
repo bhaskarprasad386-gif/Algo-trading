@@ -390,7 +390,7 @@ class IVSkewFlipRuntime:
                 expiry_type=config.expiry_type,
                 spot=spot.price,
                 today=universe_date,
-                strike_count=11 if config.symbol == "NIFTY" and config.expiry_type == "WEEKLY" else 7,
+                strike_count=11,
             )
             if universe.expiry != selected_expiry:
                 raise RuntimeError(
