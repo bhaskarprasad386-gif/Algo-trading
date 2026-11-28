@@ -1487,6 +1487,12 @@ def test_early_move_withholds_alerts_when_selected_option_coverage_is_partial():
         def evaluate(self, **kwargs):
             self.calls += 1
 
+        def snapshot(self, _underlying="NIFTY"):
+            return {}
+
+        def snapshot_all(self):
+            return {}
+
     feed = PartialOptionFeed()
     sampler = CountingSampler()
     detector = CountingDetector()
