@@ -957,7 +957,11 @@ def test_runtime_snapshot_requires_nonblank_telegram_credentials(monkeypatch):
     monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "   ")
     monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
     monkeypatch.setattr(settings, "TELEGRAM_ADMIN_CHAT_IDS", "")
-    assert runtime.snapshot()["telegram_configured"] is False
+    snapshot = runtime.snapshot()
+    assert snapshot["telegram_alerts_enabled"] is True
+    assert snapshot["telegram_configuration"]["enabled"] is True
+    assert snapshot["telegram_configuration"]["configured"] is False
+    assert snapshot["telegram_configured"] is False
 
     monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "   ")
