@@ -77,14 +77,20 @@ class SerializedLifecycleWorker:
 
         stop_error: BaseException | None = None
         stopped: Any = None
+        deadline = asyncio.get_running_loop().time() + max(0.0, timeout)
         try:
             try:
-                stopped = await asyncio.shield(asyncio.wrap_future(result))
+                remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+                stopped = await asyncio.wait_for(
+                    asyncio.shield(asyncio.wrap_future(result)),
+                    timeout=remaining,
+                )
             except BaseException as exc:
                 stop_error = exc
             finally:
                 self._queue.put(self._STOP)
-                await asyncio.to_thread(thread.join, timeout)
+                remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+                await asyncio.to_thread(thread.join, remaining)
 
             if thread.is_alive():
                 # Fail closed: do not admit another generation while the old
