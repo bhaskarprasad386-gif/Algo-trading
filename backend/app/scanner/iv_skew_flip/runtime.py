@@ -147,7 +147,7 @@ class IVSkewFlipRuntime:
         self.feed_manager = None
         self.shared_runner = shared_runner
         self.close_feed_manager = False
-        self.broker_iv_cache = broker_iv_cache or (AngelOneBrokerIVCache() if shared_runner is not None else None)
+        self.broker_iv_cache = broker_iv_cache
         # Production attaches only to the application-owned shared index runner.
         # Isolated runtimes receive a no-op transport and cannot create sockets.
         if shared_runner is not None:
