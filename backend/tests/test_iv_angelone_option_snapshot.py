@@ -70,7 +70,7 @@ def test_banknifty_monthly_snapshot_persists_only_banknifty_broker_greeks_and_fu
 
         def quote_many(self, exchange, instruments):
             assert exchange == "NFO"
-            assert len(instruments) == 14
+            assert len(instruments) == 22
             return {"status": True, "data": {"fetched": [{
                 "symbolToken": "bank-ce-token",
                 "ltp": 225.5,
@@ -95,7 +95,7 @@ def test_banknifty_monthly_snapshot_persists_only_banknifty_broker_greeks_and_fu
             strike=float(strike),
             option_type=side,
         )
-        for strike in (57700, 57800, 57900, 58000, 58100, 58200, 58300)
+        for strike in (57500, 57600, 57700, 57800, 57900, 58000, 58100, 58200, 58300, 58400, 58500)
         for side in ("CE", "PE")
     )
     contracts = tuple(
@@ -125,13 +125,13 @@ def test_banknifty_monthly_snapshot_persists_only_banknifty_broker_greeks_and_fu
 
     assert result["underlying"] == "BANKNIFTY"
     assert result["expiry_type"] == "MONTHLY"
-    assert result["expected_contracts"] == 14
-    assert result["saved_contracts"] == 14
+    assert result["expected_contracts"] == 22
+    assert result["saved_contracts"] == 22
     assert result["iv_received_contracts"] == 1
     assert result["full_quote_received_contracts"] == 1
     with Session() as db:
         rows = db.query(IVOptionObservation).all()
-        assert len(rows) == 14
+        assert len(rows) == 22
         bank_ce = next(row for row in rows if row.token == "bank-ce-token")
         assert bank_ce.underlying == "BANKNIFTY"
         assert bank_ce.expiry == "2026-11-26"
