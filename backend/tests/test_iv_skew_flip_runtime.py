@@ -1236,3 +1236,38 @@ def test_runtime_snapshot_builds_each_feed_and_sampler_view_once():
     assert all(sampler.calls == 1 for sampler in samplers.values())
     assert snapshot["option_chains"]["NIFTY_WEEKLY"]["option_feed"] == snapshot["indices"]["NIFTY"]["option_feed"]
     assert snapshot["option_chains"]["BANKNIFTY_MONTHLY"]["sampler"] == snapshot["indices"]["BANKNIFTY"]["sampler"]
+
+
+def test_runtime_withholds_iv_signal_when_any_selected_contract_is_stale():
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=IST)
+    now_ns = 10_000_000_000
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_ns=lambda: now_ns,
+        clock_datetime=lambda: now,
+    )
+
+    class PartialFreshOptionFeed:
+        def latest_quotes(self):
+            return [object(), object()]
+
+        def snapshot(self, now_ns=None):
+            return {
+                "status": "PARTIAL",
+                "expected_contracts": 3,
+                "fresh_contracts": 2,
+                "missing_contracts": 1,
+            }
+
+    runtime._option_feeds["NIFTY_WEEKLY"] = PartialFreshOptionFeed()
+    runtime._samplers["NIFTY_WEEKLY"] = object()
+
+    assert runtime._evaluate_symbol(
+        "NIFTY_WEEKLY", CHAIN_CONFIGS[0][1], now, now_ns,
+    ) is True
+    signal = runtime.snapshot()["signals"]["NIFTY_WEEKLY"]
+    assert signal["data_ready"] is False
+    assert signal["signals_allowed"] is False
+    assert signal["confluence"]["status"] == "WAITING"
+    assert "2/3 fresh broker-timestamped contracts" in signal["confluence"]["reason"]

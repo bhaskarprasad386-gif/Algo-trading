@@ -486,6 +486,28 @@ class IVSkewFlipRuntime:
             self._mark_waiting(symbol, now_ns, "no fresh option quotes are available")
             return True
 
+        # The IV signal surface is a fixed selected universe. Do not calculate
+        # skew/flip from a silently shrinking subset: every selected CE/PE
+        # contract must have a fresh broker-source timestamp in this cycle.
+        coverage_getter = getattr(feed, "snapshot", None)
+        if callable(coverage_getter):
+            try:
+                coverage = coverage_getter(now_ns=now_ns)
+            except TypeError:
+                coverage = coverage_getter()
+            if isinstance(coverage, dict):
+                expected = coverage.get("expected_contracts")
+                fresh = coverage.get("fresh_contracts")
+                if (
+                    isinstance(expected, int) and not isinstance(expected, bool)
+                    and isinstance(fresh, int) and not isinstance(fresh, bool)
+                    and expected > 0 and fresh < expected
+                ):
+                    self._mark_waiting(
+                        symbol, now_ns,
+                        f"option quote coverage incomplete: {fresh}/{expected} fresh broker-timestamped contracts",
+                    )
+                    return True
         skew = evaluate_skew(quotes, spot.price, now, now_ns, config)
         # Match universe selection: derive ATM from the current live spot and
         # break exact midpoint ties upward, never from a cached prior ATM.
