@@ -1301,9 +1301,13 @@ class IVSkewFlipRuntime:
             "early_entry_alerts": self._early_entry_alerts.snapshot("NIFTY"),
             "early_entry_alerts_by_underlying": self._early_entry_alerts.snapshot_all(),
             "telegram_delivery": dict(self._telegram_delivery),
+            # Telegram alerting is an always-on runtime capability. Credentials
+            # control delivery readiness only; they never toggle the feature.
+            "telegram_alerts_enabled": True,
             "telegram_configured": bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip() and self._telegram_chat_id()),
             "telegram_configuration": {
-                "enabled": bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip() and self._telegram_chat_id()),
+                "enabled": True,
+                "configured": bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip() and self._telegram_chat_id()),
                 "bot_token_present": bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip()),
                 "chat_id_present": bool(self._telegram_chat_id()),
                 "chat_id_source": "TELEGRAM_CHAT_ID" if str(settings.TELEGRAM_CHAT_ID or "").strip() else (
