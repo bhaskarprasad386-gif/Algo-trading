@@ -1,9 +1,8 @@
 """Serialize blocking Shared Runner lifecycle operations away from the ASGI loop.
 
-This worker is intentionally narrower than the fetch-only daemon helper: it
-owns only the SharedIndexMarketDataRunner start/stop calls. A cancelled asyncio
-awaiter does not cancel an in-flight SDK operation; the queued stop therefore
-runs after that operation and forms the shutdown barrier.
+This worker owns only SharedIndexMarketDataRunner start/stop calls. Cancelling
+an asyncio waiter does not cancel an in-flight broker SDK operation; the final
+stop is queued after admitted work and forms the shutdown barrier.
 """
 from __future__ import annotations
 
@@ -16,7 +15,7 @@ from typing import Any
 
 
 class SerializedLifecycleWorker:
-    """Single-threaded, FIFO executor for one process-owned runtime lifecycle."""
+    """Single-threaded FIFO executor for one process-owned runtime lifecycle."""
 
     _STOP = object()
 
@@ -27,19 +26,17 @@ class SerializedLifecycleWorker:
         self._thread: threading.Thread | None = None
         self._closing = False
 
-    def _ensure_started(self) -> None:
-        with self._lock:
-            if self._closing:
-                raise RuntimeError("lifecycle worker is closing")
-            if self._thread is not None and self._thread.is_alive():
-                return
-            self._queue = queue.Queue()
-            self._thread = threading.Thread(
-                target=self._run,
-                name=self._thread_name,
-                daemon=True,
-            )
-            self._thread.start()
+    def _ensure_started_locked(self) -> threading.Thread:
+        if self._thread is not None and self._thread.is_alive():
+            return self._thread
+        self._queue = queue.Queue()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=self._thread_name,
+            daemon=True,
+        )
+        self._thread.start()
+        return self._thread
 
     def _run(self) -> None:
         while True:
@@ -57,40 +54,48 @@ class SerializedLifecycleWorker:
                 result.set_result(value)
 
     async def run(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Queue a lifecycle operation; cancellation never abandons its execution."""
-        self._ensure_started()
+        """Queue a lifecycle operation; cancellation never abandons execution."""
         result: concurrent.futures.Future[Any] = concurrent.futures.Future()
-        self._queue.put((function, args, kwargs, result))
+        with self._lock:
+            if self._closing:
+                raise RuntimeError("lifecycle worker is closing")
+            self._ensure_started_locked()
+            # Admission and enqueue are atomic with respect to close(), so no
+            # operation can slip behind the final stop sentinel.
+            self._queue.put((function, args, kwargs, result))
         return await asyncio.shield(asyncio.wrap_future(result))
 
     async def close(self, stop_function: Callable[[], Any], *, timeout: float = 5.0) -> Any:
-        """Run stop after all admitted operations, then retire the worker thread."""
+        """Run stop after all admitted operations, then retire the worker."""
         with self._lock:
             if self._closing:
                 raise RuntimeError("lifecycle worker close already in progress")
             self._closing = True
-        try:
-            # run() rejects admission while closing, so enqueue the final stop
-            # directly behind any already admitted startup operation.
+            thread = self._ensure_started_locked()
             result: concurrent.futures.Future[Any] = concurrent.futures.Future()
-            thread = self._thread
-            if thread is None:
-                thread = threading.Thread(
-                    target=self._run,
-                    name=self._thread_name,
-                    daemon=True,
-                )
-                self._thread = thread
-                thread.start()
             self._queue.put((stop_function, (), {}, result))
-            stopped = await asyncio.shield(asyncio.wrap_future(result))
-            self._queue.put(self._STOP)
-            await asyncio.to_thread(thread.join, timeout)
+
+        stop_error: BaseException | None = None
+        stopped: Any = None
+        try:
+            try:
+                stopped = await asyncio.shield(asyncio.wrap_future(result))
+            except BaseException as exc:
+                stop_error = exc
+            finally:
+                self._queue.put(self._STOP)
+                await asyncio.to_thread(thread.join, timeout)
+
             if thread.is_alive():
+                # Fail closed: do not admit another generation while the old
+                # lifecycle thread may still be executing broker operations.
                 raise RuntimeError("shared runner lifecycle worker did not stop before deadline")
             with self._lock:
                 self._thread = None
+            if stop_error is not None:
+                raise stop_error
             return stopped
         finally:
             with self._lock:
-                self._closing = False
+                if self._thread is None or not self._thread.is_alive():
+                    self._closing = False
