@@ -397,26 +397,32 @@ def test_coalesced_callback_reconcile_failure_keeps_pending_group_for_supervisor
 
 class _StopAfterRecovery:
     def __init__(self):
-        self.calls = 0
         self.stopped = False
     def set(self):
         self.stopped = True
     def is_set(self):
         return self.stopped
+
+
+class _WakeAfterOneSupervisorPass:
+    def __init__(self, stop_event):
+        self.calls = 0
+        self.stop_event = stop_event
+    def clear(self):
+        # The supervisor clears its wakeup signal before each wait.
+        pass
     def wait(self, _timeout):
         self.calls += 1
-        # Let the first supervisor pass run, then stop it at the next wait.
+        # First wait permits one complete pass; second wait stops the loop.
         if self.calls > 1:
-            self.stopped = True
-        return self.stopped
+            self.stop_event.set()
+        return False
 
 
 def _run_one_recovery_supervisor_iteration(manager):
     stop_after_pass = _StopAfterRecovery()
     manager._recovery_stop = stop_after_pass
-    # The supervisor now waits on a distinct wakeup event; share the controlled
-    # test double so this helper deterministically exits after one full pass.
-    manager._recovery_wakeup = stop_after_pass
+    manager._recovery_wakeup = _WakeAfterOneSupervisorPass(stop_after_pass)
     manager._recovery_interval_seconds = 0.01
     manager._recovery_backoff_max_seconds = 0.05
     manager.registry.subscriptions = lambda: [object()]
