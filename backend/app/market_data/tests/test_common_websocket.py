@@ -2981,3 +2981,14 @@ def test_retired_socket_close_worker_start_failure_keeps_fence_and_retries(monke
     finally:
         monkeypatch.setattr(common_websocket_module, "Thread", original_thread)
         manager.close()
+
+
+def test_obsolete_socket_close_completion_skips_reconcile_after_shutdown(monkeypatch):
+    manager = CommonWebSocketManager(socket_factory=FakeSocket)
+    manager.close()
+
+    def unexpected_reconcile():
+        raise AssertionError("shutdown completion must not reconcile")
+
+    monkeypatch.setattr(manager, "_reconcile", unexpected_reconcile)
+    manager._reconcile_after_obsolete_close(SocketGroup(3, 1))
