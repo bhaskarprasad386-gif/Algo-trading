@@ -76,19 +76,44 @@ def _readiness_from_groups(*, running: bool, bootstrap_done: bool,
             "CE": {"fresh": int(group.get("ce_fresh_count", 0)), "total": int(group.get("ce_count", 0))},
             "PE": {"fresh": int(group.get("pe_fresh_count", 0)), "total": int(group.get("pe_count", 0))},
         }
-    # Require at least half of each CE/PE side to be fresh. This tolerates
-    # illiquid wings while preventing a single live contract from declaring a
-    # mostly stale option universe ready.
+    # Keep the established readiness threshold unchanged: each CE/PE side
+    # must have at least 50% fresh contracts. This is an activity/readiness
+    # policy, not a claim that every option quote is fresh.
     option_activity = all(
         side["total"] > 0 and side["fresh"] >= (side["total"] + 1) // 2
         for sides in option_sides.values() for side in sides.values()
     )
-    ready = bool(running and bootstrap_done and universe_complete and core_fresh and option_activity)
+    option_total = sum(side["total"] for sides in option_sides.values() for side in sides.values())
+    option_fresh = sum(side["fresh"] for sides in option_sides.values() for side in sides.values())
+    option_quote_coverage = {
+        "fresh": option_fresh,
+        "total": option_total,
+        "stale": max(0, option_total - option_fresh),
+        "complete": option_total > 0 and option_fresh == option_total,
+        "percentage": round(option_fresh * 100.0 / option_total, 1) if option_total else None,
+    }
+    core_market_data_ready = bool(running and bootstrap_done and universe_complete and core_fresh)
+    ready = bool(core_market_data_ready and option_activity)
+    if not running:
+        readiness_reason = "RUNNER_STOPPED"
+    elif not bootstrap_done:
+        readiness_reason = "OPTION_BOOTSTRAP_PENDING"
+    elif not universe_complete:
+        readiness_reason = "UNIVERSE_INCOMPLETE"
+    elif not core_fresh:
+        readiness_reason = "CORE_FEED_NOT_FRESH"
+    elif not option_activity:
+        readiness_reason = "OPTION_ACTIVITY_BELOW_POLICY"
+    else:
+        readiness_reason = "READY"
     return {
         "live_data_ready": ready,
         "core_market_data_fresh": core_fresh,
+        "core_market_data_ready": core_market_data_ready,
         "option_activity_fresh": option_activity,
         "option_side_freshness": option_sides,
+        "option_quote_coverage": option_quote_coverage,
+        "readiness_reason": readiness_reason,
         "readiness_policy": "CORE_SPOT_FUTURE_HARD_FRESHNESS_PLUS_50_PERCENT_FRESHNESS_PER_OPTION_SIDE",
     }
 
@@ -673,6 +698,9 @@ class SharedIndexMarketDataRunner:
             "universe_coverage": {"counts": counts, "complete": _observed_universe_complete(feed_groups)},
             "all_records_fresh": all_records_fresh,
             "live_data_ready": live_data_ready,
+            "core_market_data_ready": readiness["core_market_data_ready"],
+            "option_quote_coverage": readiness["option_quote_coverage"],
+            "readiness_reason": readiness["readiness_reason"],
             "readiness": readiness,
             "master_refresh": {
                 "last_success_at": master_last_refresh_at,
@@ -808,6 +836,9 @@ class SharedIndexMarketDataRunner:
                 "complete": universe_complete, "observed_records_complete": observed_universe_complete,
             },
             "all_records_fresh": all_records_fresh,
+            "core_market_data_ready": readiness["core_market_data_ready"],
+            "option_quote_coverage": readiness["option_quote_coverage"],
+            "readiness_reason": readiness["readiness_reason"],
             "readiness": readiness,
             "master_refresh": master_refresh,
             "option_flow_aggregates": aggregates,
