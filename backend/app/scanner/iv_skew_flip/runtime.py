@@ -30,6 +30,7 @@ from .feed import IVSkewFlipFeedAdapter
 from .sampler import IVOneSecondSampler
 from .spot_feed import IVSpotFeedAdapter
 from .shared_runner_feed import IVSharedRunnerOptionFeedAdapter, IVSharedRunnerSpotFeedAdapter
+from .broker_iv import AngelOneBrokerIVCache
 
 
 class _DisabledIVMarketDataTransport:
@@ -134,6 +135,7 @@ class IVSkewFlipRuntime:
         feed_manager: Any | None = None,
         shared_runner: Any | None = None,
         close_feed_manager: bool = False,
+        broker_iv_cache: Any | None = None,
     ) -> None:
         if refresh_seconds < 1.0 or refresh_seconds > 3.0:
             raise ValueError("universe refresh cadence must be between 1 and 3 seconds")
@@ -145,6 +147,7 @@ class IVSkewFlipRuntime:
         self.feed_manager = None
         self.shared_runner = shared_runner
         self.close_feed_manager = False
+        self.broker_iv_cache = broker_iv_cache
         # Production attaches only to the application-owned shared index runner.
         # Isolated runtimes receive a no-op transport and cannot create sockets.
         if shared_runner is not None:
@@ -426,6 +429,10 @@ class IVSkewFlipRuntime:
                     self._previous_atm_strike.pop(symbol, None)
                 sampler = None
 
+            if self.broker_iv_cache is not None:
+                self.broker_iv_cache.set_universe(symbol, universe)
+                self.broker_iv_cache.start()
+
             if sampler is None:
                 sampler = IVOneSecondSampler(
                     quote_source=feed,
@@ -517,6 +524,15 @@ class IVSkewFlipRuntime:
                         f"option quote coverage incomplete: {fresh}/{expected} fresh broker-timestamped contracts",
                     )
                     return True
+        if self.broker_iv_cache is not None:
+            quotes_with_iv = self.broker_iv_cache.enrich(symbol, quotes, now_ns=now_ns)
+            if quotes_with_iv is None:
+                self._mark_waiting(symbol, now_ns, "fresh Angel One broker-native IV is missing, stale, or incomplete for the selected contract universe")
+                return True
+            quotes = quotes_with_iv
+        else:
+            self._mark_waiting(symbol, now_ns, "Angel One broker-native IV worker is unavailable; live IV signals are fail-closed")
+            return True
         skew = evaluate_skew(quotes, spot.price, now, now_ns, config)
         # Match universe selection: derive ATM from the current live spot and
         # break exact midpoint ties upward, never from a cached prior ATM.
@@ -1381,6 +1397,8 @@ class IVSkewFlipRuntime:
         stop_resource("future_feed", self.future_feed)
         if equity_feed is not None:
             stop_resource("equity_feed", equity_feed)
+        if self.broker_iv_cache is not None:
+            stop_resource("broker_iv", self.broker_iv_cache)
 
         if not cleanup_errors and self.feed_manager is not None and self.close_feed_manager:
             try:

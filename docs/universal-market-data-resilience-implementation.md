@@ -81,3 +81,17 @@ Do not reintroduce a strategy-owned `MarketDataWebSocket`, direct `SmartWebSocke
 - After deployment is separately authorized: inspect runtime health, worker diagnostics, lane roster, queue overflow, reconnects, stale quote counts, and p50/p95/p99 callback-to-consumer latency during a representative market-hours soak.
 
 No VPS restart, deployment, trading enablement, or strategy activation is authorized by this code change alone.
+
+
+## 8. Angel One broker-native IV signal path
+
+- The existing `MarketDataClient.option_greeks()` client is reused. No broker session, WebSocket, subscription, or second market-data connection is created.
+- Production IV runtime injects one `AngelOneBrokerIVCache` worker. It requests Greeks for the active NIFTY Weekly and BANKNIFTY Monthly expiry contexts on a bounded 30-second per-chain cadence (at most two requests per 30 seconds, sequentially); the existing client retry policy remains bounded.
+- REST work runs only on the dedicated `iv-angelone-greeks-rest` worker. Shared WebSocket callbacks do not call REST or wait for Greeks.
+- Cache identity is exact underlying + expiry + strike + CE/PE + resolved instrument token. The broker-returned expiry is mandatory; duplicate rows, missing/invalid IV, wrong expiry and incomplete chain coverage are rejected.
+- Angel One Greeks has no exchange event timestamp. Its timestamp is explicitly the local response-capture time, never represented as an exchange tick time. Live use is limited to 90 seconds after capture.
+- `OptionQuote` carries broker IV, `ANGEL_ONE` provenance and capture timestamp separately from the WebSocket quote timestamp. The signal engine accepts only finite, positive broker IV with fresh capture provenance; local IV inversion remains disabled.
+- Missing, stale, partial, mismatched, or unavailable broker IV makes both IV Skew and IV Flip WAITING and prevents the confluence signal. LAST snapshot/history rows are not read by the live signal path.
+- Expiry rotation and worker shutdown fence late REST responses so an old response cannot repopulate a retired cache generation.
+- Diagnostics expose worker state, cadence, capture status, per-chain expected/fresh/missing counts and confirm zero REST calls from WebSocket callbacks.
+- Release remains gated on the complete targeted and backend CI suite. No deployment, restart, or trading activation is implied by this change.

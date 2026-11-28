@@ -78,7 +78,7 @@ def test_iv_skew_generates_bullish_signal_from_synthetic_chain():
     signal = evaluate_skew(quotes, 22000, now, now_ns, config)
     assert signal.status == "WAITING"
     assert signal.direction is None
-    assert "local IV calculation is disabled" in signal.reason
+    assert "broker-native IV" in signal.reason
 
 
 def test_iv_flip_fails_closed_when_local_iv_calculation_is_disabled():
@@ -86,7 +86,7 @@ def test_iv_flip_fails_closed_when_local_iv_calculation_is_disabled():
     signal = evaluate_flip(quotes, 22000, now, now_ns, config, previous_atm_diff=-0.20)
     assert signal.status == "WAITING"
     assert signal.direction is None
-    assert "local IV calculation is disabled" in signal.reason
+    assert "broker-native IV" in signal.reason
 
 
 def test_iv_flip_without_prior_opposite_side_does_not_signal():
@@ -94,7 +94,7 @@ def test_iv_flip_without_prior_opposite_side_does_not_signal():
     signal = evaluate_flip(quotes, 22000, now, now_ns, config, previous_atm_diff=None)
     assert signal.status == "WAITING"
     assert signal.direction is None
-    assert "local IV calculation is disabled" in signal.reason
+    assert "broker-native IV" in signal.reason
 
 
 def test_confluence_does_not_double_count_correlated_iv_surface_signals():
