@@ -1043,7 +1043,7 @@ class IVSkewFlipRuntime:
         """Send one persisted IV alert through Telegram Bot API; no secrets enter logs."""
         token = str(settings.TELEGRAM_BOT_TOKEN or "").strip()
         chat_id = IVSkewFlipRuntime._telegram_chat_id()
-        if not settings.TELEGRAM_ENABLED or not token or not chat_id:
+        if not token or not chat_id:
             raise RuntimeError("TELEGRAM_CONFIGURATION_MISSING")
         observed_ns = int(payload.get("observed_at_ns") or 0)
         observed = datetime.fromtimestamp(observed_ns / 1_000_000_000, tz=IST).strftime("%d-%b-%Y %H:%M:%S IST") if observed_ns else "—"
@@ -1143,8 +1143,7 @@ class IVSkewFlipRuntime:
 
     def _process_telegram_outbox(self, now_ns: int) -> None:
         configured = bool(
-            settings.TELEGRAM_ENABLED
-            and str(settings.TELEGRAM_BOT_TOKEN or "").strip()
+            str(settings.TELEGRAM_BOT_TOKEN or "").strip()
             and bool(self._telegram_chat_id())
         )
         try:
@@ -1163,7 +1162,7 @@ class IVSkewFlipRuntime:
                 self._telegram_delivery = {
                     "status": "WAITING_CONFIG",
                     "last_attempt_ns": self._telegram_delivery.get("last_attempt_ns"),
-                    "last_error": "Set TELEGRAM_ENABLED, TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID",
+                    "last_error": "Telegram bot token or admin recipient is missing",
                 }
         except Exception as exc:
             # Delivery failures are isolated from the market-data and signal loop.
@@ -1302,16 +1301,15 @@ class IVSkewFlipRuntime:
             "early_entry_alerts": self._early_entry_alerts.snapshot("NIFTY"),
             "early_entry_alerts_by_underlying": self._early_entry_alerts.snapshot_all(),
             "telegram_delivery": dict(self._telegram_delivery),
-            "telegram_configured": bool(settings.TELEGRAM_ENABLED and str(settings.TELEGRAM_BOT_TOKEN or "").strip() and self._telegram_chat_id()),
+            "telegram_configured": bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip() and self._telegram_chat_id()),
             "telegram_configuration": {
-                "enabled": bool(settings.TELEGRAM_ENABLED),
+                "enabled": bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip() and self._telegram_chat_id()),
                 "bot_token_present": bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip()),
                 "chat_id_present": bool(self._telegram_chat_id()),
                 "chat_id_source": "TELEGRAM_CHAT_ID" if str(settings.TELEGRAM_CHAT_ID or "").strip() else (
                     "TELEGRAM_ADMIN_CHAT_IDS" if self._telegram_chat_id() else None
                 ),
                 "missing": [name for name, present in (
-                    ("TELEGRAM_ENABLED", bool(settings.TELEGRAM_ENABLED)),
                     ("TELEGRAM_BOT_TOKEN", bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip())),
                     ("TELEGRAM_CHAT_ID_OR_TELEGRAM_ADMIN_CHAT_IDS", bool(self._telegram_chat_id())),
                 ) if not present],
