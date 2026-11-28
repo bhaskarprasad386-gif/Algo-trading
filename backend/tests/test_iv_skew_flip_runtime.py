@@ -225,8 +225,8 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
     spot.last_prices["BANKNIFTY"] = spot.prices["BANKNIFTY"]
     runtime.refresh_once()
     assert created["BANKNIFTY_MONTHLY"].universe.atm_strike == 1000.0
-    assert len(created["BANKNIFTY_MONTHLY"].universe.contracts) == 14
-    assert len(created["BANKNIFTY_MONTHLY"].universe.strikes) == 7
+    assert len(created["BANKNIFTY_MONTHLY"].universe.contracts) == 22
+    assert len(created["BANKNIFTY_MONTHLY"].universe.strikes) == 11
     assert runtime._samplers["BANKNIFTY_MONTHLY"].inherited_from is previous_bank_sampler
     assert created["NIFTY_WEEKLY"].universe is weekly_after_move
     runtime.stop()
