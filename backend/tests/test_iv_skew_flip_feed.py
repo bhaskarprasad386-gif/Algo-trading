@@ -360,3 +360,50 @@ def test_feed_adapter_accepts_nifty_weekly_eleven_strikes_and_twenty_two_contrac
     } == {
         (strike, side) for strike in universe.strikes for side in ("CE", "PE")
     }
+
+
+def _banknifty_monthly_universe(strike_count=7):
+    rows = []
+    for expiry_index, expiry in enumerate(("26Nov2026", "31Dec2026")):
+        expiry_code = "26NOV26" if expiry_index == 0 else "31DEC26"
+        for strike in range(48000, 52101, 100):
+            for side in ("CE", "PE"):
+                rows.append({
+                    "exch_seg": "NFO", "instrumenttype": "OPTIDX", "name": "BANKNIFTY",
+                    "expiry": expiry, "symbol": f"BANKNIFTY{expiry_code}{int(strike)}{side}",
+                    "strike": str(strike * 100), "token": f"BANK-{expiry_index}-{strike}-{side}", "lotsize": "30",
+                })
+    return resolve_option_universe(
+        rows, underlying="BANKNIFTY", expiry_type="MONTHLY",
+        spot=50000, today=date(2026, 11, 6), strike_count=strike_count,
+    )
+
+
+def test_banknifty_monthly_preserves_last_oi_on_price_only_frames():
+    feed = FakeFeed()
+    adapter = IVSkewFlipFeedAdapter(feed=feed)
+    universe = _banknifty_monthly_universe()
+    adapter.start(universe)
+    descriptor = next(item for item in feed.descriptors if item.strike == universe.atm_strike and item.option_type == "CE")
+
+    feed.callback(SimpleNamespace(
+        instrument=descriptor.key, timestamp_ns=10_000_000_000,
+        ltp=100.0, bid=99.0, ask=101.0, oi=54321, volume=100,
+        payload={"exchange_timestamp_ns": 10_000_000_000},
+    ))
+    feed.callback(SimpleNamespace(
+        instrument=descriptor.key, timestamp_ns=11_000_000_000,
+        ltp=101.0, bid=100.0, ask=102.0, oi=None, volume=110,
+        payload={"exchange_timestamp_ns": 11_000_000_000},
+    ))
+
+    quote = next(item for item in adapter.snapshot(11_000_000_000)["quotes"] if item["token"] == descriptor.key.token)
+    assert quote["oi"] == 54321
+    assert quote["oi_timestamp_ns"] == 10_000_000_000
+    assert quote["oi_fresh"] is True
+    assert quote["oi_age_ms"] == 1000.0
+
+    stale = next(item for item in adapter.snapshot(311_000_000_001)["quotes"] if item["token"] == descriptor.key.token)
+    assert stale["oi"] == 54321
+    assert stale["oi_fresh"] is False
+    assert stale["oi_stale"] is True
