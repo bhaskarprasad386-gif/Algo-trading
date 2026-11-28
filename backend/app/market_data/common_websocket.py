@@ -702,6 +702,28 @@ class CommonWebSocketManager:
             result[mode] = assignments
         return result
 
+    def _reconcile_after_obsolete_close(self, obsolete_group: SocketGroup) -> None:
+        """Resume reconciliation after an obsolete socket is fully retired.
+
+        A close worker can finish concurrently with application shutdown. In
+        that case the shutdown fence must win: do not turn expected teardown
+        into a failed reconciliation attempt.
+        """
+        with self._lock:
+            if self._closed:
+                return
+        try:
+            with self._reconcile_lock:
+                with self._lock:
+                    if self._closed:
+                        return
+                self._reconcile()
+        except Exception as exc:
+            app_logger.warning(
+                "Common feed reconcile after obsolete close failed group={} error={}",
+                f"{obsolete_group.mode}:{obsolete_group.shard}", exc,
+            )
+
     def _reconcile(self) -> None:
         """Pack subscriptions while keeping broker I/O outside the state lock."""
         with self._reconcile_lock:
@@ -804,14 +826,7 @@ class CommonWebSocketManager:
 
             for group, socket in zip(stale_groups, stale_sockets):
                 def _reconcile_after_obsolete_close(obsolete_group=group):
-                    try:
-                        with self._reconcile_lock:
-                            self._reconcile()
-                    except Exception as exc:
-                        app_logger.warning(
-                            "Common feed reconcile after obsolete close failed group=%s: %s",
-                            f"{obsolete_group.mode}:{obsolete_group.shard}", exc,
-                        )
+                    self._reconcile_after_obsolete_close(obsolete_group)
                 self._close_socket_tracked(
                     socket, group=group,
                     generation=self._socket_generation_counter.get(group),
