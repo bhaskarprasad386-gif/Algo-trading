@@ -45,7 +45,7 @@ type Runtime = {
   index_future_feed?: Row;
   spot_future_basis?: Record<string, Row>;
   telegram_configured?: boolean;
-  telegram_configuration?: { enabled?: boolean; bot_token_present?: boolean; chat_id_present?: boolean; missing?: string[] };
+  telegram_configuration?: { enabled?: boolean; bot_token_present?: boolean; chat_id_present?: boolean; chat_id_source?: string | null; missing?: string[] };
   telegram_delivery?: Row;
   early_entry_alerts?: { alerts?: EarlyAlert[]; [key: string]: unknown };
   early_entry_alerts_by_underlying?: Record<string, Row>;
@@ -437,8 +437,8 @@ export default function IVSkewFlipPage() {
   const [snapshotBusy,setSnapshotBusy]=useState(false);
   const [snapshotNotice,setSnapshotNotice]=useState("");
   const [error,setError]=useState("");
-  const [selectedEnabled,setSelectedEnabled]=useState(false);
-  const [savedEnabled,setSavedEnabled]=useState(false);
+  const [selectedEnabled,setSelectedEnabled]=useState(true);
+  const [savedEnabled,setSavedEnabled]=useState(true);
   const [settingDirty,setSettingDirty]=useState(false);
   const base=appConfig.apiBaseUrl.replace(/\/$/,"");
   const { data: pagePushData, status: pagePushStatus } = usePagePush("iv-skew-flip");
@@ -863,13 +863,13 @@ export default function IVSkewFlipPage() {
         <button onClick={()=>void saveRunnerSetting()} disabled={busy||selectedEnabled===savedEnabled} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface px-4 py-2 text-sm font-bold disabled:opacity-50">{busy?"Saving…":"Save"}</button>
       </div>
     </header>
-    <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">{running?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {`Runner ${!savedEnabled?"STOPPED • SAVED OFF":running?"RUNNING":"WAITING FOR SHARED FEED"} • Saved ${savedEnabled?"ON":"OFF"}`}</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Orders OFF</span></div>
+    <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">{running?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {`IV Runner ${!savedEnabled?"STOPPED • OFF":running?"RUNNING":"STARTING"} • Saved ${savedEnabled?"ON":"OFF"}`}<span className={`rounded-full border-2 px-3 py-2 ${runtime?.market_data_connection?.runner?.enabled===true?"border-emerald-500/50 text-emerald-700":"border-amber-500/50 text-amber-700"}`}><Wifi size={13} className="inline"/> {`Shared Runner ${runtime?.market_data_connection?.runner?.enabled===true?"CONNECTED":"CHECKING"}`}</span></span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Orders OFF</span></div>
     <section aria-label="Scanner at a glance" className="grid grid-cols-2 gap-2 sm:grid-cols-4"><Metric label="NIFTY Spot" value={fmt(niftySpot.price)} sub={`Feed age ${age(niftySpot.age_ms)}`}/><Metric label="ATM Strike" value={fmt(liveFeed.atm_strike??nifty.option_feed?.atm_strike,0)} sub={`Expiry ${String(liveFeed.expiry??"—")}`}/><Metric label="Option Chain" value={String(liveFeed.status??"WAITING")} sub={`${fmt(liveNiftySampler.contracts_live??liveNiftySampler.live_contracts,0)} live contracts`}/><Metric label="IV Data" value={String(liveNiftySampler.status??"WAITING")} sub={`Live IV ${fmt(liveNiftySampler.iv_live_count,0)} • OI ${fmt(liveNiftySampler.oi_live_count,0)}`}/></section>
     <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 space-y-3" aria-live="polite">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h2 className="font-extrabold tracking-tight theme-text">NIFTY Weekly + BANKNIFTY Monthly Early-Entry Alerts</h2><p className="mt-1 text-xs theme-muted">Independent per-index history, cooldown and Telegram delivery • IV + volume momentum • OI wall rejection • live-data freshness guards • alert-only, no orders</p></div>
         <div className="flex items-center gap-2">
-          <span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-xs">{String(earlyAlertLive?.state??"WATCH")}</span><span title={runtime?.telegram_configured===true?"Telegram credentials are present":`Missing: ${(runtime?.telegram_configuration?.missing??["TELEGRAM_ENABLED","TELEGRAM_BOT_TOKEN","TELEGRAM_CHAT_ID"]).join(", ")}`} className={`rounded-full border-2 px-2 py-1 text-xs font-bold ${runtime?.telegram_configured===true?"border-emerald-500/50 text-emerald-700":"border-amber-500/50 text-amber-700"}`}>Telegram {runtime?.telegram_configured===true?String((runtime.telegram_delivery as Row|undefined)?.status??"READY"):`SETUP REQUIRED${runtime?.telegram_configuration?.missing?.length?` • ${runtime.telegram_configuration.missing.length} missing`:""}`}</span>
+          <span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-xs">{String(earlyAlertLive?.state??"WATCH")}</span><span title={runtime?.telegram_configured===true?"Telegram credentials are present":`Missing: ${(runtime?.telegram_configuration?.missing??["TELEGRAM_BOT_TOKEN","TELEGRAM_ADMIN_CHAT_IDS"]).join(", ")}`} className={`rounded-full border-2 px-2 py-1 text-xs font-bold ${runtime?.telegram_configured===true?"border-emerald-500/50 text-emerald-700":"border-amber-500/50 text-amber-700"}`}>Telegram {runtime?.telegram_configured===true?String((runtime.telegram_delivery as Row|undefined)?.status??"CONNECTED"):"CONFIG REQUIRED"}</span>
           <button type="button" onClick={()=>setAlertAudioEnabled(v=>!v)} className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs font-bold" aria-pressed={alertAudioEnabled}>{alertAudioEnabled?"Sound ON":"Sound OFF"}</button>
         </div>
       </div>
@@ -937,7 +937,7 @@ export default function IVSkewFlipPage() {
         <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-sm theme-text">BANKNIFTY Monthly Early-Entry Alerts</b><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-xs">{String(bankEarlyAlertLive?.state??"WATCH")}</span></div>
         <p className="text-xs theme-muted">BANKNIFTY-specific 100-point strike grid and strike-scaled consolidation / wall-distance gates. Pilot thresholds; validate forward outcomes before treating alerts as calibrated.</p>
         {earlyAlerts.find(row=>row.underlying==="BANKNIFTY"&&row.state==="EARLY_ENTRY") ? (()=>{const alert=earlyAlerts.find(row=>row.underlying==="BANKNIFTY"&&row.state==="EARLY_ENTRY")!;return <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm"><b className="text-emerald-700">BANKNIFTY EARLY ENTRY • {alert.direction}</b><div className="mt-1">{alert.strike} {alert.option_type} • Expiry {alert.expiry} • Spot {fmt(alert.spot)} • Premium {fmt(alert.premium)}</div><p className="mt-1 text-xs theme-muted">{alert.strategy.replaceAll("_"," ")} • {alert.reason}</p></div>;})() : <p className="text-xs theme-muted">{String(bankEarlyAlertLive?.reason??"No active BANKNIFTY early-entry alert. Waiting for complete fresh history and all validation gates.")}</p>}
-        <div className="text-xs theme-muted">Telegram {runtime?.telegram_configured===true?String((runtime.telegram_delivery as Row|undefined)?.status??"READY"):"NOT CONFIGURED"} • orders disabled</div>
+        <div className="text-xs theme-muted">Telegram {runtime?.telegram_configured===true?String((runtime.telegram_delivery as Row|undefined)?.status??"CONNECTED"):"CONFIG REQUIRED"} • orders disabled</div>
       </div>
     </section>
     <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 space-y-3">
