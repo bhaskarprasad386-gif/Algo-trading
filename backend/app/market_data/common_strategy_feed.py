@@ -191,6 +191,9 @@ def close_shared_common_manager() -> None:
             "retired_transport_watch_pending_count": int(
                 retirement.get("retired_transport_watch_pending_count", 0) or 0
             ),
+            "socket_operation_worker_count": int(
+                retirement.get("socket_operation_worker_count", 0) or 0
+            ),
         }
         if any(unresolved.values()):
             raise RuntimeError(
