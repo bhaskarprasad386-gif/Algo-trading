@@ -25,6 +25,56 @@ def reset_dashboard_route_caches():
 
 
 
+def test_shared_runner_health_lite_forwards_readiness_and_option_coverage(monkeypatch):
+    snapshot = {
+        "runner": "shared-index-market-data",
+        "enabled": True,
+        "core_market_data_ready": True,
+        "live_data_ready": False,
+        "readiness_reason": "OPTION_ACTIVITY_BELOW_POLICY",
+        "option_quote_coverage": {
+            "fresh": 36, "total": 124, "stale": 88,
+            "complete": False, "percentage": 29.0,
+        },
+        "readiness": {
+            "core_market_data_ready": True,
+            "live_data_ready": False,
+            "readiness_reason": "OPTION_ACTIVITY_BELOW_POLICY",
+        },
+    }
+    monkeypatch.setattr(routes, "_shared_index_runner_health_provider", lambda: snapshot)
+
+    result = routes.get_shared_index_runner_health_lite()
+
+    assert result["core_market_data_ready"] is True
+    assert result["live_data_ready"] is False
+    assert result["readiness_reason"] == "OPTION_ACTIVITY_BELOW_POLICY"
+    assert result["option_quote_coverage"]["fresh"] == 36
+    assert result["option_quote_coverage"]["stale"] == 88
+
+
+def test_shared_runner_health_lite_fails_closed_when_provider_missing(monkeypatch):
+    monkeypatch.setattr(routes, "_shared_index_runner_health_provider", None)
+
+    result = routes.get_shared_index_runner_health_lite()
+
+    assert result["state"] == "NOT_INITIALIZED"
+    assert result["enabled"] is False
+    assert "live_data_ready" not in result
+
+
+def test_shared_runner_health_lite_fails_closed_when_provider_raises(monkeypatch):
+    def failed_snapshot():
+        raise RuntimeError("health snapshot failed")
+
+    monkeypatch.setattr(routes, "_shared_index_runner_health_provider", failed_snapshot)
+
+    result = routes.get_shared_index_runner_health_lite()
+
+    assert result["state"] == "UNAVAILABLE"
+    assert "live_data_ready" not in result
+
+
 def test_common_feed_health_reports_only_shared_runner_owner(monkeypatch):
     from app.core.config import settings
 
