@@ -925,7 +925,7 @@ def iv_skew_flip_status():
     enabled = _get_iv_scanner_enabled()
     with _iv_skew_flip_runtime_lock:
         runtime = None if iv_skew_flip_runtime is None else iv_skew_flip_runtime.snapshot()
-    shared_runner = shared_index_market_data_runner.health_snapshot()
+    shared_runner = shared_index_market_data_runner.readiness_snapshot()
     return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
             "runner_status": runtime.get("status", "STOPPED") if runtime else "STOPPED",
             "shared_runner": shared_runner,
