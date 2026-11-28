@@ -142,6 +142,11 @@ def shared_common_manager(
     with _SHARED_LOCK:
         if _SHARED_MANAGER_CLOSING:
             raise RuntimeError("shared market-data manager is shutting down")
+        if _SHARED_MANAGER is not None and bool(getattr(_SHARED_MANAGER, "_closed", False)):
+            raise RuntimeError(
+                "previous shared market-data manager is closed but not fully retired; "
+                "retry shutdown before requesting a replacement"
+            )
         if _SHARED_MANAGER is None:
             _SHARED_AUTH = auth or AngelOneAuth()
             factory = socket_factory or (lambda: MarketDataWebSocket(auth=_SHARED_AUTH, auto_reconnect=False))
@@ -173,6 +178,25 @@ def close_shared_common_manager() -> None:
         _SHARED_MANAGER_CLOSING = True
     try:
         manager.close()
+        # close() is deliberately bounded and may return while a socket-close
+        # worker or its watcher is still alive. Do not release the process-wide
+        # singleton in that state: a later shared_common_manager() call could
+        # otherwise create a second broker session beside the unretired one.
+        retirement = manager.snapshot()
+        unresolved = {
+            "retired_transport_count": int(retirement.get("retired_transport_count", 0) or 0),
+            "retired_transport_close_start_pending_count": int(
+                retirement.get("retired_transport_close_start_pending_count", 0) or 0
+            ),
+            "retired_transport_watch_pending_count": int(
+                retirement.get("retired_transport_watch_pending_count", 0) or 0
+            ),
+        }
+        if any(unresolved.values()):
+            raise RuntimeError(
+                "shared market-data manager shutdown is incomplete; "
+                f"retired transport state remains: {unresolved}"
+            )
     except Exception:
         # Keep the failed manager reachable for diagnostics/retry. Clearing it
         # here could allow a second broker manager while retired transports

@@ -3447,6 +3447,7 @@ class CommonWebSocketManager:
                 "failure_recovery_admission_rejections": self._failure_recovery_admission_rejections,
                 "retired_transport_count": len(self._retired_transports),
                 "retired_transport_close_start_pending_count": len(self._retired_transport_close_pending),
+                "retired_transport_watch_pending_count": len(self._retired_transport_watch_pending),
                 "callback_integrity_fault_pending_count": len(self._callback_integrity_fault_pending),
                 "retired_transports": [dict(item) for item in self._retired_transports.values()],
                 "retired_transport_groups": sorted({
