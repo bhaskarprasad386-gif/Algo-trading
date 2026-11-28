@@ -1,6 +1,6 @@
 # Shared WebSocket and Runner — Current Architecture
 
-**Verified baseline:** `main` at `43c015573329c01745b51be43d70755ba8c22974` (28 Nov 2026).
+**Verified baseline:** `main` at `57abed5f559ae7a6410a4c0165ec818a4e07b8f5` (28 Nov 2026).
 This document describes the current production code paths. Older batch notes and implementation proposals in prior revisions are historical records, not current runtime claims.
 
 ## 1. Production ownership
@@ -13,7 +13,15 @@ This document describes the current production code paths. Older batch notes and
 - The application lifespan starts the Shared Runner recovery loop and the persisted IV Scanner recovery loop. IV OFF detaches IV readers; it does not stop the Shared Runner.
 - No Box Spread, Cash-Future, Calendar Spread, or Synthetic market-data runner is part of this locked production startup topology.
 
-## 2. Locked physical socket lanes
+## 2. Startup lifecycle isolation
+
+- Instrument-master download remains on the fetch-only daemon worker; that helper must never create sockets, mutate runner state, or start/stop runtimes.
+- Shared Runner start/stop calls are serialized by the dedicated `SerializedLifecycleWorker`, not executed on the ASGI event loop.
+- Lifecycle commands are FIFO. Cancelling the recovery coroutine does not abandon a broker SDK call already in progress; shutdown queues runner OFF behind that operation and awaits the stop barrier.
+- Admission closes atomically with enqueue during worker shutdown, so a new ON cannot be queued behind the terminal stop. If the worker misses its bounded join deadline, the lifecycle fails closed rather than admitting another generation.
+- This worker owns only Shared Runner lifecycle operations. Market-data callbacks, instrument refresh, option rotation, and IV reader lifecycle remain on their existing dedicated owners.
+
+## 3. Locked physical socket lanes
 
 | Physical group | Allowed instruments |
 |---|---|
@@ -23,7 +31,7 @@ This document describes the current production code paths. Older batch notes and
 
 The global manager cap is three physical sessions and 1,000 tokens per session. Lane placement is descriptor-based, not consumer-name-based. A fourth physical group or conflicting instrument identity is rejected before live assignment/route mutation. Recovery recreates a failed lane in its existing `(mode, shard)`; no cross-lane redistribution is allowed.
 
-## 3. Callback and control-plane separation
+## 4. Callback and control-plane separation
 
 The Angel transport callback enters the common manager's bounded per-shard callback adapter. The adapter copies and queues normalized delivery work with generation fencing and fail-closed queue-overflow handling.
 
@@ -39,7 +47,7 @@ The control worker is generation-fenced across ON/OFF. OFF invalidates the activ
 
 Instrument-master refresh remains separately bounded and generation-fenced. It publishes only a complete validated master snapshot and preserves the last good snapshot on failure.
 
-## 4. Readiness and quote freshness contract
+## 5. Readiness and quote freshness contract
 
 These signals are deliberately distinct:
 
@@ -56,7 +64,7 @@ IV applies a stricter per-selected-contract rule:
 
 Transport OPEN, a sent subscription, or retained last-known data alone never proves fresh market data. Angel One's SDK does not expose an independently verifiable authentication acknowledgement; diagnostics must continue to report authentication as not verifiable rather than infer it from transport state.
 
-## 5. Legacy code and documentation retirement
+## 6. Legacy code and documentation retirement
 
 The earlier document versions referred to `backend/app/market_data/live_cash_future_stream.py` and `backend/app/market_data/engine.py` as remaining direct-socket compatibility paths. Neither path exists in the verified repository tree at the baseline above. Those references are retired and must not be used as current runtime evidence.
 
@@ -64,7 +72,7 @@ The old statements that Box Spread, Cash-Future, Calendar Spread, and Synthetic 
 
 Do not reintroduce a strategy-owned `MarketDataWebSocket`, direct `SmartWebSocketV2`, or independent Angel instrument-master fetch in IV or any retired strategy. New consumers require an explicit, reviewed change to the locked owner contract.
 
-## 6. Verification required for a release
+## 7. Verification required for a release
 
 - Unit tests for the two-key coalescing mailbox, generation rejection, bounded pending state, and shutdown behavior.
 - Runner tests proving spot callback dispatches control work asynchronously while preserving bootstrap/rotation/rollover correctness.
