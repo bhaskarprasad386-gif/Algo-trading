@@ -92,16 +92,21 @@ def _readiness_from_groups(*, running: bool, bootstrap_done: bool,
         "complete": option_total > 0 and option_fresh == option_total,
         "percentage": round(option_fresh * 100.0 / option_total, 1) if option_total else None,
     }
-    core_market_data_ready = bool(running and bootstrap_done and universe_complete and core_fresh)
-    ready = bool(core_market_data_ready and option_activity)
+    # This signal is intentionally independent of option bootstrap,
+    # subscription coverage, and option quote activity: it answers only
+    # whether the runner's NIFTY/BANKNIFTY spot + futures core is live.
+    core_market_data_ready = bool(running and core_fresh)
+    ready = bool(
+        core_market_data_ready and bootstrap_done and universe_complete and option_activity
+    )
     if not running:
         readiness_reason = "RUNNER_STOPPED"
+    elif not core_fresh:
+        readiness_reason = "CORE_FEED_NOT_FRESH"
     elif not bootstrap_done:
         readiness_reason = "OPTION_BOOTSTRAP_PENDING"
     elif not universe_complete:
         readiness_reason = "UNIVERSE_INCOMPLETE"
-    elif not core_fresh:
-        readiness_reason = "CORE_FEED_NOT_FRESH"
     elif not option_activity:
         readiness_reason = "OPTION_ACTIVITY_BELOW_POLICY"
     else:
