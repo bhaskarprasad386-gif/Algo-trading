@@ -65,6 +65,7 @@ class ScannerConfig:
     bullish_skew_threshold: float
     bearish_skew_threshold: float
     max_quote_age_seconds: float = 5.0
+    max_broker_iv_age_seconds: float = 90.0
     risk_free_rate: float = 0.065
     dividend_yield: float = 0.0
     min_flip_gap_iv_points: float = 0.15
@@ -144,7 +145,7 @@ def _fresh(quote: OptionQuote, now_ns: int, max_age_seconds: float) -> bool:
     )
 
 
-def _iv(quote: OptionQuote, spot: float, years: float, config: ScannerConfig) -> float | None:
+def _iv(quote: OptionQuote, spot: float, years: float, config: ScannerConfig, now_ns: int) -> float | None:
     """Accept only validated Angel One broker-native IV; local inversion is disabled."""
     value = quote.broker_iv
     if (
@@ -153,6 +154,8 @@ def _iv(quote: OptionQuote, spot: float, years: float, config: ScannerConfig) ->
         or not isfinite(float(value)) or not 0.0 < float(value) <= 5.0
         or isinstance(quote.iv_timestamp_ns, bool)
         or not isinstance(quote.iv_timestamp_ns, int) or quote.iv_timestamp_ns <= 0
+        or now_ns - quote.iv_timestamp_ns < -1_000_000_000
+        or now_ns - quote.iv_timestamp_ns > int(config.max_broker_iv_age_seconds * 1_000_000_000)
     ):
         return None
     return float(value)
@@ -203,7 +206,7 @@ def evaluate_skew(
         put = by_key.get((strikes[put_i], "PE"))
         if call is None or put is None:
             continue
-        call_iv, put_iv = _iv(call, spot, years, config), _iv(put, spot, years, config)
+        call_iv, put_iv = _iv(call, spot, years, config, now_ns), _iv(put, spot, years, config, now_ns)
         if call_iv is not None and put_iv is not None:
             spreads.append((call_iv - put_iv) * 100.0)
     if len(spreads) < 2:
@@ -237,8 +240,8 @@ def evaluate_flip(
     years = _expiry_years(pair["CE"].expiry, now)
     if years is None:
         return Signal("IV_FLIP", None, None, None, "WAITING", "invalid or expired option expiry")
-    call_iv = _iv(pair["CE"], spot, years, config)
-    put_iv = _iv(pair["PE"], spot, years, config)
+    call_iv = _iv(pair["CE"], spot, years, config, now_ns)
+    put_iv = _iv(pair["PE"], spot, years, config, now_ns)
     if call_iv is None or put_iv is None:
         return Signal("IV_FLIP", None, None, None, "WAITING", "fresh Angel One broker-native IV is required for the ATM CE/PE pair")
     diff = (call_iv - put_iv) * 100.0
