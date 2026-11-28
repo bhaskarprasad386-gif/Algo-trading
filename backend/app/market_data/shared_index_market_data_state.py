@@ -321,6 +321,7 @@ class SharedIndexMarketDataState:
             capacity_dropped = self._capacity_dropped
             retired_dropped = self._retired_dropped
             publish_errors = self._publish_errors
+            callback_stage_timing = dict(self._callback_timing)
         ages = {key: max(0, (now - record.timestamp_ns) / 1e9) for key, record in latest}
         fresh = sum(age <= self.max_age_ns / 1e9 for age in ages.values())
         feed_health_by_group: dict[str, dict[str, Any]] = {}
@@ -370,5 +371,5 @@ class SharedIndexMarketDataState:
             "capacity_ticks_dropped": capacity_dropped,
             "retired_contract_ticks_dropped": retired_dropped,
             "publish_callback_errors": publish_errors,
-            "callback_stage_timing": dict(self._callback_timing),
+            "callback_stage_timing": callback_stage_timing,
         }
