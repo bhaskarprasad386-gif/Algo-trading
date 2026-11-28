@@ -128,19 +128,16 @@ class IVSkewFlipFeedAdapter:
                 isinstance(incoming_oi, int) and not isinstance(incoming_oi, bool)
                 and incoming_oi >= 0
             )
-            # Fast price/depth frames may omit OI. Keep the last actual OI
-            # observation and its own timestamp rather than erasing it.
-            preserve_oi = universe.underlying.upper() == "NIFTY"
+            # Fast price/depth frames may omit OI for either supported index.
+            # Preserve the last actual broker OI observation and its own source
+            # timestamp; a newer price tick must not make old OI look fresh.
             oi_value = (
                 incoming_oi if valid_incoming_oi
-                else (previous.oi if preserve_oi and previous is not None else None)
+                else (previous.oi if previous is not None else None)
             )
             oi_timestamp_ns = (
                 timestamp_ns if valid_incoming_oi
-                else (
-                    previous.oi_timestamp_ns
-                    if preserve_oi and previous is not None else None
-                )
+                else (previous.oi_timestamp_ns if previous is not None else None)
             )
             quote = OptionQuote(
                 underlying=universe.underlying,

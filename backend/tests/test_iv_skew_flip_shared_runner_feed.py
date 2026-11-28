@@ -434,3 +434,34 @@ def test_shared_runner_option_adapter_rejects_local_timestamp_fallback():
     assert snapshot["fresh_contracts"] == 5
     assert target["token"] in snapshot["missing_tokens"]
     assert len(adapter.latest_quotes()) == 5
+
+
+def test_shared_runner_option_adapter_retains_oi_across_price_only_ticks_with_original_timestamp():
+    now = time_ns()
+    universe = make_universe()
+    records = make_records(universe, now)
+    runner = FakeSharedRunner(records, make_descriptors(universe))
+    adapter = IVSharedRunnerOptionFeedAdapter(
+        shared_runner=runner, stream_id="BANKNIFTY_MONTHLY",
+        clock_ns=lambda: now + 1_000_000_000,
+    )
+    adapter.start(universe)
+
+    first = adapter.latest_quotes()
+    assert len(first) == len(universe.contracts)
+    assert all(item.oi == 50000 for item in first)
+    assert all(item.oi_timestamp_ns == now for item in first)
+
+    # A later price/depth-only shared record must not erase OI or refresh its age.
+    for row in runner.state.records:
+        if row.get("instrument_type") == "option":
+            row["timestamp_ns"] = now + 1_000_000_000
+            row["exchange_timestamp_ns"] = now + 1_000_000_000
+            row["ltp"] = 121.0
+            row["oi"] = None
+
+    second = adapter.latest_quotes()
+    assert len(second) == len(universe.contracts)
+    assert all(item.ltp == 121.0 for item in second)
+    assert all(item.oi == 50000 for item in second)
+    assert all(item.oi_timestamp_ns == now for item in second)

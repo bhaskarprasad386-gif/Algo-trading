@@ -1079,7 +1079,7 @@ async def _iv_option_snapshot_daily_loop():
     """Persist bounded broker-IV snapshots independently for each active index chain."""
     last_attempt = {"NIFTY": 0.0, "BANKNIFTY": 0.0}
     next_delay = {"NIFTY": 0.0, "BANKNIFTY": 0.0}
-    expected_by_symbol = {"NIFTY": 22, "BANKNIFTY": 14}
+    expected_by_symbol = {"NIFTY": 22, "BANKNIFTY": 22}
     while True:
         now = datetime.now(IST)
         current_time = now.time()

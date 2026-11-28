@@ -149,7 +149,7 @@ def test_broker_snapshot_context_resolves_each_active_underlying_independently()
     assert nifty_universe.expiry == "2026-12-03"
     assert bank_universe.underlying == "BANKNIFTY"
     assert len(nifty_universe.contracts) == 22
-    assert len(bank_universe.contracts) == 14
+    assert len(bank_universe.contracts) == 22
     assert nifty_spot is spot.last_spot_snapshot("NIFTY")
     assert bank_spot is spot.last_spot_snapshot("BANKNIFTY")
 
@@ -201,8 +201,8 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
     assert first["option_chains"]["NIFTY_MONTHLY"]["enabled"] is False
     assert first["option_chains"]["NIFTY_MONTHLY"]["option_feed"]["status"] == "DISABLED_BY_SCOPE"
     assert first["option_chains"]["BANKNIFTY_MONTHLY"]["enabled"] is True
-    assert first["option_chains"]["BANKNIFTY_MONTHLY"]["universe_tokens"] == 14
-    assert first["indices"]["BANKNIFTY"]["universe_tokens"] == 14
+    assert first["option_chains"]["BANKNIFTY_MONTHLY"]["universe_tokens"] == 22
+    assert first["indices"]["BANKNIFTY"]["universe_tokens"] == 22
     assert set(created) == {"NIFTY_WEEKLY", "BANKNIFTY_MONTHLY"}
     assert created["BANKNIFTY_MONTHLY"].universe.expiry == "2026-11-26"
     assert created["NIFTY_WEEKLY"].universe.expiry == "2026-11-12"
@@ -225,8 +225,8 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
     spot.last_prices["BANKNIFTY"] = spot.prices["BANKNIFTY"]
     runtime.refresh_once()
     assert created["BANKNIFTY_MONTHLY"].universe.atm_strike == 1000.0
-    assert len(created["BANKNIFTY_MONTHLY"].universe.contracts) == 14
-    assert len(created["BANKNIFTY_MONTHLY"].universe.strikes) == 7
+    assert len(created["BANKNIFTY_MONTHLY"].universe.contracts) == 22
+    assert len(created["BANKNIFTY_MONTHLY"].universe.strikes) == 11
     assert runtime._samplers["BANKNIFTY_MONTHLY"].inherited_from is previous_bank_sampler
     assert created["NIFTY_WEEKLY"].universe is weekly_after_move
     runtime.stop()
@@ -1358,3 +1358,81 @@ def test_iv_on_waits_until_off_cleanup_transaction_finishes():
     assert not stop_thread.is_alive()
     assert not start_thread.is_alive()
     assert order == ["stop-enter", "stop-exit", "start"]
+
+
+def test_runtime_selects_current_nifty_weekly_expiry_before_close_and_rolls_after_close(monkeypatch):
+    import app.scanner.iv_skew_flip.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "IVOneSecondSampler", FakeSampler)
+    rows = (
+        make_rows("NIFTY", "09NOV2026", 100, 10)
+        + make_rows("NIFTY", "12NOV2026", 100, 10)
+        + make_rows("NIFTY", "26NOV2026", 100, 10)
+        + make_rows("BANKNIFTY", "26NOV2026", 900, 100)
+    )
+    spot = FakeSpotFeed()
+    spot.prices["BANKNIFTY"] = SpotSnapshot(900.0, 10_000_000_000)
+    spot.last_prices["BANKNIFTY"] = spot.prices["BANKNIFTY"]
+    created = {}
+
+    def build_runtime(now):
+        runtime = IVSkewFlipRuntime(
+            instrument_master=FakeMaster(rows),
+            spot_feed=spot,
+            option_feed_factory=lambda stream_id: created.setdefault(
+                stream_id, FakeOptionFeed(stream_id)
+            ),
+            clock_ns=lambda: 10_000_000_000,
+            clock_datetime=lambda: now,
+        )
+        runtime._rows_by_stream = {
+            stream_id: runtime._rows_for_symbol(rows, config.symbol)
+            for stream_id, config in CHAIN_CONFIGS
+        }
+        return runtime
+
+    before_close = build_runtime(datetime(2026, 11, 9, 15, 29, tzinfo=IST))
+    selected = before_close.refresh_once()
+    assert created["NIFTY_WEEKLY"].universe.expiry == "2026-11-09"
+    assert selected["option_chains"]["NIFTY_WEEKLY"]["expiry_selection"]["selector"] == "SHARED_RUNNER_AUTHORITATIVE"
+    before_close.stop()
+
+    created.clear()
+    after_close = build_runtime(datetime(2026, 11, 9, 15, 31, tzinfo=IST))
+    rolled = after_close.refresh_once()
+    assert created["NIFTY_WEEKLY"].universe.expiry == "2026-11-12"
+    assert rolled["option_chains"]["NIFTY_WEEKLY"]["expiry_selection"]["selected_expiry"] == "2026-11-12"
+    after_close.stop()
+
+
+def test_runtime_banknifty_monthly_rolls_only_to_next_listed_monthly_expiry(monkeypatch):
+    import app.scanner.iv_skew_flip.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "IVOneSecondSampler", FakeSampler)
+    now = datetime(2026, 11, 26, 15, 31, tzinfo=IST)
+    rows = (
+        make_rows("NIFTY", "03DEC2026", 100, 10)
+        + make_rows("NIFTY", "31DEC2026", 100, 10)
+        + make_rows("BANKNIFTY", "26NOV2026", 900, 100)
+        + make_rows("BANKNIFTY", "31DEC2026", 900, 100)
+    )
+    spot = FakeSpotFeed()
+    spot.prices["BANKNIFTY"] = SpotSnapshot(900.0, 10_000_000_000)
+    spot.last_prices["BANKNIFTY"] = spot.prices["BANKNIFTY"]
+    created = {}
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster(rows),
+        spot_feed=spot,
+        option_feed_factory=lambda stream_id: created.setdefault(stream_id, FakeOptionFeed(stream_id)),
+        clock_ns=lambda: 10_000_000_000,
+        clock_datetime=lambda: now,
+    )
+    runtime._rows_by_stream = {
+        stream_id: runtime._rows_for_symbol(rows, config.symbol)
+        for stream_id, config in CHAIN_CONFIGS
+    }
+
+    result = runtime.refresh_once()
+    assert created["BANKNIFTY_MONTHLY"].universe.expiry == "2026-12-31"
+    assert result["option_chains"]["BANKNIFTY_MONTHLY"]["expiry_selection"]["selected_expiry"] == "2026-12-31"
+    runtime.stop()
