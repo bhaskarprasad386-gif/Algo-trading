@@ -247,3 +247,18 @@ def test_next_vps_bootstrap_removes_retired_iv_master_recovery_timer_and_secret(
     assert "/etc/algo-trading/master-recovery.env" in bootstrap
     assert "rm -f /etc/algo-trading/master-recovery.env" in bootstrap
     assert not (root / "scripts" / "install_master_recovery_timer.sh").exists()
+
+
+def test_shared_runner_startup_uses_serialized_lifecycle_worker():
+    root = Path(__file__).parents[1]
+    main = (root / "app" / "main.py").read_text(encoding="utf-8")
+    worker = (root / "app" / "market_data" / "shared_index_lifecycle_worker.py").read_text(encoding="utf-8")
+
+    assert "SerializedLifecycleWorker" in main
+    assert "await shared_index_lifecycle_worker.run(" in main
+    assert "await shared_index_lifecycle_worker.close(shared_index_market_data_runner.stop)" in main
+    assert "shared_index_market_data_runner.start(instrument_rows=rows)" not in main
+    assert "shared_index_market_data_runner.stop()" not in main
+    assert "asyncio.shield(asyncio.wrap_future(result))" in worker
+    assert "self._queue.put((stop_function, (), {}, result))" in worker
+    assert "self._closing" in worker
