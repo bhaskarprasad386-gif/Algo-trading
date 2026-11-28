@@ -1436,3 +1436,80 @@ def test_runtime_banknifty_monthly_rolls_only_to_next_listed_monthly_expiry(monk
     assert created["BANKNIFTY_MONTHLY"].universe.expiry == "2026-12-31"
     assert result["option_chains"]["BANKNIFTY_MONTHLY"]["expiry_selection"]["selected_expiry"] == "2026-12-31"
     runtime.stop()
+
+def test_early_move_withholds_alerts_when_selected_option_coverage_is_partial():
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=IST)
+    now_ns = 10_000_000_000
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_ns=lambda: now_ns,
+        clock_datetime=lambda: now,
+    )
+
+    class PartialOptionFeed:
+        def latest_quotes(self):
+            return [object()] * 21
+
+        def snapshot(self, now_ns=None):
+            return {
+                "status": "PARTIAL",
+                "expected_contracts": 22,
+                "fresh_contracts": 21,
+                "missing_contracts": 1,
+            }
+
+        def resolved_universe(self):
+            return type("Universe", (), {"strike_step": 50.0})()
+
+    class CountingSampler:
+        configured_expiry = "2026-11-12"
+
+        def __init__(self):
+            self.snapshot_calls = 0
+
+        def snapshot(self):
+            self.snapshot_calls += 1
+            return {"raw_live_metrics": []}
+
+    class CountingDetector:
+        def __init__(self):
+            self.calls = 0
+
+        def update(self, **kwargs):
+            self.calls += 1
+            return {"state": "CONFIRMED", "signals_allowed": True}
+
+    class CountingAlerts:
+        def __init__(self):
+            self.calls = 0
+
+        def evaluate(self, **kwargs):
+            self.calls += 1
+
+        def snapshot(self, _underlying="NIFTY"):
+            return {}
+
+        def snapshot_all(self):
+            return {}
+
+    feed = PartialOptionFeed()
+    sampler = CountingSampler()
+    detector = CountingDetector()
+    alerts = CountingAlerts()
+    runtime._option_feeds["NIFTY_WEEKLY"] = feed
+    runtime._samplers["NIFTY_WEEKLY"] = sampler
+    runtime._early_move_detectors["NIFTY_WEEKLY"] = detector
+    runtime._early_entry_alerts = alerts
+
+    runtime._evaluate_early_move(now_ns)
+
+    result = runtime._early_move["NIFTY_WEEKLY"]
+    assert result["state"] == "WATCH"
+    assert result["signals_allowed"] is False
+    assert result["baseline_status"] == "WAITING_FOR_COMPLETE_OPTION_UNIVERSE"
+    assert "21/22" in result["reason"]
+    assert detector.calls == 0
+    assert alerts.calls == 0
+    assert sampler.snapshot_calls == 0
+    runtime.stop()

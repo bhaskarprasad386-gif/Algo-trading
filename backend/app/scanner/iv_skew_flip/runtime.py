@@ -710,6 +710,40 @@ class IVSkewFlipRuntime:
                 }
                 continue
             try:
+                # Early-entry alerts are a separate, faster signal path than the
+                # 60-second IV surface evaluator. Apply the same complete-universe
+                # gate here before either the alert engine or detector can emit.
+                coverage_getter = getattr(feed, "snapshot", None)
+                if not callable(coverage_getter):
+                    self._early_move[stream_id] = {
+                        "state": "WATCH", "direction": None, "signals_allowed": False,
+                        "reason": "waiting for authoritative option quote coverage",
+                        "baseline_status": "WARMING",
+                    }
+                    continue
+                try:
+                    coverage = coverage_getter(now_ns=now_ns)
+                except TypeError:
+                    coverage = coverage_getter()
+                expected = coverage.get("expected_contracts") if isinstance(coverage, dict) else None
+                fresh = coverage.get("fresh_contracts") if isinstance(coverage, dict) else None
+                quotes = tuple(feed.latest_quotes())
+                if (
+                    isinstance(expected, bool) or not isinstance(expected, int) or expected <= 0
+                    or isinstance(fresh, bool) or not isinstance(fresh, int)
+                    or fresh != expected or len(quotes) != expected
+                ):
+                    expected_label = expected if isinstance(expected, int) and not isinstance(expected, bool) else "?"
+                    fresh_label = fresh if isinstance(fresh, int) and not isinstance(fresh, bool) else "?"
+                    self._early_move[stream_id] = {
+                        "state": "WATCH", "direction": None, "signals_allowed": False,
+                        "reason": (
+                            "option quote coverage incomplete: "
+                            f"{fresh_label}/{expected_label} fresh broker-timestamped contracts"
+                        ),
+                        "baseline_status": "WAITING_FOR_COMPLETE_OPTION_UNIVERSE",
+                    }
+                    continue
                 sampler_snapshot = sampler.snapshot()
                 expiry = sampler.configured_expiry
                 universe = feed.resolved_universe() if callable(getattr(feed, "resolved_universe", None)) else None
