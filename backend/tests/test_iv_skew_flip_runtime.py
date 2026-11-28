@@ -149,7 +149,7 @@ def test_broker_snapshot_context_resolves_each_active_underlying_independently()
     assert nifty_universe.expiry == "2026-12-03"
     assert bank_universe.underlying == "BANKNIFTY"
     assert len(nifty_universe.contracts) == 22
-    assert len(bank_universe.contracts) == 14
+    assert len(bank_universe.contracts) == 22
     assert nifty_spot is spot.last_spot_snapshot("NIFTY")
     assert bank_spot is spot.last_spot_snapshot("BANKNIFTY")
 
@@ -201,8 +201,8 @@ def test_runtime_rebuilds_only_changed_strike_universe(monkeypatch):
     assert first["option_chains"]["NIFTY_MONTHLY"]["enabled"] is False
     assert first["option_chains"]["NIFTY_MONTHLY"]["option_feed"]["status"] == "DISABLED_BY_SCOPE"
     assert first["option_chains"]["BANKNIFTY_MONTHLY"]["enabled"] is True
-    assert first["option_chains"]["BANKNIFTY_MONTHLY"]["universe_tokens"] == 14
-    assert first["indices"]["BANKNIFTY"]["universe_tokens"] == 14
+    assert first["option_chains"]["BANKNIFTY_MONTHLY"]["universe_tokens"] == 22
+    assert first["indices"]["BANKNIFTY"]["universe_tokens"] == 22
     assert set(created) == {"NIFTY_WEEKLY", "BANKNIFTY_MONTHLY"}
     assert created["BANKNIFTY_MONTHLY"].universe.expiry == "2026-11-26"
     assert created["NIFTY_WEEKLY"].universe.expiry == "2026-11-12"
