@@ -792,7 +792,7 @@ def test_late_successful_connect_is_closed_after_recovery_replaces_socket():
         LateSuccessfulConnectSocket.attempts = 0
 
 
-def test_failure_callback_invalidation_waits_for_reconcile_snapshot_to_finish():
+def test_failure_callback_handoff_returns_while_reconcile_lock_is_held():
     registry = InstrumentRegistry()
     d = descriptor("101")
     registry.register(d)
@@ -809,12 +809,14 @@ def test_failure_callback_invalidation_waits_for_reconcile_snapshot_to_finish():
                 daemon=True,
             )
             worker.start()
-            time.sleep(0.05)
-            assert not callback_finished.is_set()
+            assert callback_finished.wait(timeout=0.5), "transport callback must not wait for reconcile"
             assert manager._sockets[SocketGroup(1, 0)] is original
+            with manager._lock:
+                assert manager._socket_failure_callback_pending[SocketGroup(1, 0)][0:2] == (
+                    original, manager._socket_generation[SocketGroup(1, 0)]
+                )
 
-        assert callback_finished.wait(timeout=1.0)
-        deadline = time.monotonic() + 1.0
+        deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline and len(FakeSocket.instances) < 2:
             time.sleep(0.01)
         assert len(FakeSocket.instances) == 2

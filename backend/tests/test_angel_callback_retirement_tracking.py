@@ -856,7 +856,7 @@ def test_late_failure_callback_from_retired_generation_cannot_recover_replacemen
 
 
 
-def test_socket_failure_callback_waits_for_atomic_subscription_rotation():
+def test_socket_failure_callback_handoff_returns_during_atomic_subscription_rotation():
     manager = CommonWebSocketManager()
     first = InstrumentDescriptor(
         key=InstrumentKey("NSE", "NSE", "NIFTY-ROTATION-BASE"),
@@ -925,12 +925,14 @@ def test_socket_failure_callback_waits_for_atomic_subscription_rotation():
     rotation.start()
     assert rotation_entered.wait(timeout=1.0), "rotation must enter its reconcile transaction"
     failure.start()
-    time.sleep(0.05)
+    # The transport callback must only enqueue the generation-checked event;
+    # it must return even while subscription reconciliation owns its lock.
+    assert failure_finished.wait(timeout=1.0)
 
-    # Failure invalidation must not interleave with the registry/route transaction.
+    # Actual invalidation/reconciliation remains serialized behind the
+    # registry/route transaction and cannot interleave with subscription rotation.
     assert manager._sockets[group] is socket
     assert manager._socket_generation[group] == 7
-    assert not failure_finished.is_set()
 
     release_rotation.set()
     rotation.join(timeout=2.0)

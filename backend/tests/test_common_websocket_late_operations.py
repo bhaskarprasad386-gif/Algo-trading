@@ -273,15 +273,27 @@ def test_timeout_completion_race_does_not_reconcile_if_shutdown_wins(monkeypatch
 
 class _StopAfterOneSupervisorPass:
     def __init__(self):
-        self.calls = 0
         self.stopped = False
     def set(self):
         self.stopped = True
     def is_set(self):
         return self.stopped
+
+
+class _WakeAfterOneSupervisorPass:
+    def __init__(self, stop_event):
+        self.calls = 0
+        self.stop_event = stop_event
+    def set(self):
+        # Closing the manager must also release the supervisor test loop.
+        self.stop_event.set()
+    def clear(self):
+        pass
     def wait(self, _timeout):
         self.calls += 1
-        return self.stopped or self.calls > 1
+        if self.calls > 1:
+            self.stop_event.set()
+        return False
 
 
 
@@ -309,7 +321,9 @@ def test_supervisor_acknowledges_only_pending_groups_from_reconcile_snapshot():
 
 
 
-    manager._recovery_stop = _StopAfterOneSupervisorPass()
+    stop_after_pass = _StopAfterOneSupervisorPass()
+    manager._recovery_stop = stop_after_pass
+    manager._recovery_wakeup = _WakeAfterOneSupervisorPass(stop_after_pass)
     manager._recovery_interval_seconds = 0.01
     manager._recovery_backoff_max_seconds = 0.05
     manager.registry.subscriptions = lambda: [object()]

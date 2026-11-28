@@ -266,6 +266,7 @@ class CommonWebSocketManager:
             SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
         ] = {}
         self._recovery_stop = Event()
+        self._recovery_wakeup = Event()
         self._recovery_thread: Thread | None = None
         self._closed = False
         self._recovery_interval_seconds = 5.0
@@ -286,9 +287,9 @@ class CommonWebSocketManager:
         # scheduled. If the callback recovery worker cannot start, the periodic
         # supervisor can retire these transports instead of orphaning them.
         self._failure_recovery_pending_transports: dict[SocketGroup, dict[str, Any]] = {}
-        # Integrity faults are handed off to the shared supervisor so SDK
-        # transport callbacks never perform recovery work on their own thread.
+        # All SDK transport failure callbacks hand off to the shared supervisor.
         self._callback_integrity_fault_pending: dict[SocketGroup, tuple[Any, int]] = {}
+        self._socket_failure_callback_pending: dict[SocketGroup, tuple[Any, int, str]] = {}
         self._failure_recovery_admission_rejections = 0
         # Retired transports remain visible until their close worker actually exits.
         # Store metadata only; never retain broker frames or authentication payloads.
@@ -1008,23 +1009,26 @@ class CommonWebSocketManager:
     def _handle_socket_failure(
         self, group: SocketGroup, socket: Any, generation: int, reason: Any
     ) -> None:
-        # Serialize the generation check with invalidation/reconciliation. A late
-        # failure callback from a retired socket must not impose a broker cooldown
-        # or mark the current authentication session stale.
-        with self._reconcile_lock:
-            with self._lock:
-                is_current = (
-                    not self._closed
-                    and self._sockets.get(group) is socket
-                    and self._socket_generation.get(group) == generation
-                )
-            if not is_current:
+        """Record a failure without blocking the SDK transport callback thread."""
+        reason_text = str(reason)
+        with self._lock:
+            if (
+                self._closed
+                or self._sockets.get(group) is not socket
+                or self._socket_generation.get(group) != generation
+            ):
                 return
-            # Set cooldown before scheduling invalidation/recovery so a current
-            # generation's 429 cannot be followed by an immediate reconnect.
-            if self._apply_broker_cooldown(reason):
-                _mark_socket_auth_stale(socket)
-            self._schedule_socket_failure_recovery(group, socket, generation, str(reason))
+            existing = self._socket_failure_callback_pending.get(group)
+            # Coalesce duplicate callbacks for the same generation, retaining a
+            # broker-limit reason if any callback reports one.
+            if existing is None or existing[0] is not socket or existing[1] != generation:
+                self._socket_failure_callback_pending[group] = (socket, generation, reason_text)
+            elif (
+                self._is_broker_connection_limit_error(reason_text)
+                and not self._is_broker_connection_limit_error(existing[2])
+            ):
+                self._socket_failure_callback_pending[group] = (socket, generation, reason_text)
+            self._recovery_wakeup.set()
 
     def _start_socket_connect(
         self,
@@ -1799,6 +1803,42 @@ class CommonWebSocketManager:
                     message=str(exc), context={"event": "callback_integrity_fault_handoff", "group": f"{group.mode}:{group.shard}"},
                 )
 
+    def _process_pending_socket_failure_callbacks(self) -> None:
+        """Apply queued failures in reconcile order; retain events on transient errors."""
+        with self._lock:
+            pending = list(self._socket_failure_callback_pending.items())
+        for group, (socket, generation, reason) in pending:
+            try:
+                with self._reconcile_lock:
+                    with self._lock:
+                        is_current = (
+                            not self._closed
+                            and self._sockets.get(group) is socket
+                            and self._socket_generation.get(group) == generation
+                        )
+                    if is_current:
+                        if self._apply_broker_cooldown(reason):
+                            _mark_socket_auth_stale(socket)
+                        self._schedule_socket_failure_recovery(
+                            group, socket, generation, reason
+                        )
+                with self._lock:
+                    if self._socket_failure_callback_pending.get(group) == (
+                        socket, generation, reason
+                    ):
+                        self._socket_failure_callback_pending.pop(group, None)
+            except Exception as exc:
+                runtime_diagnostics.record(
+                    component="Common Market Feed",
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                    context={"event": "socket_failure_callback_handoff", "group": f"{group.mode}:{group.shard}"},
+                )
+                app_logger.warning(
+                    "Common feed socket failure handoff deferred group=%s generation=%s: %s",
+                    group, generation, exc,
+                )
+
     def _recovery_loop(self) -> None:
         # Subscription changes intentionally remain pending during a shared
         # broker cooldown. Reconcile once when that cooldown expires so the
@@ -1813,9 +1853,19 @@ class CommonWebSocketManager:
             # should be serviced promptly, without waiting for the normal
             # five-second polling interval. Keep the ordinary idle cadence.
             with self._lock:
+                # Clear while holding the same state lock used by callback
+                # enqueue. A concurrent enqueue after this point sets the event
+                # and cannot be lost between the pending check and wait.
+                self._recovery_wakeup.clear()
                 has_urgent_integrity_fault = bool(self._callback_integrity_fault_pending)
-            wait_for = min(retry_delay, 0.1) if has_urgent_integrity_fault else retry_delay
-            if self._recovery_stop.wait(wait_for):
+                has_urgent_socket_failure = bool(self._socket_failure_callback_pending)
+            wait_for = (
+                min(retry_delay, 0.1)
+                if has_urgent_integrity_fault or has_urgent_socket_failure
+                else retry_delay
+            )
+            self._recovery_wakeup.wait(wait_for)
+            if self._recovery_stop.is_set():
                 return
             with self._lock:
                 if self._closed:
@@ -1827,12 +1877,14 @@ class CommonWebSocketManager:
                 has_pending_callback_retirements = bool(self._callback_retirement_start_pending)
                 has_pending_callback_watchers = bool(self._callback_retirement_watch_pending)
                 has_pending_integrity_faults = bool(self._callback_integrity_fault_pending)
+                has_pending_socket_failures = bool(self._socket_failure_callback_pending)
             if not (has_intent or has_pending_failure_transports or has_pending_retirement_watchers
                     or has_pending_retirement_closes or has_pending_callback_retirements or has_pending_callback_watchers
-                    or has_pending_integrity_faults):
+                    or has_pending_integrity_faults or has_pending_socket_failures):
                 retry_delay = max(0.1, float(self._recovery_interval_seconds))
                 continue
             try:
+                self._process_pending_socket_failure_callbacks()
                 self._process_pending_callback_integrity_faults()
                 self._retry_pending_retired_transport_closes()
                 self._retry_pending_retired_transport_watchers()
@@ -2274,6 +2326,7 @@ class CommonWebSocketManager:
                 if (not self._closed and self._sockets.get(group) is socket
                         and self._socket_generation.get(group) == generation):
                     self._callback_integrity_fault_pending[group] = (socket, generation)
+            self._recovery_wakeup.set()
             self._ensure_recovery_supervisor()
 
     def _is_current_data_generation(self, group: SocketGroup, generation: int | None) -> bool:
@@ -3479,6 +3532,7 @@ class CommonWebSocketManager:
         # reconcile lock; setting _closed first prevents its next socket from
         # being admitted once that operation returns.
         self._recovery_stop.set()
+        self._recovery_wakeup.set()
         with self._lock:
             self._closed = True
         with self._reconcile_lock:
@@ -3503,6 +3557,7 @@ class CommonWebSocketManager:
                 self._failure_recovery_pending_groups.clear()
                 self._failure_recovery_pending_transports.clear()
                 self._failure_recovery_pending_versions.clear()
+                self._socket_failure_callback_pending.clear()
         # The recovery supervisor may be waiting for _reconcile_lock. Release
         # that lock before joining it, otherwise every shutdown can burn the
         # full join timeout while the thread is unable to observe _closed.
