@@ -92,6 +92,9 @@ def test_lifecycle_worker_shutdown_deadline_fails_closed_for_hung_start():
 
         start_task = asyncio.create_task(worker.run(blocking_start))
         assert await asyncio.to_thread(entered.wait, 1.0)
+        start_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await start_task
         with pytest.raises(RuntimeError, match="did not stop before deadline"):
             await worker.close(stop, timeout=0.05)
 
@@ -101,8 +104,6 @@ def test_lifecycle_worker_shutdown_deadline_fails_closed_for_hung_start():
 
         release.set()
         await asyncio.sleep(0.05)
-        start_task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await start_task
+        assert stop_called.is_set()
 
     asyncio.run(scenario())
