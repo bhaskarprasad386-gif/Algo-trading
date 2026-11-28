@@ -40,6 +40,7 @@ from app.models.iv_constituent_basket_version import IVConstituentBasketVersion 
 from app.market_data.client import MarketDataClient
 from app.market_data.dashboard_snapshot_cache import cached_snapshot
 from app.market_data.shared_index_market_data_runner import SharedIndexMarketDataRunner
+from app.market_data.shared_index_lifecycle_worker import SerializedLifecycleWorker
 from app.market_data.instruments import InstrumentMaster
 from app.market_data.provider_quote_parity_store import SQLiteQuoteParityStore
 from app.market_data.provider_quote_parity_routes import router as provider_quote_parity_router, configure_store as configure_provider_quote_parity_store, configure_worker as configure_provider_quote_parity_worker
@@ -81,6 +82,7 @@ install_iv_basket_immutability_guards(engine)
 # Its own lazy cache prevents repeated OpenAPIScripMaster downloads.
 instrument_master = InstrumentMaster()
 shared_index_market_data_runner = SharedIndexMarketDataRunner(instrument_master=instrument_master)
+shared_index_lifecycle_worker = SerializedLifecycleWorker()
 configure_shared_index_runner_snapshot(shared_index_market_data_runner.snapshot)
 configure_shared_index_runner_health_snapshot(shared_index_market_data_runner.health_snapshot)
 provider_quote_parity_store: SQLiteQuoteParityStore | None = None
@@ -137,7 +139,9 @@ async def _shared_index_market_data_recovery_loop() -> None:
                 )
                 if not rows:
                     raise RuntimeError("Angel One instrument master returned no rows")
-                snapshot = shared_index_market_data_runner.start(instrument_rows=rows)
+                snapshot = await shared_index_lifecycle_worker.run(
+                    shared_index_market_data_runner.start, instrument_rows=rows
+                )
                 if snapshot.get("enabled"):
                     retry_delay = 10.0
                     await asyncio.sleep(15.0)
@@ -151,7 +155,9 @@ async def _shared_index_market_data_recovery_loop() -> None:
             retry_delay = min(max_retry_delay, max(5.0, retry_delay * 2.0))
     finally:
         try:
-            shared_index_market_data_runner.stop()
+            # FIFO lifecycle ownership: if startup is still inside the broker SDK,
+            # this stop is queued behind it and cannot be overtaken by a late ON.
+            await shared_index_lifecycle_worker.close(shared_index_market_data_runner.stop)
         except Exception:
             app_logger.exception("Shared index data runner shutdown failed")
 
