@@ -230,6 +230,10 @@ def test_readiness_reason_identifies_stale_core_feed_and_bootstrap_state() -> No
     assert stale_core["core_market_data_ready"] is False
     assert stale_core["readiness_reason"] == "CORE_FEED_NOT_FRESH"
 
+    # Restore the core future after the stale-feed scenario so the bootstrap
+    # assertions isolate option bootstrap state rather than reusing stale data.
+    groups["BANKNIFTY:future"]["fresh_count"] = 1
+
     pending = _readiness_from_groups(
         running=True, bootstrap_done=False, universe_complete=True, feed_groups=groups,
     )
