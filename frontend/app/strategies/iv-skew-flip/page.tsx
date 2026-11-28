@@ -614,7 +614,7 @@ export default function IVSkewFlipPage() {
     const body=await response.json();
     if(requestSequence!==statusFetchSequenceRef.current)return;
     if(!response.ok) throw new Error(apiError(body,`Status HTTP ${response.status}`));
-    setRuntime(body.runtime??null);
+    setRuntime({...((body.runtime??{}) as Row),market_data_connection:{...((body.runtime?.market_data_connection??{}) as Row),runner:body.shared_runner??(body.runtime?.market_data_connection as Row|undefined)?.runner}});
     setSelectedEnabled(body.saved_enabled===true);
     setSavedEnabled(body.saved_enabled===true);
     setSettingDirty(false);
