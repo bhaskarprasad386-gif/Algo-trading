@@ -266,6 +266,7 @@ class CommonWebSocketManager:
             SocketGroup, dict[tuple[int, str], list[tuple[str, InstrumentKey]]]
         ] = {}
         self._recovery_stop = Event()
+        self._recovery_wakeup = Event()
         self._recovery_thread: Thread | None = None
         self._closed = False
         self._recovery_interval_seconds = 5.0
@@ -1027,6 +1028,7 @@ class CommonWebSocketManager:
                 and not self._is_broker_connection_limit_error(existing[2])
             ):
                 self._socket_failure_callback_pending[group] = (socket, generation, reason_text)
+            self._recovery_wakeup.set()
 
     def _start_socket_connect(
         self,
@@ -1851,6 +1853,10 @@ class CommonWebSocketManager:
             # should be serviced promptly, without waiting for the normal
             # five-second polling interval. Keep the ordinary idle cadence.
             with self._lock:
+                # Clear while holding the same state lock used by callback
+                # enqueue. A concurrent enqueue after this point sets the event
+                # and cannot be lost between the pending check and wait.
+                self._recovery_wakeup.clear()
                 has_urgent_integrity_fault = bool(self._callback_integrity_fault_pending)
                 has_urgent_socket_failure = bool(self._socket_failure_callback_pending)
             wait_for = (
@@ -1858,7 +1864,8 @@ class CommonWebSocketManager:
                 if has_urgent_integrity_fault or has_urgent_socket_failure
                 else retry_delay
             )
-            if self._recovery_stop.wait(wait_for):
+            self._recovery_wakeup.wait(wait_for)
+            if self._recovery_stop.is_set():
                 return
             with self._lock:
                 if self._closed:
@@ -3524,6 +3531,7 @@ class CommonWebSocketManager:
         # reconcile lock; setting _closed first prevents its next socket from
         # being admitted once that operation returns.
         self._recovery_stop.set()
+        self._recovery_wakeup.set()
         with self._lock:
             self._closed = True
         with self._reconcile_lock:
