@@ -2923,12 +2923,19 @@ class CommonWebSocketManager:
                     # The first retirement owns close completion and its callback.
                     return Thread(name="common-ws-close-already-retired")
                 self._connect_retirement_claims.add(connect_identity)
+            transport_thread = getattr(socket, "_transport_thread", None)
             self._retired_transports[key] = {
                 "group": f"{group.mode}:{group.shard}",
                 "generation": generation,
                 "reason": reason,
                 "retired_at": time.time(),
+                "retired_at_monotonic": time.monotonic(),
                 "close_worker_alive": True,
+                "transport_thread_name": getattr(transport_thread, "name", None),
+                "transport_thread_ident": getattr(transport_thread, "ident", None),
+                "transport_thread_alive_at_retirement": bool(
+                    transport_thread is not None and transport_thread.is_alive()
+                ),
                 "last_observed_at": time.time(),
             }
         # Own completion exactly once across initial start and supervisor retries.
@@ -3651,17 +3658,18 @@ class CommonWebSocketManager:
                 )
         # All socket closes share one deadline. Per-socket timeouts must not
         # multiply shutdown latency when several shards are active.
-        shutdown_drain_deadline = time.monotonic() + 4.0
+        # The SDK close path can spend up to ~11s across close_connection,
+        # graceful join, abort, descriptor shutdown and final worker join.
+        # Start every shard close promptly, then drain all retirements against
+        # one deadline long enough for that bounded lower-level sequence.
+        shutdown_drain_deadline = time.monotonic() + 12.0
         for group, socket in socket_items:
-            remaining = max(0.05, shutdown_drain_deadline - time.monotonic())
-            # Keep close-worker startup bounded while preserving one global
-            # shutdown budget across all broker sessions.
             self._close_socket_tracked(
                 socket,
                 group=group,
                 generation=None,
                 reason="manager_shutdown",
-                timeout=min(2.0, remaining),
+                timeout=0.1,
             )
         # Wait for fast/near-boundary closes to finish and for their watchers
         # to release retirement records. A genuinely stuck transport remains
