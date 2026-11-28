@@ -3552,11 +3552,14 @@ class CommonWebSocketManager:
             self._retry_pending_retired_transport_closes(allow_closed=True)
             self._retry_pending_retired_transport_watchers()
             state = self.snapshot()
+            # Socket-operation workers have their own bounded wait above in
+            # close(). A late SDK operation remains separately observable, but
+            # must not hold the transport-retirement drain open: the retirement
+            # fence is specifically about close workers and watcher bookkeeping.
             unresolved = (
                 int(state.get("retired_transport_count", 0) or 0)
                 + int(state.get("retired_transport_close_start_pending_count", 0) or 0)
                 + int(state.get("retired_transport_watch_pending_count", 0) or 0)
-                + int(state.get("socket_operation_worker_count", 0) or 0)
             )
             if unresolved == 0:
                 return True
