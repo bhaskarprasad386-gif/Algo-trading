@@ -53,6 +53,7 @@ from app.market_data.routes import router as market_data_router, configure_share
 from app.scanner.weekly_swing_scanner import router as weekly_swing_scanner_router, weekly_swing_daily_refresh_loop, configure_page_update_callback as configure_weekly_swing_page_push, nifty200_scan_status
 
 from app.scanner.iv_skew_flip.runtime import IVSkewFlipRuntime
+from app.scanner.iv_skew_flip.broker_iv import AngelOneBrokerIVCache
 from app.scanner.iv_skew_flip.alerts import AlertCooldownStore
 from app.scanner.iv_skew_flip.angelone_option_snapshot import capture_angelone_option_snapshot
 from app.scanner.iv_skew_flip.basket_registry import summarize_basket_registry
@@ -788,6 +789,7 @@ def _start_iv_skew_flip_runtime():
             feed_manager=iv_feed_manager,
             shared_runner=shared_index_market_data_runner,
             close_feed_manager=False,
+            broker_iv_cache=AngelOneBrokerIVCache(client=MarketDataClient()),
         )
         runtime.set_page_update_callback(
             lambda snapshot: publish_page_update("iv-skew-flip", "PATCH", {"runtime": snapshot})
