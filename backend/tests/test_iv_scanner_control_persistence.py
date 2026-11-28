@@ -6,89 +6,29 @@ import sys
 from pathlib import Path
 
 
-def test_iv_scanner_control_persistence_failure_is_fail_closed(tmp_path) -> None:
+def test_iv_manual_control_endpoint_is_retired_without_side_effects(tmp_path) -> None:
     backend_dir = Path(__file__).resolve().parents[1]
     code = r"""
 from fastapi import HTTPException
 from app import main
 
+# Manual ON/OFF API is intentionally retired. It must fail closed and must
+# not touch persistence or runtime lifecycle functions.
 events = []
-def save(enabled):
-    events.append(("save", enabled))
-    if enabled is True and SAVE_FAIL_ON:
-        raise RuntimeError("DB_SECRET_SENTINEL database unavailable")
-    if enabled is False and SAVE_FAIL_OFF:
-        raise RuntimeError("DB_SECRET_SENTINEL database unavailable")
-    return enabled
+main._save_iv_scanner_enabled = lambda enabled: events.append(("save", enabled))
+main._start_iv_skew_flip_runtime = lambda: events.append(("start",))
+main._stop_iv_skew_flip_runtime = lambda: events.append(("stop",))
 
-def start():
-    events.append(("start",))
-    if START_FAIL:
-        raise RuntimeError("RUNNER_SECRET_SENTINEL runner startup failed")
-    return {"status": "RUNNING"}
-
-def stop():
-    events.append(("stop",))
-    return {"status": "STOPPED"}
-
-main._save_iv_scanner_enabled = save
-main._start_iv_skew_flip_runtime = start
-main._stop_iv_skew_flip_runtime = stop
-
-# ON persistence failure must not start the runner.
-SAVE_FAIL_ON = True
-SAVE_FAIL_OFF = False
-START_FAIL = False
 try:
     main.save_iv_skew_flip_config({"enabled": True})
 except HTTPException as exc:
-    assert exc.status_code == 503
-    assert exc.detail["reason"] == "RuntimeError"
-    assert "DB_SECRET_SENTINEL" not in str(exc.detail)
+    assert exc.status_code == 410
+    assert "automatic mode" in exc.detail.lower()
 else:
-    raise AssertionError("ON persistence failure must return HTTP 503")
-assert events == [("save", True)]
-events.clear()
+    raise AssertionError("manual IV configuration endpoint must be retired")
 
-# OFF persistence failure must not stop an already running runner.
-SAVE_FAIL_ON = False
-SAVE_FAIL_OFF = True
-try:
-    main.save_iv_skew_flip_config({"enabled": False})
-except HTTPException as exc:
-    assert exc.status_code == 503
-    assert exc.detail["reason"] == "RuntimeError"
-    assert "DB_SECRET_SENTINEL" not in str(exc.detail)
-else:
-    raise AssertionError("OFF persistence failure must return HTTP 503")
-assert events == [("save", False)]
-events.clear()
-
-# Failed startup must compensate the persisted ON state back to OFF.
-SAVE_FAIL_ON = False
-SAVE_FAIL_OFF = False
-START_FAIL = True
-try:
-    main.save_iv_skew_flip_config({"enabled": True})
-except HTTPException as exc:
-    assert exc.status_code == 503
-    assert exc.detail["reason"] == "RuntimeError"
-    assert "RUNNER_SECRET_SENTINEL" not in str(exc.detail)
-else:
-    raise AssertionError("runner startup failure must return HTTP 503")
-assert events == [("save", True), ("start",), ("save", False)]
-events.clear()
-
-# Successful ON/OFF transitions persist desired state before runtime changes.
-START_FAIL = False
-on_result = main.save_iv_skew_flip_config({"enabled": True})
-assert on_result["saved_enabled"] is True
-assert events == [("save", True), ("start",)]
-events.clear()
-off_result = main.save_iv_skew_flip_config({"enabled": False})
-assert off_result["saved_enabled"] is False
-assert events == [("save", False), ("stop",)]
-print("IV control persistence failure scenarios passed")
+assert events == []
+print("IV manual controls retirement passed")
 """
     env = os.environ.copy()
     env.update(
@@ -112,7 +52,7 @@ print("IV control persistence failure scenarios passed")
         check=False,
     )
     assert completed.returncode == 0, (
-        f"IV control persistence subprocess failed: "
+        f"IV manual-control retirement subprocess failed: "
         f"stdout={completed.stdout!r} stderr={completed.stderr!r}"
     )
-    assert "IV control persistence failure scenarios passed" in completed.stdout
+    assert "IV manual controls retirement passed" in completed.stdout
