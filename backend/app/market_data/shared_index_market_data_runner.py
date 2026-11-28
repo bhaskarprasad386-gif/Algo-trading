@@ -6,7 +6,7 @@ It publishes latest tick state for future strategy consumers. Application lifesp
 from __future__ import annotations
 
 from datetime import date, datetime
-from threading import RLock, Thread
+from threading import Event, RLock, Thread
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
@@ -231,6 +231,8 @@ class SharedIndexMarketDataRunner:
         self._run_generation = 0
         self._master_refresh_generation: int | None = None
         self._control_worker = SharedIndexControlWorker(self._process_control_batch)
+        self._control_worker_stopped = Event()
+        self._control_worker_stopped.set()
 
     @staticmethod
     def choose_nearest_future(rows: Iterable[dict], underlying: str, *, today: date | None = None) -> dict:
@@ -534,6 +536,19 @@ class SharedIndexMarketDataRunner:
             return tuple(dict(row) for row in self._rows)
 
     def start(self, instrument_rows: Iterable[dict] | None = None) -> dict:
+        # A previous OFF joins the control worker outside the runner lock (the
+        # worker may itself be waiting for that lock). Do not let a new ON
+        # overtake that join and reuse a still-alive worker thread.
+        with self._lock:
+            if self._running:
+                return self.snapshot()
+        if not self._control_worker_stopped.wait(timeout=5.0):
+            # The worker may have crossed its join deadline just before this
+            # check. Reconcile once; never clear the barrier while it is alive.
+            if self._control_worker.stop(timeout=0.0):
+                self._control_worker_stopped.set()
+            if not self._control_worker_stopped.is_set():
+                raise RuntimeError("shared index control worker has not stopped after OFF")
         with self._lock:
             if self._running:
                 return self.snapshot()
@@ -578,6 +593,7 @@ class SharedIndexMarketDataRunner:
                 self._running = True
                 self._started_at = datetime.now(IST).isoformat()
                 self._master_refresh_started_at = __import__("time").monotonic()
+                self._control_worker_stopped.clear()
                 self._control_worker.start(generation)
                 self.lifecycle.start_spot(spots)
                 self.lifecycle.start_futures(tuple(futures))
@@ -607,7 +623,8 @@ class SharedIndexMarketDataRunner:
                 self.lifecycle.stop()
             except Exception:
                 pass
-            self._control_worker.stop()
+            if self._control_worker.stop():
+                self._control_worker_stopped.set()
             return self.snapshot()
 
     def stop(self) -> dict:
@@ -629,7 +646,8 @@ class SharedIndexMarketDataRunner:
                 self._started_at = None
         # Join outside the runner lock: a control batch may be finishing a
         # registry operation that was serialized by that same lock.
-        self._control_worker.stop()
+        if self._control_worker.stop():
+            self._control_worker_stopped.set()
         return self.snapshot()
 
     def flush_rotations(self) -> tuple[str, ...]:
@@ -704,6 +722,11 @@ class SharedIndexMarketDataRunner:
             universe_complete=universe_complete, feed_groups=feed_groups,
         )
         live_data_ready = readiness["live_data_ready"]
+        control_worker = getattr(self, "_control_worker", None)
+        control_worker_snapshot = (
+            control_worker.snapshot() if control_worker is not None
+            else {"status": "UNAVAILABLE", "mailbox_capacity": 2, "pending_records": 0}
+        )
         return {
             "runner": "shared-index-market-data",
             "enabled": running,
@@ -721,7 +744,7 @@ class SharedIndexMarketDataRunner:
             "option_quote_coverage": readiness["option_quote_coverage"],
             "readiness_reason": readiness["readiness_reason"],
             "readiness": readiness,
-            "control_worker": self._control_worker.snapshot(),
+            "control_worker": control_worker_snapshot,
             "master_refresh": {
                 "last_success_at": master_last_refresh_at,
                 "last_error": master_refresh_error,
@@ -749,6 +772,11 @@ class SharedIndexMarketDataRunner:
             for symbol, record in spot_records.items()
         }
         spot_prices = {symbol: record.ltp for symbol, record in spot_records.items() if record.ltp is not None and now_ns - record.timestamp_ns <= self.state.max_age_ns}
+        control_worker = getattr(self, "_control_worker", None)
+        control_worker_snapshot = (
+            control_worker.snapshot() if control_worker is not None
+            else {"status": "UNAVAILABLE", "mailbox_capacity": 2, "pending_records": 0}
+        )
         enriched_records = self.derived_iv.decorate(self.state.records_snapshot(), spot_prices)
         aggregates = {}
         for underlying in LOCKED:
@@ -860,7 +888,7 @@ class SharedIndexMarketDataRunner:
             "option_quote_coverage": readiness["option_quote_coverage"],
             "readiness_reason": readiness["readiness_reason"],
             "readiness": readiness,
-            "control_worker": self._control_worker.snapshot(),
+            "control_worker": control_worker_snapshot,
             "master_refresh": master_refresh,
             "option_flow_aggregates": aggregates,
             "derived_iv_model": {"status": "DISABLED", "reason": "LOCAL_IV_CALCULATION_DISABLED", "iv_fields": "NULL", "volume_source": "broker_day_volume", "oi_source": "broker_open_interest"},

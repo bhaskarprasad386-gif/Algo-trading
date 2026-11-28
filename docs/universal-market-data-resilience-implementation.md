@@ -35,7 +35,7 @@ The Shared Runner's market-data callback now performs only:
 
 Instrument-master refresh admission, option bootstrap/selection, ATM rotation, expiry rollover, and futures rollover run on the dedicated `shared-index-control` worker. The mailbox stores at most one newest pending record per locked underlying; intermediate spot updates are coalesced. It cannot grow with tick rate.
 
-The control worker is generation-fenced across ON/OFF. OFF invalidates the active runner generation, tears down subscriptions under the runner lifecycle lock, then joins the worker outside that lock. A timed-out worker cannot publish into a later ON generation. Health/snapshot diagnostics expose mailbox capacity, pending symbols, coalesced updates, processed batches/records, failures, and last/max control-batch duration.
+The control worker is generation-fenced across ON/OFF. OFF invalidates the active runner generation, tears down subscriptions under the runner lifecycle lock, then joins the worker outside that lock. A stopped-event barrier prevents a subsequent ON from overtaking that join; if the worker misses its shutdown deadline, the runner fails closed and refuses to start a new worker until the old thread is confirmed stopped. Health/snapshot diagnostics expose mailbox capacity, pending symbols, coalesced updates, processed batches/records, failures, and last/max control-batch duration.
 
 Instrument-master refresh remains separately bounded and generation-fenced. It publishes only a complete validated master snapshot and preserves the last good snapshot on failure.
 

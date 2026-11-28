@@ -1261,7 +1261,7 @@ def test_runtime_withholds_iv_signal_when_any_selected_contract_is_stale():
             }
 
     runtime._option_feeds["NIFTY_WEEKLY"] = PartialFreshOptionFeed()
-    runtime._samplers["NIFTY_WEEKLY"] = object()
+    runtime._samplers["NIFTY_WEEKLY"] = type("Sampler", (), {"snapshot": lambda self: {"status": "WAITING"}})()
 
     assert runtime._evaluate_symbol(
         "NIFTY_WEEKLY", CHAIN_CONFIGS[0][1], now, now_ns,
