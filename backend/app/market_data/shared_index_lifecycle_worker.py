@@ -93,9 +93,13 @@ class SerializedLifecycleWorker:
             with self._lock:
                 self._thread = None
             if stop_error is not None:
+                # The runtime state is uncertain after a failed OFF. Keep
+                # admission permanently closed for this process generation.
                 raise stop_error
+            with self._lock:
+                self._closing = False
             return stopped
         finally:
-            with self._lock:
-                if self._thread is None or not self._thread.is_alive():
-                    self._closing = False
+            # A timed-out join or failed stop is fail-closed. Only the clean
+            # stop path above reopens admission for a later lifespan.
+            pass
