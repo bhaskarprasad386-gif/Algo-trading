@@ -25,6 +25,7 @@ class _Manager:
         {"retired_transport_count": 1},
         {"retired_transport_close_start_pending_count": 1},
         {"retired_transport_count": 1, "retired_transport_watch_pending_count": 1},
+        {"socket_operation_worker_count": 1},
     ],
 )
 def test_shared_manager_is_not_released_while_transport_retirement_is_unresolved(
