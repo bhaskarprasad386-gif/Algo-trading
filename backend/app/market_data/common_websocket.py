@@ -2326,6 +2326,7 @@ class CommonWebSocketManager:
                 if (not self._closed and self._sockets.get(group) is socket
                         and self._socket_generation.get(group) == generation):
                     self._callback_integrity_fault_pending[group] = (socket, generation)
+            self._recovery_wakeup.set()
             self._ensure_recovery_supervisor()
 
     def _is_current_data_generation(self, group: SocketGroup, generation: int | None) -> bool:
