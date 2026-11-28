@@ -27,10 +27,15 @@ with main.SessionLocal() as db:
     assert setting.enabled is True
     assert marker.id == 1
 
-# A later explicit operator OFF must remain OFF, including on subsequent reads.
-assert main._save_iv_scanner_enabled(False) is False
-assert main._get_iv_scanner_enabled() is False
-print("IV default-ON migration and explicit OFF preservation passed")
+# Even if a legacy writer reintroduces OFF, the automatic control repairs it.
+with main.SessionLocal() as db:
+    setting = db.get(IVScannerControl, 1)
+    setting.enabled = False
+    db.commit()
+assert main._get_iv_scanner_enabled() is True
+with main.SessionLocal() as db:
+    assert db.get(IVScannerControl, 1).enabled is True
+print("IV always-ON migration and legacy OFF repair passed")
 """
     env = os.environ.copy()
     env.update({
@@ -55,4 +60,4 @@ print("IV default-ON migration and explicit OFF preservation passed")
         f"IV default migration subprocess failed: "
         f"stdout={completed.stdout!r} stderr={completed.stderr!r}"
     )
-    assert "IV default-ON migration and explicit OFF preservation passed" in completed.stdout
+    assert "IV always-ON migration and legacy OFF repair passed" in completed.stdout
