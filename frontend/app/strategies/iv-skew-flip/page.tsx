@@ -929,7 +929,7 @@ export default function IVSkewFlipPage() {
       </div>
       <div className="rounded-lg border-2 border-slate-300 dark:border-slate-600 px-3 py-2 text-xs theme-muted">Expiry selection date: {String(bank.expiry_selection?.selection_date??"—")} • Selected: {String(bank.expiry_selection?.selected_expiry??"—")} • Master candidates: {Array.isArray(bank.expiry_selection?.available_expiries)?(bank.expiry_selection!.available_expiries as string[]).join(", "):"Waiting for instrument-master diagnostics"} • Contracts: {fmt(bank.universe_tokens,0)} • Last broker snapshot: {sampleTime(bankDurableHistory?.snapshot_at_ns)}</div>
       <OptionChain title="BANKNIFTY Monthly" chain={bank} spot={bankSpot} strikeRadius={5}/>
-      <IndexOiVolumeChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" chain={bank} spot={bankSpot} strikeRadius={3}/>
+      <IndexOiVolumeChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" chain={bank} spot={bankSpot} strikeRadius={5}/>
       <IndexSpotIvChart symbol="BANKNIFTY" title="BANKNIFTY Monthly" history={bankChartHistory} spot={bankSpot} chain={bank} strikeRadius={3}/>
       <SignalSummary title="BANKNIFTY" chain={bank} spot={bankSpot}/>
       <div className="rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface-2 p-3 space-y-2">
