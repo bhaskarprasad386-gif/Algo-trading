@@ -60,3 +60,18 @@ def test_lifecycle_worker_propagates_operation_errors_and_can_restart():
         assert await worker.close(lambda: "stopped-again") == "stopped-again"
 
     asyncio.run(scenario())
+
+def test_lifecycle_worker_fails_closed_when_stop_raises():
+    async def scenario():
+        worker = SerializedLifecycleWorker()
+
+        def fail_stop():
+            raise RuntimeError("stop failed")
+
+        with pytest.raises(RuntimeError, match="stop failed"):
+            await worker.close(fail_stop)
+
+        with pytest.raises(RuntimeError, match="closing"):
+            await worker.run(lambda: "must-not-run")
+
+    asyncio.run(scenario())
