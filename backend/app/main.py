@@ -168,8 +168,7 @@ async def _iv_scanner_recovery_loop() -> None:
     """Retry a persisted IV Scanner ON state after transient startup failures.
 
     This loop never relaxes the
-    instrument snapshot freshness/integrity checks. An explicitly saved OFF
-    state is always respected.
+    instrument snapshot freshness/integrity checks. The IV scanner is permanently auto-enabled; no operator ON/OFF state exists.
     """
     retry_delay = 0.0
     max_retry_delay = 60.0
@@ -726,40 +725,30 @@ def runtime_diagnostic_errors(limit: int = 50):
 
 
 def _get_iv_scanner_enabled() -> bool:
-    """Apply the default-ON rollout once, then preserve subsequent operator ON/OFF choices."""
+    """IV scanner is always enabled; repair any legacy OFF row on read."""
     with _iv_default_on_migration_lock:
         with SessionLocal() as db:
             marker = db.query(IVScannerControlMigration).filter_by(
                 migration_key="iv_scanner_default_on_2026_11"
             ).one_or_none()
             setting = db.get(IVScannerControl, 1)
+            changed = False
+            if setting is None:
+                setting = IVScannerControl(id=1, enabled=True)
+                db.add(setting)
+                changed = True
+            elif not setting.enabled:
+                setting.enabled = True
+                setting.updated_at = datetime.now(timezone.utc)
+                changed = True
             if marker is None:
-                if setting is None:
-                    setting = IVScannerControl(id=1, enabled=True)
-                    db.add(setting)
-                elif not setting.enabled:
-                    # One-time rollout: replace the legacy saved-OFF default.
-                    # Once marked, later operator OFF choices remain authoritative.
-                    setting.enabled = True
-                    setting.updated_at = datetime.now(timezone.utc)
                 db.add(IVScannerControlMigration(
                     id=1, migration_key="iv_scanner_default_on_2026_11"
                 ))
+                changed = True
+            if changed:
                 db.commit()
-            return bool(setting.enabled) if setting is not None else True
-
-
-def _save_iv_scanner_enabled(enabled: bool) -> bool:
-    with SessionLocal() as db:
-        setting = db.get(IVScannerControl, 1)
-        if setting is None:
-            setting = IVScannerControl(id=1, enabled=bool(enabled))
-            db.add(setting)
-        else:
-            setting.enabled = bool(enabled)
-            setting.updated_at = datetime.now(timezone.utc)
-        db.commit()
-    return bool(enabled)
+            return True
 
 
 def _start_iv_skew_flip_runtime():
