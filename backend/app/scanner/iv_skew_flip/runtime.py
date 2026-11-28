@@ -1,7 +1,7 @@
 """Opt-in runtime wiring for the isolated IV Skew / IV Flip market-data path."""
 from __future__ import annotations
 
-from datetime import datetime, time as datetime_time, timedelta
+from datetime import date, datetime, time as datetime_time, timedelta
 import json
 from threading import Event, RLock, Thread
 from time import monotonic, time_ns
