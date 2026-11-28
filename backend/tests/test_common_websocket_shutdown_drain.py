@@ -43,3 +43,31 @@ def test_shutdown_drain_times_out_without_releasing_retirement_fence(monkeypatch
 
     assert manager._drain_shutdown_retirements(time.monotonic() + 0.02) is False
     assert manager.snapshot()["retired_transport_count"] == 1
+
+
+def test_retired_transport_snapshot_includes_transport_identity(monkeypatch):
+    from threading import Event, Thread
+    from app.market_data.common_websocket import SocketGroup
+
+    manager = CommonWebSocketManager()
+    release = Event()
+    transport = Thread(target=release.wait, name="test-angel-transport", daemon=True)
+    transport.start()
+
+    class Socket:
+        _transport_thread = transport
+
+    monkeypatch.setattr(manager, "_start_retired_transport_close", lambda _key, _record: True)
+    manager._close_socket_tracked(
+        Socket(), group=SocketGroup(mode=3, shard=1), generation=7,
+        reason="test_retirement", timeout=0.1,
+    )
+    retired = manager.snapshot()["retired_transports"][0]
+    assert retired["group"] == "3:1"
+    assert retired["generation"] == 7
+    assert retired["transport_thread_name"] == "test-angel-transport"
+    assert retired["transport_thread_ident"] == transport.ident
+    assert retired["transport_thread_alive_at_retirement"] is True
+
+    release.set()
+    transport.join(timeout=1.0)
