@@ -208,6 +208,8 @@ class IVSharedRunnerOptionFeedAdapter:
         self._lock = RLock()
         self._universe = None
         self._started = False
+        self._oi_by_token: dict[str, int] = {}
+        self._oi_timestamp_by_token: dict[str, int] = {}
 
     def _active_descriptors(self) -> tuple[Any, ...]:
         lifecycle = getattr(self.shared_runner, "lifecycle", None)
@@ -267,6 +269,8 @@ class IVSharedRunnerOptionFeedAdapter:
             )
         with self._lock:
             self._universe = universe
+            self._oi_by_token.clear()
+            self._oi_timestamp_by_token.clear()
             self._started = True
         return {
             "status": "ATTACHED",
@@ -335,6 +339,18 @@ class IVSharedRunnerOptionFeedAdapter:
             timestamp = row["timestamp_ns"]
             if now - timestamp < -1_000_000_000 or now - timestamp > self.max_age_ns:
                 continue
+            token = str(contract.token)
+            incoming_oi = row.get("oi")
+            valid_oi = (
+                isinstance(incoming_oi, int) and not isinstance(incoming_oi, bool)
+                and incoming_oi >= 0
+            )
+            with self._lock:
+                if valid_oi:
+                    self._oi_by_token[token] = incoming_oi
+                    self._oi_timestamp_by_token[token] = timestamp
+                oi_value = self._oi_by_token.get(token)
+                oi_timestamp_ns = self._oi_timestamp_by_token.get(token)
             result.append(OptionQuote(
                 underlying=universe.underlying,
                 expiry=universe.expiry,
@@ -344,9 +360,10 @@ class IVSharedRunnerOptionFeedAdapter:
                 ltp=row.get("ltp"),
                 bid=row.get("bid"),
                 ask=row.get("ask"),
-                oi=row.get("oi"),
+                oi=oi_value,
+                oi_timestamp_ns=oi_timestamp_ns,
                 volume=row.get("volume"),
-                token=str(contract.token),
+                token=token,
                 bid_qty=row.get("bid_qty"),
                 ask_qty=row.get("ask_qty"),
             ))
