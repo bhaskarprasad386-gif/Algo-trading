@@ -6,7 +6,7 @@ from typing import Any
 
 from .engine import (
     OptionQuote, ScannerConfig, evaluate_skew, evaluate_flip,
-    evaluate_gamma_blast, confluence,
+    evaluate_gamma_blast, confluence, Signal,
 )
 
 
@@ -69,7 +69,7 @@ def evaluate_iv_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
             "threshold": float(config.gamma_min_oi_drop_pct), "status": "WAITING",
             "reason": "no confirmed five-minute OI reference with premium expansion",
         }
-    combined = confluence((skew, flip, type("SignalView", (), gamma_signal)()), required=2)
+    combined = confluence((skew, flip, Signal(**gamma_signal)), required=2)
     def serialize(signal):
         return {
             "strategy": signal.strategy, "direction": signal.direction,
