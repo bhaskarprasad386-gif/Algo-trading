@@ -32,7 +32,7 @@ from app.models.broker_replay_eligibility_audit import BrokerReplayEligibilityAu
 from app.models.broker_order_event import BrokerOrderEventRecord  # noqa: F401 - register durable broker callback event table
 from app.models.execution_intent import ExecutionIntentRecord, ExecutionLegRecord, ExecutionIntentEventRecord, ExecutionFillRecord, ExecutionBrokerOrderRecord  # noqa: F401 - register durable execution and broker order identity tables
 from app.models.broker_reconciliation import BrokerReconciliationRecord  # noqa: F401 - register durable reconciliation evidence
-from app.models.iv_scanner_control import IVScannerControl
+from app.models.iv_scanner_control import IVScannerControl, IVScannerControlMigration
 from app.models.iv_option_observation import IVOptionObservation
 from app.models.iv_early_entry_alert import IVEarlyEntryAlertEvent, IVEarlyEntryCooldown  # noqa: F401 - register durable IV early-entry alert tables
 from app.models.iv_early_entry_notification import IVEarlyEntryNotificationOutbox  # noqa: F401 - register alert notification outbox
@@ -91,6 +91,7 @@ provider_quote_parity_worker: BoundedQuoteParityWorker | None = None
 provider_readiness_bridge = ProviderReadinessBridge()
 early_impulse_observer.configure_readiness(provider_readiness_bridge)
 iv_skew_flip_runtime: IVSkewFlipRuntime | None = None
+_iv_default_on_migration_lock = threading.Lock()
 _iv_skew_flip_runtime_lock = threading.RLock()
 def _shared_runner_feed_snapshot() -> dict:
     """Read broker feed diagnostics from the sole Shared Runner owner."""
@@ -725,10 +726,27 @@ def runtime_diagnostic_errors(limit: int = 50):
 
 
 def _get_iv_scanner_enabled() -> bool:
-    """Default IV Scanner ON on first install; preserve an explicitly saved OFF."""
-    with SessionLocal() as db:
-        setting = db.get(IVScannerControl, 1)
-        return bool(setting.enabled) if setting is not None else True
+    """Apply the default-ON rollout once, then preserve subsequent operator ON/OFF choices."""
+    with _iv_default_on_migration_lock:
+        with SessionLocal() as db:
+            marker = db.query(IVScannerControlMigration).filter_by(
+                migration_key="iv_scanner_default_on_2026_11"
+            ).one_or_none()
+            setting = db.get(IVScannerControl, 1)
+            if marker is None:
+                if setting is None:
+                    setting = IVScannerControl(id=1, enabled=True)
+                    db.add(setting)
+                elif not setting.enabled:
+                    # One-time rollout: replace the legacy saved-OFF default.
+                    # Once marked, later operator OFF choices remain authoritative.
+                    setting.enabled = True
+                    setting.updated_at = datetime.now(timezone.utc)
+                db.add(IVScannerControlMigration(
+                    id=1, migration_key="iv_scanner_default_on_2026_11"
+                ))
+                db.commit()
+            return bool(setting.enabled) if setting is not None else True
 
 
 def _save_iv_scanner_enabled(enabled: bool) -> bool:
@@ -907,8 +925,12 @@ def iv_skew_flip_status():
     enabled = _get_iv_scanner_enabled()
     with _iv_skew_flip_runtime_lock:
         runtime = None if iv_skew_flip_runtime is None else iv_skew_flip_runtime.snapshot()
+    shared_runner = shared_index_market_data_runner.health_snapshot()
     return {"status": "ok", "desired_state": "ON" if enabled else "OFF", "saved_enabled": enabled,
             "runner_status": runtime.get("status", "STOPPED") if runtime else "STOPPED",
+            "shared_runner": shared_runner,
+            "shared_runner_connected": bool(shared_runner.get("enabled")),
+            "shared_runner_ready": bool(shared_runner.get("enabled") and shared_runner.get("initial_option_bootstrap_done")),
             "runtime": runtime, "orders_enabled": False}
 
 
