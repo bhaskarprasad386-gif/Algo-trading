@@ -6,7 +6,7 @@ admission run on this worker, never on the broker callback thread.
 """
 from __future__ import annotations
 
-from threading import Event, RLock, Thread
+from threading import Event, RLock, Thread, current_thread
 from time import monotonic
 from typing import Any, Callable
 
@@ -45,7 +45,13 @@ class SharedIndexControlWorker:
                 daemon=True,
             )
             self._thread = thread
-            thread.start()
+            try:
+                thread.start()
+            except Exception:
+                self._thread = None
+                self._generation = None
+                self._stop.set()
+                raise
 
     def submit(self, underlying: str, record: Any, generation: int) -> bool:
         symbol = str(underlying or "").strip().upper()
@@ -98,7 +104,7 @@ class SharedIndexControlWorker:
             self._pending.clear()
             self._wakeup.set()
             thread = self._thread
-        if thread is not None:
+        if thread is not None and thread is not current_thread() and thread.ident is not None:
             thread.join(timeout=max(0.0, float(timeout)))
         stopped = thread is None or not thread.is_alive()
         with self._lock:
