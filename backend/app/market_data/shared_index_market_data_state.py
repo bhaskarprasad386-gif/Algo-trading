@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from threading import RLock
-from time import time_ns
+from time import monotonic_ns, time_ns
 from typing import Any, Callable
 from collections import deque
 
@@ -36,6 +36,13 @@ class SharedIndexMarketDataState:
         self._out_of_order = 0
         self._capacity_dropped = 0
         self._publish_errors = 0
+        # Stage-level callback timings identify cold-start/cache contention without
+        # changing the state-lock publication ordering.
+        self._callback_timing = {
+            "cache_publish_count": 0, "cache_publish_total_ns": 0,
+            "cache_publish_max_ns": 0, "consumer_publish_count": 0,
+            "consumer_publish_total_ns": 0, "consumer_publish_max_ns": 0,
+        }
         self._oi_history: dict[str, deque[tuple[int, int]]] = {}
         self._volume_history: dict[str, deque[tuple[int, int]]] = {}
         self._tick_history: dict[str, deque[tuple[int, float | None, float | None, float | None, float | None, float | None]]] = {}
@@ -99,12 +106,27 @@ class SharedIndexMarketDataState:
             # Keep cache publication ordered with universe retirement. Otherwise
             # retain_instruments() can delete a retired key while this accepted
             # tick is outside the lock, and the delayed cache write resurrects it.
+            cache_started_ns = monotonic_ns()
             put_market_data_record(record)
+            cache_elapsed_ns = max(0, monotonic_ns() - cache_started_ns)
+            self._callback_timing["cache_publish_count"] += 1
+            self._callback_timing["cache_publish_total_ns"] += cache_elapsed_ns
+            self._callback_timing["cache_publish_max_ns"] = max(
+                self._callback_timing["cache_publish_max_ns"], cache_elapsed_ns
+            )
+            publish_started_ns = monotonic_ns()
             try:
                 self._publish(record)
             except Exception:
                 # Consumer/UI publication must not break broker tick processing.
                 self._publish_errors += 1
+            finally:
+                publish_elapsed_ns = max(0, monotonic_ns() - publish_started_ns)
+                self._callback_timing["consumer_publish_count"] += 1
+                self._callback_timing["consumer_publish_total_ns"] += publish_elapsed_ns
+                self._callback_timing["consumer_publish_max_ns"] = max(
+                    self._callback_timing["consumer_publish_max_ns"], publish_elapsed_ns
+                )
         return True
 
 
@@ -348,4 +370,5 @@ class SharedIndexMarketDataState:
             "capacity_ticks_dropped": capacity_dropped,
             "retired_contract_ticks_dropped": retired_dropped,
             "publish_callback_errors": publish_errors,
+            "callback_stage_timing": dict(self._callback_timing),
         }
