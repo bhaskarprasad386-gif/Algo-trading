@@ -247,7 +247,7 @@ def test_manager_shutdown_uses_tracked_close_and_preserves_socket_group():
             "group": group,
             "generation": None,
             "reason": "manager_shutdown",
-            "timeout": 2.0,
+            "timeout": 0.1,
         },
     )]
 
