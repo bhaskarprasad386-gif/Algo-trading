@@ -408,6 +408,9 @@ class _WakeAfterOneSupervisorPass:
     def __init__(self, stop_event):
         self.calls = 0
         self.stop_event = stop_event
+    def set(self):
+        # Closing the manager must also release the supervisor test loop.
+        self.stop_event.set()
     def clear(self):
         # The supervisor clears its wakeup signal before each wait.
         pass
