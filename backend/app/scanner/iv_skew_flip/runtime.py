@@ -1302,7 +1302,7 @@ class IVSkewFlipRuntime:
             "early_entry_alerts": self._early_entry_alerts.snapshot("NIFTY"),
             "early_entry_alerts_by_underlying": self._early_entry_alerts.snapshot_all(),
             "telegram_delivery": dict(self._telegram_delivery),
-            "telegram_configured": bool(settings.TELEGRAM_ENABLED and str(settings.TELEGRAM_BOT_TOKEN or "").strip() and str(settings.TELEGRAM_CHAT_ID or "").strip()),
+            "telegram_configured": bool(settings.TELEGRAM_ENABLED and str(settings.TELEGRAM_BOT_TOKEN or "").strip() and self._telegram_chat_id()),
             "telegram_configuration": {
                 "enabled": bool(settings.TELEGRAM_ENABLED),
                 "bot_token_present": bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip()),
