@@ -233,8 +233,16 @@ def test_readiness_reason_identifies_stale_core_feed_and_bootstrap_state() -> No
     pending = _readiness_from_groups(
         running=True, bootstrap_done=False, universe_complete=True, feed_groups=groups,
     )
-    assert pending["core_market_data_ready"] is False
+    assert pending["core_market_data_ready"] is True
+    assert pending["live_data_ready"] is False
     assert pending["readiness_reason"] == "OPTION_BOOTSTRAP_PENDING"
+
+    incomplete = _readiness_from_groups(
+        running=True, bootstrap_done=True, universe_complete=False, feed_groups=groups,
+    )
+    assert incomplete["core_market_data_ready"] is True
+    assert incomplete["live_data_ready"] is False
+    assert incomplete["readiness_reason"] == "UNIVERSE_INCOMPLETE"
 
     stopped = _readiness_from_groups(
         running=False, bootstrap_done=True, universe_complete=True, feed_groups=groups,
