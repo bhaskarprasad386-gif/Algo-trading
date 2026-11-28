@@ -3541,6 +3541,46 @@ class CommonWebSocketManager:
                 "recovery_backoff_last_error": self._recovery_backoff_last_error,
             }
 
+    def _drain_shutdown_retirements(self, deadline: float) -> bool:
+        """Retry retirement bookkeeping and wait only until the shared shutdown deadline.
+
+        A close worker that remains alive at the deadline deliberately keeps the
+        retired-session fence in place. The caller can then retain the singleton
+        and a later close() call can retry pending watcher/worker starts.
+        """
+        while True:
+            self._retry_pending_retired_transport_closes(allow_closed=True)
+            self._retry_pending_retired_transport_watchers()
+            state = self.snapshot()
+            unresolved = (
+                int(state.get("retired_transport_count", 0) or 0)
+                + int(state.get("retired_transport_close_start_pending_count", 0) or 0)
+                + int(state.get("retired_transport_watch_pending_count", 0) or 0)
+                + int(state.get("socket_operation_worker_count", 0) or 0)
+            )
+            if unresolved == 0:
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                app_logger.warning(
+                    "Common feed shutdown drain deadline expired; retired session remains fenced "
+                    "state=%s",
+                    {
+                        "retired_transport_count": state.get("retired_transport_count", 0),
+                        "retired_transport_close_start_pending_count": state.get(
+                            "retired_transport_close_start_pending_count", 0
+                        ),
+                        "retired_transport_watch_pending_count": state.get(
+                            "retired_transport_watch_pending_count", 0
+                        ),
+                        "socket_operation_worker_count": state.get(
+                            "socket_operation_worker_count", 0
+                        ),
+                    },
+                )
+                return False
+            time.sleep(min(0.05, remaining))
+
     def close(self) -> None:
         # Publish the shutdown fence before waiting for reconciliation. A
         # recovery pass may currently be inside broker I/O while holding the
@@ -3606,23 +3646,25 @@ class CommonWebSocketManager:
                     "Common feed shutdown closing socket with broker operation still in flight group=%s:%s",
                     group.mode, group.shard,
                 )
+        # All socket closes share one deadline. Per-socket timeouts must not
+        # multiply shutdown latency when several shards are active.
+        shutdown_drain_deadline = time.monotonic() + 4.0
         for group, socket in socket_items:
-            # Shutdown must retain visibility of close calls that outlive the
-            # bounded wait. Otherwise the manager can return while an orphaned
-            # SDK close worker is still running with no retirement diagnostic.
+            remaining = max(0.05, shutdown_drain_deadline - time.monotonic())
+            # Keep close-worker startup bounded while preserving one global
+            # shutdown budget across all broker sessions.
             self._close_socket_tracked(
                 socket,
                 group=group,
                 generation=None,
                 reason="manager_shutdown",
-                timeout=2.0,
+                timeout=min(2.0, remaining),
             )
-        # One final bounded worker-start retry is allowed after shutdown has
-        # stopped the supervisor. If thread creation still fails, keep the
-        # pending task and retirement diagnostics rather than releasing the fence.
-        self._retry_pending_retired_transport_closes(allow_closed=True)
-        self._retry_pending_retired_transport_watchers()
+        # Wait for fast/near-boundary closes to finish and for their watchers
+        # to release retirement records. A genuinely stuck transport remains
+        # visible and continues to block replacement-manager admission.
         # Wait for callbacks admitted before closure; new OPEN/ERROR callbacks
         # are rejected after _closed is set. Retired CLOSED remains admissible.
         with self._transport_observer_dispatch_lock:
             pass
+        self._drain_shutdown_retirements(shutdown_drain_deadline)
