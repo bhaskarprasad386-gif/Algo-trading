@@ -108,6 +108,13 @@ class AngelOneBrokerIVCache:
                 cache_key = (value.underlying, value.expiry, value.strike, value.option_type, value.token)
                 staged[cache_key] = value
             with self._lock:
+                current = self._universes.get(stream_id)
+                if (
+                    self._stop.is_set() or current is None
+                    or str(current.underlying).upper() != key[0]
+                    or str(current.expiry) != key[1]
+                ):
+                    return
                 # Replace the current expiry snapshot atomically. Never retain
                 # missing contracts from a prior REST response as current data.
                 self._cache = {
