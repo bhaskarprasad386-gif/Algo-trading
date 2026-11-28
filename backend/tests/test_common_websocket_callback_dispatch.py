@@ -405,11 +405,18 @@ class _StopAfterRecovery:
         return self.stopped
     def wait(self, _timeout):
         self.calls += 1
-        return self.stopped or self.calls > 1
+        # Let the first supervisor pass run, then stop it at the next wait.
+        if self.calls > 1:
+            self.stopped = True
+        return self.stopped
 
 
 def _run_one_recovery_supervisor_iteration(manager):
-    manager._recovery_stop = _StopAfterRecovery()
+    stop_after_pass = _StopAfterRecovery()
+    manager._recovery_stop = stop_after_pass
+    # The supervisor now waits on a distinct wakeup event; share the controlled
+    # test double so this helper deterministically exits after one full pass.
+    manager._recovery_wakeup = stop_after_pass
     manager._recovery_interval_seconds = 0.01
     manager._recovery_backoff_max_seconds = 0.05
     manager.registry.subscriptions = lambda: [object()]
