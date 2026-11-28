@@ -943,8 +943,14 @@ def test_socket_failure_callback_handoff_returns_during_atomic_subscription_rota
     assert failure_finished.is_set()
     assert {sub.key for sub in manager.registry.subscriptions()} == {first.key, second.key}
 
-    deadline = time.monotonic() + 1.0
-    while manager.snapshot()["failure_recovery_worker_active"] and time.monotonic() < deadline:
+    # The SDK callback only enqueues the failure. A false worker-active
+    # value before the supervisor consumes that event is not completion; wait
+    # for both generation invalidation and recovery admission to drain.
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        state = manager.snapshot()
+        if group not in manager._sockets and not state["failure_recovery_worker_active"]:
+            break
         time.sleep(0.005)
     assert group not in manager._sockets
     assert manager.snapshot()["failure_recovery_worker_active"] is False

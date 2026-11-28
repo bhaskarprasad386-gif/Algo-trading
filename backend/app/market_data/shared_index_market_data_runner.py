@@ -6,7 +6,7 @@ It publishes latest tick state for future strategy consumers. Application lifesp
 from __future__ import annotations
 
 from datetime import date, datetime
-from threading import RLock, Thread
+from threading import Event, RLock, Thread
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
@@ -19,6 +19,7 @@ from .shared_index_spot_resolver import resolve_locked_index_spot_descriptors
 from .shared_index_option_selection import _parse_expiry
 from .shared_index_expiry import classify_index_expiry_dates
 from .shared_index_derived_iv import SharedIndexDerivedIV
+from .shared_index_control_worker import SharedIndexControlWorker
 
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -229,6 +230,9 @@ class SharedIndexMarketDataRunner:
         self._master_refresh_error: str | None = None
         self._run_generation = 0
         self._master_refresh_generation: int | None = None
+        self._control_worker = SharedIndexControlWorker(self._process_control_batch)
+        self._control_worker_stopped = Event()
+        self._control_worker_stopped.set()
 
     @staticmethod
     def choose_nearest_future(rows: Iterable[dict], underlying: str, *, today: date | None = None) -> dict:
@@ -480,40 +484,47 @@ class SharedIndexMarketDataRunner:
         # Cache entries for retired strikes must not consume the 50-key cap.
         self.state.retain_instruments(self.lifecycle.active_keys())
 
+    def _process_control_batch(self, records: dict[str, Any], generation: int) -> None:
+        """Run contract selection and subscription maintenance away from broker callbacks."""
+        with self._lock:
+            if not self._running or generation != self._run_generation:
+                return
+        # Instrument-master I/O is admitted from the control plane only. The
+        # refresh itself has its own generation fence and bounded retry cadence.
+        self._schedule_master_refresh()
+        self._bootstrap_options()
+        with self._lock:
+            if not self._running or generation != self._run_generation or not self._bootstrap_options_done:
+                return
+            for underlying in LOCKED:
+                record = records.get(underlying)
+                if record is None:
+                    continue
+                if self.rotation.on_record(record):
+                    self._sync_state_universe()
+            if self.rotation.flush_due():
+                self._sync_state_universe()
+            self._check_option_expiry_rollover()
+            self._check_futures_rollover()
+
     def _on_record(self, record) -> None:
+        """Keep the broker callback bounded to validation, state update and mailbox publish."""
         with self._lock:
             if not self._running:
                 return
             accepted = self.state.on_record(record)
-        if not accepted:
-            return
-        if getattr(record, "instrument_type", None) is not None and getattr(record.instrument_type, "value", "") == "index":
+            if not accepted:
+                return
+            if getattr(record, "instrument_type", None) is None or getattr(record.instrument_type, "value", "") != "index":
+                return
             underlying = str(getattr(record, "underlying", "") or "").strip().upper()
             if underlying not in LOCKED or record.ltp is None:
                 return
-            with self._lock:
-                running = self._running
-                if running:
-                    self._spot_records[underlying] = record
-            if not running:
-                return
-            # Instrument-master recovery must not depend on option bootstrap:
-            # missing/stale contracts can otherwise prevent refresh indefinitely.
-            self._schedule_master_refresh()
-            self._bootstrap_options()
-            with self._lock:
-                # Stop and rotate are serialized; no subscription can be added
-                # after an explicit OFF lifecycle completes.
-                if not self._running or not self._bootstrap_options_done:
-                    return
-                rotated = self.rotation.on_record(record)
-                if rotated:
-                    self._sync_state_universe()
-                flushed = self.rotation.flush_due()
-                if flushed:
-                    self._sync_state_universe()
-                self._check_option_expiry_rollover()
-                self._check_futures_rollover()
+            self._spot_records[underlying] = record
+            generation = self._run_generation
+        # The mailbox is bounded to one latest record per locked underlying.
+        # No instrument-master, resolver, registry or subscription work runs here.
+        self._control_worker.submit(underlying, record, generation)
 
     def instrument_rows_snapshot(self) -> tuple[dict, ...]:
         """Return a read-only copy of the instrument master already loaded by this runner.
@@ -525,6 +536,19 @@ class SharedIndexMarketDataRunner:
             return tuple(dict(row) for row in self._rows)
 
     def start(self, instrument_rows: Iterable[dict] | None = None) -> dict:
+        # A previous OFF joins the control worker outside the runner lock (the
+        # worker may itself be waiting for that lock). Do not let a new ON
+        # overtake that join and reuse a still-alive worker thread.
+        with self._lock:
+            if self._running:
+                return self.snapshot()
+        if not self._control_worker_stopped.wait(timeout=5.0):
+            # The worker may have crossed its join deadline just before this
+            # check. Reconcile once; never clear the barrier while it is alive.
+            if self._control_worker.stop(timeout=0.0):
+                self._control_worker_stopped.set()
+            if not self._control_worker_stopped.is_set():
+                raise RuntimeError("shared index control worker has not stopped after OFF")
         with self._lock:
             if self._running:
                 return self.snapshot()
@@ -569,6 +593,8 @@ class SharedIndexMarketDataRunner:
                 self._running = True
                 self._started_at = datetime.now(IST).isoformat()
                 self._master_refresh_started_at = __import__("time").monotonic()
+                self._control_worker_stopped.clear()
+                self._control_worker.start(generation)
                 self.lifecycle.start_spot(spots)
                 self.lifecycle.start_futures(tuple(futures))
                 self._futures_expiries = future_expiries
@@ -597,6 +623,8 @@ class SharedIndexMarketDataRunner:
                 self.lifecycle.stop()
             except Exception:
                 pass
+            if self._control_worker.stop():
+                self._control_worker_stopped.set()
             return self.snapshot()
 
     def stop(self) -> dict:
@@ -616,6 +644,10 @@ class SharedIndexMarketDataRunner:
                 self.lifecycle.stop()
             finally:
                 self._started_at = None
+        # Join outside the runner lock: a control batch may be finishing a
+        # registry operation that was serialized by that same lock.
+        if self._control_worker.stop():
+            self._control_worker_stopped.set()
         return self.snapshot()
 
     def flush_rotations(self) -> tuple[str, ...]:
@@ -690,6 +722,11 @@ class SharedIndexMarketDataRunner:
             universe_complete=universe_complete, feed_groups=feed_groups,
         )
         live_data_ready = readiness["live_data_ready"]
+        control_worker = getattr(self, "_control_worker", None)
+        control_worker_snapshot = (
+            control_worker.snapshot() if control_worker is not None
+            else {"status": "UNAVAILABLE", "mailbox_capacity": 2, "pending_records": 0}
+        )
         return {
             "runner": "shared-index-market-data",
             "enabled": running,
@@ -707,6 +744,7 @@ class SharedIndexMarketDataRunner:
             "option_quote_coverage": readiness["option_quote_coverage"],
             "readiness_reason": readiness["readiness_reason"],
             "readiness": readiness,
+            "control_worker": control_worker_snapshot,
             "master_refresh": {
                 "last_success_at": master_last_refresh_at,
                 "last_error": master_refresh_error,
@@ -734,6 +772,11 @@ class SharedIndexMarketDataRunner:
             for symbol, record in spot_records.items()
         }
         spot_prices = {symbol: record.ltp for symbol, record in spot_records.items() if record.ltp is not None and now_ns - record.timestamp_ns <= self.state.max_age_ns}
+        control_worker = getattr(self, "_control_worker", None)
+        control_worker_snapshot = (
+            control_worker.snapshot() if control_worker is not None
+            else {"status": "UNAVAILABLE", "mailbox_capacity": 2, "pending_records": 0}
+        )
         enriched_records = self.derived_iv.decorate(self.state.records_snapshot(), spot_prices)
         aggregates = {}
         for underlying in LOCKED:
@@ -845,6 +888,7 @@ class SharedIndexMarketDataRunner:
             "option_quote_coverage": readiness["option_quote_coverage"],
             "readiness_reason": readiness["readiness_reason"],
             "readiness": readiness,
+            "control_worker": control_worker_snapshot,
             "master_refresh": master_refresh,
             "option_flow_aggregates": aggregates,
             "derived_iv_model": {"status": "DISABLED", "reason": "LOCAL_IV_CALCULATION_DISABLED", "iv_fields": "NULL", "volume_source": "broker_day_volume", "oi_source": "broker_open_interest"},

@@ -74,11 +74,11 @@ def make_records(universe, now):
     records = [
         {
             "instrument_type": "index", "underlying": "NIFTY",
-            "timestamp_ns": now, "ltp": 24000.0,
+            "timestamp_ns": now, "exchange_timestamp_ns": now, "ltp": 24000.0,
         },
         {
             "instrument_type": "index", "underlying": "BANKNIFTY",
-            "timestamp_ns": now, "ltp": 58125.0,
+            "timestamp_ns": now, "exchange_timestamp_ns": now, "ltp": 58125.0,
         },
     ]
     for contract in universe.contracts:
@@ -90,6 +90,7 @@ def make_records(universe, now):
             "strike": contract.strike,
             "option_type": contract.option_type,
             "timestamp_ns": now,
+            "exchange_timestamp_ns": now,
             "ltp": 120.0,
             "bid": 119.0,
             "ask": 121.0,
@@ -400,3 +401,36 @@ def test_shared_runner_spot_adapter_stop_disables_signal_eligibility():
     # Last-known values remain available for diagnostics, not for live signals.
     assert stopped["spot"]["NIFTY"]["price"] == 24000.0
     assert runner.stop_calls == 0
+
+
+def test_shared_runner_spot_adapter_rejects_local_timestamp_fallback():
+    now = time_ns()
+    universe = make_universe()
+    records = make_records(universe, now)
+    next(row for row in records if row.get("underlying") == "NIFTY")["exchange_timestamp_ns"] = None
+    runner = FakeSharedRunner(records, make_descriptors(universe))
+    adapter = IVSharedRunnerSpotFeedAdapter(shared_runner=runner, clock_ns=lambda: now)
+    adapter.start(object(), ("NIFTY", "BANKNIFTY"))
+
+    assert adapter.spot_snapshot("NIFTY") is None
+    assert adapter.spot_snapshot("BANKNIFTY") is not None
+    assert adapter.snapshot()["signals_allowed"] is False
+
+
+def test_shared_runner_option_adapter_rejects_local_timestamp_fallback():
+    now = time_ns()
+    universe = make_universe()
+    records = make_records(universe, now)
+    target = next(row for row in records if row.get("instrument_type") == "option")
+    target["exchange_timestamp_ns"] = None
+    runner = FakeSharedRunner(records, make_descriptors(universe))
+    adapter = IVSharedRunnerOptionFeedAdapter(
+        shared_runner=runner, stream_id="BANKNIFTY_MONTHLY", clock_ns=lambda: now,
+    )
+    adapter.start(universe)
+
+    snapshot = adapter.snapshot(now_ns=now)
+    assert snapshot["status"] == "PARTIAL"
+    assert snapshot["fresh_contracts"] == 5
+    assert target["token"] in snapshot["missing_tokens"]
+    assert len(adapter.latest_quotes()) == 5

@@ -1,6 +1,14 @@
-# Market Data Engine Separation — Architecture Contract
+# Market Data Engine Separation — Archived Proposal
 
-Status: proposed implementation contract for the institutional market-data batches.
+> **Status: SUPERSEDED — NOT THE CURRENT PRODUCTION ARCHITECTURE (28 Nov 2026).**
+> This document is retained as historical design research only. Do not implement, deploy, or use its proposed dual-broker/Box/IV ownership model as a description of the live system.
+>
+> The current production contract is [Universal Market Data Resilience Implementation](universal-market-data-resilience-implementation.md). The production data universe is locked to NIFTY and BANKNIFTY. SharedIndexMarketDataRunner publishes spot/options/futures through the common WebSocket manager; IV is a read-only consumer of its published spot/options state. Box Spread, Cash-Future, Calendar Spread, and Synthetic-Future are retired from live runtime ownership and public application surfaces. Shoonya is not promoted as a live primary/secondary source by this proposal.
+>
+> The remaining sections below are historical requirements and options that were considered before the current owner/strategy retirement decisions. They are not release gates for the current runtime.
+
+## Historical proposal (superseded)
+
 
 ## Non-negotiable separation
 

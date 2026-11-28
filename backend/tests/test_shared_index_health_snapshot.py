@@ -86,6 +86,7 @@ def test_runner_health_snapshot_is_lightweight_and_reports_ready_universe() -> N
     snapshot = runner.health_snapshot()
 
     assert snapshot["enabled"] is True
+    assert snapshot["control_worker"]["status"] == "UNAVAILABLE"
     assert snapshot["live_data_ready"] is True
     assert snapshot["universe_coverage"]["complete"] is True
     assert snapshot["latest_spots"]["NIFTY"]["price"] == 26000.0
@@ -156,6 +157,7 @@ def test_runner_health_ready_when_illiquid_options_are_stale_but_both_sides_are_
     snapshot = runner.health_snapshot()
 
     assert snapshot["all_records_fresh"] is False
+    assert snapshot["control_worker"]["status"] == "UNAVAILABLE"
     assert snapshot["live_data_ready"] is True
     assert snapshot["readiness"]["core_market_data_fresh"] is True
     assert snapshot["readiness"]["option_activity_fresh"] is True

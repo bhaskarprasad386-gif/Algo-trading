@@ -50,6 +50,16 @@ class RunnerManager:
         return {"active_subscriptions": len(self.registry.subscriptions())}
 
 
+def _wait_until(predicate, timeout=3.0):
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return bool(predicate())
+
+
 def _rows():
     expiries = {
         "NIFTY": ["19NOV2026", "26NOV2026", "03DEC2026", "10DEC2026"],
@@ -139,7 +149,12 @@ def test_live_runner_bootstraps_spot_and_124_options_after_first_spot_tick():
         instrument_type=InstrumentType.INDEX, timestamp_ns=__import__("time").time_ns(),
         ltp=48000.0, underlying="BANKNIFTY",
     ))
-    assert len(manager.registry.active_keys()) == 128
+    assert _wait_until(lambda: (
+        len(manager.registry.active_keys()) == 128
+        and runner.snapshot()["control_worker"]["processed_batches"] >= 1
+        and runner.snapshot()["control_worker"]["in_flight"] is False
+        and runner.snapshot()["control_worker"]["pending_records"] == 0
+    ))
     assert runner.snapshot()["lifecycle"]["options_active"] is True
     assert runner.snapshot()["lifecycle"]["futures_active"] is True
     assert runner.snapshot()["futures_expiries"] == {"NIFTY": "2026-11-26", "BANKNIFTY": "2026-12-24"}
@@ -581,7 +596,12 @@ def test_concurrent_nifty_bank_option_rotations_are_serialized_and_atomic(monkey
         instrument=InstrumentKey("NSE", "NSE", "99002"), symbol="BANKNIFTY",
         instrument_type=InstrumentType.INDEX, timestamp_ns=time.time_ns(), ltp=48000.0,
         underlying="BANKNIFTY"))
-    assert len(runner.lifecycle._option_keys) == 124
+    assert _wait_until(lambda: (
+        len(runner.lifecycle._option_keys) == 124
+        and runner.snapshot()["control_worker"]["processed_batches"] >= 1
+        and runner.snapshot()["control_worker"]["in_flight"] is False
+        and runner.snapshot()["control_worker"]["pending_records"] == 0
+    ))
 
     original_select = rotation_module.select_locked_index_options
     first_entered, release_first, second_entered = Event(), Event(), Event()
@@ -697,7 +717,10 @@ def test_master_refresh_is_scheduled_even_when_option_bootstrap_is_incomplete():
         underlying="NIFTY",
     ))
 
-    assert scheduled == [True]
+    assert _wait_until(lambda: scheduled == [True] and (
+        runner.snapshot()["control_worker"]["in_flight"] is False
+        and runner.snapshot()["control_worker"]["pending_records"] == 0
+    ))
     assert runner._bootstrap_options_done is False
     runner.stop()
 

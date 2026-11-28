@@ -93,10 +93,17 @@ class IVSharedRunnerSpotFeedAdapter:
                 continue
             symbol = str(row.get("underlying") or "").strip().upper()
             timestamp = row.get("timestamp_ns")
+            source_timestamp = row.get("exchange_timestamp_ns")
             price = row.get("ltp")
             if symbol not in self.DEFAULT_SYMBOLS:
                 continue
-            if isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp <= 0:
+            # A local normalizer fallback is not exchange evidence. IV only
+            # accepts a source timestamp explicitly supplied by the broker.
+            if (
+                isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp <= 0
+                or isinstance(source_timestamp, bool) or not isinstance(source_timestamp, int)
+                or source_timestamp <= 0 or source_timestamp != timestamp
+            ):
                 continue
             if isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
                 continue
@@ -293,10 +300,13 @@ class IVSharedRunnerOptionFeedAdapter:
             if str(row.get("expiry") or "")[:10] != universe.expiry[:10]:
                 continue
             timestamp = row.get("timestamp_ns")
+            source_timestamp = row.get("exchange_timestamp_ns")
             strike = row.get("strike")
             side = str(row.get("option_type") or "").upper()
             if (
                 isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp <= 0
+                or isinstance(source_timestamp, bool) or not isinstance(source_timestamp, int)
+                or source_timestamp <= 0 or source_timestamp != timestamp
                 or isinstance(strike, bool) or not isinstance(strike, (int, float))
                 or float(strike) != float(contract.strike)
                 or side != str(contract.option_type).upper()
