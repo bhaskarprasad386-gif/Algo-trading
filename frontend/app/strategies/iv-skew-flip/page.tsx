@@ -961,84 +961,9 @@ export default function IVSkewFlipPage() {
       </div>
       <p className="mt-3 text-[11px] theme-muted">Basis is informational context only. It does not independently generate or authorize a signal or order. If either quote is stale or timestamp skew exceeds the limit, the pair is withheld.</p>
     </section>
-    <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 shadow-sm">
-      <h2 className="font-bold theme-text">Early Move Monitor</h2>
-      <p className="mt-1 text-xs theme-muted">1-second refresh • rolling 10-second volume buckets • IV/premium/spot confluence. Alert-only; no orders.</p>
-      <div className="mt-3 grid gap-3 md:grid-cols-3">
-        {Object.entries(runtime?.early_move??{}).map(([key,value])=><div key={key} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 p-3">
-          <div className="flex items-center justify-between gap-2"><b className="text-sm">{key.replaceAll("_"," ")}</b><span className={`rounded-full px-2 py-1 text-xs font-bold ${value.state==="PRE_MOVE"?"bg-amber-500/15 text-amber-700":value.state==="CONFIRMED"?"bg-emerald-500/15 text-emerald-700":"theme-surface-2 theme-muted"}`}>{String(value.state??"WATCH")}</span></div>
-          <div className="mt-2 text-lg font-bold">{String(value.direction??"—")}</div>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-            <div><span className="theme-muted">Volume ratio</span><b className="block">{fmt(value.volume_ratio)}x</b></div>
-            <div><span className="theme-muted">Premium Δ</span><b className="block">{delta(value.premium_change_pct,"%")}</b></div>
-            <div><span className="theme-muted">IV Δ</span><b className="block">{delta(value.iv_change_points," pt",4)}</b></div>
-            <div><span className="theme-muted">Spot Δ 10s</span><b className="block">{delta(value.spot_change_pct,"%",4)}</b></div>
-          </div>
-          <p className="mt-2 text-xs theme-muted">{String(value.reason??"Waiting for fresh ticks")}</p>
-          <p className="mt-1 text-[10px] theme-muted">Baseline {String(value.baseline_status??"WARMING")} • contracts {fmt(value.contracts_confirming,0)}</p>
-        </div>)}
-      </div>
-    </section>
-    <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><h2 className="font-bold theme-text">NIFTY + BANKNIFTY Top 10 Heavyweight Pressure</h2><p className="mt-1 text-xs theme-muted">Dono indices ke independently ranked highest-weight 10 constituents • 5s / 10s / 30s weighted returns • no order execution</p></div>
-        <span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-1 text-xs font-bold">{String(runtime?.equity_pressure?.status ?? "DISABLED")}</span>
-      </div>
-      {Object.keys(runtime?.equity_pressure_by_underlying ?? {}).length > 0 ? (
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          {Object.entries(runtime?.equity_pressure_by_underlying ?? {}).map(([symbol, pressure]) => (
-            <div key={symbol} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 p-3">
-              <div className="flex items-center justify-between gap-2"><b className="text-sm theme-text">{symbol}</b><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-2 py-1 text-xs">{String(pressure.status ?? "WAITING")}</span></div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <Metric label="Feed" value={String((pressure.feed as Row | undefined)?.status ?? "WAITING")} />
-                <Metric label="Fresh Components" value={`${fmt(pressure.fresh_components,0)} / ${fmt(pressure.expected_components,0)}`} />
-                <Metric label="Weight Coverage" value={`${fmt(pressure.weight_coverage_pct)}%`} />
-                <Metric label="Direction" value={String(pressure.direction ?? "WAITING")} sub={pressure.signals_allowed === true ? "Timeframes agree" : "Directional output suppressed"} />
-              </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                {["5s","10s","30s"].map((windowKey)=>{const w=(pressure.windows as Row | undefined)?.[windowKey] as Row | undefined;return <div key={windowKey} className="rounded-lg border-2 border-slate-300 dark:border-slate-600 p-2"><div className="flex justify-between gap-2 text-xs"><b>{windowKey}</b><b>{String(w?.direction ?? "WAITING")}</b></div><div className="mt-2 text-[11px] theme-muted">Return <b className="theme-text">{delta(w?.weighted_return_pct,"% ",4)}</b></div><div className="mt-1 text-[11px] theme-muted">Coverage {fmt(w?.coverage_pct)}% • Advancing {fmt(w?.advancing_weight_pct)}%</div><div className="mt-2 text-[11px] theme-muted">Top: {Array.isArray(w?.top_contributors)?(w!.top_contributors as Row[]).slice(0,3).map(x=>String(x.symbol??"")).join(", ")||"—":"—"}</div></div>;})}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : runtime?.equity_pressure?.enabled !== true ? <p className="mt-3 text-sm theme-muted">{String(runtime?.equity_pressure?.reason ?? "NIFTY aur BANKNIFTY ke complete verified official weight baskets zaroori hain. Har index ke top 10 weights dynamically select honge; missing/stale basket par pressure safely unavailable rahega.")} No orders.</p> : <>
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Metric label="Feed" value={String((runtime.equity_pressure.feed as Row | undefined)?.status ?? "WAITING")} />
-          <Metric label="Fresh Components" value={`${fmt(runtime.equity_pressure.fresh_components,0)} / ${fmt(runtime.equity_pressure.expected_components,0)}`} />
-          <Metric label="Weight Coverage" value={`${fmt(runtime.equity_pressure.weight_coverage_pct)}%`} />
-          <Metric label="Direction" value={String(runtime.equity_pressure.direction ?? "WAITING")} sub={runtime.equity_pressure.signals_allowed === true ? "Timeframes agree" : "Directional output suppressed"} />
-        </div>
-        <div className="mt-3 grid gap-2 md:grid-cols-3">
-          {["5s","10s","30s"].map((windowKey)=>{const w=(runtime.equity_pressure?.windows as Row | undefined)?.[windowKey] as Row | undefined;return <div key={windowKey} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 p-3"><div className="flex justify-between gap-2 text-sm"><b>{windowKey}</b><b>{String(w?.direction ?? "WAITING")}</b></div><div className="mt-2 text-xs theme-muted">Weighted return <b className="theme-text">{delta(w?.weighted_return_pct,"% ",4)}</b></div><div className="mt-1 text-xs theme-muted">Coverage {fmt(w?.coverage_pct)}% • Advancing {fmt(w?.advancing_weight_pct)}%</div><div className="mt-2 text-xs theme-muted">Top contributors: {Array.isArray(w?.top_contributors)?(w!.top_contributors as Row[]).slice(0,3).map(x=>String(x.symbol??"")).join(", ")||"—":"—"}</div></div>;})}
-        </div>
-      </>}
-    </section>
-    <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><h2 className="font-bold theme-text">Official Index Weight Registry</h2><p className="mt-1 text-xs theme-muted">NIFTY and BANKNIFTY • read-only provenance and freshness • no automatic activation</p></div>
-        <span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-1 text-xs font-bold">As of {basketRegistry?.as_of ?? "—"}</span>
-      </div>
-      <div className="mt-3 grid gap-3 md:grid-cols-2">
-        {(["NIFTY","BANKNIFTY"] as const).map((symbol)=>{
-          const item=basketRegistry?.baskets?.[symbol]??{};
-          const verified=item.status==="VERIFIED_FRESH";
-          return <div key={symbol} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2"><b className="text-sm theme-text">{symbol}</b><span className={`rounded-full px-2 py-1 text-xs font-bold ${verified?"bg-emerald-500/10 text-emerald-700":"bg-amber-500/10 text-amber-700"}`}>{item.status??"LOADING"}</span></div>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-              <div><span className="theme-muted">Effective date</span><b className="block theme-text">{item.effective_date??"—"}</b></div>
-              <div><span className="theme-muted">Age</span><b className="block theme-text">{item.age_days===undefined?"—":`${item.age_days} days`}</b></div>
-              <div><span className="theme-muted">Constituents</span><b className="block theme-text">{fmt(item.constituent_count,0)}</b></div>
-              <div><span className="theme-muted">Mapped tokens</span><b className="block theme-text">{fmt(item.mapped_token_count,0)}</b></div>
-              <div><span className="theme-muted">Weight total</span><b className="block theme-text">{item.weight_sum===undefined?"—":`${fmt(item.weight_sum,4)}%`}</b></div>
-              <div><span className="theme-muted">Pressure signals</span><b className="block text-rose-600">BLOCKED</b></div>
-            </div>
-            <p className="mt-3 text-[11px] theme-muted">{item.reason??(verified?"Basket passed stored-data integrity checks. Runtime activation remains separately disabled.":"No verified current basket available.")}</p>
-            {item.source_name&&<p className="mt-1 text-[11px] theme-muted">Source: {item.source_name}</p>}
-          </div>;
-        })}
-      </div>
-      <p className="mt-3 text-[11px] theme-muted">Registry max age {basketRegistry?.max_age_days??45} days • Activation {basketRegistry?.activation_enabled===true?"ON":"OFF"} • Signals {basketRegistry?.signals_allowed===true?"ALLOWED":"BLOCKED"}. A green verification state is provenance validation only; it does not turn on weighted pressure.</p>
-    </section>
-    <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 shadow-sm"><h2 className="font-bold theme-text">Live Signal Monitor</h2><p className="mt-1 text-xs theme-muted">Each expiry stream is evaluated independently. WAITING means required fresh quotes or history are not available; it is not a trade signal.</p><div className="mt-3 grid gap-2 sm:grid-cols-3">{Object.entries(runtime?.signals??{}).map(([key,value])=>{const finalSignal=value.confluence&&typeof value.confluence==="object"?value.confluence as Row:{};return <div key={key} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 p-3"><b className="text-sm">{key.replaceAll("_"," ")}</b><div className="mt-2 rounded-lg border-2 border-slate-300 dark:border-slate-600 bg-blue-500/5 p-2"><div className="flex justify-between gap-2 text-xs"><span className="font-bold">FINAL CONFLUENCE</span><b>{String(finalSignal.direction??"—")} • {String(finalSignal.status??"WAITING")}</b></div><p className="mt-1 text-[11px] theme-muted">{String(finalSignal.reason??"Waiting for independent confirmations")}</p><p className="mt-1 text-[10px] theme-muted">Signal gate: {value.signals_allowed===true?"ALLOWED":"BLOCKED"} • Data: {value.data_ready===true?"READY":"WAITING"}</p></div>{(Array.isArray(value.strategies)?value.strategies as Row[]:[]).map((s,i)=><div key={i} className="flex justify-between gap-2 border-t theme-border py-2 text-xs"><span>{String(s.strategy??"Signal")}</span><b>{String(s.direction??"—")} • {String(s.status??"WAITING")}</b></div>)}</div>})}</div></section>
+    
+    
+    
+    
   </main>;
 }
