@@ -1030,10 +1030,19 @@ class IVSkewFlipRuntime:
         return snapshot
 
     @staticmethod
+    def _telegram_chat_id() -> str:
+        """Prefer the IV-specific destination; fall back to the existing Telegram admin allowlist."""
+        explicit = str(settings.TELEGRAM_CHAT_ID or "").strip()
+        if explicit:
+            return explicit
+        admin_ids = str(settings.TELEGRAM_ADMIN_CHAT_IDS or "").strip()
+        return next((item.strip() for item in admin_ids.split(",") if item.strip()), "")
+
+    @staticmethod
     def _telegram_sender(payload: dict[str, Any]) -> None:
         """Send one persisted IV alert through Telegram Bot API; no secrets enter logs."""
         token = str(settings.TELEGRAM_BOT_TOKEN or "").strip()
-        chat_id = str(settings.TELEGRAM_CHAT_ID or "").strip()
+        chat_id = IVSkewFlipRuntime._telegram_chat_id()
         if not settings.TELEGRAM_ENABLED or not token or not chat_id:
             raise RuntimeError("TELEGRAM_CONFIGURATION_MISSING")
         observed_ns = int(payload.get("observed_at_ns") or 0)
@@ -1136,7 +1145,7 @@ class IVSkewFlipRuntime:
         configured = bool(
             settings.TELEGRAM_ENABLED
             and str(settings.TELEGRAM_BOT_TOKEN or "").strip()
-            and str(settings.TELEGRAM_CHAT_ID or "").strip()
+            and bool(self._telegram_chat_id())
         )
         try:
             result = self._telegram_outbox.process_one(
@@ -1297,11 +1306,14 @@ class IVSkewFlipRuntime:
             "telegram_configuration": {
                 "enabled": bool(settings.TELEGRAM_ENABLED),
                 "bot_token_present": bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip()),
-                "chat_id_present": bool(str(settings.TELEGRAM_CHAT_ID or "").strip()),
+                "chat_id_present": bool(self._telegram_chat_id()),
+                "chat_id_source": "TELEGRAM_CHAT_ID" if str(settings.TELEGRAM_CHAT_ID or "").strip() else (
+                    "TELEGRAM_ADMIN_CHAT_IDS" if self._telegram_chat_id() else None
+                ),
                 "missing": [name for name, present in (
                     ("TELEGRAM_ENABLED", bool(settings.TELEGRAM_ENABLED)),
                     ("TELEGRAM_BOT_TOKEN", bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip())),
-                    ("TELEGRAM_CHAT_ID", bool(str(settings.TELEGRAM_CHAT_ID or "").strip())),
+                    ("TELEGRAM_CHAT_ID_OR_TELEGRAM_ADMIN_CHAT_IDS", bool(self._telegram_chat_id())),
                 ) if not present],
             },
             "equity_pressure": {
