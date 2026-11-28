@@ -1504,7 +1504,7 @@ def test_early_move_withholds_alerts_when_selected_option_coverage_is_partial():
 
     runtime._evaluate_early_move(now_ns)
 
-    result = runtime.snapshot()["early_move"]["NIFTY_WEEKLY"]
+    result = runtime._early_move["NIFTY_WEEKLY"]
     assert result["state"] == "WATCH"
     assert result["signals_allowed"] is False
     assert result["baseline_status"] == "WAITING_FOR_COMPLETE_OPTION_UNIVERSE"
