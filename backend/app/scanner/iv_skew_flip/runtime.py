@@ -1294,6 +1294,16 @@ class IVSkewFlipRuntime:
             "early_entry_alerts_by_underlying": self._early_entry_alerts.snapshot_all(),
             "telegram_delivery": dict(self._telegram_delivery),
             "telegram_configured": bool(settings.TELEGRAM_ENABLED and str(settings.TELEGRAM_BOT_TOKEN or "").strip() and str(settings.TELEGRAM_CHAT_ID or "").strip()),
+            "telegram_configuration": {
+                "enabled": bool(settings.TELEGRAM_ENABLED),
+                "bot_token_present": bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip()),
+                "chat_id_present": bool(str(settings.TELEGRAM_CHAT_ID or "").strip()),
+                "missing": [name for name, present in (
+                    ("TELEGRAM_ENABLED", bool(settings.TELEGRAM_ENABLED)),
+                    ("TELEGRAM_BOT_TOKEN", bool(str(settings.TELEGRAM_BOT_TOKEN or "").strip())),
+                    ("TELEGRAM_CHAT_ID", bool(str(settings.TELEGRAM_CHAT_ID or "").strip())),
+                ) if not present],
+            },
             "equity_pressure": {
                 **equity_pressure,
                 "enabled": self.equity_pressure_enabled,
