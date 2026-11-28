@@ -38,10 +38,11 @@ def test_banknifty_monthly_selects_last_expiry_in_nearest_available_month():
     rows = master_rows("BANKNIFTY", ("10Nov2026", "24Nov2026", "29Dec2026"))
     result = resolve_option_universe(
         rows, underlying="BANKNIFTY", expiry_type="MONTHLY",
-        spot=22000, today=date(2026, 11, 6),
+        spot=22000, today=date(2026, 11, 6), strike_count=11,
     )
     assert result.expiry == "2026-11-24"
-    assert len(result.contracts) == 14
+    assert len(result.strikes) == 11
+    assert len(result.contracts) == 22
 
 
 def test_universe_fails_closed_when_any_selected_ce_pe_is_missing():
