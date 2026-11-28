@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     TELEGRAM_ENABLED: bool = False
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""
+    # Existing Telegram control-bot deployments use this allowlisted admin chat list.
+    TELEGRAM_ADMIN_CHAT_IDS: str = ""
     # SMTP email alerts; disabled until deployment SMTP credentials are supplied.
     EMAIL_ENABLED: bool = False
     EMAIL_SMTP_HOST: str = ""
