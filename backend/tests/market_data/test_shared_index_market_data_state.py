@@ -403,3 +403,22 @@ def test_underlying_index_keeps_newest_active_spot_when_one_identity_retires():
     assert state.retain_instruments((older.instrument,)) == 1
     rows = state.latest_records_for_instruments("index", ("NIFTY",))
     assert len(rows) == 1 and rows[0]["token"] == "nifty-spot-old"
+
+
+def test_state_reports_cache_and_consumer_publish_stage_timings(monkeypatch):
+    import app.market_data.shared_index_market_data_state as state_module
+
+    published = []
+    state = SharedIndexMarketDataState(publish=lambda record: published.append(record))
+    monkeypatch.setattr(state_module, "put_market_data_record", lambda record: None)
+
+    assert state.on_record(_record("timed-spot"))
+    timing = state.snapshot()["callback_stage_timing"]
+
+    assert timing["cache_publish_count"] == 1
+    assert timing["consumer_publish_count"] == 1
+    assert timing["cache_publish_total_ns"] >= 0
+    assert timing["consumer_publish_total_ns"] >= 0
+    assert timing["cache_publish_max_ns"] <= timing["cache_publish_total_ns"]
+    assert timing["consumer_publish_max_ns"] <= timing["consumer_publish_total_ns"]
+    assert len(published) == 1
