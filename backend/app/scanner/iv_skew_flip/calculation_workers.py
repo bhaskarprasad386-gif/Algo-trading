@@ -164,6 +164,10 @@ class BoundedProcessWorker:
                     self._failures += 1
                     self._last_error = "QUEUE_ADMISSION_FAILED"
                     return {"accepted": False, "job_id": job_id, "reason": self._last_error}
+            # Deadline includes time spent waiting behind an in-flight job.
+            # If it expires, restart discards both the stuck calculation and
+            # the stale pending snapshot; the next refresh can submit anew.
+            self._inflight = {"job_id": job_id, "started_at": stamp}
             return {"accepted": True, "job_id": job_id}
 
     def poll(self, *, now: float | None = None) -> dict[str, Any] | None:
@@ -180,6 +184,8 @@ class BoundedProcessWorker:
             except Empty:
                 message = None
             if message is not None:
+                if self._inflight is not None and message.get("job_id") == self._inflight.get("job_id"):
+                    self._inflight = None
                 if message.get("kind") == "result":
                     return message
                 self._failures += 1
