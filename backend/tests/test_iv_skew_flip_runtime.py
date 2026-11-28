@@ -953,17 +953,21 @@ def test_runtime_snapshot_requires_nonblank_telegram_credentials(monkeypatch):
         spot_feed=FakeSpotFeed(),
         clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
     )
-    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_ENABLED", False)
     monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "   ")
     monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_CHAT_IDS", "")
     assert runtime.snapshot()["telegram_configured"] is False
 
     monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "   ")
-    assert runtime.snapshot()["telegram_configured"] is False
+    monkeypatch.setattr(settings, "TELEGRAM_ADMIN_CHAT_IDS", " 67890, 24680 ")
+    assert runtime.snapshot()["telegram_configured"] is True
+    assert runtime.snapshot()["telegram_configuration"]["chat_id_source"] == "TELEGRAM_ADMIN_CHAT_IDS"
 
     monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "123")
     assert runtime.snapshot()["telegram_configured"] is True
+    assert runtime.snapshot()["telegram_configuration"]["chat_id_source"] == "TELEGRAM_CHAT_ID"
 
 
 
