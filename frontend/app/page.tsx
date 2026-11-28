@@ -609,6 +609,18 @@ export default function HomePage() {
   });
   const sharedRunnerEnabled = sharedRunner?.enabled === true;
   const sharedRunnerReady = sharedRunner?.live_data_ready === true;
+  const sharedRunnerReadiness = sharedRunner?.readiness ?? {};
+  const coreMarketDataReady = sharedRunner?.core_market_data_ready === true || sharedRunnerReadiness?.core_market_data_ready === true;
+  const optionQuoteCoverage = sharedRunner?.option_quote_coverage ?? sharedRunnerReadiness?.option_quote_coverage ?? null;
+  const optionQuoteFresh = optionQuoteCoverage?.fresh != null && Number.isFinite(Number(optionQuoteCoverage.fresh)) ? Number(optionQuoteCoverage.fresh) : null;
+  const optionQuoteTotal = optionQuoteCoverage?.total != null && Number.isFinite(Number(optionQuoteCoverage.total)) ? Number(optionQuoteCoverage.total) : null;
+  const optionQuoteStale = optionQuoteCoverage?.stale != null && Number.isFinite(Number(optionQuoteCoverage.stale)) ? Number(optionQuoteCoverage.stale) : optionQuoteFresh != null && optionQuoteTotal != null ? Math.max(0, optionQuoteTotal - optionQuoteFresh) : null;
+  const optionCoverageKnown = optionQuoteFresh != null && optionQuoteTotal != null;
+  const optionCoverageComplete = optionQuoteCoverage?.complete === true;
+  const readinessReason = String(sharedRunner?.readiness_reason ?? sharedRunnerReadiness?.readiness_reason ?? "UNKNOWN");
+  const optionCoverageLabel = optionCoverageKnown
+    ? optionQuoteFresh!.toLocaleString("en-IN") + "/" + optionQuoteTotal!.toLocaleString("en-IN") + " option quotes fresh • " + (optionQuoteStale == null ? "stale count unavailable" : optionQuoteStale.toLocaleString("en-IN") + " stale")
+    : "option quote freshness unavailable";
   const sharedRunnerUnavailable = !sharedRunner || sharedRunner.state === "UNAVAILABLE" || sharedRunner.state === "NOT_INITIALIZED";
   const sharedRunnerSampleAge = sharedRunnerLastSuccessAt == null ? null : Math.max(0, (Date.now() - sharedRunnerLastSuccessAt) / 1000);
   const sharedRunnerSampleUnavailable = sharedRunnerFetchFailed && sharedRunnerSampleAge != null;
@@ -617,7 +629,7 @@ export default function HomePage() {
     : "+" + sharedRunnerTickActivity.delta.toLocaleString("en-IN") + " since last sample";
   const sharedRunnerTickRateLabel = sharedRunnerTickActivity.perSecond == null
     ? "—" : sharedRunnerTickActivity.perSecond.toFixed(1) + " ticks/s";
-  const sharedRunnerStatus = sharedRunnerSampleUnavailable ? "LAST KNOWN • HEALTH FETCH FAILED" : !sharedRunner ? "CHECKING" : sharedRunner.state === "UNAVAILABLE" ? "UNAVAILABLE" : sharedRunner.state === "NOT_INITIALIZED" ? "NOT INITIALIZED" : !sharedRunnerEnabled ? "STOPPED" : sharedRunnerReady ? "LIVE DATA READY" : sharedRunner.initial_option_bootstrap_done ? (effectiveMarketSession === "CLOSED" ? "RUNNING • MARKET CLOSED" : "RUNNING • FEED NOT READY") : "RUNNING • BOOTSTRAPPING";
+  const sharedRunnerStatus = sharedRunnerSampleUnavailable ? "LAST KNOWN • HEALTH FETCH FAILED" : !sharedRunner ? "CHECKING" : sharedRunner.state === "UNAVAILABLE" ? "UNAVAILABLE" : sharedRunner.state === "NOT_INITIALIZED" ? "NOT INITIALIZED" : !sharedRunnerEnabled ? "STOPPED" : effectiveMarketSession === "CLOSED" ? "RUNNING • MARKET CLOSED" : sharedRunnerReady ? (!optionCoverageKnown ? "RUNNER READY • COVERAGE UNKNOWN" : optionCoverageComplete ? "RUNNER READY • ALL OPTION QUOTES FRESH" : "RUNNER READY • OPTION COVERAGE PARTIAL") : coreMarketDataReady ? readinessReason === "OPTION_BOOTSTRAP_PENDING" ? "CORE READY • OPTIONS BOOTSTRAPPING" : readinessReason === "UNIVERSE_INCOMPLETE" ? "CORE READY • UNIVERSE INCOMPLETE" : readinessReason === "OPTION_ACTIVITY_BELOW_POLICY" ? "CORE READY • OPTIONS BELOW POLICY" : "CORE READY • READINESS INCOMPLETE" : readinessReason === "OPTION_BOOTSTRAP_PENDING" ? "RUNNING • BOOTSTRAPPING" : "CORE FEED NOT READY";
   const sharedFeedGroups = sharedRunner?.feed_health_by_group ?? {};
   const getRecordFeed = (underlying: string, kind: string) => {
     const group = sharedFeedGroups[underlying + ":" + kind] ?? null;
@@ -723,6 +735,8 @@ export default function HomePage() {
             <Card className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
               <div className="flex items-center justify-between gap-2"><div className="text-[10px] font-bold uppercase tracking-wide theme-subtle">SHARED INDEX RUNNER</div><span className={"rounded-full px-2 py-1 text-[9px] font-extrabold " + (sharedRunnerReady ? "theme-success-bg theme-success" : sharedRunnerEnabled || sharedRunnerUnavailable || sharedRunnerFetchFailed ? "theme-warning-bg theme-warning" : "theme-danger-bg theme-danger")}>{sharedRunnerStatus}</span></div>
               <div className="mt-2 break-words text-[11px] theme-muted">{sharedRunner?.runner || "shared-index-market-data"} • {sharedRunner?.initial_option_bootstrap_done ? "Option bootstrap complete" : "Option bootstrap pending"}</div>
+              <div className="mt-1 break-words text-[10px] theme-muted">Core spot + futures: {coreMarketDataReady ? "ready" : "not confirmed"} • {optionCoverageLabel}</div>
+              <div className="mt-1 break-words text-[9px] theme-subtle">Readiness gate: {readinessReason.replace(/_/g, " ")}</div>
               <div className="mt-1 text-[9px] theme-subtle">Last health sample: {sharedRunnerSampleAge == null ? "Not received" : sharedRunnerSampleAge.toFixed(1) + "s ago"}{sharedRunner?.last_error ? " • Start error: " + String(sharedRunner.last_error).slice(0, 140) : ""}</div>
             </Card>
             <Card className="min-w-0 rounded-xl border theme-border theme-surface-2 p-3">
