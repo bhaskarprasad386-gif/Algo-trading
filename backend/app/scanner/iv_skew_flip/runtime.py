@@ -76,6 +76,7 @@ class _DisabledIVFutureContextFeed:
     def stop(self) -> None:
         return None
 from .alerts import AlertCooldownStore, IVEarlyEntryAlertEngine
+from app.market_data.shared_index_market_data_runner import choose_locked_expiry
 from .universe import resolve_option_universe
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -374,12 +375,14 @@ class IVSkewFlipRuntime:
     def _refresh_stream(self, stream_id: str, config: ScannerConfig, spot: Any, now: datetime) -> None:
         symbol = stream_id
         try:
-            # Use the instrument master as the expiry calendar. Roll only after
-            # today's actual listed expiry has passed its 15:30 IST close.
+            # Use the exact same authoritative expiry calendar as the Shared
+            # Runner. This avoids IV independently classifying a weekly/monthly
+            # date and selecting a different contract from the live feed owner.
             rows = self._rows_by_stream[symbol]
-            local_today = now.astimezone(IST).date()
-            expiries_from_today = self._future_expiry_candidates(rows, local_today)
-            universe_date = _universe_selection_date(now, expiries_from_today)
+            selected_expiry = choose_locked_expiry(
+                rows, config.symbol, now=now,
+            )
+            universe_date = date.fromisoformat(selected_expiry)
             available_expiries = self._future_expiry_candidates(rows, universe_date)
             universe = resolve_option_universe(
                 rows,
@@ -389,12 +392,18 @@ class IVSkewFlipRuntime:
                 today=universe_date,
                 strike_count=11 if config.symbol == "NIFTY" and config.expiry_type == "WEEKLY" else 7,
             )
+            if universe.expiry != selected_expiry:
+                raise RuntimeError(
+                    f"IV expiry selector mismatch: shared={selected_expiry}, "
+                    f"resolved={universe.expiry}"
+                )
             tokens = universe.tokens
             with self._lock:
                 self._expiry_diagnostics[symbol] = {
                     "selection_date": universe_date.isoformat(),
                     "available_expiries": available_expiries,
                     "selected_expiry": universe.expiry,
+                    "selector": "SHARED_RUNNER_AUTHORITATIVE",
                 }
                 current_tokens = self._universe_tokens.get(symbol)
                 feed = self._option_feeds.get(symbol)
