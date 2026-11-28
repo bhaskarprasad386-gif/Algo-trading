@@ -438,9 +438,6 @@ export default function IVSkewFlipPage() {
   const [snapshotBusy,setSnapshotBusy]=useState(false);
   const [snapshotNotice,setSnapshotNotice]=useState("");
   const [error,setError]=useState("");
-  const [selectedEnabled,setSelectedEnabled]=useState(true);
-  const [savedEnabled,setSavedEnabled]=useState(true);
-  const [settingDirty,setSettingDirty]=useState(false);
   const base=appConfig.apiBaseUrl.replace(/\/$/,"");
   const { data: pagePushData, status: pagePushStatus } = usePagePush("iv-skew-flip");
   const requestedExpiry=String(runtime?.option_chains?.NIFTY_WEEKLY?.option_feed?.expiry??"");
@@ -616,9 +613,6 @@ export default function IVSkewFlipPage() {
     if(requestSequence!==statusFetchSequenceRef.current)return;
     if(!response.ok) throw new Error(apiError(body,`Status HTTP ${response.status}`));
     setRuntime({...((body.runtime??{}) as Row),market_data_connection:{...((body.runtime?.market_data_connection??{}) as Row),runner:body.shared_runner??(body.runtime?.market_data_connection as Row|undefined)?.runner}});
-    setSelectedEnabled(body.saved_enabled===true);
-    setSavedEnabled(body.saved_enabled===true);
-    setSettingDirty(false);
   },[base]);
   useEffect(()=>{
     if(!pagePushData)return;
@@ -728,24 +722,7 @@ export default function IVSkewFlipPage() {
         if(String(pagePushData.__event??"").toUpperCase()!=="SNAPSHOT"&&alertAudioEnabled&&fresh.length)playEarlyAlertTone();
       }
     }
-    if(typeof pagePushData.saved_enabled==="boolean"){
-      setSavedEnabled(pagePushData.saved_enabled);
-      if(!settingDirty)setSelectedEnabled(pagePushData.saved_enabled);
-    }
-  },[pagePushData,settingDirty,alertAudioEnabled]);
-  async function saveRunnerSetting(){
-    setBusy(true);setError("");
-    try{
-      const response=await fetch(`${base}/api/v1/scanner/iv-skew-flip/config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:selectedEnabled}),cache:"no-store"});
-      const body=await response.json();
-      if(!response.ok)throw new Error(apiError(body,"Could not save IV Scanner runner setting"));
-      setRuntime(body.runtime??null);
-      setSavedEnabled(body.saved_enabled===true);
-      setSelectedEnabled(body.saved_enabled===true);
-      setSettingDirty(false);
-    }catch(e){setError(e instanceof Error?e.message:"IV Scanner setting save failed");}
-    finally{setBusy(false);}
-  }
+  },[pagePushData,alertAudioEnabled]);
   async function fetchBrokerSnapshot(underlying: "NIFTY"|"BANKNIFTY" = "NIFTY"){
     const requestSequence=++brokerSnapshotSequenceRef.current;
     setSnapshotBusy(true);setSnapshotNotice("");setError("");
@@ -857,14 +834,10 @@ export default function IVSkewFlipPage() {
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={()=>void refresh().catch(e=>setError(String(e)))} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface px-3 py-2 text-sm"><RefreshCw size={15}/> Refresh</button>
         <button onClick={()=>void fetchBrokerSnapshot()} disabled={!running||snapshotBusy} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface px-3 py-2 text-sm font-bold disabled:opacity-50">{snapshotBusy?"Fetching broker…":"Fetch NIFTY Broker IV + Chain"}</button>
-        <div className="inline-flex rounded-xl border-2 border-slate-300 dark:border-slate-600 p-1" aria-label="IV Scanner desired runner state">
-          <button type="button" onClick={()=>{setSelectedEnabled(true);setSettingDirty(true);}} disabled={busy} aria-pressed={selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-bold ${selectedEnabled?"bg-emerald-600 text-white":"theme-muted"}`}>ON</button>
-          <button type="button" onClick={()=>{setSelectedEnabled(false);setSettingDirty(true);}} disabled={busy} aria-pressed={!selectedEnabled} className={`rounded-lg px-3 py-2 text-sm font-bold ${!selectedEnabled?"bg-rose-600 text-white":"theme-muted"}`}>OFF</button>
-        </div>
-        <button onClick={()=>void saveRunnerSetting()} disabled={busy||selectedEnabled===savedEnabled} className="rounded-xl border-2 border-slate-300 dark:border-slate-600 theme-surface px-4 py-2 text-sm font-bold disabled:opacity-50">{busy?"Saving…":"Save"}</button>
+        <span className="rounded-xl border-2 border-emerald-500/40 px-3 py-2 text-sm font-bold text-emerald-700">AUTO ON</span>
       </div>
     </header>
-     <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">{running?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {`IV Runner ${!savedEnabled?"STOPPED • OFF":running?"RUNNING":"STARTING"} • Saved ${savedEnabled?"ON":"OFF"}`}</span><span className={`rounded-full border-2 px-3 py-2 ${runtime?.market_data_connection?.runner?.enabled===true?"border-emerald-500/50 text-emerald-700":"border-amber-500/50 text-amber-700"}`}><Wifi size={13} className="inline"/> {`Shared Runner ${runtime?.market_data_connection?.runner?.enabled===true?"CONNECTED":"CHECKING"}`}</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Orders OFF</span></div>
+     <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">{running?<Wifi size={13} className="inline"/>:<WifiOff size={13} className="inline"/>} {`IV Runner ${running?"RUNNING":"AUTO START • WAITING FOR SHARED FEED"}`}</span><span className={`rounded-full border-2 px-3 py-2 ${runtime?.market_data_connection?.runner?.enabled===true?"border-emerald-500/50 text-emerald-700":"border-amber-500/50 text-amber-700"}`}><Wifi size={13} className="inline"/> {`Shared Runner ${runtime?.market_data_connection?.runner?.enabled===true?"CONNECTED":"CHECKING"}`}</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Universe refresh {fmt(runtime?.refresh_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Signal evaluation {fmt(runtime?.signal_evaluation_seconds,0)}s</span><span className="rounded-full border-2 border-slate-300 dark:border-slate-600 px-3 py-2">Orders OFF</span></div>
     <section aria-label="Scanner at a glance" className="grid grid-cols-2 gap-2 sm:grid-cols-4"><Metric label="NIFTY Spot" value={fmt(niftySpot.price)} sub={`Feed age ${age(niftySpot.age_ms)}`}/><Metric label="ATM Strike" value={fmt(liveFeed.atm_strike??nifty.option_feed?.atm_strike,0)} sub={`Expiry ${String(liveFeed.expiry??"—")}`}/><Metric label="Option Chain" value={String(liveFeed.status??"WAITING")} sub={`${fmt(liveNiftySampler.contracts_live??liveNiftySampler.live_contracts,0)} live contracts`}/><Metric label="IV Data" value={String(liveNiftySampler.status??"WAITING")} sub={`Live IV ${fmt(liveNiftySampler.iv_live_count,0)} • OI ${fmt(liveNiftySampler.oi_live_count,0)}`}/></section>
     <section className="rounded-2xl border-2 border-slate-300 dark:border-slate-600 theme-surface p-4 space-y-3" aria-live="polite">
       <div className="flex flex-wrap items-center justify-between gap-2">
