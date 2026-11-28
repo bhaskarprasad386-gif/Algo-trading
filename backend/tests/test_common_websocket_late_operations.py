@@ -281,7 +281,9 @@ class _StopAfterOneSupervisorPass:
         return self.stopped
     def wait(self, _timeout):
         self.calls += 1
-        return self.stopped or self.calls > 1
+        if self.calls > 1:
+            self.stopped = True
+        return self.stopped
 
 
 
@@ -309,7 +311,9 @@ def test_supervisor_acknowledges_only_pending_groups_from_reconcile_snapshot():
 
 
 
-    manager._recovery_stop = _StopAfterOneSupervisorPass()
+    stop_after_pass = _StopAfterOneSupervisorPass()
+    manager._recovery_stop = stop_after_pass
+    manager._recovery_wakeup = stop_after_pass
     manager._recovery_interval_seconds = 0.01
     manager._recovery_backoff_max_seconds = 0.05
     manager.registry.subscriptions = lambda: [object()]
