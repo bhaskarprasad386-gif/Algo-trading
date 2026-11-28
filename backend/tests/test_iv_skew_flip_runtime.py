@@ -1271,3 +1271,90 @@ def test_runtime_withholds_iv_signal_when_any_selected_contract_is_stale():
     assert signal["signals_allowed"] is False
     assert signal["confluence"]["status"] == "WAITING"
     assert "2/3 fresh broker-timestamped contracts" in signal["confluence"]["reason"]
+
+
+
+def test_iv_on_off_race_stop_cannot_overtake_partial_startup():
+    """OFF must wait until the complete ON transaction has unwound/committed."""
+    from threading import Event, Thread
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+    start_entered = Event()
+    release_start = Event()
+    stop_entered = Event()
+    order = []
+
+    def blocked_start(*, instruments=None):
+        order.append("start-enter")
+        start_entered.set()
+        assert release_start.wait(2.0)
+        order.append("start-exit")
+        return {"status": "RUNNING"}
+
+    def blocked_stop():
+        order.append("stop")
+        stop_entered.set()
+        return {"status": "STOPPED"}
+
+    runtime._start_locked = blocked_start
+    runtime._stop_locked = blocked_stop
+    start_thread = Thread(target=lambda: runtime.start(instruments=[]))
+    start_thread.start()
+    assert start_entered.wait(1.0)
+
+    stop_thread = Thread(target=runtime.stop)
+    stop_thread.start()
+    assert not stop_entered.wait(0.05), "OFF must not enter during the ON transaction"
+
+    release_start.set()
+    start_thread.join(timeout=1.0)
+    stop_thread.join(timeout=1.0)
+    assert not start_thread.is_alive()
+    assert not stop_thread.is_alive()
+    assert order == ["start-enter", "start-exit", "stop"]
+
+
+def test_iv_on_waits_until_off_cleanup_transaction_finishes():
+    """A new ON must not clear lifecycle state while OFF still owns cleanup."""
+    from threading import Event, Thread
+    runtime = IVSkewFlipRuntime(
+        instrument_master=FakeMaster([]),
+        spot_feed=FakeSpotFeed(),
+        clock_datetime=lambda: datetime(2026, 11, 6, 10, 0, tzinfo=IST),
+    )
+    stop_entered = Event()
+    release_stop = Event()
+    start_entered = Event()
+    order = []
+
+    def blocked_stop():
+        order.append("stop-enter")
+        stop_entered.set()
+        assert release_stop.wait(2.0)
+        order.append("stop-exit")
+        return {"status": "STOPPED"}
+
+    def blocked_start(*, instruments=None):
+        order.append("start")
+        start_entered.set()
+        return {"status": "RUNNING"}
+
+    runtime._stop_locked = blocked_stop
+    runtime._start_locked = blocked_start
+    stop_thread = Thread(target=runtime.stop)
+    stop_thread.start()
+    assert stop_entered.wait(1.0)
+
+    start_thread = Thread(target=lambda: runtime.start(instruments=[]))
+    start_thread.start()
+    assert not start_entered.wait(0.05), "ON must wait for OFF cleanup to finish"
+
+    release_stop.set()
+    stop_thread.join(timeout=1.0)
+    start_thread.join(timeout=1.0)
+    assert not stop_thread.is_alive()
+    assert not start_thread.is_alive()
+    assert order == ["stop-enter", "stop-exit", "start"]
