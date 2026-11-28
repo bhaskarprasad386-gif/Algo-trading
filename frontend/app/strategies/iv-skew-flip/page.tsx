@@ -11,7 +11,6 @@ type EarlyAlert = { id: number; underlying?: string; observed_at_ns_text?: strin
 type Chain = { symbol?: string; expiry_type?: string; option_feed?: Row; sampler?: Row; universe_tokens?: number; expiry_selection?: Row; error?: string | null; signals?: Row };
 type BasketEntry = {
   status?: string;
-  health?: { status?: string; reason?: string; worker_alive?: boolean; shared_runner_ready?: boolean; last_refresh_age_ms?: number | null; degraded?: boolean };
   signals_allowed?: boolean;
   reason?: string;
   effective_date?: string;
@@ -32,6 +31,7 @@ type BasketRegistry = {
 };
 type Runtime = {
   status?: string;
+  health?: { status?: string; reason?: string; worker_alive?: boolean; shared_runner_ready?: boolean; last_refresh_age_ms?: number | null; degraded?: boolean };
   desired_state?: "ON" | "OFF";
   saved_enabled?: boolean;
   runner_status?: "RUNNING" | "STOPPED";
