@@ -362,7 +362,7 @@ def test_feed_adapter_accepts_nifty_weekly_eleven_strikes_and_twenty_two_contrac
     }
 
 
-def _banknifty_monthly_universe(strike_count=7):
+def _banknifty_monthly_universe(strike_count=11):
     rows = []
     for expiry_index, expiry in enumerate(("26Nov2026", "31Dec2026")):
         expiry_code = "26NOV26" if expiry_index == 0 else "31DEC26"
