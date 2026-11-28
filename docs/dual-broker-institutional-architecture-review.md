@@ -1,6 +1,6 @@
 # Dual-Broker Institutional Market-Data Architecture — Deep Review and Batch Addendum
 
-Status: reviewed design proposal only. This document does not authorize production provider selection, strategy fan-out, trading, deployment, or live broker activation.
+Status: ARCHIVED HISTORICAL DESIGN REVIEW — superseded by `docs/universal-market-data-resilience-implementation.md` (28 Nov 2026). This document does not describe the current production topology. Its references to Box/IV parallel broker ownership, Shoonya primary/secondary failover, and strategy fan-out are historical proposals only. Current production is the locked NIFTY/BANKNIFTY Shared Index Runner; IV reads its published spot/options state; retired strategies are not live owners. Do not use this document as an implementation or deployment checklist.
 
 ## 1. Executive decision
 
